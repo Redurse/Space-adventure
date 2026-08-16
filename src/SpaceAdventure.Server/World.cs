@@ -95,8 +95,30 @@ public sealed partial class World
 
     public void SpawnCharacter(int playerId) => _characters[playerId] = new Character(playerId, Ship.SpawnPoint, Ship.SpawnRoomId);
 
+    // A player left the session (GameServer.Tick). Everything keyed by their id goes with them,
+    // including a seat they were occupying - a turret nobody is sitting at must not stay manned by
+    // a crew member who is no longer aboard.
+    public void RemoveCharacter(int playerId)
+    {
+        _characters.Remove(playerId);
+        _moveInput.Remove(playerId);
+        _cutInput.Remove(playerId);
+        _weaponCooldowns.Remove(playerId);
+        _stolenItemCount.Remove(playerId);
+        foreach (var runtime in _turretRuntimes.Values.Where(t => t.MannedByPlayerId == playerId))
+        {
+            runtime.MannedByPlayerId = null;
+            _turretAimInput.Remove(runtime.Definition.Id); // otherwise the barrel keeps swinging by itself
+        }
+    }
+
     public void ApplyCommand(int playerId, ClientCommand command)
     {
+        // A command can outlive its sender by a tick - the socket dies between the client's last
+        // send and the server draining the queue.
+        if (!_characters.ContainsKey(playerId))
+            return;
+
         _moveInput[playerId] = new Vec2(command.MoveX, command.MoveY);
         _characters[playerId].LookDirection = new Vec2(command.LookX, command.LookY);
         PowerGrid.ApplyInput(command.PowerSystemIndex, command.PowerDirection);

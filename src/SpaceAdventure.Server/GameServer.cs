@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using SpaceAdventure.Shared.Model;
 using SpaceAdventure.Shared.Networking;
@@ -11,9 +12,12 @@ public sealed class GameServer
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1.0 / TicksPerSecond);
 
     private readonly World _world;
-    private readonly List<IServerConnection> _connections = new();
-    private readonly Dictionary<IServerConnection, int> _playerIds = new();
-    private int _nextPlayerId = 1;
+    private readonly List<(IServerConnection Connection, int PlayerId)> _connections = new();
+
+    // Players join from whichever thread accepted their socket, never from the tick loop - so the
+    // list above is only ever touched by the tick, and a join waits here until the next one.
+    private readonly ConcurrentQueue<(IServerConnection Connection, int PlayerId)> _joining = new();
+    private int _nextPlayerId;
 
     private readonly string? _savePath;
 
@@ -27,12 +31,13 @@ public sealed class GameServer
             _world.ApplySave(loadFrom);
     }
 
+    // Thread-safe: NetworkHost calls this from its accept thread while the tick loop is running.
+    // The id is handed back at once (the joiner's welcome frame needs it), but the character itself
+    // is spawned at the top of the next tick, where the world is not mid-step.
     public int Connect(IServerConnection connection)
     {
-        var playerId = _nextPlayerId++;
-        _connections.Add(connection);
-        _playerIds[connection] = playerId;
-        _world.SpawnCharacter(playerId);
+        var playerId = Interlocked.Increment(ref _nextPlayerId);
+        _joining.Enqueue((connection, playerId));
         return playerId;
     }
 
@@ -58,9 +63,26 @@ public sealed class GameServer
     // Single tick step, exposed separately from Run() so tests can drive it without real-time waits.
     public void Tick()
     {
-        foreach (var connection in _connections)
+        while (_joining.TryDequeue(out var joiner))
         {
-            var playerId = _playerIds[connection];
+            _connections.Add(joiner);
+            _world.SpawnCharacter(joiner.PlayerId);
+        }
+
+        // A crew member who drops out leaves with their body: the alternative is a motionless
+        // character standing in a corridor, still breathing the room's air and still counted as a
+        // boarder or an arrest target.
+        for (var i = _connections.Count - 1; i >= 0; i--)
+        {
+            if (_connections[i].Connection.IsOpen)
+                continue;
+            _world.RemoveCharacter(_connections[i].PlayerId);
+            (_connections[i].Connection as IDisposable)?.Dispose();
+            _connections.RemoveAt(i);
+        }
+
+        foreach (var (connection, playerId) in _connections)
+        {
             foreach (var command in connection.ReceiveCommands())
                 _world.ApplyCommand(playerId, command);
         }
@@ -78,7 +100,7 @@ public sealed class GameServer
         }
 
         var snapshot = _world.CreateSnapshot();
-        foreach (var connection in _connections)
+        foreach (var (connection, _) in _connections)
             connection.Send(snapshot);
     }
 }

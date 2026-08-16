@@ -12,7 +12,9 @@ using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Client;
 
-public class Game1 : Game
+// The menu that runs before a session exists - ship choice, hosting, joining - lives in
+// Game1.Menu.cs; everything here assumes a live _client.
+public partial class Game1 : Game
 {
     private const float TurretInteractionRadius = 1.0f; // must match World.InteractionRadius
 
@@ -59,19 +61,19 @@ public class Game1 : Game
     private const float SuitAmbientRadius = 3f;
     private const float OpenVisionRadius = 13f;
 
-    private static readonly ShipKind[] SelectableShipKinds = { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette };
-
     private GraphicsDeviceManager _graphics;
     private SpriteBatch _spriteBatch = null!;
     private SpriteFont _font = null!;
     // The one white pixel every renderer in this project builds its shapes from; Game1 needs its
     // own only to draw the item riding the cursor mid-drag, which belongs to no panel.
     private Texture2D _pixel = null!;
-    private SoloSession _session = null!;
+    // Either a SoloSession (playing on our own ship, with or without guests aboard) or a
+    // NetworkSession (a guest on someone else's) - from here down only _client matters.
+    private IDisposable? _session;
     private GameClient _client = null!;
-    // Ship-select screen (game_design.md section 9) gates session startup: SoloSession/GameClient
-    // stay unconstructed (the null! above is a lie until this flips) until the player picks a
-    // class, so every other field below can go on assuming _client is always live once used.
+    // The menu (game_design.md section 9) gates session startup: the session/GameClient stay
+    // unconstructed (the null! above is a lie until this flips) until the player picks a class or
+    // joins a crew, so every other field below can go on assuming _client is always live once used.
     private bool _sessionStarted;
     // Read once at startup so the select screen can offer "continue" (game_design.md section 5).
     private SaveGame? _existingSave;
@@ -151,6 +153,7 @@ public class Game1 : Game
 
         UpdateRenderScale();
         Window.ClientSizeChanged += (_, _) => UpdateRenderScale();
+        Window.TextInput += OnMenuTextInput; // typing the host's address on the join screen
         base.Initialize();
     }
 
@@ -217,68 +220,17 @@ public class Game1 : Game
         _existingSave = SaveStore.Load();
     }
 
-    // Pressing 1/2/3 on the ship-select screen picks a class (game_design.md section 9) and only
-    // then spins up the embedded server with that layout — SoloSession/GameServer/World all take
-    // the ShipKind at construction, so it has to be known before the session starts.
-    private void HandleShipSelect(KeyboardState keyboard)
-    {
-        // C continues the autosaved run (game_design.md section 5) instead of picking a hull -
-        // the saved game already knows which ship the crew flies.
-        if (_existingSave is not null && keyboard.IsKeyDown(Keys.C))
-        {
-            StartSession(_existingSave.ShipKind, _existingSave);
-            return;
-        }
-
-        var index = keyboard.IsKeyDown(Keys.D1) ? 0
-            : keyboard.IsKeyDown(Keys.D2) ? 1
-            : keyboard.IsKeyDown(Keys.D3) ? 2
-            : keyboard.IsKeyDown(Keys.D4) ? 3
-            : -1;
-        if (index < 0)
-            return;
-
-        // Starting fresh abandons the old run - the first docking would overwrite it anyway, so
-        // clearing it now keeps "continue" from offering a save that no longer matches.
-        SaveStore.Delete();
-        StartSession(SelectableShipKinds[index], loadFrom: null);
-    }
-
-    private void StartSession(ShipKind shipKind, SaveGame? loadFrom)
-    {
-        _session = new SoloSession(shipKind, loadFrom);
-        _client = new GameClient(_session.Connection, _session.PlayerId);
-        _sessionStarted = true;
-    }
-
-    private void DrawShipSelectScreen()
-    {
-        _spriteBatch.Begin(transformMatrix: _renderScale);
-        _spriteBatch.DrawString(_font, "Выберите корабль", new Vector2(60, 40), Color.White, 0f, Vector2.Zero, 1.4f, SpriteEffects.None, 0f);
-        for (var i = 0; i < SelectableShipKinds.Length; i++)
-        {
-            var kind = SelectableShipKinds[i];
-            var y = 110 + i * 90;
-            _spriteBatch.DrawString(_font, $"[{i + 1}] {ShipCatalog.Name(kind)}", new Vector2(60, y), Color.Gold, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
-            _spriteBatch.DrawString(_font, ShipCatalog.Description(kind), new Vector2(80, y + 26), Color.LightSteelBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
-        }
-
-        if (_existingSave is { } save)
-        {
-            _spriteBatch.DrawString(_font, $"[C] Продолжить: {ShipCatalog.Name(save.ShipKind)}, {save.Credits} кред.",
-                new Vector2(60, 400), Color.LightGreen, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
-            _spriteBatch.DrawString(_font, "Выбор корабля начнёт новую игру и сотрёт сохранение.",
-                new Vector2(80, 428), Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
-        }
-        _spriteBatch.End();
-    }
-
     protected override void Update(GameTime gameTime)
     {
         var keyboard = Keyboard.GetState();
 
+        // Escape leaves the game - except on the join screen, where it's "never mind" and steps back
+        // to the ship list rather than quitting outright.
         if (GamePad.GetState(PlayerIndex.One).Buttons.Back == ButtonState.Pressed || keyboard.IsKeyDown(Keys.Escape))
-            Exit();
+        {
+            if (_sessionStarted || !LeaveJoinScreen())
+                Exit();
+        }
 
         // F11 toggles back to a window - edge-triggered, or holding the key would flip the mode
         // every single frame.
@@ -291,7 +243,7 @@ public class Game1 : Game
 
         if (!_sessionStarted)
         {
-            HandleShipSelect(keyboard);
+            HandleMenu(keyboard);
             base.Update(gameTime);
             return;
         }
@@ -1068,7 +1020,7 @@ public class Game1 : Game
         if (!_sessionStarted)
         {
             GraphicsDevice.Clear(Color.Black);
-            DrawShipSelectScreen();
+            DrawMenu();
             base.Draw(gameTime);
             return;
         }

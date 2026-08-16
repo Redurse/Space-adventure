@@ -3,7 +3,7 @@ using SpaceAdventure.Shared.Model;
 using SpaceAdventure.Shared.Networking;
 using SpaceAdventure.Shared.Protocol;
 
-internal static class TestRunner
+internal static partial class TestRunner
 {
     private static readonly (string Name, Func<bool> Run)[] Tests =
     {
@@ -188,6 +188,12 @@ internal static class TestRunner
         ("World_Station_CrossingConnector_MovesContinuously", World_Station_CrossingConnector_MovesContinuously),
         ("World_Station_Departing_PullsCrewBackAboard", World_Station_Departing_PullsCrewBackAboard),
         ("World_Station_OpenAirlockWhileDocked_DoesNotVentTheShip", World_Station_OpenAirlockWhileDocked_DoesNotVentTheShip),
+        ("Wire_SnapshotSurvivesTheRoundTrip", Wire_SnapshotSurvivesTheRoundTrip),
+        ("Wire_FramesAreSelfDelimitingOnOneStream", Wire_FramesAreSelfDelimitingOnOneStream),
+        ("Wire_SnapshotFrameStaysWithinBudget", Wire_SnapshotFrameStaysWithinBudget),
+        ("Coop_JoinerGetsOwnCharacterAndDrivesItOverTheSocket", Coop_JoinerGetsOwnCharacterAndDrivesItOverTheSocket),
+        ("Coop_DroppedConnection_TakesItsCharacterOffTheShip", Coop_DroppedConnection_TakesItsCharacterOffTheShip),
+        ("Coop_GunnerLeavingUnmansTheTurret", Coop_GunnerLeavingUnmansTheTurret),
     };
 
     public static int Run()
