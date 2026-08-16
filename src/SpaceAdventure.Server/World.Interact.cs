@@ -8,19 +8,46 @@ public sealed partial class World
     private const float SuitActionDurationSeconds = 2f;
 
     // Single F key, priority-ordered: 0) ignored entirely while mid-equip/unequip (can't react
-    // instantly, game_design.md section 2), 1) stand up if manning, 2) reload a turret if
-    // carrying a crate, 3) pick up a crate/tool at a station, 4) repair a damaged turret/system
-    // or man a free turret, 5) start putting on/taking off a suit at a locker, 6) weld the
-    // nearest breached hull block in the current room.
+    // instantly, game_design.md section 2), 1) stand up if manning, 2) use a held MedKit if hurt
+    // (game_design.md section 4, M12 - anywhere, no proximity needed, since it's self-treatment
+    // not a station), 3) reload a turret if carrying a crate, 4) pick up a crate/tool at a
+    // station, 5) repair a damaged turret/system or man a free turret, 6) start putting on/taking
+    // off a suit at a locker, 7) weld the nearest breached hull block in the current room.
     private void HandleInteract(Character character)
     {
         if (character.SuitActionRemaining > 0)
             return;
 
+        if (character.IsOutside)
+        {
+            HandleEvaInteract(character);
+            return;
+        }
+
+        // A station room has none of the ship's fixtures in it - the only thing to interact with
+        // is somebody else's property (World.StationCrime.cs).
+        if (character.OnStation)
+        {
+            TryStealCrate(character);
+            return;
+        }
+
         if (character.ManningTurretId is { } manned)
         {
             _turretRuntimes[manned].MannedByPlayerId = null;
             character.ManningTurretId = null;
+            return;
+        }
+
+        if (character.IsAtHelm)
+        {
+            character.IsAtHelm = false; // the last commanded thrust is deliberately left as-is (game_design.md Phase 3, M15)
+            return;
+        }
+
+        if (character.Inventory.IsHolding(ItemType.MedKit) && character.Health < Character.MaxHealth)
+        {
+            TryUseMedKit(character);
             return;
         }
 
@@ -83,12 +110,19 @@ public sealed partial class World
         var nearbyDamagedSystem = Ship.SystemDevices.FirstOrDefault(d =>
             d.RoomId == character.RoomId &&
             (d.Position - character.Position).Length() < InteractionRadius &&
-            PowerGrid.IsDamaged(d.System));
+            !IsDeviceConnected(d.Id));
 
         if (nearbyDamagedSystem is not null)
         {
             if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
-                PowerGrid.SetDamaged(nearbyDamagedSystem.System, false);
+                RepairDeviceWiring(nearbyDamagedSystem.Id);
+            return;
+        }
+
+        if (Ship.HelmConsole.RoomId == character.RoomId &&
+            (Ship.HelmConsole.Position - character.Position).Length() < InteractionRadius)
+        {
+            character.IsAtHelm = true;
             return;
         }
 

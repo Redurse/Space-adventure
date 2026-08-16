@@ -21,21 +21,40 @@ public sealed partial class World
 
     private void StepAtmosphere(double deltaSeconds)
     {
-        var oxygenPower = PowerGrid.GetAllocation(PowerSystemId.Oxygen);
+        var oxygenPower = GetEffectivePower(PowerSystemId.Oxygen);
         var generatorRoomId = Ship.SystemDevices.First(d => d.System == PowerSystemId.Oxygen).RoomId;
         _roomOxygen[generatorRoomId] = Math.Min(FullOxygen,
             _roomOxygen[generatorRoomId] + OxygenGenerationPerPowerUnitPerSecond * oxygenPower * (float)deltaSeconds);
 
-        // Diffuse across every door, room to room, based on the level gap — computed as a batch
-        // of deltas from the pre-diffusion snapshot so the order doors happen to be processed in
-        // doesn't bias the result toward one side of the ship.
+        // Diffuse across every OPEN door, room to room, based on the level gap — computed as a
+        // batch of deltas from the pre-diffusion snapshot so the order doors happen to be
+        // processed in doesn't bias the result toward one side of the ship. A closed door blocks
+        // this entirely (game_design.md Phase 3, M16 - airtight compartments).
         var deltas = new Dictionary<string, float>();
         foreach (var door in Ship.Doors)
         {
+            if (!IsDoorOpen(door.Id))
+                continue;
             var flow = OxygenDiffusionRatePerSecond * (_roomOxygen[door.RoomAId] - _roomOxygen[door.RoomBId]) * (float)deltaSeconds;
             deltas[door.RoomAId] = deltas.GetValueOrDefault(door.RoomAId) - flow;
             deltas[door.RoomBId] = deltas.GetValueOrDefault(door.RoomBId) + flow;
         }
+
+        // An open AirlockOuterDoor exposes its chamber directly to vacuum - same diffusion
+        // formula as an interior door, just with the far side pinned at 0 instead of another
+        // room's level. A door standing wide open to space drains far faster than any single
+        // hull breach, which is exactly the point of it being a deliberate, undoable choice.
+        // ...unless the ship is docked, in which case that same door opens onto the station's own
+        // pressurized dock chamber rather than onto space (World.StationDocking.cs) - walking
+        // ashore is a normal thing to do and must not vent the ship on the way.
+        foreach (var outerDoor in Ship.AirlockOuterDoors)
+        {
+            if (!IsDoorOpen(outerDoor.Id) || Phase == VoyagePhase.Station)
+                continue;
+            var flow = OxygenDiffusionRatePerSecond * _roomOxygen[outerDoor.RoomId] * (float)deltaSeconds;
+            deltas[outerDoor.RoomId] = deltas.GetValueOrDefault(outerDoor.RoomId) - flow;
+        }
+
         foreach (var (roomId, delta) in deltas)
             _roomOxygen[roomId] += delta;
 
@@ -48,7 +67,10 @@ public sealed partial class World
 
         foreach (var character in _characters.Values)
         {
-            if (character.WearingSuit)
+            // Station and enemy-ship rooms aren't part of _roomOxygen at all (no atmosphere/breach
+            // simulation in either structure) - and a boarding party is necessarily suited anyway,
+            // since it crossed vacuum to get there.
+            if (character.SuitSealed || character.OnStation || character.OnEnemyShip)
                 continue;
 
             var oxygen = _roomOxygen[character.RoomId];

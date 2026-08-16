@@ -9,7 +9,6 @@ public sealed class TurretRuntime
     public float AimDegrees { get; set; }
     public int? MannedByPlayerId { get; set; }
     public float CooldownRemaining { get; set; }
-    public float PendingShotDamage { get; set; } // resolved and cleared on the next Step
     public int AmmoRemaining { get; set; } // ballistic
     public float Charge { get; set; } // laser
     public bool Damaged { get; set; } // local system damage — needs a wrench, blocks firing

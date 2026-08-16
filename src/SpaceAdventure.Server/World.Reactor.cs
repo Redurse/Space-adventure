@@ -14,15 +14,16 @@ public sealed partial class World
         if ((Ship.ReactorBlock.Position - character.Position).Length() >= InteractionRadius)
             return;
 
-        var rodSlots = PowerGrid.Reactor.RodSlots;
-        if (rodSlots[slotIndex])
+        var reactor = PowerGrid.Reactor;
+        if (reactor.IsRodLoaded(slotIndex))
         {
             if (character.Inventory.TryAdd(ItemType.FuelRod))
-                rodSlots[slotIndex] = false;
+                reactor.RemoveRod(slotIndex);
         }
         else if (character.Inventory.TryTakeHeldItem(ItemType.FuelRod))
         {
-            rodSlots[slotIndex] = true;
+            // Rods come off the rack fresh, so this is what actually refuels the reactor.
+            reactor.InsertRod(slotIndex);
         }
     }
 }

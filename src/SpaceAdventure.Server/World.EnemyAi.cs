@@ -4,30 +4,31 @@ namespace SpaceAdventure.Server;
 
 public sealed partial class World
 {
-    private const float EnemyAttackIntervalSeconds = 6f;
     private const double TurretDamageChance = 0.35; // vs damaging a system or breaching a room
     private const double SystemDamageChance = 0.35; // rolled only if the turret roll misses
 
-    private readonly Random _random = new();
-    private float _enemyAttackCooldown = EnemyAttackIntervalSeconds;
+    // The only randomness in the simulation, and it used to be seeded from the clock - which made
+    // every fight, and therefore every test that flew through one, a different run: the suite
+    // drifted between 177 and 180 passing with nothing changed at all.
+    //
+    // Seeded from a counter rather than a constant, so both properties hold: a whole run of the
+    // suite is reproducible (Worlds are built in a fixed order), while two Worlds built in a row
+    // still roll differently - which is what the tests that retry a scenario until it lands are
+    // relying on. A real session builds exactly one World, so its fights are as varied as the
+    // sequence of rolls within them.
+    private static int _seedCounter;
+    private readonly Random _random = new(Interlocked.Increment(ref _seedCounter) * 104729);
 
-    // Simple attacker AI (game_design.md section 11): attacks on a timer, retreats (stops
-    // attacking) at low HP. Every attack hits the shield first (game_design.md section 1) — only
-    // once it's depleted does an attack disable a turret, knock out a ship system block
-    // ("повреждена локальная коробка"), or breach a single outer-hull wall block (several
-    // breaches can pile up in the same room) — no projectile/travel-time modeling since the
-    // enemy has no position yet (see EnemyShip).
-    private void StepEnemyAi(double deltaSeconds)
+    // What an enemy shell does once it actually reaches the hull (World.Projectiles.cs). Every hit
+    // goes at the shield first (game_design.md section 1) — only once that's depleted does one
+    // disable a turret, knock out a ship system block ("повреждена локальная коробка"), or breach a
+    // single outer-hull wall block (several breaches can pile up in the same room).
+    //
+    // This used to fire on a timer with no projectile at all, because the enemy had no position;
+    // the consequences are unchanged, but now something had to cross the gap to cause them, which
+    // means cover and maneuvering are worth something.
+    private void ApplyEnemyAttack()
     {
-        if (Phase != VoyagePhase.Battle || Enemy.Hp <= 0 || Enemy.IsRetreating)
-            return;
-
-        _enemyAttackCooldown -= (float)deltaSeconds;
-        if (_enemyAttackCooldown > 0)
-            return;
-
-        _enemyAttackCooldown = EnemyAttackIntervalSeconds;
-
         if (Shield.TryAbsorbHit())
             return;
 
@@ -38,10 +39,14 @@ public sealed partial class World
             return;
         }
 
-        var undamagedSystems = Ship.SystemDevices.Where(d => !PowerGrid.IsDamaged(d.System)).ToList();
-        if (undamagedSystems.Count > 0 && _random.NextDouble() < SystemDamageChance)
+        // A "system hit" severs one currently-live wire link (game_design.md section 1, M14)
+        // rather than flipping one flat per-system flag — could be a trunk or a drop, and could
+        // land on a link that already has a backup carrying it (in which case this cuts the
+        // backup instead, see CutWireLink).
+        var liveLinks = WireNetwork.Links.Where(l => IsLinkConnected(l.Id)).ToList();
+        if (liveLinks.Count > 0 && _random.NextDouble() < SystemDamageChance)
         {
-            PowerGrid.SetDamaged(undamagedSystems[_random.Next(undamagedSystems.Count)].System, true);
+            CutWireLink(liveLinks[_random.Next(liveLinks.Count)].Id);
             return;
         }
 

@@ -19,12 +19,18 @@ public sealed class GalaxyMap
     {
         var points = new[]
         {
-            new GalaxyPoint("home-station", "Домашняя станция", 10f, 50f, GalaxyPointKind.Station),
-            new GalaxyPoint("sector-alpha", "Сектор Альфа", 35f, 30f, GalaxyPointKind.HostileSector),
-            new GalaxyPoint("sector-beta", "Сектор Бета", 35f, 70f, GalaxyPointKind.HostileSector),
-            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 60f, 50f, GalaxyPointKind.Station),
-            new GalaxyPoint("sector-delta", "Сектор Дельта", 80f, 25f, GalaxyPointKind.HostileSector),
-            new GalaxyPoint("trade-station", "Торговая станция", 90f, 60f, GalaxyPointKind.Station),
+            // Faction ownership (game_design.md section 12): home stays neutral so a new crew
+            // always has somewhere that treats them the same regardless of reputation; the other
+            // two stations belong to the rival powers, as do the sectors their raiders patrol.
+            new GalaxyPoint("home-station", "Домашняя станция", 10f, 50f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("sector-alpha", "Сектор Альфа", 35f, 30f, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
+            // Beta is a picket of two and Delta a patrol of three - the map's difficulty gradient
+            // is squadron size, not per-ship strength (game_design.md section 12).
+            new GalaxyPoint("sector-beta", "Сектор Бета", 35f, 70f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
+            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 60f, 50f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
+            new GalaxyPoint("sector-delta", "Сектор Дельта", 80f, 25f, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
+            new GalaxyPoint("trade-station", "Торговая станция", 90f, 60f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
+            new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 60f, 15f, GalaxyPointKind.AsteroidField),
         };
 
         return new GalaxyMap(points, "home-station");

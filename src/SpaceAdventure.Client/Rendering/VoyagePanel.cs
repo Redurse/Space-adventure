@@ -27,6 +27,8 @@ public sealed class VoyagePanel
         };
 
         spriteBatch.DrawString(_font, text, origin, Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, $"Кредиты: {snapshot.Credits}", origin + new Vector2(0, 18),
+            Color.LightGreen, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
     }
 
     private static string PointName(WorldSnapshot snapshot, string? pointId) =>

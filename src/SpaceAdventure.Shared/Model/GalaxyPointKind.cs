@@ -4,4 +4,5 @@ public enum GalaxyPointKind
 {
     Station,
     HostileSector,
+    AsteroidField,
 }

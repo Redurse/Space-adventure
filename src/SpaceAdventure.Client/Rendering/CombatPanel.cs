@@ -23,7 +23,10 @@ public sealed class CombatPanel
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, string hint, Vector2 origin)
     {
         var enemyStatus = snapshot.Enemy.Hp <= 0 ? " (уничтожен)" : snapshot.Enemy.IsRetreating ? " (отступает)" : "";
-        var enemyText = $"Враг: {snapshot.Enemy.Hp:0}/{snapshot.Enemy.MaxHp:0} HP{enemyStatus}";
+        // A defended sector sends its ships in one at a time (game_design.md section 12) - showing
+        // how many are left is the difference between "nearly done" and "this is the first of three".
+        var squadron = snapshot.Enemy.RemainingShips > 1 ? $"  [ещё кораблей: {snapshot.Enemy.RemainingShips}]" : "";
+        var enemyText = $"Враг: {snapshot.Enemy.Hp:0}/{snapshot.Enemy.MaxHp:0} HP{enemyStatus}{squadron}";
         spriteBatch.DrawString(_font, enemyText, origin, snapshot.Enemy.Hp > 0 ? Color.OrangeRed : Color.Gray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
 
         var barOrigin = origin + new Vector2(0, 22);
@@ -46,7 +49,8 @@ public sealed class CombatPanel
         {
             var healthColor = me.Health > 40 ? Color.LightGreen : Color.IndianRed;
             var suitStatus = me.WearingSuit ? " [скафандр]" : "";
-            spriteBatch.DrawString(_font, $"Здоровье: {me.Health:0}/100{suitStatus}", healthOrigin, healthColor, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+            var bleedingStatus = me.IsBleeding ? " [кровотечение]" : "";
+            spriteBatch.DrawString(_font, $"Здоровье: {me.Health:0}/100{suitStatus}{bleedingStatus}", healthOrigin, healthColor, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
         }
 
         var ammoOrigin = healthOrigin + new Vector2(0, 20);

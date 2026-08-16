@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -20,6 +21,11 @@ public sealed class ShipRenderer
     public const int MediumBlockSize = 28;
     public const int BigBlockSize = 36;
 
+    // Bulkhead slab, in screen pixels, centred on the room boundary. Deliberately narrower than a
+    // door's 1-unit (48px) span so a doorway still cuts cleanly through it.
+    private const int WallThickness = 12;
+    private const int RibSpacing = 26;
+
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
 
@@ -38,17 +44,59 @@ public sealed class ShipRenderer
         return new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
     }
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock)
+    // Shared with Game1's door click-toggle hit-testing (game_design.md Phase 3, M16) so the
+    // clickable area always matches what DrawDoor actually renders.
+    public static Rectangle GetDoorRect(float left, float top, float width, float height, Vector2 origin) =>
+        new(
+            (int)(origin.X + left * PixelsPerUnit),
+            (int)(origin.Y + top * PixelsPerUnit),
+            (int)(width * PixelsPerUnit),
+            (int)(height * PixelsPerUnit));
+
+    // hullPlating: draw the ship closed up, seen from outside. That's the view from a turret
+    // periscope - the gunner is looking along the plating at the field, and the decks, crew and
+    // furniture behind that plating are not things they can see. Without it the ship reads as an
+    // open floor plan floating in space while you're supposedly outside it.
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock,
+        float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null, bool hullPlating = false)
     {
-        foreach (var room in snapshot.Rooms)
+        var forwardDegrees = ShipCatalog.ForwardDegrees(snapshot.CurrentShipKind);
+
+        if (hullPlating)
         {
-            var oxygen = snapshot.RoomOxygen.FirstOrDefault(o => o.RoomId == room.Id)?.Oxygen ?? 100f;
-            DrawRoom(spriteBatch, room, oxygen, origin);
+            HullSkin.Draw(spriteBatch, _pixel, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
+                origin, forwardDegrees, closedUp: true);
+            foreach (var turret in snapshot.Turrets)
+                DrawTurret(spriteBatch, turret, snapshot.TurretStates.FirstOrDefault(s => s.Id == turret.Id),
+                    snapshot.Rooms, snapshot.Turrets, origin, showPeriscope: false);
+            return;
         }
+
+        // The armour the compartments sit inside, under everything else - what shows of it is the
+        // plated border around the decks and the bow sticking out ahead of them.
+        HullSkin.Draw(spriteBatch, _pixel, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
+            origin, forwardDegrees, closedUp: false);
+
+        // Floors first, walls second: the bulkheads are thick and straddle the boundary between
+        // two rooms, so a room drawn later would otherwise paint its floor over its neighbour's
+        // wall slab.
+        foreach (var room in snapshot.Rooms)
+            DrawRoomFloor(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
+        foreach (var room in snapshot.Rooms)
+            DrawRoomWalls(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
 
         // Drawn after room outlines so the opening visibly cuts through the shared wall.
         foreach (var door in snapshot.Doors)
-            DrawDoor(spriteBatch, door, origin);
+        {
+            var isOpen = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? true;
+            DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen, origin);
+        }
+
+        foreach (var outerDoor in snapshot.AirlockOuterDoors)
+        {
+            var isOpen = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == outerDoor.Id)?.IsOpen ?? false;
+            DrawDoor(spriteBatch, outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, isOpen, origin, leadsToVacuum: true);
+        }
 
         // Only breached blocks get drawn — an intact one is just an ordinary bit of the hull
         // the room outline already implies.
@@ -58,7 +106,7 @@ public sealed class ShipRenderer
                 continue;
             var block = snapshot.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
             if (block is not null)
-                DrawBreachedWallBlock(spriteBatch, block, origin);
+                DrawBreachedWallBlock(spriteBatch, block, origin, totalSeconds);
         }
 
         foreach (var storage in snapshot.AmmoStorages)
@@ -72,9 +120,11 @@ public sealed class ShipRenderer
 
         foreach (var device in snapshot.SystemDevices)
         {
-            var damaged = snapshot.SystemStates.FirstOrDefault(s => s.System == device.System)?.Damaged ?? false;
+            // Match by DeviceId, not System — Shields has two separate physical generators
+            // (M14) that can be damaged independently of each other.
+            var damaged = snapshot.SystemStates.FirstOrDefault(s => s.DeviceId == device.Id)?.Damaged ?? false;
             var isOpen = openBlock.Kind == BlockKind.System && openBlock.System == device.System;
-            var size = device.System == PowerSystemId.Engine ? BigBlockSize : NormalBlockSize;
+            var size = (int)((device.System == PowerSystemId.Engine ? BigBlockSize : NormalBlockSize) * device.SizeScale);
             DrawSystemDevice(spriteBatch, device, damaged, isOpen, size, origin);
         }
 
@@ -82,39 +132,129 @@ public sealed class ShipRenderer
         DrawDistributionBlock(spriteBatch, snapshot.DistributionBlock, openBlock.Kind == BlockKind.Distribution, origin);
         DrawNavigationConsole(spriteBatch, snapshot.NavigationConsole, openBlock.Kind == BlockKind.Navigation, origin);
         DrawAirlockConsole(spriteBatch, snapshot.AirlockConsole, snapshot.Voyage.Phase == VoyagePhase.Station, openBlock.Kind == BlockKind.Station, origin);
+        DrawWiringTerminal(spriteBatch, snapshot.WiringTerminal, openBlock.Kind == BlockKind.Wiring, origin);
+        DrawStorageRack(spriteBatch, snapshot, openBlock.Kind == BlockKind.Rack, origin);
+        var anyoneAtHelm = snapshot.Characters.Any(c => c.IsAtHelm);
+        DrawHelmConsole(spriteBatch, snapshot.HelmConsole, anyoneAtHelm, origin);
 
         foreach (var turret in snapshot.Turrets)
         {
             var state = snapshot.TurretStates.FirstOrDefault(s => s.Id == turret.Id);
-            DrawTurret(spriteBatch, turret, state, origin);
+            DrawTurret(spriteBatch, turret, state, snapshot.Rooms, snapshot.Turrets, origin);
         }
 
         foreach (var character in snapshot.Characters)
             DrawCharacter(spriteBatch, character, origin);
+
+        // A cutter works anywhere - there's just nothing to cut in here. The flame still lights, and
+        // it still burns the tank, so "why is my bottle empty" has a visible cause.
+        foreach (var shot in snapshot.PersonalShots.Where(s => s.Scene == ShotScene.Ship))
+            BoardingRenderer.DrawShot(spriteBatch, _pixel, shot, origin);
+
+        foreach (var character in snapshot.Characters.Where(c => c.Cutting && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
+            FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
+                origin + new Vector2(character.X, character.Y) * PixelsPerUnit,
+                new Vector2(character.FacingX, character.FacingY), totalSeconds);
+
+        if (effects is not null)
+            foreach (var effect in effects.Where(e => e.Kind != EffectKind.Cut)) // Cut is exterior-only, drawn by FieldRenderer
+                DrawSparkBurst(spriteBatch, origin + new Vector2(effect.Position.X, effect.Position.Y) * PixelsPerUnit, effect.Progress, effect.Kind == EffectKind.Weld ? Color.White : Color.PaleGreen);
+    }
+
+    // Barotrauma-style brief spark burst for a tool action that just landed (welding a breach,
+    // repairing a system) - a handful of short rays radiating from the point, expanding and
+    // fading over the effect's lifetime (TransientEffect.Progress goes 0 -> 1).
+    private void DrawSparkBurst(SpriteBatch spriteBatch, Vector2 center, float progress, Color color)
+    {
+        var alpha = 1f - progress;
+        var length = 5f + progress * 16f;
+        const int rayCount = 6;
+        for (var i = 0; i < rayCount; i++)
+        {
+            var angle = i * MathF.PI * 2f / rayCount + progress * 2f;
+            spriteBatch.Draw(_pixel, center, null, color * alpha, angle, new Vector2(0f, 0.5f), new Vector2(length, 2f), SpriteEffects.None, 0f);
+        }
+    }
+
+    // Shared industrial "panel" look for equipment blocks (game_design.md Phase 3 visual pass) —
+    // a beveled face plus four corner rivets, built entirely from the single white pixel texture
+    // (this project has no image assets/content pipeline for real sprites).
+    private void DrawPanel(SpriteBatch spriteBatch, Rectangle rect, Color faceColor, Color borderColor, int borderThickness)
+    {
+        spriteBatch.Draw(_pixel, rect, faceColor);
+        // Bevel: a lighter sliver along the top/left, a darker one along bottom/right.
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, 2), Color.White * 0.18f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, 2, rect.Height), Color.White * 0.18f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - 2, rect.Width, 2), Color.Black * 0.35f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - 2, rect.Y, 2, rect.Height), Color.Black * 0.35f);
+        DrawRectOutline(spriteBatch, rect, borderColor, borderThickness);
+        DrawRivets(spriteBatch, rect);
+    }
+
+    private void DrawRivets(SpriteBatch spriteBatch, Rectangle rect)
+    {
+        const int inset = 3;
+        const int size = 2;
+        var color = Color.Black * 0.5f;
+        foreach (var (x, y) in new[]
+                 {
+                     (rect.X + inset, rect.Y + inset), (rect.Right - inset - size, rect.Y + inset),
+                     (rect.X + inset, rect.Bottom - inset - size), (rect.Right - inset - size, rect.Bottom - inset - size),
+                 })
+            spriteBatch.Draw(_pixel, new Rectangle(x, y, size, size), color);
+    }
+
+    // Alternating yellow/black hazard tape (SS13/Barotrauma convention for anything dangerous:
+    // airlocks, breached hull) - plain vertical stripes rather than true diagonals since there's
+    // no clipping/scissor rect available to cut a rotated stripe to the target shape.
+    private void DrawHazardStripes(SpriteBatch spriteBatch, Rectangle rect, bool horizontal)
+    {
+        const int stripeSize = 5;
+        if (horizontal)
+        {
+            for (var x = rect.X; x < rect.Right; x += stripeSize)
+            {
+                var w = Math.Min(stripeSize, rect.Right - x);
+                var stripe = ((x - rect.X) / stripeSize) % 2 == 0 ? Color.Gold : Color.Black;
+                spriteBatch.Draw(_pixel, new Rectangle(x, rect.Y, w, rect.Height), stripe * 0.9f);
+            }
+        }
+        else
+        {
+            for (var y = rect.Y; y < rect.Bottom; y += stripeSize)
+            {
+                var h = Math.Min(stripeSize, rect.Bottom - y);
+                var stripe = ((y - rect.Y) / stripeSize) % 2 == 0 ? Color.Gold : Color.Black;
+                spriteBatch.Draw(_pixel, new Rectangle(rect.X, y, rect.Width, h), stripe * 0.9f);
+            }
+        }
     }
 
     private void DrawAmmoStorage(SpriteBatch spriteBatch, AmmoStorage storage, Vector2 origin)
     {
-        const int size = 14;
+        const int size = 16;
         var center = origin + new Vector2(storage.X, storage.Y) * PixelsPerUnit;
-        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size), Color.SaddleBrown);
+        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
+        DrawPanel(spriteBatch, rect, Color.SaddleBrown * 0.85f, Color.SaddleBrown, 1);
     }
 
     private void DrawSuitLocker(SpriteBatch spriteBatch, SuitLocker locker, Vector2 origin)
     {
-        const int size = 14;
+        const int size = 16;
         var center = origin + new Vector2(locker.X, locker.Y) * PixelsPerUnit;
-        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size), Color.CadetBlue);
+        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
+        DrawPanel(spriteBatch, rect, Color.CadetBlue * 0.7f, Color.CadetBlue, 1);
     }
 
     private void DrawToolStation(SpriteBatch spriteBatch, ToolStation station, Vector2 origin)
     {
-        const int size = 14;
+        const int size = 16;
         var center = origin + new Vector2(station.X, station.Y) * PixelsPerUnit;
         var isWeapon = station.Item is ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle;
         var color = isWeapon ? Color.DarkRed : Color.DarkKhaki;
-        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size), color);
-        spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(station.Item), center + new Vector2(9, -8), color, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
+        DrawPanel(spriteBatch, rect, color * 0.75f, color, 1);
+        spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(station.Item), center + new Vector2(10, -8), color, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
     }
 
     // Physical, damageable system block (game_design.md section 1) — click it to see its
@@ -125,8 +265,9 @@ public sealed class ShipRenderer
         var rect = GetBlockRect(device.Position, size, origin);
         var center = new Vector2(rect.Center.X, rect.Center.Y);
 
-        spriteBatch.Draw(_pixel, rect, damaged ? Color.Red * 0.6f : Color.SlateGray * 0.8f);
-        DrawRectOutline(spriteBatch, rect, damaged ? Color.Red : isOpen ? Color.Gold : Color.LightSteelBlue, isOpen ? 3 : 2);
+        DrawPanel(spriteBatch, rect, damaged ? Color.Red * 0.6f : Color.SlateGray * 0.8f, damaged ? Color.Red : isOpen ? Color.Gold : Color.LightSteelBlue, isOpen ? 3 : 2);
+        if (damaged)
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Bottom - 3, rect.Width, 3), horizontal: true);
         spriteBatch.DrawString(_font, SystemShortLabel(device.System), new Vector2(rect.X + 2, rect.Y + 3), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
 
         if (damaged)
@@ -137,10 +278,13 @@ public sealed class ShipRenderer
     // slots (see ReactorPanel). Glows warmer the more rods are loaded.
     private void DrawReactorBlock(SpriteBatch spriteBatch, ReactorBlock block, ReactorState reactor, bool isOpen, Vector2 origin)
     {
-        var rect = GetBlockRect(block.Position, BigBlockSize, origin);
+        var rect = GetBlockRect(block.Position, (int)(BigBlockSize * block.SizeScale), origin);
         var running = reactor.CurrentOutput > 0;
-        spriteBatch.Draw(_pixel, rect, running ? Color.DarkOrange * 0.55f : Color.DimGray * 0.6f);
-        DrawRectOutline(spriteBatch, rect, isOpen ? Color.Gold : running ? Color.Orange : Color.Gray, isOpen ? 3 : 2);
+        DrawPanel(spriteBatch, rect, running ? Color.DarkOrange * 0.55f : Color.DimGray * 0.6f, isOpen ? Color.Gold : running ? Color.Orange : Color.Gray, isOpen ? 3 : 2);
+        // Core glow: a small inset square that reads as the fuel core, brighter while running.
+        var coreSize = rect.Width / 3;
+        var coreRect = new Rectangle(rect.Center.X - coreSize / 2, rect.Center.Y - coreSize / 2, coreSize, coreSize);
+        spriteBatch.Draw(_pixel, coreRect, (running ? Color.Yellow : Color.DarkSlateGray) * (running ? 0.8f : 0.5f));
         spriteBatch.DrawString(_font, "Реактор", new Vector2(rect.X + 2, rect.Y + 4), Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
     }
 
@@ -148,17 +292,42 @@ public sealed class ShipRenderer
     private void DrawDistributionBlock(SpriteBatch spriteBatch, PowerDistributionBlock block, bool isOpen, Vector2 origin)
     {
         var rect = GetBlockRect(block.Position, MediumBlockSize, origin);
-        spriteBatch.Draw(_pixel, rect, Color.MediumPurple * 0.6f);
-        DrawRectOutline(spriteBatch, rect, isOpen ? Color.Gold : Color.Plum, isOpen ? 3 : 2);
+        DrawPanel(spriteBatch, rect, Color.MediumPurple * 0.6f, isOpen ? Color.Gold : Color.Plum, isOpen ? 3 : 2);
         spriteBatch.DrawString(_font, "Э", new Vector2(rect.X + 6, rect.Y + 6), Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+    }
+
+    // Next to the distribution block (game_design.md section 1, M14) — click it to bring up the
+    // wiring schematic.
+    private void DrawWiringTerminal(SpriteBatch spriteBatch, WiringTerminal terminal, bool isOpen, Vector2 origin)
+    {
+        var rect = GetBlockRect(terminal.Position, NormalBlockSize, origin);
+        DrawPanel(spriteBatch, rect, Color.DarkSlateBlue * 0.6f, isOpen ? Color.Gold : Color.MediumSlateBlue, isOpen ? 3 : 2);
+        spriteBatch.DrawString(_font, "Пр", new Vector2(rect.X + 2, rect.Y + 3), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+    }
+
+    // Cargo shelving (game_design.md section 13) — click it to open its 30 slots. Shows how full it
+    // is at a glance as a row of little filled bars, so you can tell a loaded rack from an empty one
+    // without walking over and opening it.
+    private void DrawStorageRack(SpriteBatch spriteBatch, WorldSnapshot snapshot, bool isOpen, Vector2 origin)
+    {
+        var rect = GetBlockRect(snapshot.StorageRack.Position, MediumBlockSize, origin);
+        DrawPanel(spriteBatch, rect, Color.Sienna * 0.6f, isOpen ? Color.Gold : Color.Peru, isOpen ? 3 : 2);
+
+        var used = snapshot.RackSlots.Count(s => s is not null);
+        const int shelves = 3;
+        for (var i = 0; i < shelves; i++)
+        {
+            var filled = used > i * StorageRack.Capacity / shelves;
+            var y = rect.Y + 6 + i * 7;
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X + 5, y, rect.Width - 10, 3), filled ? Color.Khaki : Color.Black * 0.5f);
+        }
     }
 
     // Bridge console (game_design.md section 5) — click it to bring up the galaxy map.
     private void DrawNavigationConsole(SpriteBatch spriteBatch, NavigationConsole console, bool isOpen, Vector2 origin)
     {
         var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
-        spriteBatch.Draw(_pixel, rect, Color.Teal * 0.6f);
-        DrawRectOutline(spriteBatch, rect, isOpen ? Color.Gold : Color.LightSeaGreen, isOpen ? 3 : 2);
+        DrawPanel(spriteBatch, rect, Color.Teal * 0.6f, isOpen ? Color.Gold : Color.LightSeaGreen, isOpen ? 3 : 2);
         spriteBatch.DrawString(_font, "Карта", new Vector2(rect.X + 1, rect.Y + 7), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
@@ -167,9 +336,17 @@ public sealed class ShipRenderer
     private void DrawAirlockConsole(SpriteBatch spriteBatch, AirlockConsole console, bool usable, bool isOpen, Vector2 origin)
     {
         var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
-        spriteBatch.Draw(_pixel, rect, (usable ? Color.SeaGreen : Color.DimGray) * 0.6f);
-        DrawRectOutline(spriteBatch, rect, isOpen ? Color.Gold : usable ? Color.LightGreen : Color.Gray, isOpen ? 3 : 2);
+        DrawPanel(spriteBatch, rect, (usable ? Color.SeaGreen : Color.DimGray) * 0.6f, isOpen ? Color.Gold : usable ? Color.LightGreen : Color.Gray, isOpen ? 3 : 2);
         spriteBatch.DrawString(_font, "Шлюз", new Vector2(rect.X + 1, rect.Y + 7), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+    }
+
+    // Pilot's console (game_design.md Phase 3, M15) — click it to man it and bring up the helm's
+    // joystick panel instead of the ship view.
+    private void DrawHelmConsole(SpriteBatch spriteBatch, HelmConsole console, bool isOpen, Vector2 origin)
+    {
+        var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
+        DrawPanel(spriteBatch, rect, Color.DarkGoldenrod * 0.6f, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2);
+        spriteBatch.DrawString(_font, "Штурв", new Vector2(rect.X + 1, rect.Y + 7), Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
     }
 
     private static string SystemShortLabel(PowerSystemId system) => system switch
@@ -182,82 +359,235 @@ public sealed class ShipRenderer
         _ => "?",
     };
 
-    private void DrawTurret(SpriteBatch spriteBatch, Turret turret, TurretState? state, Vector2 origin)
+    // Two separate things in two separate places: the periscope inside the room, which is what the
+    // gunner walks up to and mans, and the gun itself out on the hull plating (TurretMount), whose
+    // barrel is what the shell actually leaves through. Drawing the aim line from the console used
+    // to imply the ship shot out of its own furniture.
+    private void DrawTurret(SpriteBatch spriteBatch, Turret turret, TurretState? state,
+        IReadOnlyList<Room> rooms, IReadOnlyList<Turret> allTurrets, Vector2 origin, bool showPeriscope = true)
     {
         var center = origin + new Vector2(turret.PeriscopeX, turret.PeriscopeY) * PixelsPerUnit;
         var manned = state?.MannedByPlayerId is not null;
         var damaged = state?.Damaged ?? false;
 
-        const int markerSize = 10;
-        var markerColor = damaged ? Color.Red : manned ? Color.Gold : Color.Silver;
-        spriteBatch.Draw(_pixel,
-            new Rectangle((int)center.X - markerSize / 2, (int)center.Y - markerSize / 2, markerSize, markerSize),
-            markerColor);
+        // The crew station is inside the ship, so it goes with the rest of the interior when the
+        // hull is drawn closed up.
+        if (showPeriscope)
+        {
+            const int markerSize = 10;
+            var markerColor = damaged ? Color.Red : manned ? Color.Gold : Color.Silver;
+            spriteBatch.Draw(_pixel,
+                new Rectangle((int)center.X - markerSize / 2, (int)center.Y - markerSize / 2, markerSize, markerSize),
+                markerColor);
 
-        if (damaged)
-            spriteBatch.DrawString(_font, "!", center + new Vector2(8, -18), Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+            if (damaged)
+                spriteBatch.DrawString(_font, "!", center + new Vector2(8, -18), Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+        }
 
         if (state is null)
             return;
 
-        // 0 degrees points toward the bow (-X); positive degrees rotate toward -Y.
-        var angleRad = state.AimDegrees * MathF.PI / 180f;
-        var direction = new Vector2(-MathF.Cos(angleRad), MathF.Sin(angleRad));
-        var rotation = MathF.Atan2(direction.Y, direction.X);
+        var mount = TurretMount.For(rooms, allTurrets, turret);
+        var mountPx = origin + new Vector2(mount.Position.X, mount.Position.Y) * PixelsPerUnit;
+        var rotation = mount.FireDegrees(state.AimDegrees) * (MathF.PI / 180f);
+        var barrelColor = damaged ? Color.DarkRed : manned ? Color.Gold : Color.Silver;
 
-        const float lineLengthPx = 70f;
-        spriteBatch.Draw(_pixel, center, null, Color.Gold, rotation, Vector2.Zero, new Vector2(lineLengthPx, 3f), SpriteEffects.None, 0f);
+        // Mount ring, then the barrel sticking out of it along the current aim. A manned gun is
+        // drawn heavier: while you're behind the periscope this is the thing you're steering, and
+        // it has to be findable at a glance against the ship's own plating.
+        var ringSize = manned ? 22f : 16f;
+        var barrelThickness = manned ? 10f : 7f;
+        spriteBatch.Draw(_pixel, mountPx, null, barrelColor * 0.85f, 0f, new Vector2(0.5f, 0.5f), new Vector2(ringSize, ringSize), SpriteEffects.None, 0f);
+        spriteBatch.Draw(_pixel, mountPx, null, barrelColor, rotation, new Vector2(0f, 0.5f),
+            new Vector2(TurretMount.BarrelLength * PixelsPerUnit, barrelThickness), SpriteEffects.None, 0f);
+
+        if (!manned)
+            return;
+
+        // The gunner's aiming aids: the arc the barrel can actually cover, and a sight line running
+        // out of the muzzle so it's obvious where a shell would go.
+        DrawAimArcEdge(spriteBatch, mountPx, mount.FireDegrees(turret.MinAimDegrees));
+        DrawAimArcEdge(spriteBatch, mountPx, mount.FireDegrees(turret.MaxAimDegrees));
+
+        var muzzleLocal = mount.Muzzle(state.AimDegrees);
+        var muzzle = origin + new Vector2(muzzleLocal.X, muzzleLocal.Y) * PixelsPerUnit;
+        spriteBatch.Draw(_pixel, muzzle, null, Color.Gold * 0.45f, rotation, new Vector2(0f, 0.5f), new Vector2(900f, 2f), SpriteEffects.None, 0f);
+
+        var readout = $"{state.AimDegrees:0}°";
+        spriteBatch.DrawString(_font, readout, mountPx + new Vector2(-10, -30), Color.Gold, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
     }
 
-    private void DrawDoor(SpriteBatch spriteBatch, Door door, Vector2 origin)
+    private void DrawAimArcEdge(SpriteBatch spriteBatch, Vector2 mountPx, float degrees)
     {
-        var rect = new Rectangle(
-            (int)(origin.X + door.Left * PixelsPerUnit),
-            (int)(origin.Y + door.Top * PixelsPerUnit),
-            (int)(door.Width * PixelsPerUnit),
-            (int)(door.Height * PixelsPerUnit));
+        var rotation = degrees * (MathF.PI / 180f);
+        spriteBatch.Draw(_pixel, mountPx, null, Color.Gold * 0.18f, rotation, new Vector2(0f, 0.5f), new Vector2(420f, 2f), SpriteEffects.None, 0f);
+    }
 
-        spriteBatch.Draw(_pixel, rect, Color.SeaGreen);
+    // Green: open and passable. Dark red: closed and airtight (game_design.md Phase 3, M16).
+    // leadsToVacuum darkens it further - an AirlockOuterDoor open to space rather than a room.
+    // Hazard tape frames anything airtight-relevant (SS13/Barotrauma convention), thicker on the
+    // ones leading to open vacuum since those are the ones that can actually kill you.
+    // internal: reused by StationRenderer, which draws the station's own Rooms/Doors/Characters
+    // through the exact same visual language instead of duplicating it.
+    internal void DrawDoor(SpriteBatch spriteBatch, float left, float top, float width, float height, bool isOpen, Vector2 origin, bool leadsToVacuum = false)
+    {
+        var rect = GetDoorRect(left, top, width, height, origin);
+        var color = isOpen ? (leadsToVacuum ? Color.MediumPurple : Color.SeaGreen) : Color.DarkRed;
+        spriteBatch.Draw(_pixel, rect, color);
+
+        var stripeThickness = leadsToVacuum ? 4 : 3;
+        var horizontal = rect.Width >= rect.Height;
+        if (horizontal)
+        {
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, rect.Width, stripeThickness), horizontal: true);
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Bottom - stripeThickness, rect.Width, stripeThickness), horizontal: true);
+        }
+        else
+        {
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, stripeThickness, rect.Height), horizontal: false);
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.Right - stripeThickness, rect.Y, stripeThickness, rect.Height), horizontal: false);
+        }
     }
 
     // Tint scales with how low the room's oxygen actually is (game_design.md section 1 —
     // Barotrauma-style atmosphere) rather than a flat breached/not-breached flag: a single
-    // holding-steady breach barely shows, a room actually suffocating goes visibly red.
-    private void DrawRoom(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin)
+    // holding-steady breach barely shows, a room actually suffocating goes visibly red. The floor
+    // gets a paneled-grating pattern instead of a flat fill (this project has no image assets, so
+    // the "texture" is drawn as a grid of seams rather than an actual sprite).
+    internal void DrawRoomFloor(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin)
     {
-        var rect = new Rectangle(
-            (int)(origin.X + room.X * PixelsPerUnit),
-            (int)(origin.Y + room.Y * PixelsPerUnit),
-            (int)(room.Width * PixelsPerUnit),
-            (int)(room.Height * PixelsPerUnit));
+        var rect = GetRoomRect(room, origin);
+        var accent = RoomDecor.Accent(room.Id);
+
+        spriteBatch.Draw(_pixel, rect, new Color(35, 40, 47));
+        DrawFloorGrating(spriteBatch, rect);
+        RoomDecor.DrawDeckMarkings(spriteBatch, _pixel, rect, accent);
+        RoomDecor.DrawLightPool(spriteBatch, _pixel, rect, accent);
 
         var deficit = Math.Clamp((100f - oxygen) / 100f, 0f, 1f);
         if (deficit > 0f)
             spriteBatch.Draw(_pixel, rect, Color.Red * (deficit * 0.5f));
 
-        DrawRectOutline(spriteBatch, rect, deficit > 0.3f ? Color.Red : Color.SteelBlue, 2);
-        spriteBatch.DrawString(_font, room.Name, new Vector2(rect.X + 6, rect.Y + 6), Color.LightSteelBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        // Compartment name on a painted plate in the department's own colour, the way a bulkhead is
+        // actually stencilled - a bare label floating on the deck reads as a debug overlay.
+        var plate = new Rectangle(rect.X + 8, rect.Y + 8, Math.Min(rect.Width - 16, 34 + room.Name.Length * 9), 20);
+        spriteBatch.Draw(_pixel, plate, accent * 0.22f);
+        spriteBatch.Draw(_pixel, new Rectangle(plate.X, plate.Y, 3, plate.Height), accent * 0.8f);
+        spriteBatch.DrawString(_font, room.Name, new Vector2(rect.X + 14, rect.Y + 10), Color.LightSteelBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
 
         var oxygenColor = oxygen >= 50f ? Color.LightSteelBlue : oxygen >= 20f ? Color.Orange : Color.OrangeRed;
-        spriteBatch.DrawString(_font, $"O2: {oxygen:0}", new Vector2(rect.X + 6, rect.Y + 26), oxygenColor, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, $"O2: {oxygen:0}", new Vector2(rect.X + 10, rect.Y + 30), oxygenColor, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
     }
 
-    private void DrawBreachedWallBlock(SpriteBatch spriteBatch, WallBlock block, Vector2 origin)
+    // Thick, plated bulkheads rather than a 3px outline: a slab centred on the room's boundary
+    // (so two neighbouring rooms share one wall instead of stacking two), with a lit inner edge, a
+    // shadowed outer one, ribs every RibSpacing pixels, a service conduit running down the middle
+    // and bolted plates over the corners. VisibilityMask raycasts against that same boundary line,
+    // so what blocks sight is exactly what's drawn here.
+    internal void DrawRoomWalls(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin)
     {
-        const int size = 12;
+        var rect = GetRoomRect(room, origin);
+        var alarmed = oxygen < 70f;
+        var accent = RoomDecor.Accent(room.Id);
+        const int half = WallThickness / 2;
+
+        // Rounded inside corners before the bulkheads themselves, so the wall slabs cover the seam
+        // where the arc meets them.
+        RoomDecor.DrawCornerFillets(spriteBatch, _pixel, rect, alarmed ? new Color(92, 60, 62) : new Color(70, 78, 90), 30f);
+        RoomDecor.DrawWallLamps(spriteBatch, _pixel, rect, accent, alarmed);
+
+        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Y - half, rect.Width + WallThickness, WallThickness), true, alarmed);
+        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Bottom - half, rect.Width + WallThickness, WallThickness), true, alarmed);
+        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Y - half, WallThickness, rect.Height + WallThickness), false, alarmed);
+        DrawWallBand(spriteBatch, new Rectangle(rect.Right - half, rect.Y - half, WallThickness, rect.Height + WallThickness), false, alarmed);
+
+        DrawCornerPlate(spriteBatch, rect.X, rect.Y, alarmed);
+        DrawCornerPlate(spriteBatch, rect.Right, rect.Y, alarmed);
+        DrawCornerPlate(spriteBatch, rect.X, rect.Bottom, alarmed);
+        DrawCornerPlate(spriteBatch, rect.Right, rect.Bottom, alarmed);
+    }
+
+    private void DrawWallBand(SpriteBatch spriteBatch, Rectangle band, bool horizontal, bool alarmed)
+    {
+        spriteBatch.Draw(_pixel, band, alarmed ? new Color(92, 60, 62) : new Color(70, 78, 90));
+        var conduit = (alarmed ? Color.OrangeRed : Color.SteelBlue) * 0.45f;
+
+        if (horizontal)
+        {
+            spriteBatch.Draw(_pixel, new Rectangle(band.X, band.Y, band.Width, 2), Color.White * 0.16f);
+            spriteBatch.Draw(_pixel, new Rectangle(band.X, band.Bottom - 2, band.Width, 2), Color.Black * 0.5f);
+            spriteBatch.Draw(_pixel, new Rectangle(band.X, band.Center.Y - 1, band.Width, 2), conduit);
+            for (var x = band.X + RibSpacing / 2; x < band.Right; x += RibSpacing)
+            {
+                spriteBatch.Draw(_pixel, new Rectangle(x, band.Y, 2, band.Height), Color.Black * 0.45f);
+                spriteBatch.Draw(_pixel, new Rectangle(x + 2, band.Y, 1, band.Height), Color.White * 0.12f);
+            }
+        }
+        else
+        {
+            spriteBatch.Draw(_pixel, new Rectangle(band.X, band.Y, 2, band.Height), Color.White * 0.16f);
+            spriteBatch.Draw(_pixel, new Rectangle(band.Right - 2, band.Y, 2, band.Height), Color.Black * 0.5f);
+            spriteBatch.Draw(_pixel, new Rectangle(band.Center.X - 1, band.Y, 2, band.Height), conduit);
+            for (var y = band.Y + RibSpacing / 2; y < band.Bottom; y += RibSpacing)
+            {
+                spriteBatch.Draw(_pixel, new Rectangle(band.X, y, band.Width, 2), Color.Black * 0.45f);
+                spriteBatch.Draw(_pixel, new Rectangle(band.X, y + 2, band.Width, 1), Color.White * 0.12f);
+            }
+        }
+    }
+
+    private void DrawCornerPlate(SpriteBatch spriteBatch, int x, int y, bool alarmed)
+    {
+        const int size = WallThickness + 6;
+        var rect = new Rectangle(x - size / 2, y - size / 2, size, size);
+        spriteBatch.Draw(_pixel, rect, alarmed ? new Color(110, 70, 72) : new Color(88, 96, 110));
+        DrawRectOutline(spriteBatch, rect, Color.Black * 0.45f, 1);
+        DrawRivets(spriteBatch, rect);
+    }
+
+    private static Rectangle GetRoomRect(Room room, Vector2 origin) => new(
+        (int)(origin.X + room.X * PixelsPerUnit),
+        (int)(origin.Y + room.Y * PixelsPerUnit),
+        (int)(room.Width * PixelsPerUnit),
+        (int)(room.Height * PixelsPerUnit));
+
+    private static float RoomOxygen(WorldSnapshot snapshot, string roomId) =>
+        snapshot.RoomOxygen.FirstOrDefault(o => o.RoomId == roomId)?.Oxygen ?? 100f;
+
+    // Panel-seam grid — the floor "texture": a grid of faint darker lines every 24px reads as
+    // welded deck plating without needing an actual tileable sprite.
+    private void DrawFloorGrating(SpriteBatch spriteBatch, Rectangle rect)
+    {
+        const int cell = 24;
+        var seam = Color.Black * 0.25f;
+        for (var x = rect.X + cell; x < rect.Right; x += cell)
+            spriteBatch.Draw(_pixel, new Rectangle(x, rect.Y, 1, rect.Height), seam);
+        for (var y = rect.Y + cell; y < rect.Bottom; y += cell)
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X, y, rect.Width, 1), seam);
+    }
+
+    // Pulses via totalSeconds instead of a flat red square — reads as an active hazard light
+    // rather than a static marker (SS13's breach warning strobe).
+    private void DrawBreachedWallBlock(SpriteBatch spriteBatch, WallBlock block, Vector2 origin, float totalSeconds)
+    {
+        const int size = 14;
         var center = origin + new Vector2(block.X, block.Y) * PixelsPerUnit;
         var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
-        spriteBatch.Draw(_pixel, rect, Color.Red);
+        var flicker = 0.55f + 0.45f * MathF.Sin(totalSeconds * 6f);
+        DrawHazardStripes(spriteBatch, rect, horizontal: true);
+        spriteBatch.Draw(_pixel, rect, Color.Red * (flicker * 0.6f));
         spriteBatch.DrawString(_font, "!", center + new Vector2(-3, -18), Color.Red, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
     }
 
-    private void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin)
+    // Simple humanoid read (helmet + torso) rather than a flat square — no sprite sheet, but a
+    // second smaller square as a "helmet" plus a facing notch is enough to read as a person from
+    // this camera height. FacingX/Y drives the notch so idle characters still show which way
+    // they're looking.
+    internal void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin)
     {
         var size = (int)(CharacterDiameter * PixelsPerUnit);
-        var rect = new Rectangle(
-            (int)(origin.X + character.X * PixelsPerUnit) - size / 2,
-            (int)(origin.Y + character.Y * PixelsPerUnit) - size / 2,
-            size, size);
+        var center = new Vector2(origin.X + character.X * PixelsPerUnit, origin.Y + character.Y * PixelsPerUnit);
+        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
 
         if (character.WearingSuit)
         {
@@ -265,7 +595,21 @@ public sealed class ShipRenderer
             DrawRectOutline(spriteBatch, new Rectangle(rect.X - ringMargin, rect.Y - ringMargin, rect.Width + ringMargin * 2, rect.Height + ringMargin * 2), Color.CadetBlue, 2);
         }
 
-        spriteBatch.Draw(_pixel, rect, Color.OrangeRed);
+        spriteBatch.Draw(_pixel, rect, Color.OrangeRed * 0.9f);
+        // "Helmet": a smaller, lighter square centered on the body reads as a head/visor.
+        var helmetSize = Math.Max(4, size / 2);
+        var visorColor = character.WearingSuit ? Color.CadetBlue : new Color(255, 220, 190);
+        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - helmetSize / 2, (int)center.Y - helmetSize / 2, helmetSize, helmetSize), visorColor);
+
+        // Facing notch: a tiny bright square nudged toward FacingX/Y, off the body's edge.
+        var facing = new Vector2(character.FacingX, character.FacingY);
+        if (facing.LengthSquared() > 0.01f)
+        {
+            facing.Normalize();
+            const int notchSize = 3;
+            var notchCenter = center + facing * (size / 2f + 1);
+            spriteBatch.Draw(_pixel, new Rectangle((int)notchCenter.X - notchSize / 2, (int)notchCenter.Y - notchSize / 2, notchSize, notchSize), Color.White);
+        }
 
         if (character.CarryingAmmoCrate)
         {

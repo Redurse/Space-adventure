@@ -15,4 +15,10 @@ public enum ItemType
     Rifle,
     LaserRifle,
     FuelRod,
+    MedKit,
+    WireSpool,
+    Mineral,
+    // Slots into a suit or a cutter rather than being used on its own (OxygenTankDefinitions):
+    // the suit needs it to keep anyone alive in vacuum, the cutter needs it to burn at all.
+    OxygenTank,
 }

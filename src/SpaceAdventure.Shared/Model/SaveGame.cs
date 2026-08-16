@@ -1,0 +1,27 @@
+namespace SpaceAdventure.Shared.Model;
+
+// A saved run (game_design.md section 5 — "игра сохраняется при каждой стыковке к аванпосту").
+//
+// Deliberately holds only *campaign* progress, not the physical simulation: which hull the crew
+// flies, what they own, who likes them, what job they're on, and where on the map they are. Room
+// positions, EVA state, hull breaches, ore already cut out of an asteroid and mid-battle state are
+// all left out on purpose — a save is only ever taken while docked, which is a clean, well-defined
+// situation, so restoring one just puts the crew back at that station rather than trying to
+// reconstruct an arbitrary moment.
+public sealed record SaveGame(
+    int Version,
+    ShipKind ShipKind,
+    int Credits,
+    string DockedPointId,
+    IReadOnlyDictionary<FactionId, int> FactionStandings,
+    IReadOnlyDictionary<ShipUpgradeTrack, int> UpgradeLevels,
+    IReadOnlyList<ItemType> Inventory,
+    Quest? ActiveQuest,
+    // What's on the ship's storage rack, slot by slot (nulls preserved, since which shelf a thing
+    // sits on is the player's own arrangement). Absent in version 1 files - restores as empty.
+    IReadOnlyList<ItemType?>? RackSlots = null)
+{
+    // Bumped whenever the shape changes incompatibly; SaveStore refuses anything it doesn't know,
+    // so an old file fails to load cleanly instead of half-restoring into a broken run.
+    public const int CurrentVersion = 2;
+}

@@ -21,9 +21,103 @@ public sealed class Inventory
     // newly-equipped item that needs more hands than are currently free (Barotrauma-style).
     public List<int> HeldSlotIndices { get; } = new();
 
+    // The charge of an oxygen tank socketed into whatever is in that slot, or null for "no tank".
+    // A slot still holds an item *type* rather than an item, so the one piece of per-item state the
+    // game now needs lives here, alongside the slot, instead of turning every item into an object.
+    public float?[] MainSlotTanks { get; } = new float?[MainSlotCount];
+    public Dictionary<EquipSlot, float?> EquippedTanks { get; } = new()
+    {
+        [EquipSlot.Headset] = null,
+        [EquipSlot.Clothing] = null,
+        [EquipSlot.Headwear] = null,
+    };
+
+    // Worn suit: index -1 stands for "the clothing slot" everywhere a socket is addressed, so one
+    // set of methods covers a cutter in the row and the suit on your back.
+    public const int WornSuitSlot = -1;
+
+    public float? TankCharge(int slotIndex) =>
+        slotIndex == WornSuitSlot ? EquippedTanks[EquipSlot.Clothing] : MainSlotTanks[slotIndex];
+
+    private void SetTank(int slotIndex, float? charge)
+    {
+        if (slotIndex == WornSuitSlot)
+            EquippedTanks[EquipSlot.Clothing] = charge;
+        else
+            MainSlotTanks[slotIndex] = charge;
+    }
+
+    private ItemType? SocketedItem(int slotIndex) =>
+        slotIndex == WornSuitSlot ? Equipped[EquipSlot.Clothing] : ItemAt(slotIndex);
+
+    public bool HasWorkingTank(int slotIndex) => TankCharge(slotIndex) > 0f;
+
+    // Moving a tank out of the row and into a socket. Both ends have to be real: a tank in hand or
+    // in the row, and something with a socket that hasn't already got one.
+    public bool TryAttachTank(int sourceSlotIndex, int targetSlotIndex)
+    {
+        if (sourceSlotIndex < 0 || sourceSlotIndex >= MainSlotCount || MainSlots[sourceSlotIndex] != ItemType.OxygenTank)
+            return false;
+        if (targetSlotIndex != WornSuitSlot && (targetSlotIndex < 0 || targetSlotIndex >= MainSlotCount))
+            return false;
+        if (SocketedItem(targetSlotIndex) is not { } target || !OxygenTankDefinitions.HasSocket(target))
+            return false;
+        if (TankCharge(targetSlotIndex) is not null)
+            return false;
+
+        SetTank(targetSlotIndex, MainSlotTanks[sourceSlotIndex] ?? OxygenTankDefinitions.FullCharge);
+        MainSlots[sourceSlotIndex] = null;
+        MainSlotTanks[sourceSlotIndex] = null;
+        HeldSlotIndices.Remove(sourceSlotIndex);
+        return true;
+    }
+
+    // Back out of the socket into the row - including an empty one, which is what makes room for a
+    // fresh tank.
+    public bool TryDetachTank(int slotIndex)
+    {
+        if (slotIndex != WornSuitSlot && (slotIndex < 0 || slotIndex >= MainSlotCount))
+            return false;
+        if (TankCharge(slotIndex) is not { } charge)
+            return false;
+
+        var freeIndex = Array.IndexOf(MainSlots, null);
+        if (freeIndex < 0)
+            return false;
+
+        MainSlots[freeIndex] = ItemType.OxygenTank;
+        MainSlotTanks[freeIndex] = charge;
+        SetTank(slotIndex, null);
+        return true;
+    }
+
+    public void RefillTank(int slotIndex)
+    {
+        if (TankCharge(slotIndex) is not null)
+            SetTank(slotIndex, OxygenTankDefinitions.FullCharge);
+    }
+
+    // Burns oxygen out of a socket; returns false once it's dry, which is what every user of a tank
+    // treats as "no tank at all".
+    public bool DrainTank(int slotIndex, float amount)
+    {
+        if (TankCharge(slotIndex) is not { } charge || charge <= 0f)
+            return false;
+
+        SetTank(slotIndex, Math.Max(0f, charge - amount));
+        return true;
+    }
+
+    // The row slot of the first held item of this type - what the tank rules need, since the socket
+    // belongs to that particular slot rather than to the item type.
+    public int HeldSlotOf(ItemType type) => HeldSlotIndices.FirstOrDefault(i => MainSlots[i] == type, -1);
+
     private int HandsInUse => HeldSlotIndices.Sum(i => ItemDefinitions.HandsRequired(MainSlots[i]!.Value));
 
     public bool Has(ItemType type) => Array.IndexOf(MainSlots, (ItemType?)type) >= 0;
+
+    public ItemType? ItemAt(int slotIndex) =>
+        slotIndex >= 0 && slotIndex < MainSlotCount ? MainSlots[slotIndex] : null;
 
     public bool IsHolding(ItemType type) => HeldSlotIndices.Any(i => MainSlots[i] == type);
 
@@ -58,6 +152,8 @@ public sealed class Inventory
             return false; // row full — matches the hard carry limit from the design doc
 
         MainSlots[freeIndex] = type;
+        // A tank picked up off a rack is a full one; anything else arrives with an empty socket.
+        MainSlotTanks[freeIndex] = type == ItemType.OxygenTank ? OxygenTankDefinitions.FullCharge : null;
         return true;
     }
 
@@ -68,6 +164,21 @@ public sealed class Inventory
             return false;
 
         MainSlots[index] = null;
+        MainSlotTanks[index] = null;
+        return true;
+    }
+
+    // Like TryRemove, but by slot index rather than item type — used when selling a specific
+    // slot to the trader (game_design.md section 6, M10 economy), where the caller already knows
+    // which slot was clicked rather than which item it holds.
+    public bool TryRemoveAt(int slotIndex)
+    {
+        if (slotIndex < 0 || slotIndex >= MainSlotCount || MainSlots[slotIndex] is null)
+            return false;
+
+        MainSlots[slotIndex] = null;
+        MainSlotTanks[slotIndex] = null;
+        HeldSlotIndices.Remove(slotIndex);
         return true;
     }
 
@@ -80,6 +191,7 @@ public sealed class Inventory
             return false;
 
         MainSlots[index] = null;
+        MainSlotTanks[index] = null;
         HeldSlotIndices.Remove(index);
         return true;
     }

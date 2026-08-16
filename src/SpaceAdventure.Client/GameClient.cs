@@ -30,8 +30,32 @@ public sealed class GameClient
         bool firePressed,
         int toggleHoldSlotIndex = -1,
         int toggleReactorSlotIndex = -1,
-        string? travelToPointId = null) =>
-        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId));
+        string? travelToPointId = null,
+        ItemType? buyItemType = null,
+        int sellSlotIndex = -1,
+        bool acceptCargoQuestPressed = false,
+        bool turnInCargoQuestPressed = false,
+        ShipUpgradeTrack? purchaseUpgradeTrack = null,
+        string? wireLinkInteractId = null,
+        float helmThrustX = 0,
+        float helmThrustY = 0,
+        bool helmStabilizePressed = false,
+        string? doorToggleId = null,
+        bool pushOffPressed = false,
+        float pushOffDirectionX = 0,
+        float pushOffDirectionY = 0,
+        ShipKind? purchaseShipKind = null,
+        QuestKind? acceptQuestKind = null,
+        bool dockPressed = false,
+        SlotRef? moveItemFrom = null,
+        SlotRef? moveItemTo = null,
+        float lookX = 0,
+        float lookY = 0,
+        int? attachTankFromSlot = null,
+        int? attachTankToSlot = null,
+        int? detachTankSlot = null,
+        bool cutHeld = false) =>
+        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, wireLinkInteractId, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld));
 
     public void PollSnapshots()
     {

@@ -33,20 +33,32 @@ public sealed class ReactorPanel
         var header = $"Реактор: {reactor.CurrentOutput:0}/{reactor.MaxOutput:0}  Топливо: {reactor.Fuel:0}/{reactor.MaxFuel:0}";
         spriteBatch.DrawString(_font, header, origin, Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
 
-        for (var i = 0; i < reactor.RodSlots.Count; i++)
+        for (var i = 0; i < reactor.RodCharges.Count; i++)
         {
             var rect = GetSlotRect(i, origin);
-            var loaded = reactor.RodSlots[i];
 
             spriteBatch.Draw(_pixel, rect, Color.DimGray * 0.5f);
             DrawRectOutline(spriteBatch, rect, Color.LightGray, 1);
 
-            if (loaded)
+            if (reactor.RodCharges[i] is not { } charge)
+                continue;
+
+            // The rod body is always drawn, and only the charge left in it is lit up from the
+            // bottom — a spent rod still occupying a slot has to look different from an empty
+            // slot, otherwise "swap the dead one out" isn't a readable instruction.
+            const int margin = 4;
+            var body = new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2);
+            spriteBatch.Draw(_pixel, body, Color.DarkSlateGray);
+
+            var litHeight = (int)(body.Height * MathHelper.Clamp(charge, 0f, 1f));
+            if (litHeight > 0)
             {
-                const int margin = 4;
-                spriteBatch.Draw(_pixel, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2), Color.YellowGreen);
-                spriteBatch.DrawString(_font, "Яд", new Vector2(rect.X + 4, rect.Y + 8), Color.Black, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+                var fill = charge > 0.5f ? Color.YellowGreen : charge > 0.2f ? Color.Orange : Color.OrangeRed;
+                spriteBatch.Draw(_pixel, new Rectangle(body.X, body.Bottom - litHeight, body.Width, litHeight), fill);
             }
+
+            var label = litHeight > 0 ? "Яд" : "0%";
+            spriteBatch.DrawString(_font, label, new Vector2(rect.X + 4, rect.Y + 8), litHeight > 0 ? Color.Black : Color.OrangeRed, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
         }
 
         var hintOrigin = origin + new Vector2(0, 24 + SlotSize + 10);

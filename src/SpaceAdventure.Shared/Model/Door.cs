@@ -9,6 +9,7 @@ public sealed record Door(string Id, string RoomAId, string RoomBId, float X, fl
     public float Right => X + Width / 2;
     public float Top => Y - Height / 2;
     public float Bottom => Y + Height / 2;
+    public Vec2 Position => new(X, Y);
 
     public bool Contains(Vec2 p) => p.X >= Left && p.X <= Right && p.Y >= Top && p.Y <= Bottom;
 

@@ -17,16 +17,18 @@ public sealed class PowerGrid
     public Battery Battery { get; }
 
     private readonly Dictionary<PowerSystemId, float> _allocated;
-    private readonly Dictionary<PowerSystemId, bool> _damaged;
     private int _adjustIndex = -1;
     private float _adjustDirection;
 
     public PowerGrid()
     {
-        Reactor = new Reactor(maxOutput: 60f, maxFuel: 500f, fuelPerPowerUnitPerSecond: 0.05f);
+        // Burn rate: at 0.05 a full load of rods lasted under three minutes of flight at full draw,
+        // which turned the reactor into a chore you fed every other jump instead of a system you
+        // occasionally look after. An eighth of that puts a full set at something like twenty
+        // minutes wide open, and far longer at the draw a ship actually cruises on.
+        Reactor = new Reactor(maxOutput: 60f, maxFuel: 500f, fuelPerPowerUnitPerSecond: 0.006f);
         Battery = new Battery(capacity: 200f);
         _allocated = Systems.ToDictionary(s => s, _ => 0f);
-        _damaged = Systems.ToDictionary(s => s, _ => false);
     }
 
     public void ApplyInput(int systemIndex, float direction)
@@ -35,15 +37,12 @@ public sealed class PowerGrid
         _adjustDirection = direction;
     }
 
-    // Effective output — zero while the system's physical block is damaged (game_design.md
-    // section 1), regardless of where its distribution slider sits. The slider itself is left
-    // alone, so the system resumes at the same allocation once repaired.
+    // Raw slider allocation only — PowerGrid no longer knows about wire damage at all (M14 moved
+    // that into World.Wiring.cs, since "is this system actually connected" now depends on the
+    // wiring graph, not a single per-system flag). Callers that care whether power actually
+    // reaches a system must go through World's wiring-aware accessor instead of this directly.
     public float GetAllocation(PowerSystemId system) =>
-        IsDamaged(system) ? 0f : (_allocated.TryGetValue(system, out var value) ? value : 0f);
-
-    public bool IsDamaged(PowerSystemId system) => _damaged.TryGetValue(system, out var damaged) && damaged;
-
-    public void SetDamaged(PowerSystemId system, bool damaged) => _damaged[system] = damaged;
+        _allocated.TryGetValue(system, out var value) ? value : 0f;
 
     public void Step(double deltaSeconds)
     {

@@ -6,49 +6,85 @@ using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Client.Rendering;
 
-// Shown while the airlock console is open (game_design.md section 10): the station's NPCs as
-// clickable icons. Real transactions/quests land in later milestones (M10 economy, M11 cargo
-// quests) — for now clicking an NPC just shows what they'd offer.
+// The Trader's buy/sell lists (M10 economy), the Administrator's delivery quest (M11,
+// game_design.md section 7), and the Mechanic's ship upgrades (M13, game_design.md section 9) -
+// shown as a small HUD dialogue panel once the player clicks an NPC physically standing in a
+// station room (StationRenderer draws the room/NPCs themselves; this class no longer does).
 public sealed class StationPanel
 {
-    public const float PixelsPerUnit = 6f;
-    public const int NpcMarkerSize = 24;
+    private const int RowHeight = 20;
+    private const int RowWidth = 210;
+    private static readonly Vector2 TradeListOrigin = new(0, 170);
+    private static readonly Vector2 SellColumnOffset = new(230, 0);
 
-    private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
 
-    public StationPanel(GraphicsDevice graphicsDevice, SpriteFont font)
+    public StationPanel(SpriteFont font)
     {
-        _pixel = new Texture2D(graphicsDevice, 1, 1);
-        _pixel.SetData(new[] { Color.White });
         _font = font;
     }
 
-    public static Rectangle GetNpcRect(StationNpc npc, Vector2 panelOrigin)
+    // "Купить" column — one row per TradeCatalog.Goods entry, in catalog order.
+    public static Rectangle GetGoodRect(int index, Vector2 panelOrigin)
     {
-        var center = panelOrigin + new Vector2(npc.X, npc.Y) * PixelsPerUnit;
-        return new Rectangle((int)center.X - NpcMarkerSize / 2, (int)center.Y - NpcMarkerSize / 2, NpcMarkerSize, NpcMarkerSize);
+        var origin = panelOrigin + TradeListOrigin + new Vector2(0, index * RowHeight);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth, RowHeight - 2);
     }
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin, string? talkingToNpcId)
+    // "Продать" column — one row per main inventory slot index (not every slot is sellable; the
+    // caller/click-handler still needs to check the slot actually holds a cataloged item).
+    public static Rectangle GetSellRect(int slotIndex, Vector2 panelOrigin)
     {
-        spriteBatch.DrawString(_font, "Станция - клик по человеку, чтобы поговорить", panelOrigin + new Vector2(0, -24),
-            Color.Yellow, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+        var origin = panelOrigin + TradeListOrigin + SellColumnOffset + new Vector2(0, slotIndex * RowHeight);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth, RowHeight - 2);
+    }
 
-        foreach (var npc in snapshot.StationNpcs)
-        {
-            var rect = GetNpcRect(npc, panelOrigin);
-            var isTalking = npc.Id == talkingToNpcId;
-            var color = npc.Kind == NpcKind.Administrator ? Color.SteelBlue : Color.Goldenrod;
+    // The Administrator's single action button — "turn in" once the active job is finishable,
+    // absent (nothing to click) otherwise. Doubles as the job-board header when nothing's active.
+    public static Rectangle GetAdminActionRect(Vector2 panelOrigin)
+    {
+        var origin = panelOrigin + new Vector2(0, 160);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth, RowHeight - 2);
+    }
 
-            spriteBatch.Draw(_pixel, rect, color);
-            if (isTalking)
-                DrawRectOutline(spriteBatch, new Rectangle(rect.X - 3, rect.Y - 3, rect.Width + 6, rect.Height + 6), Color.White, 2);
+    // The job board shown when no quest is active — one row per kind (game_design.md section 7).
+    public static readonly QuestKind[] OfferedQuestKinds = { QuestKind.Delivery, QuestKind.Bounty, QuestKind.Mining };
 
-            spriteBatch.DrawString(_font, npc.Name, new Vector2(rect.X - 20, rect.Bottom + 4),
-                Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-        }
+    public static Rectangle GetQuestOfferRect(int index, Vector2 panelOrigin)
+    {
+        var origin = panelOrigin + new Vector2(0, 180 + index * RowHeight);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth, RowHeight - 2);
+    }
 
+    public static string QuestKindLabel(QuestKind kind) => kind switch
+    {
+        QuestKind.Bounty => "охота за головой",
+        QuestKind.Mining => "добыча руды",
+        _ => "доставка груза",
+    };
+
+    // The Mechanic's upgrade list — one row per ShipUpgradeCatalog.Tracks entry, in catalog order.
+    public static Rectangle GetUpgradeRect(int index, Vector2 panelOrigin)
+    {
+        var origin = panelOrigin + TradeListOrigin + new Vector2(0, index * RowHeight);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth, RowHeight - 2);
+    }
+
+    // The Shipwright's hull list — one row per ShipKind, same geometry as the other lists.
+    public static readonly ShipKind[] PurchasableShipKinds = { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser };
+
+    public static Rectangle GetShipRect(int index, Vector2 panelOrigin)
+    {
+        var origin = panelOrigin + TradeListOrigin + new Vector2(0, index * RowHeight);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth + 120, RowHeight - 2);
+    }
+
+    // Shown as a small HUD panel (like ReactorPanel/PowerPanel) once the player clicks an NPC
+    // physically standing in a station room (StationRenderer draws the room/NPCs themselves) -
+    // the sub-lists below (trade/quest/upgrade) are unchanged from when this used to be a
+    // full-screen menu, just anchored to a HUD slot instead of taking over the whole screen.
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 panelOrigin, string? talkingToNpcId)
+    {
         if (talkingToNpcId is null)
             return;
 
@@ -56,22 +92,178 @@ public sealed class StationPanel
         if (talkingTo is null)
             return;
 
-        var dialogueOrigin = panelOrigin + new Vector2(0, 140);
-        var line = talkingTo.Kind switch
+        spriteBatch.DrawString(_font, $"Кредиты: {snapshot.Credits}", panelOrigin + new Vector2(0, -44),
+            Color.LightGreen, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+
+        // Reputation with whoever holds this station (game_design.md section 12) - it's what
+        // drives the prices in the lists below and whether the Administrator offers work at all,
+        // so it belongs right next to them rather than on a separate screen.
+        var dockedPoint = snapshot.GalaxyPoints.FirstOrDefault(p => p.Id == snapshot.Voyage.DockedPointId);
+        if (dockedPoint is not null)
         {
-            NpcKind.Administrator => "\"Заданий для тебя пока нет - загляни попозже.\"",
-            NpcKind.Trader => "\"Торговать пока нечем - склад пуст.\"",
-            _ => "...",
-        };
+            var standing = snapshot.FactionStandings.FirstOrDefault(f => f.Faction == dockedPoint.Faction);
+            if (standing is not null)
+            {
+                var label = FactionDefinitions.StandingLabel(standing.Standing);
+                var color = standing.Standing >= FactionDefinitions.FriendlyThreshold ? Color.LightGreen
+                    : standing.Standing <= FactionDefinitions.HostileThreshold ? Color.OrangeRed
+                    : Color.LightGray;
+                spriteBatch.DrawString(_font, $"{standing.Name}: {label} ({standing.Standing:+0;-0;0})",
+                    panelOrigin + new Vector2(0, -26), color, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            }
+        }
+
+        var dialogueOrigin = panelOrigin + new Vector2(0, 140);
         spriteBatch.DrawString(_font, $"{talkingTo.Name}:", dialogueOrigin, Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
-        spriteBatch.DrawString(_font, line, dialogueOrigin + new Vector2(0, 20), Color.LightGray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+
+        switch (talkingTo.Kind)
+        {
+            case NpcKind.Administrator:
+                DrawAdminQuest(spriteBatch, snapshot, dialogueOrigin, panelOrigin);
+                return;
+            case NpcKind.Mechanic:
+                DrawMechanicUpgrades(spriteBatch, snapshot, panelOrigin);
+                return;
+            case NpcKind.Shipwright:
+                DrawShipyard(spriteBatch, snapshot, panelOrigin);
+                return;
+            default:
+                DrawTraderLists(spriteBatch, snapshot, playerId, panelOrigin);
+                return;
+        }
     }
 
-    private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)
+    // Hull list at the Shipwright (game_design.md section 9). Prices are shown net of the trade-in
+    // on the current hull, which is what actually gets charged (World.ShipPurchase.cs) - trading
+    // down therefore reads as a negative number, i.e. the yard pays you.
+    private void DrawShipyard(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin)
     {
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
+        var headerOrigin = panelOrigin + TradeListOrigin + new Vector2(0, -20);
+        spriteBatch.DrawString(_font, $"Верфь (сейчас: {ShipCatalog.Name(snapshot.CurrentShipKind)})", headerOrigin,
+            Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        for (var i = 0; i < PurchasableShipKinds.Length; i++)
+        {
+            var kind = PurchasableShipKinds[i];
+            var rect = GetShipRect(i, panelOrigin);
+
+            string label;
+            Color color;
+            if (kind == snapshot.CurrentShipKind)
+            {
+                label = $"{ShipCatalog.Name(kind)} — ваш текущий корабль";
+                color = Color.LightGreen;
+            }
+            else
+            {
+                var cost = ShipCatalog.Price(kind) - ShipCatalog.TradeInValue(snapshot.CurrentShipKind);
+                label = cost >= 0
+                    ? $"{ShipCatalog.Name(kind)} — доплата {cost}"
+                    : $"{ShipCatalog.Name(kind)} — возврат {-cost}";
+                color = snapshot.Credits >= cost ? Color.White : Color.Gray;
+            }
+
+            spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), color, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
+    }
+
+    private void DrawMechanicUpgrades(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin)
+    {
+        var headerOrigin = panelOrigin + TradeListOrigin + new Vector2(0, -20);
+        spriteBatch.DrawString(_font, "Прокачка корабля", headerOrigin, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        for (var i = 0; i < ShipUpgradeCatalog.Tracks.Count; i++)
+        {
+            var track = ShipUpgradeCatalog.Tracks[i];
+            var level = snapshot.ShipUpgradeLevels.TryGetValue(track.Track, out var lvl) ? lvl : 0;
+            var rect = GetUpgradeRect(i, panelOrigin);
+
+            string label;
+            Color color;
+            if (level >= track.MaxLevel)
+            {
+                label = $"{track.Name}: {level}/{track.MaxLevel} (макс.)";
+                color = Color.LightGreen;
+            }
+            else
+            {
+                var cost = track.CostPerLevel[level];
+                var affordable = snapshot.Credits >= cost;
+                label = $"{track.Name}: {level}/{track.MaxLevel} - след. уровень {cost}";
+                color = affordable ? Color.White : Color.Gray;
+            }
+
+            spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), color, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
+    }
+
+    private void DrawAdminQuest(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 dialogueOrigin, Vector2 panelOrigin)
+    {
+        var actionRect = GetAdminActionRect(panelOrigin);
+        var actionPosition = new Vector2(actionRect.X, actionRect.Y);
+
+        if (snapshot.ActiveQuest is null)
+        {
+            // One row per kind of job on offer (game_design.md section 7) - picking is the
+            // player's call, not a random draw.
+            spriteBatch.DrawString(_font, "Доска заданий:", actionPosition, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            for (var i = 0; i < OfferedQuestKinds.Length; i++)
+            {
+                var rect = GetQuestOfferRect(i, panelOrigin);
+                spriteBatch.DrawString(_font, $"[Клик] {QuestKindLabel(OfferedQuestKinds[i])}",
+                    new Vector2(rect.X, rect.Y), Color.Yellow, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+            }
+            return;
+        }
+
+        var quest = snapshot.ActiveQuest;
+
+        // Where a job can be handed in depends on its kind (World.Quests.cs): a delivery at its
+        // destination, a bounty or a mining haul back at whoever issued it.
+        var turnInHere = quest.Kind == QuestKind.Delivery
+            ? quest.DestinationPointId == snapshot.Voyage.DockedPointId
+            : quest.IssuedByPointId == snapshot.Voyage.DockedPointId;
+        var objectiveMet = quest.Kind != QuestKind.Bounty || quest.ObjectiveComplete;
+
+        if (turnInHere && objectiveMet)
+        {
+            spriteBatch.DrawString(_font, $"[Клик] Сдать задание (+{quest.RewardCredits} кред.)",
+                actionPosition, Color.Yellow, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            return;
+        }
+
+        spriteBatch.DrawString(_font, $"Задание: {quest.Describe()} (+{quest.RewardCredits} кред.)",
+            dialogueOrigin + new Vector2(0, 20), Color.LightGray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+    }
+
+    private void DrawTraderLists(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 panelOrigin)
+    {
+        var buyHeaderOrigin = panelOrigin + TradeListOrigin + new Vector2(0, -20);
+        spriteBatch.DrawString(_font, "Купить", buyHeaderOrigin, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, "Продать", buyHeaderOrigin + SellColumnOffset, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        for (var i = 0; i < TradeCatalog.Goods.Count; i++)
+        {
+            var good = TradeCatalog.Goods[i];
+            var rect = GetGoodRect(i, panelOrigin);
+            var label = $"{ItemDefinitions.DisplayName(good.Item)} - {good.BuyPrice}";
+            var affordable = snapshot.Credits >= good.BuyPrice;
+            spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), affordable ? Color.White : Color.Gray,
+                0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
+
+        var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == playerId);
+        if (me?.Inventory is not { } inventory)
+            return;
+
+        for (var i = 0; i < inventory.MainSlots.Count; i++)
+        {
+            if (inventory.MainSlots[i] is not { } item || TradeCatalog.Find(item) is not { } good)
+                continue;
+
+            var rect = GetSellRect(i, panelOrigin);
+            var label = $"{ItemDefinitions.DisplayName(item)} - {good.SellPrice}";
+            spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
     }
 }

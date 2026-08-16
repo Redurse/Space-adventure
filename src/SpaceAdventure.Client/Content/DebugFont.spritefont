@@ -6,7 +6,17 @@
     <Spacing>0</Spacing>
     <UseKerning>true</UseKerning>
     <Style>Regular</Style>
+    <!-- Any character outside the regions below now draws as '?' instead of throwing out of
+         SpriteBatch.DrawString. A missing glyph is a cosmetic problem; taking the whole game down
+         over one is not, and it has already happened twice (the em dash below, then a degree sign
+         in the turret readout, which crashed the moment anyone manned a gun). -->
+    <DefaultCharacter>?</DefaultCharacter>
     <CharacterRegions>
+      <!-- Latin-1 symbols actually used in the HUD: the degree sign for turret elevation. -->
+      <CharacterRegion>
+        <Start>&#xA0;</Start>
+        <End>&#xFF;</End>
+      </CharacterRegion>
       <CharacterRegion>
         <Start>&#32;</Start>
         <End>&#126;</End>

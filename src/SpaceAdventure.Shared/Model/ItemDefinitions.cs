@@ -15,6 +15,10 @@ public static class ItemDefinitions
         ItemType.Cutter => 1,
         ItemType.Knife => 1,
         ItemType.FuelRod => 1,
+        ItemType.MedKit => 1,
+        ItemType.WireSpool => 1,
+        ItemType.Mineral => 1,
+        ItemType.OxygenTank => 1,
         _ => 0, // AmmoCrate, Spacesuit
     };
 
@@ -32,6 +36,10 @@ public static class ItemDefinitions
         ItemType.Rifle => "автомат",
         ItemType.LaserRifle => "лазерная винтовка",
         ItemType.FuelRod => "ядерный стержень",
+        ItemType.MedKit => "аптечка",
+        ItemType.WireSpool => "катушка провода",
+        ItemType.Mineral => "минеральная руда",
+        ItemType.OxygenTank => "кислородный баллон",
         _ => type.ToString(),
     };
 
@@ -48,6 +56,10 @@ public static class ItemDefinitions
         ItemType.Rifle => "Ав",
         ItemType.LaserRifle => "ЛВ",
         ItemType.FuelRod => "Яд",
+        ItemType.MedKit => "Ап",
+        ItemType.WireSpool => "Пр",
+        ItemType.Mineral => "Ру",
+        ItemType.OxygenTank => "О2",
         _ => "?",
     };
 }
