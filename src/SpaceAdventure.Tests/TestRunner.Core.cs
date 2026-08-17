@@ -65,7 +65,9 @@ internal static partial class TestRunner
 
         var character = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var maxX = world.Ship.Rooms.Max(r => r.Right);
-        return Math.Abs(character.X - maxX) < 0.01f;
+        // Stops RoomLayout.CharacterRadius short of the bare wall, not exactly on it - a wall has
+        // real thickness now, so the character's own edge is what touches it, not its center point.
+        return Math.Abs(character.X - (maxX - RoomLayout.CharacterRadius)) < 0.01f;
     }
 
     private static bool GameServer_Tick_AppliesMoveCommandFromClient()
@@ -90,7 +92,8 @@ internal static partial class TestRunner
     {
         var ship = Ship.CreateStarter();
         var (pos, roomId) = ship.MoveAlongAxis(new Vec2(2.5f, 0.5f), "cockpit", new Vec2(0, -1f), _ => true);
-        return roomId == "cockpit" && Math.Abs(pos.Y - 0f) < 0.01f; // clamped at the top hull wall
+        // Clamped CharacterRadius short of the top hull wall, not exactly on it (see RoomLayout.cs).
+        return roomId == "cockpit" && Math.Abs(pos.Y - RoomLayout.CharacterRadius) < 0.01f;
     }
 
     private static bool Ship_MoveAlongAxis_PassesThroughAlignedDoor()
@@ -104,9 +107,10 @@ internal static partial class TestRunner
     private static bool Ship_MoveAlongAxis_BlockedWhenMisalignedWithDoor()
     {
         var ship = Ship.CreateStarter();
-        // Same wall, but y=0.5 is outside the door's 2.1..3.9 opening — should hit the wall.
+        // Same wall, but y=0.5 is outside the door's 2.1..3.9 opening — should hit the wall, stopping
+        // CharacterRadius short of it rather than exactly on it (see RoomLayout.cs).
         var (pos, roomId) = ship.MoveAlongAxis(new Vec2(4.9f, 0.5f), "cockpit", new Vec2(0.3f, 0), _ => true);
-        return roomId == "cockpit" && Math.Abs(pos.X - 5f) < 0.01f;
+        return roomId == "cockpit" && Math.Abs(pos.X - (5f - RoomLayout.CharacterRadius)) < 0.01f;
     }
 
     private static bool Reactor_Step_DepletesFuelProportionalToUsage()

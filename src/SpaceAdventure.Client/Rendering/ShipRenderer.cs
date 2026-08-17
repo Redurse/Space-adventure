@@ -22,8 +22,10 @@ public sealed class ShipRenderer
     public const int BigBlockSize = 36;
 
     // Bulkhead slab, in screen pixels, centred on the room boundary. Deliberately narrower than a
-    // door's 1-unit (48px) span so a doorway still cuts cleanly through it.
-    private const int WallThickness = 12;
+    // door's 1-unit (48px) span so a doorway still cuts cleanly through it, and narrower than twice
+    // RoomLayout.CharacterRadius (33.6px) so a character stopped at the collision clearance never
+    // still pokes out past the wall's outer face.
+    private const int WallThickness = 28;
     private const int RibSpacing = 26;
 
     private readonly Texture2D _pixel;

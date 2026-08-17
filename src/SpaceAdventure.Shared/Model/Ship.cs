@@ -178,20 +178,25 @@ public sealed partial class Ship
             new SuitLocker("suit-locker-engine", "engine", X: 20f, Y: 3f),
         };
 
-        // One physical, damageable block per power-grid system (game_design.md section 1), one
-        // per room so every room has something the enemy AI can knock out locally. Shields is the
-        // one system with two physical generators (design doc §1 — "несколько генераторов щита в
-        // разных частях корпуса"), matching its two drop links in WireNetwork.
+        // Every breaker panel hangs in the reactor room, spaced apart rather than lined up one
+        // behind another, so running a wire from the distribution block to any of them is a short,
+        // uncluttered trip instead of a walk across the whole ship - same consolidation as the
+        // Corvette's reactor hall (Ship.Corvette.cs). Shields is the one system with two physical
+        // generators (design doc §1 — "несколько генераторов щита в разных частях корпуса"),
+        // matching its two drop links in WireNetwork - both still live here, not one per hull side.
+        // system-oxygen is the one exception: it stays in the corridor, because its RoomId is where
+        // the generator actually pumps air into (World.Atmosphere.cs), not just a panel location -
+        // moving it would relocate life support to a different compartment, not just tidy up wiring.
         var systemDevices = new[]
         {
-            new ShipSystemDevice("system-shields", "cockpit", X: 3.5f, Y: 1.5f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-shields-2", "quarters", X: 13.5f, Y: 1.5f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-weapon-charger", "reactor", X: 5.5f, Y: 1.5f, PowerSystemId.WeaponCharger),
+            new ShipSystemDevice("system-shields", "reactor", X: 7.2f, Y: 0.7f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-shields-2", "reactor", X: 8.6f, Y: 1.6f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-weapon-charger", "reactor", X: 7.6f, Y: 2.2f, PowerSystemId.WeaponCharger),
             new ShipSystemDevice("system-oxygen", "corridor", X: 12.5f, Y: 1.5f, PowerSystemId.Oxygen),
-            new ShipSystemDevice("system-secondary", "quarters", X: 15.5f, Y: 1.5f, PowerSystemId.Secondary),
-            new ShipSystemDevice("system-engine", "engine", X: 19f, Y: 1.5f, PowerSystemId.Engine),
+            new ShipSystemDevice("system-secondary", "reactor", X: 8.5f, Y: 3.8f, PowerSystemId.Secondary),
+            new ShipSystemDevice("system-engine", "reactor", X: 7.2f, Y: 4.3f, PowerSystemId.Engine),
             // Paired engine block, as every class now carries (WireNetwork.CreateDefault).
-            new ShipSystemDevice("system-engine-2", "engine", X: 19f, Y: 4.5f, PowerSystemId.Engine),
+            new ShipSystemDevice("system-engine-2", "reactor", X: 8.5f, Y: 5.2f, PowerSystemId.Engine),
         };
 
         // Reactor is a big, clickable block; the distribution block sits right next to it

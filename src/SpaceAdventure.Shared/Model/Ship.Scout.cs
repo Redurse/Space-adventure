@@ -45,20 +45,22 @@ public sealed partial class Ship
             new SuitLocker("suit-locker-engine", "engine", X: 10f, Y: 5f),
         };
 
-        // Same 6 device ids/PowerSystemIds as every other class, just fewer rooms to spread them
-        // across — keeps WireNetwork.CreateDefault() (which reuses these ids as its node ids)
-        // working unmodified for every ship class.
+        // Same 6 device ids/PowerSystemIds as every other class. No separate reactor room on a
+        // hull this small - the engine room carries the reactor/distribution blocks directly, so
+        // it's the one that plays that role, and every breaker panel hangs there too, spaced apart
+        // rather than lined up in a row - only system-oxygen stays out of it, since its RoomId is
+        // where the generator actually feeds air (World.Atmosphere.cs), not just a panel location.
         var systemDevices = new[]
         {
-            new ShipSystemDevice("system-shields", "bridge", X: 4.5f, Y: 1f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-shields-2", "engine", X: 10.5f, Y: 1f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-weapon-charger", "bridge", X: 2f, Y: 1f, PowerSystemId.WeaponCharger),
+            new ShipSystemDevice("system-shields", "engine", X: 5.8f, Y: 1f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-shields-2", "engine", X: 5.8f, Y: 3f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-weapon-charger", "engine", X: 5.8f, Y: 5f, PowerSystemId.WeaponCharger),
             new ShipSystemDevice("system-oxygen", "engine", X: 9.5f, Y: 1f, PowerSystemId.Oxygen),
-            new ShipSystemDevice("system-secondary", "engine", X: 10.5f, Y: 3f, PowerSystemId.Secondary),
-            new ShipSystemDevice("system-engine", "engine", X: 5.5f, Y: 1f, PowerSystemId.Engine),
+            new ShipSystemDevice("system-secondary", "engine", X: 10.3f, Y: 3f, PowerSystemId.Secondary),
+            new ShipSystemDevice("system-engine", "engine", X: 7.3f, Y: 5.3f, PowerSystemId.Engine),
             // Second engine block: every class carries the pair the wiring topology expects
-            // (WireNetwork.CreateDefault), and on a hull this small they sit side by side.
-            new ShipSystemDevice("system-engine-2", "engine", X: 6.5f, Y: 1f, PowerSystemId.Engine),
+            // (WireNetwork.CreateDefault) - spaced away from its twin now, not sitting side by side.
+            new ShipSystemDevice("system-engine-2", "engine", X: 9f, Y: 5.3f, PowerSystemId.Engine),
         };
 
         var reactorBlock = new ReactorBlock("reactor-block", "engine", X: 7f, Y: 1f);

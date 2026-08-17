@@ -61,16 +61,20 @@ public sealed partial class Ship
             new SuitLocker("suit-locker-engine", "engine", X: 25f, Y: 3f),
         };
 
+        // Every breaker panel hangs in the reactor room, spaced apart rather than lined up one
+        // behind another (Ship.cs's Frigate carries the same layout and reasoning) - system-oxygen
+        // is the one exception, since its RoomId is where the generator actually feeds air
+        // (World.Atmosphere.cs), not just a panel location.
         var systemDevices = new[]
         {
-            new ShipSystemDevice("system-shields", "cockpit", X: 3.5f, Y: 1.5f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-shields-2", "quarters", X: 13.5f, Y: 1.5f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-weapon-charger", "reactor", X: 5.5f, Y: 1.5f, PowerSystemId.WeaponCharger),
+            new ShipSystemDevice("system-shields", "reactor", X: 7.2f, Y: 0.7f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-shields-2", "reactor", X: 8.6f, Y: 1.6f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-weapon-charger", "reactor", X: 7.6f, Y: 2.2f, PowerSystemId.WeaponCharger),
             new ShipSystemDevice("system-oxygen", "corridor", X: 12.5f, Y: 1.5f, PowerSystemId.Oxygen),
-            new ShipSystemDevice("system-secondary", "quarters", X: 15.5f, Y: 1.5f, PowerSystemId.Secondary),
-            new ShipSystemDevice("system-engine", "engine", X: 24f, Y: 1.5f, PowerSystemId.Engine),
+            new ShipSystemDevice("system-secondary", "reactor", X: 8.5f, Y: 3.8f, PowerSystemId.Secondary),
+            new ShipSystemDevice("system-engine", "reactor", X: 7.2f, Y: 4.3f, PowerSystemId.Engine),
             // Paired engine block, as every class now carries (WireNetwork.CreateDefault).
-            new ShipSystemDevice("system-engine-2", "engine", X: 24f, Y: 4.5f, PowerSystemId.Engine),
+            new ShipSystemDevice("system-engine-2", "reactor", X: 8.5f, Y: 5.2f, PowerSystemId.Engine),
         };
 
         var reactorBlock = new ReactorBlock("reactor-block", "reactor", X: 9.5f, Y: 1f);

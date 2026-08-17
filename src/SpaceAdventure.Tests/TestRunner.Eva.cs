@@ -309,4 +309,81 @@ internal static partial class TestRunner
     // Inventory.WornSuitSlot - the socket on the suit being worn, addressed like a row slot.
     private const int WornSuitSlotIndex = -1;
 
+    // A held tool burns its tank the whole time it's lit, whether or not anything is actually in
+    // reach to weld (same rule the cutter already lives by) - holding it outside while drifting
+    // past nothing in particular spends the tank same as holding it uselessly indoors would. This
+    // pins down that an EVA trip and back leaves the *rest* of welding intact: the tank keeps
+    // exactly the charge it drained to (nothing extra vanishes crossing the airlock either way),
+    // and a real breach back inside still welds normally afterward.
+    private static bool World_Weld_SurvivesAnEvaRoundTripWithoutLosingUnrelatedCharge()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        var weldingToolSlot = TakeFromRack(world, ItemType.WeldingTool);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: weldingToolSlot));
+        TakeTankFromRack(world, ItemType.WeldingTank);
+        AttachTankTo(world, Array.IndexOf(
+            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.WeldingTool),
+            ItemType.WeldingTank);
+
+        EnterAsteroidFieldStationary(world);
+        EquipSuit(world, 1);
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
+        MoveCharacterTo(world, 1, 23f, 3f);
+        WalkFixedDirection(world, 1, 1f, 0f);
+
+        if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsOutside)
+            return false;
+
+        // Hold the weld button pointed at nothing in particular for a while, same as a player
+        // holding it while looking around outside with no breach actually in reach yet.
+        for (var i = 0; i < 15 * 30; i++)
+        {
+            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: 0f, LookY: -1f));
+            world.Step(RealtimeStep);
+        }
+
+        var chargeBeforeReturn = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).WelderTank;
+        if (chargeBeforeReturn is not { } charge || charge <= 0f || charge >= WeldingTankDefinitions.FullCharge)
+            return false; // sanity check: it should have drained some, but not all, of a full tank
+
+        world.ApplyCommand(1, new ClientCommand(1, WeldHeld: false));
+        for (var i = 0; i < 5 * 30; i++)
+        {
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: -1, MoveY: 0));
+            world.Step(RealtimeStep);
+        }
+
+        var afterReturn = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (afterReturn.IsOutside || afterReturn.WelderTank != chargeBeforeReturn)
+            return false; // crossing the airlock either way must not touch the tank on its own
+
+        BreachRoom(world, "corridor");
+        var breachCountBefore = CountBreaches(world.CreateSnapshot(), "corridor");
+        if (breachCountBefore == 0)
+            return false;
+
+        // Walk to whichever wall the breach actually landed on (top or bottom row) rather than
+        // assuming one - the welder only reaches ~1.7 units, and BreachRoom's target is random.
+        var breachedBlock = world.CreateSnapshot().WallBlocks.First(bl => bl.RoomId == "corridor" &&
+            world.CreateSnapshot().WallBlockStates.First(s => s.Id == bl.Id).Breached);
+        WalkAcrossShipTo(world, breachedBlock.X, breachedBlock.Y > 3f ? breachedBlock.Y - 0.5f : breachedBlock.Y + 0.5f);
+
+        for (var i = 0; i < 5 * 30 && CountBreaches(world.CreateSnapshot(), "corridor") == breachCountBefore; i++)
+        {
+            var snapshot = world.CreateSnapshot();
+            var me = snapshot.Characters.Single(c => c.PlayerId == 1);
+            var target = snapshot.WallBlocks
+                .Where(b => b.RoomId == "corridor" && snapshot.WallBlockStates.First(s => s.Id == b.Id).Breached)
+                .OrderBy(b => (new Vec2(b.X, b.Y) - new Vec2(me.X, me.Y)).Length())
+                .First();
+            var aim = new Vec2(target.X - me.X, target.Y - me.Y);
+            aim = aim.Length() > 0.01f ? aim.Normalized() : new Vec2(0f, -1f);
+            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: aim.X, LookY: aim.Y));
+            world.Step(RealtimeStep);
+        }
+
+        return CountBreaches(world.CreateSnapshot(), "corridor") == breachCountBefore - 1;
+    }
 }

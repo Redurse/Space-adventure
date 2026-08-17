@@ -81,18 +81,20 @@ public sealed partial class Ship
         };
 
         // Every breaker panel hangs in the reactor hall, as asked - one place to run to when the
-        // enemy severs something - except the two systems that physically live in the side bays
-        // and the engines at the very bottom of them.
+        // enemy severs something, and spaced apart rather than lined up so wiring one isn't a
+        // squeeze. system-oxygen is the one exception: it stays in life-support, because its
+        // RoomId is where the generator actually feeds air (World.Atmosphere.cs), not just a
+        // panel location - moving it would relocate life support to a different compartment.
         var systemDevices = new[]
         {
-            new ShipSystemDevice("system-shields", "shields-bay", X: 2f, Y: 9.2f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-shields", "reactor", X: 5.2f, Y: 9.3f, PowerSystemId.Shields),
             new ShipSystemDevice("system-shields-2", "reactor", X: 4.8f, Y: 14f, PowerSystemId.Shields),
             new ShipSystemDevice("system-weapon-charger", "reactor", X: 6.75f, Y: 14f, PowerSystemId.WeaponCharger),
             new ShipSystemDevice("system-secondary", "reactor", X: 8.7f, Y: 14f, PowerSystemId.Secondary),
             new ShipSystemDevice("system-oxygen", "life-support", X: 11.5f, Y: 9.2f, PowerSystemId.Oxygen),
-            // The two engines, big and right at the tail of each side compartment.
-            new ShipSystemDevice("system-engine", "shields-bay", X: 2f, Y: 17.2f, PowerSystemId.Engine, SizeScale: 1.7f),
-            new ShipSystemDevice("system-engine-2", "life-support", X: 11.5f, Y: 17.2f, PowerSystemId.Engine, SizeScale: 1.7f),
+            // The two engine breakers, still big, now in the reactor hall with everything else.
+            new ShipSystemDevice("system-engine", "reactor", X: 7.5f, Y: 9.3f, PowerSystemId.Engine, SizeScale: 1.7f),
+            new ShipSystemDevice("system-engine-2", "reactor", X: 8.9f, Y: 12.2f, PowerSystemId.Engine, SizeScale: 1.7f),
         };
 
         // Low in the hall and much larger than other classes' - this compartment is built around it.

@@ -13,12 +13,23 @@ public sealed partial class World
     public const float WelderReachUnits = 1.7f;
     private const int WelderSamples = 6;
     // A wall block is a 1x1 segment (WallBlock.cs) - generous enough that the flame doesn't have to
-    // land pixel-perfect on the block's own center to catch it.
-    private const float WeldPointRadius = 0.6f;
+    // land pixel-perfect on the block's own center to catch it. Widened from the cutter's original
+    // 0.6 - unlike ore (a fixed target you walk up to and hold still against), a breach sits flush
+    // in a wall you're standing beside at an angle, so a straight aim line grazing just past its
+    // center used to read as "the welder stopped working" even while lit and pointed roughly at it.
+    private const float WeldPointRadius = 0.85f;
 
     private readonly Dictionary<int, bool> _weldInput = new();
 
-    public bool IsWelding(int playerId) => _weldInput.GetValueOrDefault(playerId) && CanWeld(_characters[playerId]);
+    // Mirrors StepWelding's own gate exactly, so the client-rendered flame (World.cs's Welding
+    // flag) never shows lit while nothing is actually being welded underneath it - it used to skip
+    // the Health/OnStation/OnEnemyShip checks StepWelding applies, so the torch could read as
+    // active in situations where the server had already stopped doing anything with it.
+    public bool IsWelding(int playerId) =>
+        _weldInput.GetValueOrDefault(playerId) &&
+        _characters.TryGetValue(playerId, out var character) &&
+        character.Health > 0 && !character.OnEnemyShip && !character.OnStation &&
+        CanWeld(character);
 
     // Holding a welding tool is not enough: it needs a tank with something left in it, same as the
     // cutter's socket (World.OxygenTanks.cs's sibling, WeldingTankDefinitions).
@@ -41,10 +52,11 @@ public sealed partial class World
 
             character.Inventory.DrainTank(slot, WeldingTankDefinitions.DrainPerSecond * (float)deltaSeconds);
 
-            // The torch lights anywhere the tool is held and lit, exactly like the cutter - but a
-            // hull breach only exists in the player's own ship interior, so that's the only place
-            // the flame has anything to weld shut.
-            if (character.IsOutside || character.OnEnemyShip || character.OnStation)
+            // The torch lights anywhere the tool is held and lit, exactly like the cutter - a hull
+            // breach can be welded from either side of the plating it's in, on a spacewalk patching
+            // it from outside same as from the corridor it opened onto. Only a boarded enemy hull or
+            // a station has no breach of your own ship to reach at all.
+            if (character.OnEnemyShip || character.OnStation)
                 continue;
 
             WeldAlongFlame(character);
@@ -57,14 +69,27 @@ public sealed partial class World
         if (aim.Length() < 0.01f)
             return;
 
+        // Indoors, the flame and the block it's aimed at share the ship's own interior coordinate
+        // space. Outside, the character is tracked in world/field space (GetEvaWorldPosition) while
+        // WallBlock.Position is still in that same interior frame, so the block's position has to be
+        // rotated and translated out to world space the same way the hull plating itself is drawn
+        // out there (World.Eva.cs) before the two can be compared.
+        var origin = character.IsOutside ? GetEvaWorldPosition(character) : character.Position;
+        var (hullCenter, _) = GetHullLocalBounds();
+
         // Sampled along the flame rather than tested at its tip - same reasoning as the cutter: a
         // breach beside the character would otherwise be missed by a flame pointed past it.
         for (var i = 1; i <= WelderSamples; i++)
         {
-            var point = character.Position + aim * (WelderReachUnits * i / WelderSamples);
+            var point = origin + aim * (WelderReachUnits * i / WelderSamples);
             var block = Ship.WallBlocks.FirstOrDefault(b =>
-                b.RoomId == character.RoomId && _breachedWallBlockIds.Contains(b.Id) &&
-                (b.Position - point).Length() <= WeldPointRadius);
+            {
+                if (!_breachedWallBlockIds.Contains(b.Id))
+                    return false;
+                if (character.IsOutside)
+                    return (_shipFieldPosition + RotateLocalToWorld(b.Position - hullCenter, _shipRotationDegrees) - point).Length() <= WeldPointRadius;
+                return b.RoomId == character.RoomId && (b.Position - point).Length() <= WeldPointRadius;
+            });
             if (block is null)
                 continue;
 

@@ -51,9 +51,17 @@ public sealed class CombatPanel
             var suitStatus = me.WearingSuit ? " [скафандр]" : "";
             var bleedingStatus = me.IsBleeding ? " [кровотечение]" : "";
             spriteBatch.DrawString(_font, $"Здоровье: {me.Health:0}/100{suitStatus}{bleedingStatus}", healthOrigin, healthColor, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+
+            // At 0 there's no separate "dead" state (World.Injuries.cs) - the character just keeps
+            // standing there, fully mobile, with welding/cutting silently refusing to light
+            // (World.Welding.cs/World.Cutting.cs both gate on Health > 0). Without this line, that
+            // reads as "the tool is broken" rather than "you're down and need a MedKit."
+            if (me.Health <= 0)
+                spriteBatch.DrawString(_font, "НЕДЕЕСПОСОБЕН - нужна аптечка (сварка/резак не работают)",
+                    healthOrigin + new Vector2(0, 16), Color.Red, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
         }
 
-        var ammoOrigin = healthOrigin + new Vector2(0, 20);
+        var ammoOrigin = healthOrigin + new Vector2(0, me?.Health <= 0 ? 36 : 20);
         foreach (var turret in snapshot.TurretStates)
         {
             var isLaser = snapshot.Turrets.FirstOrDefault(t => t.Id == turret.Id)?.WeaponType == TurretWeaponType.Laser;

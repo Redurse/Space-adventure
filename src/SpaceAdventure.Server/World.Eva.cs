@@ -63,12 +63,13 @@ public sealed partial class World
     // the door's own position so the character doesn't visually jump anywhere on the crossing.
     private bool TryCrossIntoVacuum(Character character, Vec2 moveDelta)
     {
-        // Outside only means something where there's physically somewhere to be: an asteroid field
-        // to fly around in, or a battle - where the enemy ship is a real boardable structure
-        // sitting a fixed distance away (World.Boarding.cs). Traveling or docked still has nowhere
-        // meaningful to place the character, so it stays blocked like an unsuited attempt.
-        if (!character.SuitSealed ||
-            (Phase != VoyagePhase.AsteroidField && Phase != VoyagePhase.Battle))
+        // Outside means anywhere the ship is actually out in the field, physically: an asteroid
+        // field, a battle, approaching or transiting between points of interest (M31-M33's real,
+        // physically-simulated flight) all put the ship's own hull right there to walk out onto.
+        // Only docked at a station is different - the airlock leads onto the station's own
+        // walkway there (Movement.cs's OnStation crossing), not into vacuum, so that's the one
+        // phase this stays blocked for.
+        if (!character.SuitSealed || Phase == VoyagePhase.Station)
             return false;
 
         // Whichever room the door is actually cut into, rather than one hardcoded chamber id: a
@@ -86,7 +87,11 @@ public sealed partial class World
         // Straight onto the plating beside the door, boots down - no nudge out into open space.
         // Standing back in the door's own rectangle is harmless now that going back inside also
         // requires actually walking *toward* the hull (StepShipAttachedWalk).
-        character.EvaLocalOffset = SnapToHullSurface(outerDoor.Position - hullCenter);
+        // Snapped from the character's own crossing point (next), not the door's fixed center -
+        // the door is a whole unit wide, so anchoring to its center always re-planted the character
+        // there regardless of where across the doorway they actually walked through, reading as a
+        // small teleport on every exit.
+        character.EvaLocalOffset = SnapToHullSurface(next - hullCenter);
         character.EvaVelocity = Vec2.Zero;
         return true;
     }

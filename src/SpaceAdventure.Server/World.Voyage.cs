@@ -8,12 +8,18 @@ namespace SpaceAdventure.Server;
 // starts docked at the home station.
 public sealed partial class World
 {
-    private const float MapTravelSpeedPerSecond = 20f;
-    private const float ArrivalRadius = 1f;
+    // Autopilot cruise while nobody's at the helm (World.StarSystems.cs's TryWarpTo companion
+    // mechanic) - the same field flight everyone already flies during a fight or a docking
+    // approach, just running several times faster while there's nothing yet to react to.
+    private const float TimeCompressionFactor = 8f;
+    private const float TransitArrivalRadius = 8f; // close enough to hand off to Arrive()
+    private const float TransitSlowdownRadius = 25f; // start easing off the throttle before overshoot
 
     public GalaxyMap GalaxyMap { get; } = GalaxyMap.CreateStarter();
 
-    private Vec2 _shipMapPosition;
+    // Which StarSystem the ship is currently in (World.StarSystems.cs) - changed only by warp;
+    // AsteroidField resolves through it rather than through a single stored instance.
+    private string _currentSystemId = "";
     private string? _dockedPointId;
     private string? _travelTargetPointId;
     // Who owns the ship currently being fought - captured on arrival, since the sector's point id
@@ -57,24 +63,60 @@ public sealed partial class World
             return; // idling in open space with nowhere chosen yet
 
         var target = GalaxyMap.GetPoint(targetId);
-        var toTarget = target.Position - _shipMapPosition;
-        var distance = toTarget.Length();
+        // Taking the helm by hand hands control back and drops the time compression - the same
+        // rule the captain-bot's own auto-stabilize already follows (World.CrewAi.cs) for exactly
+        // the same reason: a human at the console overrides automatic flight, not the other way
+        // round.
+        var humanAtHelm = _characters.Values.Any(c => !c.IsBot && c.IsAtHelm);
+        var effectiveDelta = humanAtHelm ? deltaSeconds : deltaSeconds * TimeCompressionFactor;
+        if (!humanAtHelm)
+            AutopilotToward(target.Position, effectiveDelta);
 
-        if (distance <= ArrivalRadius)
-        {
+        StepShipFieldPhysics(effectiveDelta, fullPower: !humanAtHelm);
+
+        if ((target.Position - _shipFieldPosition).Length() <= TransitArrivalRadius)
             Arrive(target);
+    }
+
+    // Flies the ship toward a point the way a player would with the joystick: full throttle once
+    // roughly lined up, easing off near the target, turning input dropping to zero once the
+    // heading error is tiny (SetHelmInput, World.ShipField.cs). deltaSeconds is the SAME
+    // (possibly time-compressed) step StepShipFieldPhysics is about to take - the turn rate has to
+    // know it, or a single compressed tick's fixed-rate turn (ShipRotationDegreesPerSecond * dt)
+    // overshoots a small remaining error and the heading oscillates back and forth forever instead
+    // of ever settling on the bearing.
+    private void AutopilotToward(Vec2 target, double deltaSeconds)
+    {
+        var toTarget = target - _shipFieldPosition;
+        var distance = toTarget.Length();
+        if (distance < 0.01f)
+        {
+            SetHelmInput(0f, 0f);
             return;
         }
 
-        var step = toTarget.Normalized() * MapTravelSpeedPerSecond * (float)deltaSeconds;
-        _shipMapPosition = step.Length() >= distance ? target.Position : _shipMapPosition + step;
+        var bearingDegrees = MathF.Atan2(toTarget.Y, toTarget.X) * (180f / MathF.PI) - Ship.ForwardDegrees;
+        var error = ((bearingDegrees - _shipRotationDegrees) % 360f + 540f) % 360f - 180f;
+        var throttle = MathF.Abs(error) >= 25f ? 0f : Math.Min(1f, distance / TransitSlowdownRadius);
+        var maxStepDegrees = ShipRotationDegreesPerSecond * (float)deltaSeconds;
+        var turn = MathF.Abs(error) < 2f ? 0f
+            : maxStepDegrees >= MathF.Abs(error) ? error / maxStepDegrees // lands exactly on the bearing this tick, doesn't swing past it
+            : MathF.Sign(error);
+        SetHelmInput(throttle, turn);
     }
 
     private void Arrive(GalaxyPoint target)
     {
-        _shipMapPosition = target.Position;
-
-        if (target.Kind == GalaxyPointKind.HostileSector)
+        if (target.Kind == GalaxyPointKind.WarpPoint)
+        {
+            // Parked, not drifting - same guarantee every other arrival gives, so residual
+            // momentum can't carry the ship back out of WarpCaptureRadius before anyone reacts.
+            _travelTargetPointId = null;
+            _shipVelocity = Vec2.Zero;
+            _shipThrust = Vec2.Zero;
+            _shipAutoStabilize = true;
+        }
+        else if (target.Kind == GalaxyPointKind.HostileSector)
         {
             _travelTargetPointId = null;
             _battleFaction = OwnerOf(target.Id);
@@ -184,7 +226,10 @@ public sealed partial class World
     {
         if (pointId is null || Phase == VoyagePhase.Battle)
             return;
-        if (!GalaxyMap.Points.Any(p => p.Id == pointId))
+        // Only this system's own points - nothing in the current UI ever offers another system's
+        // (GalaxyPoints is scoped the same way, World.Factions.cs's CreateGalaxyPoints), and flying
+        // there without a warp would be a coordinate-space coincidence, not a real destination.
+        if (GalaxyMap.GetSystem(_currentSystemId).Points.All(p => p.Id != pointId))
             return;
 
         // Casting off takes the station's rooms out of the docked layout, so anyone still standing

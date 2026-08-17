@@ -45,7 +45,16 @@ public partial class Game1
         // disagree about where "over there" is.
         var mountOnScreen = (origin + new Vector2(mount.Position.X, mount.Position.Y) * ShipRenderer.PixelsPerUnit)
             * SceneZoom(snapshot);
-        var toCursor = new Vector2(_designMouse.X - mountOnScreen.X, _designMouse.Y - mountOnScreen.Y);
+
+        // The scene batch is also spun around the screen's center pivot while manning a turret
+        // (TurretViewRotationDegrees, Draw's sceneTransform) - undo that same rotation on the
+        // cursor first, or the aim would track a fixed screen direction instead of the mouse.
+        var pivot = WorldViewportOrigin + WorldViewportSize / 2f;
+        var rotationRadians = MathHelper.ToRadians(TurretViewRotationDegrees(snapshot));
+        var designMouse = new Vector2(_designMouse.X, _designMouse.Y);
+        var cursorUnrotated = pivot + Vector2.Transform(designMouse - pivot, Matrix.CreateRotationZ(-rotationRadians));
+
+        var toCursor = new Vector2(cursorUnrotated.X - mountOnScreen.X, cursorUnrotated.Y - mountOnScreen.Y);
         if (toCursor.LengthSquared() < 1f)
             return 0f;
 
@@ -423,11 +432,22 @@ public partial class Game1
 
         if (_openBlock.Kind == BlockKind.Navigation)
         {
-            var mapOrigin = GalaxyMapPanel.ComputeMapOrigin(GalaxyMapPanelOrigin, snapshot.GalaxyPoints);
+            var mapOrigin = GalaxyMapPanel.ComputeMapOrigin(GalaxyMapPanelOrigin, snapshot.GalaxyPoints, _mapZoom, _mapPanOffset);
             foreach (var point in snapshot.GalaxyPoints)
             {
-                if (GalaxyMapPanel.GetPointRect(point, mapOrigin).Contains(_designMouse))
+                if (GalaxyMapPanel.GetPointRect(point, mapOrigin, _mapZoom).Contains(_designMouse))
                     return (-1, -1, point.Id, null, -1, false, false, null, false, null);
+            }
+
+            // Warp target - rides as a field like the other Administrator/Recruiter actions
+            // (GalaxyMapPanel's own tuple is already at its practical limit).
+            var otherSystems = snapshot.StarSystems.Where(s => s.Id != snapshot.CurrentSystemId).ToList();
+            for (var i = 0; i < otherSystems.Count; i++)
+            {
+                if (!GalaxyMapPanel.GetSystemRect(i, GalaxyMapPanelOrigin).Contains(_designMouse))
+                    continue;
+                _pendingWarpToSystemId = otherSystems[i].Id;
+                return (-1, -1, null, null, -1, false, false, null, false, null);
             }
         }
 

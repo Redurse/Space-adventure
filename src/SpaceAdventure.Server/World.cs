@@ -44,14 +44,44 @@ public sealed partial class World
             return StationKind.Outpost;
         }
     }
-    public AsteroidField AsteroidField { get; } = AsteroidField.CreateDefault();
+    // Which system's field is "the" field right now (World.StarSystems.cs) - a computed lookup
+    // rather than a stored instance, so every existing reader (World.ShipField.cs, Cutting.cs,
+    // Eva.cs, Quests.cs, Projectiles.cs, CrewAi.cs) keeps working unchanged even though there's no
+    // longer a single field for the whole game.
+    public AsteroidField AsteroidField => GalaxyMap.GetSystem(_currentSystemId).Field;
     public VoyagePhase Phase { get; private set; } = VoyagePhase.Station;
+
+    // What the galaxy map actually plots as the ship's marker. While docked, _shipFieldPosition
+    // holds DockBerthPosition - a field-space point anchored to the ship's OWN airlock door
+    // (World.StationDocking.cs), used purely to line up the ship's and station's interiors for
+    // walking between them. That point has no relationship to the docked GalaxyPoint's real
+    // position on the map (e.g. home-station sits at (35,141) in Sol), so plotting it directly
+    // put the marker floating off in open space instead of on the station it's actually docked
+    // at. Every other phase already keeps _shipFieldPosition in real GalaxyPoint-space (M31-M33),
+    // so only the docked case needs to substitute the docked point's own position instead.
+    private Vec2 ShipMapPosition =>
+        Phase == VoyagePhase.Station && _dockedPointId is not null
+            ? GalaxyMap.GetPoint(_dockedPointId).Position
+            : _shipFieldPosition;
 
     private readonly Dictionary<int, Character> _characters = new();
     private readonly Dictionary<int, Vec2> _moveInput = new();
     private readonly Dictionary<string, TurretRuntime> _turretRuntimes;
     private readonly Dictionary<string, float> _turretAimInput = new();
     private readonly HashSet<string> _breachedWallBlockIds = new();
+
+    // A block sitting under a door's own rectangle - regular interior Door or the vacuum
+    // AirlockOuterDoor - is excluded from random breach selection (World.EnemyAi.cs,
+    // World.ShipField.cs's asteroid-collision hit): a hole opening exactly where a door already is
+    // would either double up with (or physically block) the door's own opening/closing, which no
+    // ship class's layout intends. Most hulls never generate a WallBlock there in the first place
+    // (doors sit on shared interior walls, hull blocks only on exterior ones), but a side compartment
+    // whose exterior wall also carries its own AirlockOuterDoor - e.g. the Corvette's shield bay and
+    // life-support flanks - does generate one at that exact spot, so the exclusion is checked rather
+    // than assumed.
+    private bool IsAtDoorPosition(WallBlock block) =>
+        Ship.AirlockOuterDoors.Any(d => d.RoomId == block.RoomId && d.Contains(block.Position)) ||
+        Ship.Doors.Any(d => d.Connects(block.RoomId) && d.Contains(block.Position));
 
     public ShipKind CurrentShipKind { get; private set; }
 
@@ -60,6 +90,9 @@ public sealed partial class World
     // selection (game_design.md section 9) is purely additive.
     public World(ShipKind shipKind = ShipKind.Frigate)
     {
+        // Set before anything below touches AsteroidField (which resolves through it) - a fresh
+        // crew always starts in whichever system the home station actually sits in.
+        _currentSystemId = GalaxyMap.SystemOf(GalaxyMap.HomePointId).Id;
         CurrentShipKind = shipKind;
         Ship = Ship.Create(shipKind);
         _turretRuntimes = Ship.Turrets.ToDictionary(t => t.Id, t => new TurretRuntime(t));
@@ -85,8 +118,8 @@ public sealed partial class World
             _oreDepositHp[deposit.Id] = deposit.MaxHp;
 
         var home = GalaxyMap.GetPoint(GalaxyMap.HomePointId);
-        _shipMapPosition = home.Position;
         _dockedPointId = home.Id;
+        _shipFieldPosition = DockBerthPosition;
         // A fresh run starts docked, which is itself a save point (game_design.md section 5) -
         // set directly rather than via EnterStation, whose refuel/repair pass is meaningless on a
         // ship that hasn't flown yet.
@@ -167,6 +200,9 @@ public sealed partial class World
 
         if (command.AbandonQuestPressed)
             TryAbandonQuest();
+
+        if (command.WarpToSystemId is not null)
+            TryWarpTo(command.WarpToSystemId);
 
         if (command.PurchaseUpgradeTrack is { } upgradeTrack)
             TryPurchaseUpgrade(upgradeTrack);
@@ -344,7 +380,7 @@ public sealed partial class World
                 c.LayingWireFromPin);
         }).ToArray(),
         PowerGrid.CreateState(),
-        new VoyageState(Phase, _shipMapPosition, _dockedPointId, _travelTargetPointId),
+        new VoyageState(Phase, ShipMapPosition, _dockedPointId, _travelTargetPointId),
         Credits,
         ActiveQuest,
         new Dictionary<ShipUpgradeTrack, int>(UpgradeLevels),
@@ -361,5 +397,8 @@ public sealed partial class World
         new ShipFieldState(
             _shipFieldPosition.X, _shipFieldPosition.Y, _shipRotationDegrees,
             _shipVelocity.X, _shipVelocity.Y, _shipThrust.X, _shipThrust.Y, _shipAutoStabilize),
-        _recruitRoster);
+        _recruitRoster,
+        CreateStarSystemSummaries(),
+        _currentSystemId,
+        CanWarpNow);
 }

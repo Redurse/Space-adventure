@@ -65,7 +65,8 @@ public sealed partial class World
         // Docked at the saved station, exactly as if the ship had just finished its approach.
         var point = GalaxyMap.Points.FirstOrDefault(p => p.Id == save.DockedPointId)
             ?? GalaxyMap.GetPoint(GalaxyMap.HomePointId);
-        _shipMapPosition = point.Position;
+        // _currentSystemId isn't restored yet (M35) - a save/load after warping away will still
+        // put the crew back in whichever system they started in this process. Contained, tracked.
         EnterStation(point.Id);
         AutosavePending = false; // loading isn't itself a save-worthy moment
 

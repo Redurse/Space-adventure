@@ -59,11 +59,18 @@ public sealed partial class World
     // approach - World.StationDocking.cs): only the "what happens on arrival at candidatePosition"
     // part differs (breach a wall block vs. capture a dock), so that part stays in each phase's
     // own Step method instead of being duplicated here.
-    private Vec2 IntegrateShipFieldMotion(double deltaSeconds)
+    //
+    // fullPower bypasses the Engine allocation gate - the autopilot cruise between systems'
+    // points of interest (World.Voyage.cs's StepTraveling) is the ship's own automated running,
+    // not a manual burn, and a crew that hasn't touched the power sliders yet still has to be
+    // able to leave dock on their very first trip. Manual flight (the default, fullPower: false)
+    // keeps depending on GetEffectivePower exactly as it always has - anyone actually at the helm
+    // still has to feed the engines like any other system.
+    private Vec2 IntegrateShipFieldMotion(double deltaSeconds, bool fullPower = false)
     {
         var dt = (float)deltaSeconds;
         _hullContactCooldown = Math.Max(0f, _hullContactCooldown - dt);
-        var enginePowerScale = Math.Min(2f, GetEffectivePower(PowerSystemId.Engine) / ShipEngineReferencePower);
+        var enginePowerScale = fullPower ? 1f : Math.Min(2f, GetEffectivePower(PowerSystemId.Engine) / ShipEngineReferencePower);
 
         // Heading is steered, not inferred. It used to swing round to face whatever direction the
         // ship was drifting, which meant the pilot could never point the bow anywhere on purpose -
@@ -90,9 +97,9 @@ public sealed partial class World
         return _shipFieldPosition + _shipVelocity * dt;
     }
 
-    private void StepShipFieldPhysics(double deltaSeconds)
+    private void StepShipFieldPhysics(double deltaSeconds, bool fullPower = false)
     {
-        var candidatePosition = IntegrateShipFieldMotion(deltaSeconds)
+        var candidatePosition = IntegrateShipFieldMotion(deltaSeconds, fullPower)
             .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
 
         if (TryFindHullCollision(candidatePosition, _shipRotationDegrees, out var localContactPoint))
@@ -220,7 +227,8 @@ public sealed partial class World
 
     private void BreachNearestWallBlock(Vec2 localContactPoint)
     {
-        var nearest = Ship.WallBlocks.OrderBy(b => (b.Position - localContactPoint).Length()).FirstOrDefault();
+        var nearest = Ship.WallBlocks.Where(b => !IsAtDoorPosition(b))
+            .OrderBy(b => (b.Position - localContactPoint).Length()).FirstOrDefault();
         if (nearest is not null)
             _breachedWallBlockIds.Add(nearest.Id);
     }

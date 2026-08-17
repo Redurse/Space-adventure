@@ -6,6 +6,14 @@ namespace SpaceAdventure.Shared.Model;
 // itself). Extracted here once both types needed it, rather than duplicating it.
 public static class RoomLayout
 {
+    // Half the character's own drawn footprint (matches Client ShipRenderer.CharacterDiameter/2).
+    // A bare point-position let the character's center reach a room's exact geometric edge, which
+    // is the wall's own centerline (ShipRenderer.DrawWallBand draws the wall straddling that same
+    // line) - so the character's actual body, wider than that clearance, sank into the wall band
+    // and poked out the other side into whatever room was drawn next door. Collision now stops the
+    // character's near edge at the wall's face instead of letting its center touch the centerline.
+    public const float CharacterRadius = 0.35f;
+
     public static Room GetRoom(IReadOnlyList<Room> rooms, string roomId) => rooms.First(r => r.Id == roomId);
 
     public static (Vec2 Position, string RoomId) MoveAlongAxis(
@@ -14,15 +22,21 @@ public static class RoomLayout
         var room = GetRoom(rooms, roomId);
         var next = position + delta;
 
-        if (room.Contains(next))
+        if (ContainsWithClearance(room, next))
             return (next, roomId);
 
+        // Door crossing is checked against the door's own rectangle, not the clearance-shrunk room
+        // - otherwise a character could never get close enough to a door to actually reach it.
         var door = doors.FirstOrDefault(d => d.Connects(roomId) && d.Contains(next) && isDoorOpen(d.Id));
         if (door is not null)
             return (next, door.OtherRoom(roomId));
 
         return (new Vec2(
-            Math.Clamp(next.X, room.Left, room.Right),
-            Math.Clamp(next.Y, room.Top, room.Bottom)), roomId);
+            Math.Clamp(next.X, room.Left + CharacterRadius, room.Right - CharacterRadius),
+            Math.Clamp(next.Y, room.Top + CharacterRadius, room.Bottom - CharacterRadius)), roomId);
     }
+
+    private static bool ContainsWithClearance(Room room, Vec2 p) =>
+        p.X >= room.Left + CharacterRadius && p.X <= room.Right - CharacterRadius &&
+        p.Y >= room.Top + CharacterRadius && p.Y <= room.Bottom - CharacterRadius;
 }

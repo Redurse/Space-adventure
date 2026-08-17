@@ -127,4 +127,7 @@ public sealed record ClientCommand(
     // Unlike accept/turn-in, needs no docked gate: giving up is something you can decide mid-flight.
     // Appended at the end rather than next to AcceptCargoQuestPressed/TurnInCargoQuestPressed so it
     // doesn't shift every positional argument after it at GameClient.cs's construction call site.
-    bool AbandonQuestPressed = false);
+    bool AbandonQuestPressed = false,
+    // Which system to warp to, the one frame the button was clicked (World.StarSystems.cs) - null
+    // means no click that frame, same convention as TravelToPointId. Only honored while CanWarpNow.
+    string? WarpToSystemId = null);

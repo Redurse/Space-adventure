@@ -131,6 +131,14 @@ public partial class Game1 : Game
     private string? _pendingPickupDroppedItemId; // click-to-pick-up (World.Mining.cs), any context
     private SlotRef? _pendingDropItemFrom; // drag ended over empty space (World.Storage.cs)
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
+    private string? _pendingWarpToSystemId; // clicked a system on GalaxyMapPanel's own list (World.StarSystems.cs)
+    // The galaxy map's own camera - purely a client view of server-authoritative positions, so it
+    // lives here rather than in any snapshot. Zoom via scroll wheel, pan via right-drag; both only
+    // read while the navigation console is actually open.
+    private float _mapZoom = 1f;
+    private Vector2 _mapPanOffset = Vector2.Zero;
+    private Point? _mapPanLastMouse;
+    private int _prevScrollWheelValue;
     private readonly EffectTracker _effectTracker = new();
     private readonly AtmosphereField _atmosphere = new();
     private WorldSnapshot? _previousSnapshot;
@@ -298,6 +306,25 @@ public partial class Game1 : Game
         var keyboardAim = isManningTurret ? ReadAimDirection(keyboard) : 0f;
         var aimDirection = keyboardAim != 0f || !isManningTurret ? keyboardAim : ReadTurretAimTowardCursor();
         var mouse = Mouse.GetState();
+
+        // Galaxy map camera: right-drag to pan, scroll wheel to zoom - both harmless to read even
+        // when the map isn't open (they just accumulate into fields nothing else looks at then).
+        var mapOpen = _openBlock.Kind == BlockKind.Navigation;
+        if (mapOpen && mouse.RightButton == ButtonState.Pressed)
+        {
+            if (_mapPanLastMouse is { } lastMouse)
+                _mapPanOffset += new Vector2(mouse.Position.X - lastMouse.X, mouse.Position.Y - lastMouse.Y);
+            _mapPanLastMouse = mouse.Position;
+        }
+        else
+        {
+            _mapPanLastMouse = null;
+        }
+        var scrollDelta = mouse.ScrollWheelValue - _prevScrollWheelValue;
+        _prevScrollWheelValue = mouse.ScrollWheelValue;
+        if (mapOpen && scrollDelta != 0)
+            _mapZoom = Math.Clamp(_mapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.3f, 3f);
+
         // Dragging gets first refusal on the button: a press that lands on an item slot starts a
         // drag instead of counting as a click, so releasing over the rack doesn't also read as
         // "clicked empty space, close the panel".
@@ -362,6 +389,9 @@ public partial class Game1 : Game
         var abandonQuestPressed = _pendingAbandonQuest;
         _pendingAbandonQuest = false;
 
+        var warpToSystemId = _pendingWarpToSystemId;
+        _pendingWarpToSystemId = null;
+
         // Right-click backs out of a pending wire-lay without walking back to its start pin -
         // harmless to send every frame it's held, the server just clears an already-null anchor.
         var wireLayCancelPressed = mouse.RightButton == ButtonState.Pressed && myCharacter?.LayingWireFromPin is not null;
@@ -373,7 +403,7 @@ public partial class Game1 : Game
         var weldHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingWelder();
 
         _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, pushOffDirection.X, pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, lookDirection.X, lookDirection.Y,
-            tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed);
+            tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
 
@@ -418,6 +448,18 @@ public partial class Game1 : Game
             return null;
         var turret = snapshot.Turrets.FirstOrDefault(t => t.Id == state.Id);
         return turret is null ? null : (turret, state);
+    }
+
+    // Degrees to spin the whole scene batch by while manning a turret, so the gun's own outward
+    // facing (TurretMount.OutwardDegrees, ship-local) reads as screen-up instead of the view
+    // always staying upright regardless of which side of the hull the gun sits on. 0 everywhere
+    // else - the ship interior/field view is never rotated except behind a periscope.
+    private float TurretViewRotationDegrees(WorldSnapshot snapshot)
+    {
+        if (MannedTurret(snapshot) is not { } manned || _openBlock.Kind is BlockKind.Navigation)
+            return 0f;
+        var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
+        return -90f - mount.OutwardDegrees;
     }
 
     private (Vector2 Origin, Vec2 HullCenter, Vec2 Anchor) ComputeCamera(WorldSnapshot snapshot, CharacterState me)
@@ -648,7 +690,19 @@ public partial class Game1 : Game
         // Manning a turret pulls the whole scene back to half scale (SceneZoom) so the gunner can
         // see as far as the gun shoots; everywhere else this is the identity.
         var sceneZoom = _client.LatestSnapshot is { } zoomSnapshot ? SceneZoom(zoomSnapshot) : 1f;
-        _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(sceneZoom, sceneZoom, 1f) * _renderScale);
+        // Also spun around the screen's own center (TurretViewRotationDegrees) while manning a
+        // turret, so the gun's facing direction reads as screen-up - identity (0°) everywhere
+        // else. The pivot is the same point ComputeCamera anchors the manned turret's view on, so
+        // rotating around it leaves the turret itself fixed at screen-center instead of swinging
+        // it off to one side.
+        var sceneRotationDegrees = _client.LatestSnapshot is { } rotSnapshot ? TurretViewRotationDegrees(rotSnapshot) : 0f;
+        var screenPivot = (WorldViewportOrigin + WorldViewportSize / 2f) / sceneZoom;
+        var sceneTransform =
+            Matrix.CreateTranslation(-screenPivot.X, -screenPivot.Y, 0f) *
+            Matrix.CreateRotationZ(MathHelper.ToRadians(sceneRotationDegrees)) *
+            Matrix.CreateTranslation(screenPivot.X, screenPivot.Y, 0f) *
+            Matrix.CreateScale(sceneZoom, sceneZoom, 1f) * _renderScale;
+        _spriteBatch.Begin(transformMatrix: sceneTransform);
         if (_client.LatestSnapshot is { } snapshot)
         {
             var myCharacter = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
@@ -660,7 +714,7 @@ public partial class Game1 : Game
             // with whatever's outside it (asteroids, ore, EVA characters) layered on top in the
             // same ship-local frame, so walking through the airlock never swaps renderer or scale.
             if (_openBlock.Kind == BlockKind.Navigation)
-                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin);
+                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset);
             else if (myIsAtHelm)
             {
                 _helmPanel.Draw(_spriteBatch, snapshot, HelmPanelOrigin);

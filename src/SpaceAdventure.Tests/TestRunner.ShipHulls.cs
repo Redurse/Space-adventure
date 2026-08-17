@@ -150,7 +150,8 @@ internal static partial class TestRunner
         var station = Station.CreateDefault();
         var dockRoomId = station.DockRoomId;
         var (pos, roomId) = station.MoveAlongAxis(new Vec2(2.5f, 0.5f), dockRoomId, new Vec2(0, -1f), _ => true);
-        return roomId == dockRoomId && Math.Abs(pos.Y - 0f) < 0.01f; // clamped at the top hull wall
+        // Clamped CharacterRadius short of the top hull wall, not exactly on it (see RoomLayout.cs).
+        return roomId == dockRoomId && Math.Abs(pos.Y - RoomLayout.CharacterRadius) < 0.01f;
     }
 
 }

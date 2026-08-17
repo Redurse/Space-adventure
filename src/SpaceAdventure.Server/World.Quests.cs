@@ -34,10 +34,13 @@ public sealed partial class World
         var dockedName = GalaxyMap.GetPoint(dockedId).Name;
 
         // Pick from whatever kinds this station can actually offer right now - a map with no other
-        // station can't issue a delivery, one with no hostile sector can't issue a bounty.
+        // station can't issue a delivery, one with no hostile sector can't issue a bounty. Scoped
+        // to this system's own points (not GalaxyMap.Points' every-system list) - a delivery to a
+        // station across a warp jump isn't a job this version can offer (M35 scope note).
         var candidates = new List<Quest>();
+        var localPoints = GalaxyMap.GetSystem(_currentSystemId).Points;
 
-        var otherStations = GalaxyMap.Points
+        var otherStations = localPoints
             .Where(p => p.Kind == GalaxyPointKind.Station && p.Id != dockedId)
             .ToList();
         if (otherStations.Count > 0)
@@ -46,7 +49,7 @@ public sealed partial class World
             candidates.Add(new Quest(QuestKind.Delivery, destination.Id, destination.Name, DeliveryQuestReward, dockedId));
         }
 
-        var sectors = GalaxyMap.Points.Where(p => p.Kind == GalaxyPointKind.HostileSector).ToList();
+        var sectors = localPoints.Where(p => p.Kind == GalaxyPointKind.HostileSector).ToList();
         if (sectors.Count > 0)
         {
             var target = sectors[_random.Next(sectors.Count)];

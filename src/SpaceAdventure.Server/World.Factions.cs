@@ -104,9 +104,12 @@ public sealed partial class World
             .Select(kv => new FactionStandingState(kv.Key, FactionDefinitions.Name(kv.Key), kv.Value))
             .ToArray();
 
-    // GalaxyMap.Points is Shared's static starting data - only ContestedPointId ever actually
-    // differs from it, but every point is re-checked here so the client (which just reads
-    // GalaxyPoint.Faction, same as it always has) never needs to know a war exists at all.
+    // Only the CURRENT system's points - GalaxyMap.Points is every system's combined, which is
+    // exactly what a client-side map must never draw as one space (World.StarSystems.cs). Faction
+    // is re-checked per point so the client (which just reads GalaxyPoint.Faction, same as it
+    // always has) never needs to know a war exists at all.
     private IReadOnlyList<GalaxyPoint> CreateGalaxyPoints() =>
-        GalaxyMap.Points.Select(p => OwnerOf(p.Id) == p.Faction ? p : p with { Faction = OwnerOf(p.Id) }).ToArray();
+        GalaxyMap.GetSystem(_currentSystemId).Points
+            .Select(p => OwnerOf(p.Id) == p.Faction ? p : p with { Faction = OwnerOf(p.Id) })
+            .ToArray();
 }

@@ -328,9 +328,9 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.CutWire("trunk-shields"); // takes out both shield devices (cockpit + quarters)
+        world.CutWire("trunk-shields"); // takes out both shield devices (reactor room)
 
-        WalkAcrossShipTo(world, 3.5f, 1.5f); // cockpit shields device
+        WalkAcrossShipTo(world, 7.2f, 0.7f); // reactor room's shields device
 
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // no tool held — should fail
         var stillDamagedWithoutTool = !world.IsDeviceConnected("system-shields");
@@ -338,7 +338,7 @@ internal static partial class TestRunner
         var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot)); // hold it
 
-        WalkAcrossShipTo(world, 3.5f, 1.5f); // back to the shields device
+        WalkAcrossShipTo(world, 7.2f, 0.7f); // back to the shields device
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // repair
 
         return stillDamagedWithoutTool && world.IsDeviceConnected("system-shields");

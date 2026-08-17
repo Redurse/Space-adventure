@@ -89,4 +89,11 @@ public sealed record WorldSnapshot(
     ShipFieldState ShipField,
     // Who's currently on offer at the docked station's Recruiter, if it has one (World.Recruiting.cs,
     // game_design.md section 10) - empty away from a Recruiter or undocked.
-    IReadOnlyList<BotCandidate> RecruitCandidates);
+    IReadOnlyList<BotCandidate> RecruitCandidates,
+    // The inter-system map (World.StarSystems.cs) - every known system's id/name (full graph, any
+    // is a valid warp target), which one the ship is in now, and whether it's parked at that
+    // system's own WarpPoint slowly enough to actually jump - the same "arms the button" pattern
+    // CanDock already uses for docking.
+    IReadOnlyList<StarSystemSummary> StarSystems,
+    string CurrentSystemId,
+    bool CanWarpNow);

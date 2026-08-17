@@ -10,7 +10,11 @@ public sealed record GalaxyPoint(string Id, string Name, float X, float Y, Galax
     StationKind StationKind = StationKind.Outpost,
     // Only meaningful for Kind == HostileSector: how many ships defend it (game_design.md section
     // 12, "групповые вражеские встречи"). They engage one after another, not all at once.
-    int SquadronSize = 1)
+    int SquadronSize = 1,
+    // Which StarSystem this point belongs to. Left blank in the literals below - StarSystem's own
+    // constructor stamps every point it's given with its own Id, so the point data doesn't have to
+    // repeat its system on every single line.
+    string SystemId = "")
 {
     public Vec2 Position => new(X, Y);
 }

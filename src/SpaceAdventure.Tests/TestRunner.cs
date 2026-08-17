@@ -142,6 +142,7 @@ internal static partial class TestRunner
         ("World_Eva_Jetpack_ExhaustsFuelThenKeepsDriftingAtLastVelocity", World_Eva_Jetpack_ExhaustsFuelThenKeepsDriftingAtLastVelocity),
         ("World_Eva_AutoReattachToShip_WhenDriftingBack", World_Eva_AutoReattachToShip_WhenDriftingBack),
         ("World_Eva_ReenterShip_ReturnsInsideAtAirlockChamber", World_Eva_ReenterShip_ReturnsInsideAtAirlockChamber),
+        ("World_Weld_SurvivesAnEvaRoundTripWithoutLosingUnrelatedCharge", World_Weld_SurvivesAnEvaRoundTripWithoutLosingUnrelatedCharge),
         ("World_Rack_DragFromInventory_StowsItem", World_Rack_DragFromInventory_StowsItem),
         ("World_Rack_DropOntoOccupiedSlot_SwapsTheTwo", World_Rack_DropOntoOccupiedSlot_SwapsTheTwo),
         ("World_Rack_AwayFromTheRack_MoveIsRefused", World_Rack_AwayFromTheRack_MoveIsRefused),
@@ -246,6 +247,9 @@ internal static partial class TestRunner
         ("World_Recruiting_MedicBotLeavesHealthyCrewAlone", World_Recruiting_MedicBotLeavesHealthyCrewAlone),
         ("World_Recruiting_EngineerBotFeedsUnpoweredSystems", World_Recruiting_EngineerBotFeedsUnpoweredSystems),
         ("World_Recruiting_CaptainBotStabilizesAbandonedHelm", World_Recruiting_CaptainBotStabilizesAbandonedHelm),
+        ("World_StarSystem_GalaxyHasMoreThanOneSystemFromTheStart", World_StarSystem_GalaxyHasMoreThanOneSystemFromTheStart),
+        ("World_StarSystem_FlyToWarpPointThenJumpToOtherSystem", World_StarSystem_FlyToWarpPointThenJumpToOtherSystem),
+        ("World_StarSystem_WarpDoesNothingWithoutBeingAtTheWarpPoint", World_StarSystem_WarpDoesNothingWithoutBeingAtTheWarpPoint),
     };
 
     public static int Run()
