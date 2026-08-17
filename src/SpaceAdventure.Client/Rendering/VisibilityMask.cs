@@ -25,10 +25,6 @@ public sealed class VisibilityMask : IDisposable
         AlphaDestinationBlend = Blend.One,
     };
 
-    // Uniform rays on top of the corner rays: they round off the light's outer rim where no wall
-    // is in the way (a corner sweep alone would give a polygon with long straight chords there).
-    private const int ArcSamples = 72;
-    private const float CornerNudge = 0.0008f;
     private const float FalloffStart = 0.72f; // fraction of the radius where the light starts fading
 
     private readonly GraphicsDevice _device;
@@ -79,7 +75,7 @@ public sealed class VisibilityMask : IDisposable
         var span = full ? MathF.PI * 2f : halfAngleDegrees * 2f * MathF.PI / 180f;
         var start = full ? 0f : baseAngle - span / 2f;
 
-        CollectRayOffsets(walls, eye, start, span, full);
+        ShadowCast.CollectRayOffsets(_offsets, walls, eye, start, span, full);
         BuildTriangles(walls, eye, start, radius, origin, full);
     }
 
@@ -93,34 +89,13 @@ public sealed class VisibilityMask : IDisposable
         spriteBatch.End();
     }
 
-    // Angles are kept as offsets from the sweep's start so a cone and a full circle sort the same
-    // way and never wrap in the middle of the fan.
-    private void CollectRayOffsets(IReadOnlyList<WallSegment> walls, Vector2 eye, float start, float span, bool full)
+    // Draws the mask's own render target as-is, with whatever blend state the caller has already
+    // set up - used by RoomLighting to fold the player's own sight into the combined light/sight
+    // mask via a Max blend instead of this class's own multiply-onto-backbuffer Composite.
+    public void DrawRaw(SpriteBatch spriteBatch)
     {
-        _offsets.Clear();
-        for (var i = 0; i <= ArcSamples; i++)
-            _offsets.Add(span * i / ArcSamples);
-
-        foreach (var wall in walls)
-        {
-            AddCorner(wall.Ax - eye.X, wall.Ay - eye.Y, start, span, full);
-            AddCorner(wall.Bx - eye.X, wall.By - eye.Y, start, span, full);
-        }
-
-        _offsets.Sort();
-    }
-
-    private void AddCorner(float dx, float dy, float start, float span, bool full)
-    {
-        var offset = Wrap(MathF.Atan2(dy, dx) - start);
-        if (!full && offset > span)
-            return;
-
-        if (offset > CornerNudge)
-            _offsets.Add(offset - CornerNudge);
-        _offsets.Add(offset);
-        if (full || offset + CornerNudge <= span)
-            _offsets.Add(offset + CornerNudge);
+        if (_target is not null)
+            spriteBatch.Draw(_target, Vector2.Zero, Color.White);
     }
 
     private void BuildTriangles(IReadOnlyList<WallSegment> walls, Vector2 eye, float start, float radius,
@@ -149,7 +124,7 @@ public sealed class VisibilityMask : IDisposable
     {
         var angle = start + offset;
         var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
-        var distance = Cast(eye, direction, walls, radius);
+        var distance = ShadowCast.Cast(eye, direction, walls, radius);
         var point = eye + direction * distance;
 
         var shade = Falloff(distance / radius);
@@ -166,33 +141,6 @@ public sealed class VisibilityMask : IDisposable
             return 1f;
         var fade = 1f - MathHelper.Clamp((t - FalloffStart) / (1f - FalloffStart), 0f, 1f);
         return fade * fade;
-    }
-
-    // Nearest wall the ray meets, or maxDistance if it reaches that far unobstructed.
-    private static float Cast(Vector2 eye, Vector2 direction, IReadOnlyList<WallSegment> walls, float maxDistance)
-    {
-        var best = maxDistance;
-        foreach (var wall in walls)
-        {
-            var sx = wall.Bx - wall.Ax;
-            var sy = wall.By - wall.Ay;
-            var denominator = direction.X * sy - direction.Y * sx;
-            if (MathF.Abs(denominator) < 1e-6f)
-                continue;
-
-            var qx = wall.Ax - eye.X;
-            var qy = wall.Ay - eye.Y;
-            var t = (qx * sy - qy * sx) / denominator;
-            if (t <= 1e-4f || t >= best)
-                continue;
-
-            var u = (qx * direction.Y - qy * direction.X) / denominator;
-            if (u < -1e-4f || u > 1f + 1e-4f)
-                continue;
-
-            best = t;
-        }
-        return best;
     }
 
     private void Rasterize(Matrix renderScale)
@@ -239,13 +187,6 @@ public sealed class VisibilityMask : IDisposable
     {
         if (_vertices.Length < needed)
             Array.Resize(ref _vertices, needed * 2);
-    }
-
-    private static float Wrap(float angle)
-    {
-        const float twoPi = MathF.PI * 2f;
-        angle %= twoPi;
-        return angle < 0 ? angle + twoPi : angle;
     }
 
     public void Dispose()

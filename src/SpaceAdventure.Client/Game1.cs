@@ -93,6 +93,8 @@ public partial class Game1 : Game
     private StationRenderer _stationRenderer = null!;
     private BoardingRenderer _boardingRenderer = null!;
     private VisibilityMask _visibility = null!;
+    private RoomLighting _roomLighting = null!;
+    private bool _roomLightingReady;
     private RackPanel _rackPanel = null!;
     private ConnectionsPanel _connectionsPanel = null!;
     private SlotRef? _dragFrom;
@@ -228,6 +230,7 @@ public partial class Game1 : Game
         _stationRenderer = new StationRenderer(_shipRenderer, GraphicsDevice, _font);
         _boardingRenderer = new BoardingRenderer(_shipRenderer, GraphicsDevice, _font);
         _visibility = new VisibilityMask(GraphicsDevice);
+        _roomLighting = new RoomLighting(GraphicsDevice);
         _rackPanel = new RackPanel(GraphicsDevice, _font);
         _connectionsPanel = new ConnectionsPanel(_font);
         _existingSave = SaveStore.Load();
@@ -452,9 +455,11 @@ public partial class Game1 : Game
     // narrow forward cone it always had (game_design.md section 2); unsuited the light is all-round
     // but still bounded, so a corridor reads as a corridor rather than the whole deck plan.
     // Returns false for the views that replace the scene entirely (map/wiring/helm) - nothing to
-    // mask there.
-    private bool BuildVisibilityMask(WorldSnapshot snapshot)
+    // mask there. Also builds the room-lighting mask (_roomLightingReady) alongside the sight mask,
+    // over the same walls/origin - the two share every input except what they do with it.
+    private bool BuildVisibilityMask(WorldSnapshot snapshot, float totalSeconds)
     {
+        _roomLightingReady = false;
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         if (me is null || me.IsAtHelm || _openBlock.Kind is BlockKind.Navigation)
             return false;
@@ -469,6 +474,8 @@ public partial class Game1 : Game
         List<WallSegment> walls;
         Vector2 origin;
         Vector2 eye;
+        List<PointLight> lights;
+        Color floor;
 
         if (me.OnEnemyShip)
         {
@@ -478,6 +485,10 @@ public partial class Game1 : Game
             walls = Occluders.Build(snapshot.EnemyShipRooms, gaps);
             origin = ComputeStationCamera(me);
             eye = new Vector2(me.X, me.Y);
+            // A boarded ship is a hostile hull running on its own damaged grid, not the player's -
+            // dim, reddish, and flickering rather than tied to the player's own power state.
+            lights = BuildEnemyShipLights(snapshot.EnemyShipRooms, totalSeconds);
+            floor = EnemyShipFloor;
         }
         else
         {
@@ -491,7 +502,8 @@ public partial class Game1 : Game
             // While docked the station's compartments are part of the same layout, in the same
             // coordinates - its walls block the view exactly like the ship's own.
             var rooms = snapshot.Rooms;
-            if (snapshot.Voyage.Phase == VoyagePhase.Station)
+            var docked = snapshot.Voyage.Phase == VoyagePhase.Station;
+            if (docked)
             {
                 foreach (var door in snapshot.StationDoors)
                     gaps.Add(Occluders.ToGap(door));
@@ -503,6 +515,14 @@ public partial class Game1 : Game
             var camera = ComputeCamera(snapshot, me);
             origin = camera.Origin;
             eye = new Vector2(camera.Anchor.X, camera.Anchor.Y);
+
+            var mood = ComputeShipPowerMood(snapshot);
+            lights = BuildShipRoomLights(snapshot.Rooms, mood.PowerFraction, snapshot.Power, totalSeconds);
+            // A docked station has its own external power - always lit regardless of what shape the
+            // player's own ship's grid is in.
+            if (docked)
+                AddStationLights(lights, snapshot.StationRooms);
+            floor = mood.Floor;
         }
 
         var radius = me.WearingSuit ? SuitVisionRadius : OpenVisionRadius;
@@ -513,7 +533,95 @@ public partial class Game1 : Game
         if (me.IsOutside)
             facing = ShipLocalFrame.ToLocalDirection(facing, snapshot.ShipField.RotationDegrees);
         var ambient = me.WearingSuit ? SuitAmbientRadius : 0f;
-        return _visibility.Build(walls, eye, new Vector2(facing.X, facing.Y), radius, halfAngle, ambient, origin, _renderScale);
+        var sightReady = _visibility.Build(walls, eye, new Vector2(facing.X, facing.Y), radius, halfAngle, ambient, origin, _renderScale);
+        _roomLightingReady = _roomLighting.Build(walls, lights, floor, origin, _renderScale);
+        // Has to happen here, before the backbuffer is touched - see MergeSight's own comment.
+        if (_roomLightingReady && sightReady)
+            _roomLighting.MergeSight(_spriteBatch, _visibility);
+        return sightReady;
+    }
+
+    // Never above ~92% brightness even at full power - room art is already painted as if lit, so
+    // this only has to darken things down from there, never brighten past the original.
+    private static readonly Color PoweredFloor = new(232, 236, 244);
+    // Dark and red rather than plain black: an unpowered room still has to read as a place (and as
+    // an emergency, not a void) once the player's own suit lamp picks it out.
+    private static readonly Color UnpoweredFloor = new(46, 16, 14);
+    private static readonly Color EnemyShipFloor = new(22, 14, 16);
+
+    private readonly record struct ShipPowerMood(float PowerFraction, Color Floor);
+
+    // How lit the ship's own lamps/scanner/airlocks are (the "Secondary" power slider,
+    // game_design.md section 1) - the slider's own allocation share of the reactor's rated output,
+    // scaled down further if the reactor isn't actually delivering that much (low fuel, damage) or
+    // the Secondary system itself is damaged (PowerGrid always zeroes a damaged system's output).
+    private static ShipPowerMood ComputeShipPowerMood(WorldSnapshot snapshot)
+    {
+        var damaged = snapshot.SystemStates.FirstOrDefault(s => s.System == PowerSystemId.Secondary)?.Damaged ?? false;
+        var maxOutput = snapshot.Power.ReactorMaxOutput;
+        var allocFraction = maxOutput > 0f && snapshot.Power.Allocated.TryGetValue(PowerSystemId.Secondary, out var allocated)
+            ? MathHelper.Clamp(allocated / maxOutput, 0f, 1f)
+            : 0f;
+        var outputFraction = maxOutput > 0f ? MathHelper.Clamp(snapshot.Power.ReactorOutput / maxOutput, 0f, 1f) : 0f;
+        var fraction = damaged ? 0f : allocFraction * outputFraction;
+        return new ShipPowerMood(fraction, Color.Lerp(UnpoweredFloor, PoweredFloor, fraction));
+    }
+
+    // One lamp per compartment, tinted with the same department colour RoomDecor paints the floor
+    // with, plus the reactor's own glow (present even with the lights off, as long as it's actually
+    // producing power) - flickering once its fuel runs critically low.
+    private static List<PointLight> BuildShipRoomLights(IReadOnlyList<Room> rooms, float powerFraction, PowerState power, float totalSeconds)
+    {
+        var lights = new List<PointLight>(rooms.Count + 1);
+        var lampIntensity = MathHelper.Lerp(0.05f, 0.55f, powerFraction);
+        foreach (var room in rooms)
+        {
+            var tint = Color.Lerp(Color.White, RoomDecor.Accent(room.Id), 0.22f);
+            var radius = MathF.Max(room.Width, room.Height) * 0.9f + 1.5f;
+            lights.Add(new PointLight(new Vector2(room.Center.X, room.Center.Y), radius, tint * lampIntensity));
+        }
+
+        var reactorRoom = rooms.FirstOrDefault(r => r.Id.Contains("reactor") || r.Id.Contains("engine"));
+        if (reactorRoom is not null && power.ReactorMaxOutput > 0f)
+        {
+            var outputFraction = MathHelper.Clamp(power.ReactorOutput / power.ReactorMaxOutput, 0f, 1f);
+            var fuelFraction = power.ReactorMaxFuel > 0f ? power.ReactorFuel / power.ReactorMaxFuel : 1f;
+            var flicker = fuelFraction < 0.15f
+                ? 0.7f + 0.3f * MathF.Sin(totalSeconds * 17f) * MathF.Sin(totalSeconds * 6.1f)
+                : 1f;
+            var radius = MathF.Max(reactorRoom.Width, reactorRoom.Height) * 0.75f + 1f;
+            lights.Add(new PointLight(new Vector2(reactorRoom.Center.X, reactorRoom.Center.Y), radius,
+                new Color(255, 150, 70) * (0.35f * outputFraction * flicker)));
+        }
+
+        return lights;
+    }
+
+    // A docked station runs on its own power, not the ship's - always lit, no flicker.
+    private static void AddStationLights(List<PointLight> lights, IReadOnlyList<Room> stationRooms)
+    {
+        foreach (var room in stationRooms)
+        {
+            var radius = MathF.Max(room.Width, room.Height) * 0.95f + 1.5f;
+            lights.Add(new PointLight(new Vector2(room.Center.X, room.Center.Y), radius, Color.White * 0.6f));
+        }
+    }
+
+    // A boarded enemy hull: no power state to read (it isn't the player's grid), so a fixed dim,
+    // uneven red emergency light stands in for "this ship has taken damage and is running dark".
+    // The sine offsets are seeded from room position so neighbouring compartments don't flicker in
+    // lockstep.
+    private static List<PointLight> BuildEnemyShipLights(IReadOnlyList<Room> rooms, float totalSeconds)
+    {
+        var lights = new List<PointLight>(rooms.Count);
+        foreach (var room in rooms)
+        {
+            var flicker = 0.55f + 0.25f * MathF.Sin(totalSeconds * 9f + room.X) * MathF.Sin(totalSeconds * 2.3f + room.Y);
+            var radius = MathF.Max(room.Width, room.Height) * 0.85f + 1.2f;
+            lights.Add(new PointLight(new Vector2(room.Center.X, room.Center.Y), radius,
+                new Color(210, 90, 70) * MathHelper.Clamp(flicker, 0.2f, 0.85f)));
+        }
+        return lights;
     }
 
 
@@ -527,10 +635,11 @@ public partial class Game1 : Game
             return;
         }
 
-        // The line-of-sight mask renders into its own target, which has to happen before the
-        // backbuffer is cleared and drawn into - swapping render targets discards whatever the
-        // backbuffer already held.
-        var maskReady = _client.LatestSnapshot is { } maskSnapshot && BuildVisibilityMask(maskSnapshot);
+        // The line-of-sight and room-lighting masks render into their own targets, which has to
+        // happen before the backbuffer is cleared and drawn into - swapping render targets discards
+        // whatever the backbuffer already held.
+        var totalSeconds = (float)gameTime.TotalGameTime.TotalSeconds;
+        var maskReady = _client.LatestSnapshot is { } maskSnapshot && BuildVisibilityMask(maskSnapshot, totalSeconds);
 
         GraphicsDevice.Clear(Color.Black);
 
@@ -562,7 +671,6 @@ public partial class Game1 : Game
                 var (origin, hullCenter, _) = myCharacter is not null
                     ? ComputeCamera(snapshot, myCharacter)
                     : (WorldViewportOrigin, ShipLocalFrame.GetHullCenter(snapshot.Rooms), Vec2.Zero);
-                var totalSeconds = (float)gameTime.TotalGameTime.TotalSeconds;
                 // Behind the periscope you are outside the ship looking at it, so it's drawn closed
                 // up - and so is the station it's docked to, for the same reason.
                 var fromOutside = MannedTurret(snapshot) is not null;
@@ -582,9 +690,14 @@ public partial class Game1 : Game
         }
         _spriteBatch.End();
 
-        // Multiplied over the finished scene, before any HUD is drawn: everything the player has
-        // no line of sight to becomes absolutely black, while the panels below stay readable.
-        if (maskReady)
+        // Multiplied over the finished scene, before any HUD is drawn. Room lighting already has
+        // the player's own sight folded into it (MergeSight, called earlier - a lit room stays lit
+        // beyond lamp reach; the player's own lamp still works with the ship's power out), so this
+        // is a single multiply with no render target switching. If room lighting didn't build for
+        // some reason but sight did, sight still applies on its own rather than nothing at all.
+        if (_roomLightingReady)
+            _roomLighting.Composite(_spriteBatch);
+        else if (maskReady)
             _visibility.Composite(_spriteBatch);
 
         _spriteBatch.Begin(transformMatrix: _renderScale);
