@@ -77,7 +77,7 @@ public sealed partial class World
         if (target.Kind == GalaxyPointKind.HostileSector)
         {
             _travelTargetPointId = null;
-            _battleFaction = target.Faction;
+            _battleFaction = OwnerOf(target.Id);
             _battleSectorPointId = target.Id;
             // Battle happens in real field space, so the enemy hulls are somewhere you can
             // physically fly to, shoot at and board (World.Boarding.cs) - not an abstract HP bar.
@@ -86,7 +86,9 @@ public sealed partial class World
             _shipThrust = Vec2.Zero;
             _shipRotationDegrees = 0f;
             _shipAutoStabilize = true;
-            SpawnEnemySquadron(Math.Max(1, target.SquadronSize)); // needs the ship parked first: they spawn off its bow
+            // needs the ship parked first: they spawn off its bow. Size adjusts with standing
+            // (World.Factions.cs) - hated crews draw a bigger welcome, loved ones a smaller one.
+            SpawnEnemySquadron(Math.Max(1, target.SquadronSize + SquadronSizeAdjustment(OwnerOf(target.Id))));
             ResetEnemyCrew(); // a fresh enemy ship means a fresh crew to board through
             _crewShipId = BoardableEnemy?.Id;
             Phase = VoyagePhase.Battle;
@@ -173,6 +175,7 @@ public sealed partial class World
         _breachedWallBlockIds.Clear();
         foreach (var room in Ship.Rooms)
             _roomOxygen[room.Id] = FullOxygen;
+        RegenerateRecruitRoster();
     }
 
     // From the navigation console: pick a destination. Ignored mid-fight (can't flee to the

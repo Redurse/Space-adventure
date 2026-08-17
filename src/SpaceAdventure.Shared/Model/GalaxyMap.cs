@@ -31,6 +31,9 @@ public sealed class GalaxyMap
             new GalaxyPoint("sector-delta", "Сектор Дельта", 80f, 25f, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
             new GalaxyPoint("trade-station", "Торговая станция", 90f, 60f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
             new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 60f, 15f, GalaxyPointKind.AsteroidField),
+            // The Miners' Guild (game_design.md section 12, Phase 4 - MinersGuild) sits right by
+            // the belt it works, staying out of the Consortium/FreeFleet fight entirely.
+            new GalaxyPoint("mining-outpost", "Форпост старателей", 72f, 18f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
         };
 
         return new GalaxyMap(points, "home-station");

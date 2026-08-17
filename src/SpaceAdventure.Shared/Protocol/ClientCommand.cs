@@ -21,18 +21,13 @@ namespace SpaceAdventure.Shared.Protocol;
 // PurchaseUpgradeTrack is edge-triggered like BuyItemType (null = no click that frame) — buying
 // the next level of a ship upgrade from the station's Mechanic (game_design.md section 9, M13
 // scope), same docked-only gate.
-// WireLinkInteractId is edge-triggered like BuyItemType (null = no click that frame) — clicking a
-// wire on the wiring panel schematic (game_design.md section 1, M14). The server picks the action
-// from whatever's currently held: a wrench/screwdriver repairs whichever half (primary or backup)
-// is damaged, a WireSpool lays a backup if the link doesn't already have one. No proximity check —
-// same reasoning as the MedKit (it's a panel interaction, not a physical station).
 // HelmThrottle/HelmTurn are the helm's flight controls ([-1,1] each, held rather than edge-triggered —
 // game_design.md Phase 3, M15), sent continuously like PowerDirection; only applied server-side
 // while the sender is actually manning the helm (World.ShipField.cs), and otherwise ignored rather
 // than zeroing anything, so the last commanded thrust keeps being applied after standing up.
 // HelmStabilizePressed is edge-triggered like InteractPressed — engages auto-stabilize, which
 // kills the ship's drift and holds position until a new thrust vector is given.
-// DoorToggleId is edge-triggered like WireLinkInteractId (null = no click that frame) — clicking
+// DoorToggleId is edge-triggered like BuyItemType (null = no click that frame) — clicking
 // a door (interior Door or an AirlockOuterDoor to vacuum) flips it open/closed (game_design.md
 // Phase 3, M16). No proximity check server-side, same trusted-client reasoning as the other
 // click-driven fields above.
@@ -56,7 +51,6 @@ public sealed record ClientCommand(
     bool AcceptCargoQuestPressed = false,
     bool TurnInCargoQuestPressed = false,
     ShipUpgradeTrack? PurchaseUpgradeTrack = null,
-    string? WireLinkInteractId = null,
     // The helm flies the ship the way you'd expect to fly one: HelmThrottle is the engines along
     // the nose (positive ahead, negative astern), HelmTurn swings the bow (-1 left, +1 right).
     // Heading is something the pilot holds, not something derived from where the ship happens to be
@@ -93,4 +87,44 @@ public sealed record ClientCommand(
     int? DetachTankSlot = null,
     // Held, not edge-triggered: the cutter burns for as long as the button is down, aimed along
     // LookX/LookY. Cutting is a continuous action against a block of ore, not a click on a marker.
-    bool CutHeld = false);
+    bool CutHeld = false,
+    // Which candidate on the Recruiter's current roster to hire (World.Recruiting.cs), edge-
+    // triggered like DoorToggleId - null means no click that frame. Docked-only, same gate
+    // as the rest of the station NPCs.
+    string? HireCandidateId = null,
+    // Held, not edge-triggered, same as CutHeld: the welding tool burns for as long as the button
+    // is down, aimed along LookX/LookY, and repairs whatever breached hull block the flame passes
+    // through (World.Welding.cs).
+    bool WeldHeld = false,
+    // Physically laying a wire (World.Wiring.cs's HandlePinInteract, M20): edge-triggered like
+    // WireLinkInteractId used to be, but - unlike that trusted panel click - server-checked for
+    // proximity, since this is a physical in-world interaction, not a HUD panel. Not laying yet:
+    // this pin becomes the anchor. Laying, same pin clicked again: cancels. Laying, a different
+    // compatible pin clicked: completes the wire and consumes a WireSpool. Laying, a different
+    // incompatible/occupied pin clicked: restarts the lay from that pin instead of dead-ending.
+    PinRef? PinInteractId = null,
+    // Edge-triggered explicit cancel for a pending lay - lets the client offer an out (e.g. a
+    // right-click) without having to walk back to the anchor pin and click it again.
+    bool WireLayCancelPressed = false,
+    // Which installed Relay component to toggle (World.ComponentLogic.cs, M21) - edge-triggered
+    // like DoorToggleId, same no-proximity-check trusted-client convention.
+    string? ComponentOperateId = null,
+    // Which ComponentMount was clicked (World.ComponentMounts.cs, M23) - edge-triggered like
+    // DoorToggleId. What actually happens (install/uninstall/operate the installed Relay) depends
+    // on what's already there and what the player is holding, resolved server-side.
+    string? ComponentMountInteractId = null,
+    // A drag that ended over empty space instead of a slot (World.Storage.cs's TryDropItem) - the
+    // item falls to the floor at the character's own feet as a DroppedItem rather than silently
+    // snapping back. Server re-validates reachability itself, same trust level as MoveItemFrom/To.
+    SlotRef? DropItemFrom = null,
+    // Click-to-pick-up a DroppedItem (World.Mining.cs's TryPickupDroppedItem) - works in EVA, ship
+    // interior, and station interior alike; server-checked for proximity and matching room/context,
+    // same trust level as PinInteractId. Additive alongside EVA's existing F-key pickup, not a
+    // replacement for it.
+    string? PickupDroppedItemId = null,
+    // Edge-triggered like the other two quest actions above - drops the active quest without
+    // turning it in, costing standing with whoever issued it (World.Quests.cs, World.Factions.cs).
+    // Unlike accept/turn-in, needs no docked gate: giving up is something you can decide mid-flight.
+    // Appended at the end rather than next to AcceptCargoQuestPressed/TurnInCargoQuestPressed so it
+    // doesn't shift every positional argument after it at GameClient.cs's construction call site.
+    bool AbandonQuestPressed = false);

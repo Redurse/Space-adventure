@@ -27,4 +27,18 @@ public sealed record CharacterState(
     float? SuitTank = null,
     float? CutterTank = null,
     // The cutting flame is lit this tick: what the client draws, and what other players see.
-    bool Cutting = false);
+    bool Cutting = false,
+    // Hired crew (World.Recruiting.cs) - null Role means an ordinary player. The client draws a bot
+    // with its given name and role instead of another anonymous crew member.
+    bool IsBot = false,
+    string? BotName = null,
+    CrewRole? Role = null,
+    // Same story as SuitTank/CutterTank above, for the tank socketed into a held welding tool
+    // (WeldingTankDefinitions). Welding is lit this tick: what the client draws (a yellow-orange
+    // flame, distinct from the cutter's blue one) and what other players see.
+    float? WelderTank = null,
+    bool Welding = false,
+    // Which pin a wire-lay is anchored at, null when not laying (World.Wiring.cs's
+    // HandlePinInteract) - lets every client, not just this one, draw the trailing wire from that
+    // pin to wherever this character currently stands.
+    PinRef? LayingWireFromPin = null);

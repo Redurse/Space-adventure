@@ -16,9 +16,12 @@ public sealed partial class Station
     {
         // Security always comes last so it stands in the room furthest from the dock - a thief
         // gets a few rooms of warning rather than walking straight into the guard.
-        StationKind.Trade => new[] { NpcKind.Trader, NpcKind.Administrator, NpcKind.Mechanic, NpcKind.Security },
-        StationKind.Shipyard => new[] { NpcKind.Trader, NpcKind.Mechanic, NpcKind.Shipwright, NpcKind.Security },
-        _ => new[] { NpcKind.Administrator, NpcKind.Trader, NpcKind.Security }, // Outpost: the bare minimum
+        StationKind.Trade => new[] { NpcKind.Trader, NpcKind.Administrator, NpcKind.Mechanic, NpcKind.Recruiter, NpcKind.Security },
+        StationKind.Shipyard => new[] { NpcKind.Trader, NpcKind.Mechanic, NpcKind.Shipwright, NpcKind.Recruiter, NpcKind.Security },
+        StationKind.Mining => new[] { NpcKind.Trader, NpcKind.Administrator, NpcKind.Recruiter, NpcKind.Security },
+        // Outpost: the bare minimum, but crew can be hired anywhere - a fresh captain with an empty
+        // ship and no way to staff it would be stuck until it happened to reach a bigger station.
+        _ => new[] { NpcKind.Administrator, NpcKind.Trader, NpcKind.Recruiter, NpcKind.Security },
     };
 
     // Station property left out in the open, one crate per service room (game_design.md section 10
@@ -41,6 +44,7 @@ public sealed partial class Station
         NpcKind.Mechanic => ("Мастерская", "Механик станции"),
         NpcKind.Shipwright => ("Верфь", "Корабельный мастер"),
         NpcKind.Security => ("Пост охраны", "Охранник"),
+        NpcKind.Recruiter => ("Кадровое агентство", "Кадровик"),
         _ => ("Отсек", "Сотрудник"),
     };
 

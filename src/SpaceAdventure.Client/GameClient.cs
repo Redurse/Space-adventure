@@ -36,7 +36,6 @@ public sealed class GameClient
         bool acceptCargoQuestPressed = false,
         bool turnInCargoQuestPressed = false,
         ShipUpgradeTrack? purchaseUpgradeTrack = null,
-        string? wireLinkInteractId = null,
         float helmThrustX = 0,
         float helmThrustY = 0,
         bool helmStabilizePressed = false,
@@ -54,8 +53,17 @@ public sealed class GameClient
         int? attachTankFromSlot = null,
         int? attachTankToSlot = null,
         int? detachTankSlot = null,
-        bool cutHeld = false) =>
-        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, wireLinkInteractId, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld));
+        bool cutHeld = false,
+        string? hireCandidateId = null,
+        bool weldHeld = false,
+        PinRef? pinInteractId = null,
+        bool wireLayCancelPressed = false,
+        string? componentOperateId = null,
+        string? componentMountInteractId = null,
+        SlotRef? dropItemFrom = null,
+        string? pickupDroppedItemId = null,
+        bool abandonQuestPressed = false) =>
+        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed));
 
     public void PollSnapshots()
     {

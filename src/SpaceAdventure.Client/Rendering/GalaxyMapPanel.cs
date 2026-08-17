@@ -44,6 +44,16 @@ public sealed class GalaxyMapPanel
         return new Rectangle((int)center.X - PointMarkerSize / 2, (int)center.Y - PointMarkerSize / 2, PointMarkerSize, PointMarkerSize);
     }
 
+    // Whose territory a point sits in, at a glance, independent of the Station/HostileSector fill
+    // color above - drawn as a border rather than replacing the fill so both facts stay visible on
+    // the same marker instead of one hiding the other.
+    private static Color FactionColor(FactionId faction) => faction switch
+    {
+        FactionId.Consortium => Color.CornflowerBlue,
+        FactionId.FreeFleet => Color.Crimson,
+        _ => Color.Gray,
+    };
+
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin)
     {
         spriteBatch.DrawString(_font, "Карта галактики - клик по точке, чтобы проложить курс", panelOrigin + new Vector2(0, -24),
@@ -59,8 +69,9 @@ public sealed class GalaxyMapPanel
             var color = isTarget ? Color.Gold : point.Kind == GalaxyPointKind.Station ? Color.SteelBlue : Color.OrangeRed;
 
             spriteBatch.Draw(_pixel, rect, color);
+            DrawRectOutline(spriteBatch, new Rectangle(rect.X - 2, rect.Y - 2, rect.Width + 4, rect.Height + 4), FactionColor(point.Faction), 2);
             if (isDocked)
-                DrawRectOutline(spriteBatch, new Rectangle(rect.X - 3, rect.Y - 3, rect.Width + 6, rect.Height + 6), Color.LimeGreen, 2);
+                DrawRectOutline(spriteBatch, new Rectangle(rect.X - 5, rect.Y - 5, rect.Width + 10, rect.Height + 10), Color.LimeGreen, 2);
 
             var kindLabel = point.Kind == GalaxyPointKind.Station ? "станция" : "враждебный сектор";
             spriteBatch.DrawString(_font, $"{point.Name} ({kindLabel})", new Vector2(rect.X - 10, rect.Bottom + 2),
@@ -69,6 +80,28 @@ public sealed class GalaxyMapPanel
 
         var shipCenter = mapOrigin + new Vector2(snapshot.Voyage.ShipMapPosition.X, snapshot.Voyage.ShipMapPosition.Y) * PixelsPerUnit;
         spriteBatch.Draw(_pixel, new Rectangle((int)shipCenter.X - 4, (int)shipCenter.Y - 4, 8, 8), Color.White);
+
+        DrawFactionStandings(spriteBatch, snapshot.FactionStandings, panelOrigin + new Vector2(700, 0));
+    }
+
+    // The number and its two known thresholds (FactionDefinitions.StandingLabel) already tell the
+    // whole story - no separate legend needed for what "42" or "враждебны" means.
+    private void DrawFactionStandings(SpriteBatch spriteBatch, IReadOnlyList<FactionStandingState> standings, Vector2 origin)
+    {
+        spriteBatch.DrawString(_font, "Отношения фракций", origin, Color.Yellow, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        for (var i = 0; i < standings.Count; i++)
+        {
+            var standing = standings[i];
+            var label = FactionDefinitions.StandingLabel(standing.Standing);
+            var color = standing.Standing >= FactionDefinitions.FriendlyThreshold ? Color.LimeGreen
+                : standing.Standing <= FactionDefinitions.HostileThreshold ? Color.OrangeRed
+                : Color.LightGray;
+            var row = origin + new Vector2(0, 22 + i * 20);
+            spriteBatch.Draw(_pixel, new Rectangle((int)row.X, (int)row.Y + 2, 10, 10), FactionColor(standing.Faction));
+            spriteBatch.DrawString(_font, $"{standing.Name}: {label} ({standing.Standing})", row + new Vector2(16, 0),
+                color, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
     }
 
     private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)

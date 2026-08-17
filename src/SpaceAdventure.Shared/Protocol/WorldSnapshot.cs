@@ -16,7 +16,6 @@ public sealed record WorldSnapshot(
     IReadOnlyList<TurretState> TurretStates,
     IReadOnlyList<AmmoStorage> AmmoStorages,
     IReadOnlyList<SuitLocker> SuitLockers,
-    IReadOnlyList<ToolStation> ToolStations,
     IReadOnlyList<ShipSystemDevice> SystemDevices,
     IReadOnlyList<ShipSystemState> SystemStates,
     ReactorBlock ReactorBlock,
@@ -24,10 +23,11 @@ public sealed record WorldSnapshot(
     NavigationConsole NavigationConsole,
     IReadOnlyList<GalaxyPoint> GalaxyPoints,
     AirlockConsole AirlockConsole,
-    WiringTerminal WiringTerminal,
     HelmConsole HelmConsole,
-    // The ship's cargo shelving and what's currently on it (game_design.md section 13).
-    StorageRack StorageRack,
+    // The ship's cargo shelving (now two per hull, World.ShipPurchase.cs's InitializeRackSlots) and
+    // what's currently on it - one flat array covering every shelf, RackFor's own
+    // "index / StorageRack.Capacity" is what maps a slot back to which physical shelf it's on.
+    IReadOnlyList<StorageRack> StorageRacks,
     IReadOnlyList<ItemType?> RackSlots,
     IReadOnlyList<StationNpc> StationNpcs,
     IReadOnlyList<StationCrate> StationCrates,
@@ -76,11 +76,17 @@ public sealed record WorldSnapshot(
     int Credits,
     Quest? ActiveQuest,
     IReadOnlyDictionary<ShipUpgradeTrack, int> ShipUpgradeLevels,
-    IReadOnlyList<WireNode> WireNodes,
-    IReadOnlyList<WireLink> WireLinks,
-    IReadOnlyList<WireLinkState> WireLinkStates,
+    IReadOnlyList<Component> Components,
+    IReadOnlyList<ComponentState> ComponentStates,
+    IReadOnlyList<Wire> Wires,
+    IReadOnlyList<WireState> WireStates,
+    IReadOnlyList<ComponentMount> ComponentMounts,
+    IReadOnlyList<ComponentMountState> ComponentMountStates,
     IReadOnlyList<Asteroid> Asteroids,
     IReadOnlyList<OreDeposit> OreDeposits,
     IReadOnlyList<OreDepositState> OreDepositStates,
     IReadOnlyList<DroppedItem> DroppedItems,
-    ShipFieldState ShipField);
+    ShipFieldState ShipField,
+    // Who's currently on offer at the docked station's Recruiter, if it has one (World.Recruiting.cs,
+    // game_design.md section 10) - empty away from a Recruiter or undocked.
+    IReadOnlyList<BotCandidate> RecruitCandidates);

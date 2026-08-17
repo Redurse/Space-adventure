@@ -39,14 +39,14 @@ public sealed partial class World
             return;
         }
 
-        // A "system hit" severs one currently-live wire link (game_design.md section 1, M14)
-        // rather than flipping one flat per-system flag — could be a trunk or a drop, and could
-        // land on a link that already has a backup carrying it (in which case this cuts the
-        // backup instead, see CutWireLink).
-        var liveLinks = WireNetwork.Links.Where(l => IsLinkConnected(l.Id)).ToList();
-        if (liveLinks.Count > 0 && _random.NextDouble() < SystemDamageChance)
+        // A "system hit" severs one currently-intact wire (game_design.md section 1, M14) rather
+        // than flipping one flat per-system flag — could be a trunk or a drop, and could land on a
+        // wire that's reinforcing an already-covered input (in which case the other, still-intact
+        // wire into that same pin keeps it powered - see IsPinPowered).
+        var liveWires = _wires.Where(w => !_wireDamaged[w.Id]).ToList();
+        if (liveWires.Count > 0 && _random.NextDouble() < SystemDamageChance)
         {
-            CutWireLink(liveLinks[_random.Next(liveLinks.Count)].Id);
+            CutWire(liveWires[_random.Next(liveWires.Count)].Id);
             return;
         }
 

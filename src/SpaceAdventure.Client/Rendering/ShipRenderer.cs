@@ -115,8 +115,7 @@ public sealed class ShipRenderer
         foreach (var locker in snapshot.SuitLockers)
             DrawSuitLocker(spriteBatch, locker, origin);
 
-        foreach (var station in snapshot.ToolStations)
-            DrawToolStation(spriteBatch, station, origin);
+        DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.Rooms.Select(r => r.Id), origin, totalSeconds);
 
         foreach (var device in snapshot.SystemDevices)
         {
@@ -132,8 +131,13 @@ public sealed class ShipRenderer
         DrawDistributionBlock(spriteBatch, snapshot.DistributionBlock, openBlock.Kind == BlockKind.Distribution, origin);
         DrawNavigationConsole(spriteBatch, snapshot.NavigationConsole, openBlock.Kind == BlockKind.Navigation, origin);
         DrawAirlockConsole(spriteBatch, snapshot.AirlockConsole, snapshot.Voyage.Phase == VoyagePhase.Station, openBlock.Kind == BlockKind.Station, origin);
-        DrawWiringTerminal(spriteBatch, snapshot.WiringTerminal, openBlock.Kind == BlockKind.Wiring, origin);
-        DrawStorageRack(spriteBatch, snapshot, openBlock.Kind == BlockKind.Rack, origin);
+        for (var rackIndex = 0; rackIndex < snapshot.StorageRacks.Count; rackIndex++)
+        {
+            var rack = snapshot.StorageRacks[rackIndex];
+            var isOpen = openBlock.Kind == BlockKind.Rack && openBlock.TargetComponentId == rack.Id;
+            DrawStorageRack(spriteBatch, rack, rackIndex * StorageRack.Capacity, snapshot, isOpen, origin);
+        }
+        ComponentRenderer.Draw(spriteBatch, _pixel, _font, snapshot, origin, totalSeconds);
         var anyoneAtHelm = snapshot.Characters.Any(c => c.IsAtHelm);
         DrawHelmConsole(spriteBatch, snapshot.HelmConsole, anyoneAtHelm, origin);
 
@@ -153,6 +157,11 @@ public sealed class ShipRenderer
 
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
             FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
+                origin + new Vector2(character.X, character.Y) * PixelsPerUnit,
+                new Vector2(character.FacingX, character.FacingY), totalSeconds);
+
+        foreach (var character in snapshot.Characters.Where(c => c.Welding && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
+            FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel,
                 origin + new Vector2(character.X, character.Y) * PixelsPerUnit,
                 new Vector2(character.FacingX, character.FacingY), totalSeconds);
 
@@ -179,19 +188,27 @@ public sealed class ShipRenderer
     // Shared industrial "panel" look for equipment blocks (game_design.md Phase 3 visual pass) —
     // a beveled face plus four corner rivets, built entirely from the single white pixel texture
     // (this project has no image assets/content pipeline for real sprites).
-    private void DrawPanel(SpriteBatch spriteBatch, Rectangle rect, Color faceColor, Color borderColor, int borderThickness)
+    private void DrawPanel(SpriteBatch spriteBatch, Rectangle rect, Color faceColor, Color borderColor, int borderThickness) =>
+        DrawPanel(spriteBatch, _pixel, rect, faceColor, borderColor, borderThickness);
+
+    // internal + static, with the pixel texture passed explicitly, so ComponentRenderer.cs can draw
+    // the exact same beveled-panel-plus-rivets look for installed components instead of a new art
+    // style from scratch.
+    internal static void DrawPanel(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, Color faceColor, Color borderColor, int borderThickness)
     {
-        spriteBatch.Draw(_pixel, rect, faceColor);
+        spriteBatch.Draw(pixel, rect, faceColor);
         // Bevel: a lighter sliver along the top/left, a darker one along bottom/right.
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, 2), Color.White * 0.18f);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, 2, rect.Height), Color.White * 0.18f);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - 2, rect.Width, 2), Color.Black * 0.35f);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - 2, rect.Y, 2, rect.Height), Color.Black * 0.35f);
-        DrawRectOutline(spriteBatch, rect, borderColor, borderThickness);
-        DrawRivets(spriteBatch, rect);
+        spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, rect.Width, 2), Color.White * 0.18f);
+        spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, 2, rect.Height), Color.White * 0.18f);
+        spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Bottom - 2, rect.Width, 2), Color.Black * 0.35f);
+        spriteBatch.Draw(pixel, new Rectangle(rect.Right - 2, rect.Y, 2, rect.Height), Color.Black * 0.35f);
+        DrawRectOutline(spriteBatch, pixel, rect, borderColor, borderThickness);
+        DrawRivets(spriteBatch, pixel, rect);
     }
 
-    private void DrawRivets(SpriteBatch spriteBatch, Rectangle rect)
+    private void DrawRivets(SpriteBatch spriteBatch, Rectangle rect) => DrawRivets(spriteBatch, _pixel, rect);
+
+    internal static void DrawRivets(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
     {
         const int inset = 3;
         const int size = 2;
@@ -201,7 +218,7 @@ public sealed class ShipRenderer
                      (rect.X + inset, rect.Y + inset), (rect.Right - inset - size, rect.Y + inset),
                      (rect.X + inset, rect.Bottom - inset - size), (rect.Right - inset - size, rect.Bottom - inset - size),
                  })
-            spriteBatch.Draw(_pixel, new Rectangle(x, y, size, size), color);
+            spriteBatch.Draw(pixel, new Rectangle(x, y, size, size), color);
     }
 
     // Alternating yellow/black hazard tape (SS13/Barotrauma convention for anything dangerous:
@@ -246,15 +263,34 @@ public sealed class ShipRenderer
         DrawPanel(spriteBatch, rect, Color.CadetBlue * 0.7f, Color.CadetBlue, 1);
     }
 
-    private void DrawToolStation(SpriteBatch spriteBatch, ToolStation station, Vector2 origin)
+    public const int DroppedItemHitSize = 20;
+
+    // Shared by Draw() and Game1's click-to-pick-up hit-testing, same "one function serves both"
+    // convention GetBlockRect already establishes.
+    public static Rectangle GetDroppedItemRect(DroppedItem dropped, Vector2 origin) =>
+        GetBlockRect(dropped.Position, DroppedItemHitSize, origin);
+
+    // Reused by StationRenderer (constructed with this instance) so a station floor's own drops get
+    // the same look through the same method rather than a second copy of it - FieldRenderer's
+    // DrawDroppedItem is the EVA-space twin of this, same pulsing-diamond idea, different Draw() and
+    // a different coordinate frame entirely, so it isn't shared code, just a shared look.
+    internal void DrawDroppedItems(SpriteBatch spriteBatch, IReadOnlyList<DroppedItem> droppedItems,
+        IEnumerable<string> validRoomIds, Vector2 origin, float totalSeconds)
     {
-        const int size = 16;
-        var center = origin + new Vector2(station.X, station.Y) * PixelsPerUnit;
-        var isWeapon = station.Item is ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle;
-        var color = isWeapon ? Color.DarkRed : Color.DarkKhaki;
-        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
-        DrawPanel(spriteBatch, rect, color * 0.75f, color, 1);
-        spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(station.Item), center + new Vector2(10, -8), color, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        var rooms = validRoomIds as ICollection<string> ?? validRoomIds.ToList();
+        foreach (var dropped in droppedItems)
+        {
+            if (dropped.RoomId is not { } roomId || !rooms.Contains(roomId))
+                continue;
+
+            var center = origin + new Vector2(dropped.X, dropped.Y) * PixelsPerUnit;
+            var pulse = 0.8f + 0.2f * MathF.Sin(totalSeconds * 4f + center.X);
+            const int size = 14;
+            var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
+            DrawPanel(spriteBatch, rect, Color.LightGoldenrodYellow * (0.55f * pulse), Color.LightGoldenrodYellow, 1);
+            spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(dropped.Item), center + new Vector2(9, -7),
+                Color.LightGoldenrodYellow, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
     }
 
     // Physical, damageable system block (game_design.md section 1) — click it to see its
@@ -296,24 +332,21 @@ public sealed class ShipRenderer
         spriteBatch.DrawString(_font, "Э", new Vector2(rect.X + 6, rect.Y + 6), Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
     }
 
-    // Next to the distribution block (game_design.md section 1, M14) — click it to bring up the
-    // wiring schematic.
-    private void DrawWiringTerminal(SpriteBatch spriteBatch, WiringTerminal terminal, bool isOpen, Vector2 origin)
-    {
-        var rect = GetBlockRect(terminal.Position, NormalBlockSize, origin);
-        DrawPanel(spriteBatch, rect, Color.DarkSlateBlue * 0.6f, isOpen ? Color.Gold : Color.MediumSlateBlue, isOpen ? 3 : 2);
-        spriteBatch.DrawString(_font, "Пр", new Vector2(rect.X + 2, rect.Y + 3), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-    }
-
     // Cargo shelving (game_design.md section 13) — click it to open its 30 slots. Shows how full it
     // is at a glance as a row of little filled bars, so you can tell a loaded rack from an empty one
     // without walking over and opening it.
-    private void DrawStorageRack(SpriteBatch spriteBatch, WorldSnapshot snapshot, bool isOpen, Vector2 origin)
+    // offset: where this particular shelf's own 30-slot band starts in the snapshot's flat
+    // RackSlots array (World.Storage.cs's RackFor) - a hull carries two shelves now, so the "how
+    // full" readout has to count only this one's band, not every shelf's items combined.
+    private void DrawStorageRack(SpriteBatch spriteBatch, StorageRack rack, int offset, WorldSnapshot snapshot, bool isOpen, Vector2 origin)
     {
-        var rect = GetBlockRect(snapshot.StorageRack.Position, MediumBlockSize, origin);
+        var rect = GetBlockRect(rack.Position, MediumBlockSize, origin);
         DrawPanel(spriteBatch, rect, Color.Sienna * 0.6f, isOpen ? Color.Gold : Color.Peru, isOpen ? 3 : 2);
 
-        var used = snapshot.RackSlots.Count(s => s is not null);
+        var used = 0;
+        for (var i = 0; i < StorageRack.Capacity; i++)
+            if (offset + i < snapshot.RackSlots.Count && snapshot.RackSlots[offset + i] is not null)
+                used++;
         const int shelves = 3;
         for (var i = 0; i < shelves; i++)
         {
@@ -595,11 +628,17 @@ public sealed class ShipRenderer
             DrawRectOutline(spriteBatch, new Rectangle(rect.X - ringMargin, rect.Y - ringMargin, rect.Width + ringMargin * 2, rect.Height + ringMargin * 2), Color.CadetBlue, 2);
         }
 
-        spriteBatch.Draw(_pixel, rect, Color.OrangeRed * 0.9f);
+        // Hired crew (World.Recruiting.cs) reads as a body of a different colour, not another
+        // anonymous crewmate - the point of hiring one is knowing it's there and doing its job.
+        spriteBatch.Draw(_pixel, rect, character.IsBot ? Color.SteelBlue * 0.9f : Color.OrangeRed * 0.9f);
         // "Helmet": a smaller, lighter square centered on the body reads as a head/visor.
         var helmetSize = Math.Max(4, size / 2);
         var visorColor = character.WearingSuit ? Color.CadetBlue : new Color(255, 220, 190);
         spriteBatch.Draw(_pixel, new Rectangle((int)center.X - helmetSize / 2, (int)center.Y - helmetSize / 2, helmetSize, helmetSize), visorColor);
+
+        if (character.IsBot && character.Role is { } role)
+            spriteBatch.DrawString(_font, $"{character.BotName} ({CrewRoles.Name(role)})", new Vector2(rect.X - 10, rect.Y - 14),
+                Color.LightSkyBlue, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
 
         // Facing notch: a tiny bright square nudged toward FacingX/Y, off the body's edge.
         var facing = new Vector2(character.FacingX, character.FacingY);
@@ -621,11 +660,14 @@ public sealed class ShipRenderer
             spriteBatch.DrawString(_font, "...", new Vector2(rect.X, rect.Bottom + 2), Color.CadetBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
     }
 
-    private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)
+    private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness) =>
+        DrawRectOutline(spriteBatch, _pixel, rect, color, thickness);
+
+    internal static void DrawRectOutline(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, Color color, int thickness)
     {
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
+        spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
+        spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
+        spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
+        spriteBatch.Draw(pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
     }
 }

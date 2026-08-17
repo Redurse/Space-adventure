@@ -71,7 +71,11 @@ public sealed class InventoryPanel
             above ? slotRect.Y - SocketSize - 4 : slotRect.Bottom + StripGap + StripHeight + 3,
             SocketSize, SocketSize);
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 rowOrigin, Vector2 equipOrigin)
+    // hoveredMainSlotIndex: which row slot's tool socket to reveal this frame (Game1's
+    // HoveredToolSlotIndex) - a cutter or welding tool's socket stays hidden until the mouse is
+    // over its slot (or the socket band that then appears above it), so the row doesn't show a
+    // socket under every tool all the time.
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 rowOrigin, Vector2 equipOrigin, int? hoveredMainSlotIndex = null)
     {
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == playerId);
         if (me?.Inventory is not { } inventory)
@@ -83,7 +87,7 @@ public sealed class InventoryPanel
             var item = inventory.Equipped.TryGetValue(id, out var equipped) ? equipped : null;
             var rect = GetSlotRect(i, equipOrigin);
             DrawSlot(spriteBatch, _pixel, _font, rect, item, label);
-            if (item is { } worn && OxygenTankDefinitions.HasSocket(worn))
+            if (item is { } worn && TankSockets.HasSocket(worn))
                 DrawSocket(spriteBatch, GetSocketRect(rect, above: true), inventory.WornSuitTank);
         }
 
@@ -101,8 +105,8 @@ public sealed class InventoryPanel
                 spriteBatch.Draw(_pixel, stripRect, held ? Color.LimeGreen : Color.DarkGoldenrod);
             }
 
-            if (item is { } socketed && OxygenTankDefinitions.HasSocket(socketed))
-                DrawSocket(spriteBatch, GetSocketRect(rect), inventory.MainSlotTanks[i]);
+            if (item is { } socketed && TankSockets.HasSocket(socketed) && hoveredMainSlotIndex == i)
+                DrawSocket(spriteBatch, GetSocketRect(rect, above: true), inventory.MainSlotTanks[i]);
         }
     }
 

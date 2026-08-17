@@ -10,9 +10,11 @@ public sealed partial class World
     // Single F key, priority-ordered: 0) ignored entirely while mid-equip/unequip (can't react
     // instantly, game_design.md section 2), 1) stand up if manning, 2) use a held MedKit if hurt
     // (game_design.md section 4, M12 - anywhere, no proximity needed, since it's self-treatment
-    // not a station), 3) reload a turret if carrying a crate, 4) pick up a crate/tool at a
-    // station, 5) repair a damaged turret/system or man a free turret, 6) start putting on/taking
-    // off a suit at a locker, 7) weld the nearest breached hull block in the current room.
+    // not a station), 3) reload a turret if carrying a crate, 4) pick up an ammo crate at storage,
+    // 5) repair a damaged turret/system or man a free turret, 6) start putting on/taking off a suit
+    // at a locker, 7) weld the nearest breached hull block in the current room. Hand tools/tanks/
+    // weapons/consumables live in the storage racks now (World.Storage.cs's TryMoveItem, opened by
+    // clicking one), not a separate F-key pickup - see game_design.md section 13.
     private void HandleInteract(Character character)
     {
         if (character.SuitActionRemaining > 0)
@@ -76,16 +78,6 @@ public sealed partial class World
             return;
         }
 
-        var nearbyToolStation = Ship.ToolStations.FirstOrDefault(s =>
-            s.RoomId == character.RoomId &&
-            (s.Position - character.Position).Length() < InteractionRadius);
-
-        if (nearbyToolStation is not null)
-        {
-            character.Inventory.TryAdd(nearbyToolStation.Item); // no-op if the inventory row is full
-            return;
-        }
-
         if (nearbyTurret is not null)
         {
             var runtime = _turretRuntimes[nearbyTurret.Id];
@@ -136,17 +128,5 @@ public sealed partial class World
             character.SuitActionEquipping = !character.WearingSuit;
             return;
         }
-
-        // Lowest priority: weld shut the nearest breached hull block in the room you're standing
-        // in — each breach is its own block, so a room with several needs several visits. Only
-        // intercepts if a breach is actually in range; needs the (two-handed) welding tool held.
-        var nearbyBreachedBlock = Ship.WallBlocks
-            .Where(b => b.RoomId == character.RoomId && _breachedWallBlockIds.Contains(b.Id) &&
-                        (b.Position - character.Position).Length() < InteractionRadius)
-            .OrderBy(b => (b.Position - character.Position).Length())
-            .FirstOrDefault();
-
-        if (nearbyBreachedBlock is not null && character.Inventory.IsHolding(ItemType.WeldingTool))
-            _breachedWallBlockIds.Remove(nearbyBreachedBlock.Id);
     }
 }

@@ -19,12 +19,20 @@ public static class ItemDefinitions
         ItemType.WireSpool => 1,
         ItemType.Mineral => 1,
         ItemType.OxygenTank => 1,
+        ItemType.WeldingTank => 1,
+        _ when ComponentDefinitions.ComponentKindFor(type) is not null => 1, // small electronics box
         _ => 0, // AmmoCrate, Spacesuit
     };
 
     public static bool IsHoldable(ItemType type) => HandsRequired(type) > 0;
 
-    public static string DisplayName(ItemType type) => type switch
+    // The 14 purchasable component items delegate to ComponentDefinitions - the ComponentKind
+    // they install as (World.ComponentMounts.cs, M23) already owns the one true name/label for
+    // each kind, so the item shouldn't keep its own separate copy.
+    public static string DisplayName(ItemType type) =>
+        ComponentDefinitions.ComponentKindFor(type) is { } kind ? ComponentDefinitions.DisplayName(kind) : DisplayNameForBaseItem(type);
+
+    private static string DisplayNameForBaseItem(ItemType type) => type switch
     {
         ItemType.AmmoCrate => "ящик патронов",
         ItemType.Spacesuit => "скафандр",
@@ -40,11 +48,15 @@ public static class ItemDefinitions
         ItemType.WireSpool => "катушка провода",
         ItemType.Mineral => "минеральная руда",
         ItemType.OxygenTank => "кислородный баллон",
+        ItemType.WeldingTank => "сварочный баллон",
         _ => type.ToString(),
     };
 
     // Short 1-2 letter code for tight HUD slots/markers.
-    public static string ShortLabel(ItemType type) => type switch
+    public static string ShortLabel(ItemType type) =>
+        ComponentDefinitions.ComponentKindFor(type) is { } kind ? ComponentDefinitions.ShortLabel(kind) : ShortLabelForBaseItem(type);
+
+    private static string ShortLabelForBaseItem(ItemType type) => type switch
     {
         ItemType.AmmoCrate => "П",
         ItemType.Spacesuit => "С",
@@ -60,6 +72,7 @@ public static class ItemDefinitions
         ItemType.WireSpool => "Пр",
         ItemType.Mineral => "Ру",
         ItemType.OxygenTank => "О2",
+        ItemType.WeldingTank => "Сб",
         _ => "?",
     };
 }

@@ -1,4 +1,5 @@
 using SpaceAdventure.Shared.Model;
+using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Server;
 
@@ -13,6 +14,13 @@ public sealed class Character
     // stays that way, this only adds one extra passive drain state on top of it.
 
     public int PlayerId { get; }
+    // Hired crew (World.Recruiting.cs, game_design.md section 10): a bot lives in the same
+    // _characters dictionary as a live player, keyed by a negative id no GameServer connection can
+    // ever hand out, and is driven entirely by World.CrewAi.cs rather than ApplyCommand - nothing
+    // ever sends it a ClientCommand. BotName/Role are null for an ordinary player.
+    public bool IsBot { get; init; }
+    public string? BotName { get; init; }
+    public CrewRole? Role { get; init; }
     public Vec2 Position { get; set; }
     public string RoomId { get; set; }
     public string? ManningTurretId { get; set; }
@@ -35,6 +43,10 @@ public sealed class Character
     // suit lamp shines along it (the client's vision cone), and it's aimed with the mouse. Zero
     // means the player isn't aiming, and the body's own heading stands in.
     public Vec2 LookDirection { get; set; }
+
+    // Which pin a wire-lay is anchored at (World.Wiring.cs's HandlePinInteract) - null when not
+    // laying. Walking to the second pin is just ordinary movement, no special mode.
+    public PinRef? LayingWireFromPin { get; set; }
 
     // EVA state (game_design.md Phase 3, M17) - only meaningful while IsOutside. EvaLocalOffset's
     // meaning depends on EvaAttachedTo: relative to the ship's hull center in its own unrotated

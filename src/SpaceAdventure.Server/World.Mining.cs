@@ -27,4 +27,28 @@ public sealed partial class World
         if (character.Inventory.TryAdd(nearbyDropped.Item))
             _droppedItems.Remove(nearbyDropped);
     }
+
+    // Click-to-pick-up, additive alongside HandleEvaInteract's F-key path above: works anywhere a
+    // DroppedItem can exist (EVA, ship interior, station interior - World.Storage.cs's TryDropItem
+    // is what puts one on a ship/station floor in the first place). RoomId has to match first (null
+    // for both sides means EVA) - ship-local and station-local coordinates can legitimately land on
+    // the same numbers, so proximity alone isn't enough to prove it's the same physical item.
+    private void TryPickupDroppedItem(Character character, string droppedItemId)
+    {
+        var dropped = _droppedItems.FirstOrDefault(d => d.Id == droppedItemId);
+        if (dropped is null)
+            return;
+
+        var (position, roomId) = character.IsOutside
+            ? (GetEvaWorldPosition(character), (string?)null)
+            : (character.Position, character.RoomId);
+
+        if (dropped.RoomId != roomId)
+            return;
+        if ((dropped.Position - position).Length() >= PickupRadius)
+            return;
+
+        if (character.Inventory.TryAdd(dropped.Item))
+            _droppedItems.Remove(dropped);
+    }
 }

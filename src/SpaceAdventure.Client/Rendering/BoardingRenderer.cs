@@ -71,6 +71,11 @@ public sealed class BoardingRenderer
             FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
                 origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
                 new Vector2(character.FacingX, character.FacingY), 0f);
+
+        foreach (var character in snapshot.Characters.Where(c => c.Welding && c.OnEnemyShip))
+            FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel,
+                origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
+                new Vector2(character.FacingX, character.FacingY), 0f);
     }
 
     // A round in flight: a bright head with a short streak behind it, coloured by who fired and

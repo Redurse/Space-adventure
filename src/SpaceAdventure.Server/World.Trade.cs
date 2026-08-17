@@ -9,8 +9,15 @@ namespace SpaceAdventure.Server;
 public sealed partial class World
 {
     private const int StartingCredits = 300;
+    // The Miners' Guild pays a premium for ore at its own base - the one concrete thing that
+    // makes docking there (rather than any other trader) worth the detour (game_design.md
+    // section 10, StationKind.Mining).
+    private const float MiningStationOreSellBonus = 1.2f;
 
     public int Credits { get; private set; } = StartingCredits;
+
+    private StationKind? DockedStationKind =>
+        _dockedPointId is { } id ? GalaxyMap.GetPoint(id).StationKind : null;
 
     // Charges the crew wallet and adds the item to the character's inventory. No-ops (no credits
     // spent) if the crew can't afford it, the inventory row is full, or the ship isn't docked.
@@ -54,6 +61,7 @@ public sealed partial class World
         // Sell prices move the same way as buy prices - an ally's station pays out better, a
         // hostile one lowballs you (the multiplier is inverted here, since a low multiplier means
         // "cheap for the player" on the buy side but "stingy" on the sell side).
-        Credits += (int)MathF.Round(good.SellPrice / LocalPriceMultiplier);
+        var oreBonus = item == ItemType.Mineral && DockedStationKind == StationKind.Mining ? MiningStationOreSellBonus : 1f;
+        Credits += (int)MathF.Round(good.SellPrice / LocalPriceMultiplier * oreBonus);
     }
 }

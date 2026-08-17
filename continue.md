@@ -1674,3 +1674,214 @@ min/max всех комнат. На рядных корпусах это одн�
 
 **Проверено**: 187/187, плюс живая проверка двумя окнами — хост открывает кооп и начинает игру, второй
 клиент подключается по 127.0.0.1, оба видят друг друга, движение гостя видно у хоста в реальном времени.
+
+## Боты экипажа: наём и автономная работа по роли
+
+game_design.md section 10 explicitly deferred this ("Кадровик... пока не делаем"); implemented now
+on request. New `NpcKind.Recruiter` staffs every station kind (Outpost/Trade/Shipyard -
+`Station.Default.cs`); its dialogue panel lists 3 randomly rolled `BotCandidate`s (name, `CrewRole`,
+cost scaling with a random 100/150/200% quality tier), rerolled on every docking the same way the
+Trader's stock refreshes.
+
+**A hired bot is an ordinary `Character`**, keyed by a negative id (`--_nextBotId`, never collides
+with `GameServer`'s incrementing positive ids) and marked `IsBot`/`BotName`/`Role`
+(`World.Recruiting.cs`). It never receives a `ClientCommand` - `GameServer` doesn't know it exists -
+and never moves: no pathfinding exists anywhere in this codebase (`World.EnemyAi.cs`'s "AI" is dice
+rolls), so a bot is placed once, permanently, at its role's real fixture (helm/distribution
+block/reactor/a turret's periscope) and never walks. Standing at the post it does its job at all
+game is indistinguishable from having walked there.
+
+**`World.CrewAi.cs`'s `StepCrewBots`** runs each role every tick:
+- **Security** claims a free turret and keeps it forever; aims by folding the boardable enemy's
+  field position into the turret mount's own unrotated frame (the exact inverse of the geometry
+  `TryFire` already uses to send a shot out of it) and fires once aligned.
+- **Engineer** nudges the single shared power-allocation slot (`PowerGrid.ApplyInput`) toward
+  Oxygen/Shields/Engine/WeaponCharger in that priority order - only actually contends with a live
+  player's own input in the same tick, which is rare and self-resolving next tick.
+- **Mechanic** reloads any empty reactor rod slot and clears one broken thing ship-wide (a jammed
+  turret or a cut wire) on a 4-second cooldown - ship-wide rather than proximity-gated, since there's
+  nothing for it to walk to.
+- **Medic** continuously heals whoever's worst off, ship-wide - no consumable to run out of, since
+  it's a standing job, not an item.
+- **Captain** is a safety net, not a pilot: engages auto-stabilize if the ship is coasting and no
+  live player is at the helm.
+
+Cap of 4 hired bots (`World.MaxHiredBots`). Client: `StationPanel`'s Recruiter view lists the board
+and current headcount; `ShipRenderer.DrawCharacter` draws a bot in steel blue with its name+role
+label instead of the ordinary crew orange.
+
+**Grabbing a test-only wall this ran into**: reaching the 4-bot cap costs more than the 300 credits
+a fresh game starts with - a real limitation of the hiring economy, working as intended, but it meant
+the cap test couldn't just spend its way there. Tests fund themselves through the save/load path
+(`SaveGame.Credits` + `World.ApplySave`) instead of grinding bounty quests for real, which would have
+tangled unrelated tests up in the faction-standing system for no reason. Also found along the way:
+a "re-dock and check the roster rerolled" helper that only sent `TravelToPointId` and stepped never
+actually re-docked at all - arriving at a station now only drops the ship into `StationApproach`
+(manual docking, an earlier session's own work) and idles there forever without a helm hand actually
+flying it in, silently making every "reroll" a no-op. Fixed by reusing the existing `DockAtStation`
+test helper instead of reimplementing the trip.
+
+**Проверено**: 198/198 (11 new tests: roster generation, hire/credit/cap gates, and one live-behavior
+test per role - a Security bot actually lowering enemy HP through its own aim+fire loop, a Mechanic
+reloading a drained rod, an Engineer raising Oxygen allocation from zero, a Captain braking a coasting
+ship, a Medic's no-op-on-healthy-crew contract).
+
+## Полная система проводов и функциональных блоков (M19-M23): замена M14
+
+По явной просьбе — полноценный редактор схем в духе Barotrauma вместо прежней фиксированной
+проводки. Заменяет `WireNetwork`/`WireLink`/`WireNode` (Shared/Model) и `WireLinkState` (Protocol)
+целиком; удалена клиентская `WiringPanel` и терминал `WiringTerminal` на всех 4 корпусах.
+
+**Модель (Shared/Model, Shared/Protocol)**: `ComponentKind` — 3 встроенных вида корпуса
+(`Distribution/Junction/Device`) + 14 покупаемых (вентили И/ИЛИ/НЕ/Искл.ИЛИ, `Timer`, `Memory`,
+`Relay`, 4 датчика, 3 исполнителя). `PinKind` различает Power и Signal — они никогда не
+соединяются друг с другом. `Component`/`Wire`/`PinRef` заменяют `WireNode`/`WireLink` — `Wire`
+хранит только два конца (`PinRef`), без физического пути (путь при прокладке — чисто визуальный
+момент, для связности/ремонта/логики нужны только конечные точки). `WireGraphFactory` строит
+встроенную разводку корпуса **из реальных данных корпуса** (`Ship.SystemDevices`), а не из
+отдельного жёстко прописанного списка, как раньше — попутно снимает старое требование "каждый
+корпус обязан иметь одинаковый набор из 7 устройств".
+
+**Ключевое правило (Wire.cs)**: выходной пин — неограниченный веер; Power-вход берёт до 2 проводов
+(это и есть обобщённый механизм резерва — "хотя бы один из двух проводов жив" воспроизводит старое
+`HasBackup` для каждого силового входа бесплатно); Signal-вход — ровно 1 (правило слияния для >1
+источника — неочевидный игроку эффект, которого проект сознательно избегает).
+
+**Сервер, `World.Wiring.cs`**: `GetEffectivePower`/`IsDeviceConnected` — рекурсивный обход
+связности по графу вместо жёсткой проверки "магистраль+отвод". Пойманный по пути баг: рекурсия
+неверно трактовала выходной пин распределительной коробки (Junction) — обращалась к проводам,
+СЛУШАЮЩИМ этот пин, которых нет (коробка сама источник для своих отводов, а не приёмник) — из-за
+этого ломалось вообще всё питание корабля, не только проводка. Исправлено спецкейсом: выход
+коробки всегда равен её единственному входу.
+
+**Сервер, `World.ComponentLogic.cs` (M21-M22)**: `StepComponentLogic` считает Signal-граф
+ограниченным числом проходов релаксации (`MaxPropagationPasses=8`), НЕ топологической сортировкой —
+игрок может и будет разводить схемы с обратной связью (например, память, заведённая через НЕ сама
+на себя — рабочая "мигалка", а не баг); каждый тик стартует от значений прошлого тика, так что
+устоявшаяся схема остаётся устойчивой, а зациклённая просто колеблется, не вешая симуляцию. Таймер —
+задержка включения (копит `_timerHeldSeconds`, сбрасывается мгновенно при падении входа). Память —
+SR-защёлка, при одновременном set+reset побеждает reset. Датчики читают **свою же комнату**
+(`Component.RoomId`) — отдельной настройки "что слушать" не нужно; `PowerLossSensor` — исключение,
+следит за реактором в целом, не за конкретной системой (упрощение первой версии). Исполнитель двери
+форсирует её **открытой** при true и просто отдаёт управление обратно при false — форсировать
+закрытие было бы плохим эффектом, если в проёме стоит игрок.
+
+**Сервер, физическая прокладка (M20, `World.Wiring.cs`'s `HandlePinInteract`)**: игрок кликает пин,
+держа `WireSpool` (с проверкой дистанции на сервере — в отличие от старого доверительного клика по
+панели); второй клик по тому же пину — отмена; по другому совместимому и не переполненному входу —
+провод создан, катушка потрачена; по несовместимому — прокладка перезапускается от нового пина
+(не тупик). `Character.LayingWireFromPin`/`CharacterState` — видно другим игрокам в кооперативе.
+
+**Сервер, экономика (M23, `World.ComponentMounts.cs`)**: 14 новых `ItemType` 1:1 с `ComponentKind`
+(имя/метка берутся из `ComponentDefinitions`, не дублируются в `ItemDefinitions`). Три
+взаимоисключающих правила на одном гнезде `ComponentMount`: гаечный ключ/отвёртка у занятого гнезда
+снимает деталь и обрывает её провода; подходящий предмет в руке у пустого гнезда — устанавливает;
+пустые руки у занятого гнезда с реле — переключают его как кнопку. Держим `WireSpool` — гнездо не
+реагирует вообще (не путать с прокладкой). Покупка нового корпуса сбрасывает всю разводку и
+установленные блоки к заводским (`InitializeShipState` → `InitializeWiring`/`InitializeComponentMounts`).
+
+**Пойманный по пути баг теста (не в проводке)**: `World_Recruiting_EngineerBotFeedsUnpoweredSystems`
+стал падать детерминированно (не флейково) из-за сдвига RNG-сида статическим счётчиком при
+добавлении новых тестов раньше по списку. Причина: `RerollUntilRoleOffered`'s поездка в бой и
+обратно оставляла Engine держащим весь бюджет реактора (60 из 60), и Engineer-бот никогда не
+СНИЖАЕТ уже забитую систему (только поднимает то, что ниже цели) — тупик, из которого бот сам
+никогда не выйдет. Исправлено: тест явно сажает Engine до найма бота (пока никто не оспаривает
+общий слайдер питания), а не полагается на то, что реролл его не заполнит.
+
+**Клиент**: реализован отдельным проходом после серверной части. `ComponentRenderer.cs` (новый) рисует
+пустые гнёзда контуром, занятые — панелью+заклёпками в цвете категории с 2-4-буквенной меткой
+(`ComponentDefinitions.ShortLabel`), пины — мелкими квадратами по сторонам (вход слева/выход справа
+по `PinKind`), провода — линиями (зелёный = запитан/сигнал true, серый = нет, красный =
+`WireState.Damaged`), провод в процессе прокладки — линия-поводок до позиции того персонажа, кто его
+ведёт (свой и чужие в кооперативе). `ShipRenderer.DrawPanel/DrawRivets/DrawRectOutline` стали
+`internal static` с явным `pixel`-параметром, чтобы новый файл переиспользовал тот же стиль.
+
+`Game1.HandleMouseClick` получил новую ветку: пин реагирует только пока в руке `WireSpool` (иначе
+клик по нему ничего не значит), тело гнезда — только когда катушки в руке НЕТ (чтобы клик посреди
+прокладки провода не попал по гнезду); оба edge-triggered через `_pending...`-поля, как остальные
+подобные действия. `ComputeHint` перестал быть статическим (нужен `_designMouse`+камера) и получил
+приоритетную ветку `WiringHint` сразу после проверки `SuitActionRemaining`: отмена/завершение
+прокладки под курсором, "ведём провод от X" пока никуда не наведено, "начать провод" над пином с
+катушкой в руке, "установить/снять/нажать реле" над гнездом — с той же логикой edge-кейсов (гнездо
+не реагирует с катушкой в руке, "снять" требует гаечный ключ/отвёртку), что и сам клик-хендлер, чтобы
+подсказка никогда не обещала действие, которое клик потом проигнорирует.
+
+`StationPanel` — 14 новых `TradeGood` не влезали в старый единственный "Купить"-столбец (упёрлись бы
+в высоту панели), поэтому `GetGoodRect` теперь раскладывает индекс `TradeCatalog.Goods` по двум
+столбцам: первые 10 (обычное снаряжение) — как раньше, начиная с 11-го — в третий столбец
+"Компоненты" правее "Продать". Клик-хендлер не менялся — он и так перебирает весь `Goods.Count` и
+делегирует прямоугольник `GetGoodRect`.
+
+**Проверено**: 224/224 тестов (дважды подряд без флейка — клиентские правки не трогают покрытый
+тестами код), чистая сборка всего решения (`SpaceAdventure.sln`) без ошибок. Живая проверка в
+MonoGame-окне не проводилась (ограничение песочницы, см. раздел про верификацию выше) — по запросу
+пользователя после этого прохода.
+
+## Фракции: видимость, новый игрок, больше последствий, война (M25-M29)
+
+Закрывает пункт Phase 4 "полноценная динамика фракций" (`game_design.md` §12) — до этого репутация
+была одним числом на фракцию, которое двигали только сдача задания и уничтожение корабля, а влияло
+только на цены и доступность заданий. Пользователь выбрал все пять направлений сразу: видимость в
+UI, новая фракция, больше способов менять репутацию, больше последствий в мире, война фракций.
+
+**M25 — панель отношений (клиент, без протокола)**: `WorldSnapshot.FactionStandings` уже долетал до
+клиента, но нигде не рисовался. `GalaxyMapPanel.Draw` получил список "Фракция: статус (число)" в
+углу навигационной консоли и цветную рамку по фракции-владельцу вокруг каждой точки карты (`FactionColor`,
+по `point.Faction`) — раньше точка красилась только по `GalaxyPointKind` (станция/сектор).
+
+**M26 — Гильдия старателей (`FactionId.MinersGuild`) + `StationKind.Mining`**: третья фракция,
+`Rival = null` как у Independent, но, в отличие от неё, её репутация двигается по общим правилам
+(не освобождена особым случаем в `PriceMultiplier`). Новый вид станции добавлен тем же табличным
+механизмом, что и `Trade`/`Shipyard` (`Station.Default.cs`'s `ServicesFor`) — просто ещё один case,
+никакой новой инфраструктуры. Её Трейдер платит за руду на 20% больше листовой цены
+(`World.Trade.cs`'s `MiningStationOreSellBonus`, `DockedStationKind`) — единственное, что реально
+отличает станцию, вместо выдуманного нового NPC.
+
+**M27 — два новых рычага репутации**: (1) `ClientCommand.AbandonQuestPressed` — отказ от задания без
+докового гейта (`World.Quests.cs`'s `TryAbandonQuest`), штраф меньше, чем убийство охранника/арест
+(`FactionDefinitions.StandingPenaltyForAbandoningQuest = -10`). Кнопка в `StationPanel` — тот же
+`GetAdminActionRect`, что и "Сдать задание", просто в ветке "сдать здесь нельзя". (2) Сдача ЛЮБОГО
+задания слегка портит отношения с соперником фракции-заказчика (`RivalStandingPerQuestTurnIn = -4`,
+та же асимметрия, что уже есть у `RecordShipDestroyed`, только меньше и в обратную сторону — работать
+на одну сторону само по себе маленький политический жест). Изначально в плане была "пощада вместо
+добивания отступающего врага" — отброшено при реализации: выйти из `VoyagePhase.Battle`, пока хоть
+один корабль жив (пусть даже отступающий), нельзя в принципе (`TryStartTravel` игнорирует смену
+курса в бою), так что "оставить его в живых и уйти" физически недостижимо игроком без отдельной
+переделки правил боя — не в этом плане.
+
+**M28 — два новых мировых следствия**: (1) `FactionDefinitions.WarThreshold = -70` (строже
+`HostileThreshold = -40`) — `World.StationDocking.cs`'s `CanDockNow` отказывает в стыковке вообще,
+а не только в товарах/заданиях; подойти вплотную по-прежнему можно, кнопка просто никогда не
+загорается. (2) `World.Factions.cs`'s `SquadronSizeAdjustment` — та же репутация, что двигает цены,
+двигает и размер эскадры на входе в сектор (`World.Voyage.cs`'s `Arrive`): враждебная фракция
+добавляет корабль, дружественная убирает (не ниже 1).
+
+**M29 — война фракций (один спорный форпост)**: `_pointOwner`/`OwnerOf` в `World.Factions.cs` —
+рантайм-словарь владения поверх статичного `GalaxyPoint.Faction`, тем же приёмом, каким
+`_factionStanding` уже живёт рядом со статичным `FactionDefinitions`. Каждое уничтожение корабля
+(`RecordShipDestroyed`, уже вызывается на каждом килле) заодно двигает `_warEffort[(проигравший,
+соперник)]`; при достижении `WarEffortToFlipSector` спорная станция (`outpost-gamma`, единственная
+в этой версии) меняет владельца, счётчик обнуляется. Видимость смены — не новое поле протокола:
+`CreateGalaxyPoints()` отдаёт снапшоту точки с `Faction`, подставленным из `OwnerOf`, так что
+клиент (который просто читает `GalaxyPoint.Faction`, как и всегда) ничего не должен знать про войну
+вообще. Все места, где раньше читали `GalaxyMap.GetPoint(id).Faction` напрямую (`DockedFaction`,
+`TryAbandonQuest`, `CanDockNow`, `Arrive`'s `_battleFaction`/`SquadronSizeAdjustment`), переведены на
+`OwnerOf`, иначе цены/квесты/бой на "отвоёванной" станции продолжали бы молча считать её прежней.
+
+**Пойманное при реализации взаимодействие M28×M29**: `WarEffortToFlipSector` изначально стоял на 3
+("примерно 3 убийства") — ровно столько же, сколько уже стабильно набирает
+`GrindStandingHostile`-гринд до `HostileThreshold` в старых тестах на `outpost-gamma`/`trade-station`.
+Гринд до более глубокого `WarThreshold` вдобавок сам себя разгоняет: как только эскадра увеличивается
+(M28), один визит может убить на корабль больше, а значит один "заход" способен просадить репутацию
+сразу на 70+ пунктов — что попутно перескакивает и порог войны. В одном прогоне это увело
+`outpost-gamma` к Вольному флоту посреди совсем другого теста (`World_Docking_AtWar_...`), который
+проверял отказ в стыковке именно у Консорциума — станция сменила хозяина, и новый хозяин был не в
+состоянии войны с игроком, тест ловил "стыковка разрешена" там, где ждал отказа. Исправлено на двух
+уровнях: `WarEffortToFlipSector` поднят до 5 (заведомо больше, чем стоят оба обычных гринда — 3 и 4
+убийства), и тест на отказ в стыковке при войне переведён с `outpost-gamma` (единственная спорная
+точка) на `trade-station` (тот же Консорциум, но никогда не участвует в войне) — так проверка не
+зависит от того, насколько именно гринд перелетел через порог.
+
+**Проверено**: 239/239 тестов, три прогона подряд без флейка. Чистая сборка всего решения. Клиент
+запущен и закрыт без исключений (полная визуальная проверка панели фракций и цвета отвоёванной
+станции в MonoGame-окне не проводилась — то же ограничение песочницы, что и в предыдущих разделах).

@@ -33,7 +33,7 @@ public sealed class StationRenderer
     public static Rectangle GetNpcRect(StationNpc npc, Vector2 origin) =>
         ShipRenderer.GetBlockRect(npc.Position, NpcMarkerSize, origin);
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, string? talkingToNpcId)
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, string? talkingToNpcId, float totalSeconds = 0f)
     {
         foreach (var room in snapshot.StationRooms)
             _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin);
@@ -66,6 +66,8 @@ public sealed class StationRenderer
             DrawNpc(spriteBatch, npc, origin, npc.Id == talkingToNpcId);
         }
 
+        _shipRenderer.DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.StationRooms.Select(r => r.Id), origin, totalSeconds);
+
         foreach (var character in snapshot.Characters.Where(c => c.OnStation))
             _shipRenderer.DrawCharacter(spriteBatch, character, origin);
 
@@ -75,6 +77,11 @@ public sealed class StationRenderer
 
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && c.OnStation))
             FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
+                origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
+                new Vector2(character.FacingX, character.FacingY), 0f);
+
+        foreach (var character in snapshot.Characters.Where(c => c.Welding && c.OnStation))
+            FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel,
                 origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
                 new Vector2(character.FacingX, character.FacingY), 0f);
     }

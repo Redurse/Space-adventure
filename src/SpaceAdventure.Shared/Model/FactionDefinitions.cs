@@ -10,17 +10,30 @@ public static class FactionDefinitions
     public const int MaxStanding = 100;
     public const int HostileThreshold = -40; // at or below this, the faction's stations refuse quests
     public const int FriendlyThreshold = 40; // at or above this, its trader gives the best prices
+    // Stricter than HostileThreshold on purpose (World.StationDocking.cs) - being turned away from
+    // a faction's own territory entirely has to be rarer than just losing access to its job board.
+    public const int WarThreshold = -70;
 
     // Killing a faction's raider pleases its rivals as much as it angers the faction itself -
     // that mutual pull is what makes standing a real choice rather than a number that only grows.
     public const int StandingPerQuestTurnIn = 12;
     public const int StandingPerShipDestroyed = -18;
     public const int RivalStandingPerShipDestroyed = 6;
+    // Doing work for one side is a small political act even when nobody's shooting - a courier run
+    // for the Consortium costs a little goodwill with FreeFleet, just far less than blowing up one
+    // of their ships would (World.Quests.cs's TryTurnInQuest).
+    public const int RivalStandingPerQuestTurnIn = -4;
+    // Smaller than a guard kill or an arrest (World.StationCrime.cs) - this is reneging on a deal,
+    // not violence, but it still has to cost something or "accept, then quietly drop it" would be
+    // a strictly-better version of just not taking work in the first place (World.Quests.cs's
+    // TryAbandonQuest).
+    public const int StandingPenaltyForAbandoningQuest = -10;
 
     public static string Name(FactionId faction) => faction switch
     {
         FactionId.Consortium => "Консорциум",
         FactionId.FreeFleet => "Вольный флот",
+        FactionId.MinersGuild => "Гильдия старателей",
         _ => "Независимые",
     };
 

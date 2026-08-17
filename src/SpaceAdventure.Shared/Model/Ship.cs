@@ -12,16 +12,19 @@ public sealed partial class Ship
     public IReadOnlyList<Turret> Turrets { get; }
     public IReadOnlyList<AmmoStorage> AmmoStorages { get; }
     public IReadOnlyList<SuitLocker> SuitLockers { get; }
-    public IReadOnlyList<ToolStation> ToolStations { get; }
     public IReadOnlyList<ShipSystemDevice> SystemDevices { get; }
     public IReadOnlyList<WallBlock> WallBlocks { get; }
     public ReactorBlock ReactorBlock { get; }
     public PowerDistributionBlock DistributionBlock { get; }
     public NavigationConsole NavigationConsole { get; }
     public AirlockConsole AirlockConsole { get; }
-    public WiringTerminal WiringTerminal { get; }
     public HelmConsole HelmConsole { get; }
-    public StorageRack StorageRack { get; }
+    // Two per hull (game_design.md section 13) - a starter kit of 3 units of every hand
+    // tool/tank/weapon/consumable used to live scattered across the ship as individual ToolStation
+    // pickups; it now lives here instead, split across these two shelves (World.ShipPurchase.cs's
+    // InitializeRackSlots), so the player has one kind of place to look for gear, not two.
+    public IReadOnlyList<StorageRack> StorageRacks { get; }
+    public IReadOnlyList<ComponentMount> ComponentMounts { get; }
     public Vec2 SpawnPoint { get; }
     public string SpawnRoomId { get; }
     // Which way this hull points when it flies, in its own layout coordinates. The classes laid out
@@ -40,37 +43,35 @@ public sealed partial class Ship
         IReadOnlyList<Turret> turrets,
         IReadOnlyList<AmmoStorage> ammoStorages,
         IReadOnlyList<SuitLocker> suitLockers,
-        IReadOnlyList<ToolStation> toolStations,
         IReadOnlyList<ShipSystemDevice> systemDevices,
         IReadOnlyList<WallBlock> wallBlocks,
         ReactorBlock reactorBlock,
         PowerDistributionBlock distributionBlock,
         NavigationConsole navigationConsole,
         AirlockConsole airlockConsole,
-        WiringTerminal wiringTerminal,
         HelmConsole helmConsole,
-        StorageRack storageRack,
+        IReadOnlyList<StorageRack> storageRacks,
         Vec2 spawnPoint,
         string spawnRoomId,
-        float forwardDegrees = 0f)
+        float forwardDegrees = 0f,
+        IReadOnlyList<ComponentMount>? componentMounts = null)
     {
         ForwardDegrees = forwardDegrees;
+        ComponentMounts = componentMounts ?? Array.Empty<ComponentMount>();
         Rooms = rooms;
         Doors = doors;
         AirlockOuterDoors = airlockOuterDoors;
         Turrets = turrets;
         AmmoStorages = ammoStorages;
         SuitLockers = suitLockers;
-        ToolStations = toolStations;
         SystemDevices = systemDevices;
         WallBlocks = wallBlocks;
         ReactorBlock = reactorBlock;
         DistributionBlock = distributionBlock;
         NavigationConsole = navigationConsole;
         AirlockConsole = airlockConsole;
-        WiringTerminal = wiringTerminal;
         HelmConsole = helmConsole;
-        StorageRack = storageRack;
+        StorageRacks = storageRacks;
         SpawnPoint = spawnPoint;
         SpawnRoomId = spawnRoomId;
         _roomsById = rooms.ToDictionary(r => r.Id);
@@ -177,26 +178,6 @@ public sealed partial class Ship
             new SuitLocker("suit-locker-engine", "engine", X: 20f, Y: 3f),
         };
 
-        // Hand tools and personal weapons (game_design.md sections 2, 3, 7), one station each,
-        // spread across every room so no single stop hands out everything.
-        var toolStations = new[]
-        {
-            new ToolStation("toolbox-reactor-wrench", "reactor", X: 7f, Y: 5f, ItemType.Wrench),
-            new ToolStation("toolbox-reactor-screwdriver", "reactor", X: 9f, Y: 5f, ItemType.Screwdriver),
-            new ToolStation("toolbox-corridor-welding", "corridor", X: 11.5f, Y: 5f, ItemType.WeldingTool),
-            new ToolStation("toolbox-engine-cutter", "engine", X: 21.5f, Y: 5f, ItemType.Cutter),
-            new ToolStation("armory-quarters-knife", "quarters", X: 14f, Y: 5f, ItemType.Knife),
-            new ToolStation("armory-quarters-rifle", "quarters", X: 17f, Y: 5f, ItemType.Rifle),
-            new ToolStation("armory-cockpit-laser-rifle", "cockpit", X: 3.5f, Y: 5f, ItemType.LaserRifle),
-            new ToolStation("rod-rack-reactor", "reactor", X: 7.5f, Y: 1f, ItemType.FuelRod),
-            new ToolStation("medkit-quarters", "quarters", X: 16f, Y: 5f, ItemType.MedKit),
-            new ToolStation("wirespool-engine", "engine", X: 22.5f, Y: 1.5f, ItemType.WireSpool),
-            // Oxygen tanks beside the suit locker: a suit without one keeps nobody alive and a
-            // cutter without one won't light (OxygenTankDefinitions), so they belong where the crew
-            // suits up rather than somewhere else on the deck.
-            new ToolStation("tank-rack-engine", "engine", X: 19f, Y: 1.5f, ItemType.OxygenTank),
-        };
-
         // One physical, damageable block per power-grid system (game_design.md section 1), one
         // per room so every room has something the enemy AI can knock out locally. Shields is the
         // one system with two physical generators (design doc §1 — "несколько генераторов щита в
@@ -226,10 +207,6 @@ public sealed partial class Ship
         // the station's NPCs.
         var airlockConsole = new AirlockConsole("airlock-console", "corridor", X: 10.5f, Y: 1.5f);
 
-        // Wiring terminal next to the distribution block (game_design.md section 1, M14) — click
-        // it to bring up the wiring schematic instead of the ship view.
-        var wiringTerminal = new WiringTerminal("wiring-terminal", "reactor", X: 8f, Y: 3f);
-
         // Helm console on the bridge (game_design.md Phase 3, M15) — stand here to take manual
         // control of the ship in open space. Kept away from the bow turret's periscope (1.5, 3)
         // and the laser rifle armory (3.5, 5) so their interaction radii don't overlap with this.
@@ -248,12 +225,31 @@ public sealed partial class Ship
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[4], top: true, bottom: true, left: false, right: false));
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[5], top: true, bottom: true, left: false, right: false));
 
-        // Cargo shelving in the crew quarters - the one room that isn't already crowded with
-        // machinery, and the natural place to keep what you're hauling.
-        var storageRack = new StorageRack("rack-quarters", "quarters", X: 16f, Y: 1.5f);
+        // Two shelves: quarters (the one room that isn't already crowded with machinery) and engine
+        // (World.ShipPurchase.cs's InitializeRackSlots seeds the crew's starter gear between them).
+        var storageRacks = new[]
+        {
+            new StorageRack("rack-quarters", "quarters", X: 16f, Y: 1.5f),
+            new StorageRack("rack-engine", "engine", X: 20f, Y: 5f),
+        };
+
+        // Empty sockets for purchasable logic/sensor/actuator parts (World.ComponentMounts.cs,
+        // game_design.md section 1's wiring) - spread one or two per room, not one per possible
+        // kind, since the player chooses what to install where. One sits by the airlock door
+        // specifically for an AutoDoorController.
+        var componentMounts = new[]
+        {
+            new ComponentMount("mount-cockpit-1", "cockpit", X: 1.5f, Y: 5f),
+            new ComponentMount("mount-reactor-1", "reactor", X: 6f, Y: 1.5f),
+            new ComponentMount("mount-corridor-1", "corridor", X: 12.5f, Y: 5f),
+            new ComponentMount("mount-quarters-1", "quarters", X: 13.5f, Y: 5f),
+            new ComponentMount("mount-quarters-2", "quarters", X: 17.5f, Y: 4.5f),
+            new ComponentMount("mount-engine-door", "engine", X: 22f, Y: 4f, TargetDoorId: "door-engine-airlock"),
+        };
 
         var corridor = rooms.First(r => r.Id == "corridor");
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, toolStations, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, airlockConsole, wiringTerminal, helmConsole, storageRack, corridor.Center, corridor.Id);
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+            reactorBlock, distributionBlock, navigationConsole, airlockConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
+            componentMounts: componentMounts);
     }
 }

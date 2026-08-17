@@ -61,21 +61,6 @@ public sealed partial class Ship
             new SuitLocker("suit-locker-engine", "engine", X: 25f, Y: 3f),
         };
 
-        var toolStations = new[]
-        {
-            new ToolStation("toolbox-reactor-wrench", "reactor", X: 7f, Y: 5f, ItemType.Wrench),
-            new ToolStation("toolbox-reactor-screwdriver", "reactor", X: 9f, Y: 5f, ItemType.Screwdriver),
-            new ToolStation("toolbox-corridor-welding", "corridor", X: 11.5f, Y: 5f, ItemType.WeldingTool),
-            new ToolStation("toolbox-engine-cutter", "engine", X: 26.5f, Y: 5f, ItemType.Cutter),
-            new ToolStation("armory-quarters-knife", "quarters", X: 14f, Y: 5f, ItemType.Knife),
-            new ToolStation("armory-quarters-rifle", "quarters", X: 17f, Y: 5f, ItemType.Rifle),
-            new ToolStation("armory-cockpit-laser-rifle", "cockpit", X: 3.5f, Y: 5f, ItemType.LaserRifle),
-            new ToolStation("rod-rack-reactor", "reactor", X: 7.5f, Y: 1f, ItemType.FuelRod),
-            new ToolStation("medkit-quarters", "quarters", X: 16f, Y: 5f, ItemType.MedKit),
-            new ToolStation("wirespool-engine", "engine", X: 27.5f, Y: 1.5f, ItemType.WireSpool),
-            new ToolStation("tank-rack-engine", "engine", X: 25.5f, Y: 1.5f, ItemType.OxygenTank), // beside the suit locker
-        };
-
         var systemDevices = new[]
         {
             new ShipSystemDevice("system-shields", "cockpit", X: 3.5f, Y: 1.5f, PowerSystemId.Shields),
@@ -92,7 +77,6 @@ public sealed partial class Ship
         var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 9.5f, Y: 3f);
         var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 1.5f, Y: 1.5f);
         var airlockConsole = new AirlockConsole("airlock-console", "corridor", X: 10.5f, Y: 1.5f);
-        var wiringTerminal = new WiringTerminal("wiring-terminal", "reactor", X: 8f, Y: 3f);
         var helmConsole = new HelmConsole("helm-console", "cockpit", X: 3f, Y: 4f);
 
         var wallBlocks = new List<WallBlock>();
@@ -101,10 +85,30 @@ public sealed partial class Ship
             wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[i], top: true, bottom: true, left: false, right: false));
 
         var corridor = rooms.First(r => r.Id == "corridor");
-        // The cruiser has an actual hold - the rack belongs there rather than in the crew quarters.
+        // The cruiser has an actual hold - one shelf belongs there, the other in the crew quarters.
         var hold = rooms.First(r => r.Id == "hold");
-        var storageRack = new StorageRack("rack-hold", hold.Id, X: hold.Center.X, Y: hold.Top + 1.5f);
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, toolStations, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, airlockConsole, wiringTerminal, helmConsole, storageRack, corridor.Center, corridor.Id);
+        var storageRacks = new[]
+        {
+            new StorageRack("rack-hold", hold.Id, X: hold.Center.X, Y: hold.Top + 1.5f),
+            new StorageRack("rack-quarters", "quarters", X: 16.5f, Y: 5f),
+        };
+
+        var componentMounts = new[]
+        {
+            new ComponentMount("mount-cockpit-1", "cockpit", X: 1.5f, Y: 5f),
+            new ComponentMount("mount-cockpit-2", "cockpit", X: 4f, Y: 4.5f),
+            new ComponentMount("mount-reactor-1", "reactor", X: 6f, Y: 1.5f),
+            new ComponentMount("mount-corridor-1", "corridor", X: 12.5f, Y: 5f),
+            new ComponentMount("mount-quarters-1", "quarters", X: 13.5f, Y: 5f),
+            new ComponentMount("mount-quarters-2", "quarters", X: 17.5f, Y: 4.5f),
+            new ComponentMount("mount-hold-1", "hold", X: 19f, Y: 5f),
+            new ComponentMount("mount-engine-1", "engine", X: 24f, Y: 5f),
+            new ComponentMount("mount-engine-2", "engine", X: 26f, Y: 4.5f),
+            new ComponentMount("mount-engine-door", "engine", X: 27f, Y: 4f, TargetDoorId: "door-engine-airlock"),
+        };
+
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+            reactorBlock, distributionBlock, navigationConsole, airlockConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
+            componentMounts: componentMounts);
     }
 }

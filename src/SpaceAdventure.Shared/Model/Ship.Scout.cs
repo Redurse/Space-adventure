@@ -45,21 +45,6 @@ public sealed partial class Ship
             new SuitLocker("suit-locker-engine", "engine", X: 10f, Y: 5f),
         };
 
-        // No Rifle/LaserRifle station — a Scout crew has nothing but a Knife to fall back on if
-        // boarded, part of what makes this the weakest class rather than just the smallest.
-        var toolStations = new[]
-        {
-            new ToolStation("armory-bridge-knife", "bridge", X: 1f, Y: 5f, ItemType.Knife),
-            new ToolStation("medkit-bridge", "bridge", X: 4f, Y: 5f, ItemType.MedKit),
-            new ToolStation("toolbox-engine-wrench", "engine", X: 6f, Y: 5f, ItemType.Wrench),
-            new ToolStation("toolbox-engine-screwdriver", "engine", X: 7f, Y: 5f, ItemType.Screwdriver),
-            new ToolStation("toolbox-engine-welding", "engine", X: 8f, Y: 5f, ItemType.WeldingTool),
-            new ToolStation("toolbox-engine-cutter", "engine", X: 9f, Y: 5f, ItemType.Cutter),
-            new ToolStation("wirespool-engine", "engine", X: 5.5f, Y: 4f, ItemType.WireSpool),
-            new ToolStation("rod-rack-engine", "engine", X: 10.5f, Y: 3.5f, ItemType.FuelRod),
-            new ToolStation("tank-rack-engine", "engine", X: 9f, Y: 3.5f, ItemType.OxygenTank), // beside the suit locker
-        };
-
         // Same 6 device ids/PowerSystemIds as every other class, just fewer rooms to spread them
         // across — keeps WireNetwork.CreateDefault() (which reuses these ids as its node ids)
         // working unmodified for every ship class.
@@ -80,7 +65,6 @@ public sealed partial class Ship
         var distributionBlock = new PowerDistributionBlock("distribution-block", "engine", X: 7f, Y: 3f);
         var navigationConsole = new NavigationConsole("navigation-console", "bridge", X: 1f, Y: 1f);
         var airlockConsole = new AirlockConsole("airlock-console", "bridge", X: 3f, Y: 1f);
-        var wiringTerminal = new WiringTerminal("wiring-terminal", "engine", X: 5.5f, Y: 3f);
         var helmConsole = new HelmConsole("helm-console", "bridge", X: 4f, Y: 3f);
 
         var wallBlocks = new List<WallBlock>();
@@ -89,9 +73,22 @@ public sealed partial class Ship
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[2], top: true, bottom: true, left: false, right: false));
 
         var bridge = rooms.First(r => r.Id == "bridge");
-        // The scout has no dedicated hold, so the rack shares the engine room.
-        var storageRack = new StorageRack("rack-engine", "engine", X: 8f, Y: 1.5f);
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, toolStations, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, airlockConsole, wiringTerminal, helmConsole, storageRack, bridge.Center, bridge.Id);
+        // No dedicated hold on this hull - both shelves share the ship's only two rooms.
+        var storageRacks = new[]
+        {
+            new StorageRack("rack-engine", "engine", X: 8f, Y: 1.5f),
+            new StorageRack("rack-bridge", "bridge", X: 4.5f, Y: 5f),
+        };
+
+        var componentMounts = new[]
+        {
+            new ComponentMount("mount-bridge-1", "bridge", X: 2f, Y: 4.5f),
+            new ComponentMount("mount-engine-1", "engine", X: 6.5f, Y: 4.5f),
+            new ComponentMount("mount-engine-door", "engine", X: 9.5f, Y: 4f, TargetDoorId: "door-engine-airlock"),
+        };
+
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+            reactorBlock, distributionBlock, navigationConsole, airlockConsole, helmConsole, storageRacks, bridge.Center, bridge.Id,
+            componentMounts: componentMounts);
     }
 }

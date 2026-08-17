@@ -33,11 +33,14 @@ public sealed class RackPanel
         return new Rectangle(x, y, SlotSize, SlotSize);
     }
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
+    // offset: where this particular shelf's 30-slot band starts in the snapshot's flat RackSlots
+    // array (World.Storage.cs's RackFor) - a hull carries two shelves now, so this draws whichever
+    // one Game1's CurrentOpenRackOffset says is actually open, not always the first.
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, int offset)
     {
         var used = 0;
-        for (var i = 0; i < snapshot.RackSlots.Count; i++)
-            if (snapshot.RackSlots[i] is not null)
+        for (var i = 0; i < StorageRack.Capacity; i++)
+            if (offset + i < snapshot.RackSlots.Count && snapshot.RackSlots[offset + i] is not null)
                 used++;
 
         spriteBatch.DrawString(_font, $"Стеллаж — {used}/{StorageRack.Capacity}   [перетащите мышью или двойной клик]",
@@ -45,7 +48,8 @@ public sealed class RackPanel
 
         for (var i = 0; i < StorageRack.Capacity; i++)
         {
-            var item = i < snapshot.RackSlots.Count ? snapshot.RackSlots[i] : null;
+            var globalIndex = offset + i;
+            var item = globalIndex < snapshot.RackSlots.Count ? snapshot.RackSlots[globalIndex] : null;
             InventoryPanel.DrawSlot(spriteBatch, _pixel, _font, GetSlotRect(i, origin), item, string.Empty);
         }
     }

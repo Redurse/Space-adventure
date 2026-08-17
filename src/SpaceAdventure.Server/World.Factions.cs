@@ -28,10 +28,17 @@ public sealed partial class World
             FactionDefinitions.MaxStanding);
     }
 
+    // Who currently controls a point - GalaxyPoint.Faction (Shared's static starting data) unless
+    // the war below (WarEffort/ContestedPointId) has flipped it, the same reason _factionStanding
+    // itself lives here rather than as a mutable field on FactionDefinitions.
+    private readonly Dictionary<string, FactionId> _pointOwner = new();
+    private FactionId OwnerOf(string pointId) =>
+        _pointOwner.TryGetValue(pointId, out var owner) ? owner : GalaxyMap.GetPoint(pointId).Faction;
+
     // Faction that owns wherever the ship currently is - what the trader's prices and the
     // administrator's willingness to talk are both keyed off.
     private FactionId DockedFaction =>
-        _dockedPointId is { } id ? GalaxyMap.GetPoint(id).Faction : FactionId.Independent;
+        _dockedPointId is { } id ? OwnerOf(id) : FactionId.Independent;
 
     // Destroying a ship angers its owner and pleases their rival by a smaller amount - the
     // asymmetry is what makes picking a side actually cost something.
@@ -39,7 +46,39 @@ public sealed partial class World
     {
         AdjustStanding(faction, FactionDefinitions.StandingPerShipDestroyed);
         if (FactionDefinitions.Rival(faction) is { } rival)
+        {
             AdjustStanding(rival, FactionDefinitions.RivalStandingPerShipDestroyed);
+            NudgeWarEffort(loser: faction, winner: rival);
+        }
+    }
+
+    // The one front this version models (game_design.md section 12, Phase 4 - "война фракций друг
+    // с другом"): whichever rival is currently losing ships loses ground here too, once enough of
+    // them have died. A whole map that can flip anywhere would need a real background simulation;
+    // this is the same effect on a single, deliberately chosen border station instead.
+    private const string ContestedPointId = "outpost-gamma";
+    // Deliberately above what grinding a faction just past HostileThreshold or even WarThreshold
+    // costs (3 and 4 kills respectively, at StandingPerShipDestroyed each) - losing a station
+    // outright has to take a sustained campaign, not just the same fighting that already made a
+    // faction hostile enough to refuse quests or lock the player out of its territory.
+    private const int WarEffortToFlipSector = 5;
+    private readonly Dictionary<(FactionId Loser, FactionId Winner), int> _warEffort = new();
+
+    private void NudgeWarEffort(FactionId loser, FactionId winner)
+    {
+        if (OwnerOf(ContestedPointId) != loser)
+            return; // this front already belongs to the side that's currently winning it
+
+        var key = (loser, winner);
+        var effort = _warEffort.GetValueOrDefault(key) + 1;
+        if (effort < WarEffortToFlipSector)
+        {
+            _warEffort[key] = effort;
+            return;
+        }
+
+        _pointOwner[ContestedPointId] = winner;
+        _warEffort.Remove(key);
     }
 
     private bool IsHostileHere => GetStanding(DockedFaction) <= FactionDefinitions.HostileThreshold;
@@ -48,8 +87,26 @@ public sealed partial class World
     private float LocalPriceMultiplier =>
         FactionDefinitions.PriceMultiplier(DockedFaction, GetStanding(DockedFaction));
 
+    // Same standing that moves prices also moves how hard a sector's defenders are to get past
+    // (World.EnemyFleet.cs's SpawnEnemySquadron, called from World.Voyage.cs's Arrive): a faction
+    // that hates you throws more hulls at you, one that loves you thins its own patrol out.
+    private const int HostilitySquadronBonus = 1;
+    private int SquadronSizeAdjustment(FactionId faction)
+    {
+        var standing = GetStanding(faction);
+        if (standing <= FactionDefinitions.HostileThreshold) return HostilitySquadronBonus;
+        if (standing >= FactionDefinitions.FriendlyThreshold) return -HostilitySquadronBonus;
+        return 0;
+    }
+
     private IReadOnlyList<FactionStandingState> CreateFactionStandings() =>
         _factionStanding
             .Select(kv => new FactionStandingState(kv.Key, FactionDefinitions.Name(kv.Key), kv.Value))
             .ToArray();
+
+    // GalaxyMap.Points is Shared's static starting data - only ContestedPointId ever actually
+    // differs from it, but every point is re-checked here so the client (which just reads
+    // GalaxyPoint.Faction, same as it always has) never needs to know a war exists at all.
+    private IReadOnlyList<GalaxyPoint> CreateGalaxyPoints() =>
+        GalaxyMap.Points.Select(p => OwnerOf(p.Id) == p.Faction ? p : p with { Faction = OwnerOf(p.Id) }).ToArray();
 }

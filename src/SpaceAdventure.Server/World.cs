@@ -91,6 +91,7 @@ public sealed partial class World
         // set directly rather than via EnterStation, whose refuel/repair pass is meaningless on a
         // ship that hasn't flown yet.
         AutosavePending = true;
+        RegenerateRecruitRoster();
     }
 
     public void SpawnCharacter(int playerId) => _characters[playerId] = new Character(playerId, Ship.SpawnPoint, Ship.SpawnRoomId);
@@ -103,6 +104,7 @@ public sealed partial class World
         _characters.Remove(playerId);
         _moveInput.Remove(playerId);
         _cutInput.Remove(playerId);
+        _weldInput.Remove(playerId);
         _weaponCooldowns.Remove(playerId);
         _stolenItemCount.Remove(playerId);
         foreach (var runtime in _turretRuntimes.Values.Where(t => t.MannedByPlayerId == playerId))
@@ -143,6 +145,7 @@ public sealed partial class World
         // Held rather than edge-triggered: the flame burns while the button is down, so this is
         // state to remember for the tick, not an action to perform on the spot.
         _cutInput[playerId] = command.CutHeld;
+        _weldInput[playerId] = command.WeldHeld;
 
         if (command.ToggleReactorSlotIndex >= 0)
             ToggleReactorSlot(character, command.ToggleReactorSlotIndex);
@@ -162,6 +165,9 @@ public sealed partial class World
         if (command.TurnInCargoQuestPressed)
             TryTurnInQuest(character);
 
+        if (command.AbandonQuestPressed)
+            TryAbandonQuest();
+
         if (command.PurchaseUpgradeTrack is { } upgradeTrack)
             TryPurchaseUpgrade(upgradeTrack);
 
@@ -171,11 +177,29 @@ public sealed partial class World
         if (command.DockPressed)
             TryDockAtStation();
 
-        if (command.WireLinkInteractId is { } wireLinkId)
-            HandleWireLinkInteract(character, wireLinkId);
-
         if (command.DoorToggleId is { } doorId)
             ToggleDoor(doorId);
+
+        if (command.HireCandidateId is { } candidateId)
+            TryHireCandidate(candidateId);
+
+        if (command.PinInteractId is { } pinRef)
+            HandlePinInteract(character, pinRef);
+
+        if (command.WireLayCancelPressed)
+            character.LayingWireFromPin = null;
+
+        if (command.ComponentOperateId is { } operateId)
+            ToggleRelay(operateId);
+
+        if (command.ComponentMountInteractId is { } mountId)
+            HandleComponentMountInteract(character, mountId);
+
+        if (command.DropItemFrom is { } dropFrom)
+            TryDropItem(character, dropFrom);
+
+        if (command.PickupDroppedItemId is { } pickupId)
+            TryPickupDroppedItem(character, pickupId);
 
         if (command.PushOffPressed)
             HandlePushOff(character, new Vec2(command.PushOffDirectionX, command.PushOffDirectionY));
@@ -208,6 +232,7 @@ public sealed partial class World
         StepCharacters(deltaSeconds);
         StepTurrets(deltaSeconds);
         StepCutting(deltaSeconds);
+        StepWelding(deltaSeconds);
         StepPersonalShots(deltaSeconds);
         StepOxygenTanks(deltaSeconds);
         StepBoarding(deltaSeconds);
@@ -219,6 +244,14 @@ public sealed partial class World
         StepVoyage(deltaSeconds);
         StepAtmosphere(deltaSeconds);
         StepInjuries(deltaSeconds);
+        // After everything else so a bot reacts to this tick's state (a fresh breach, a target that
+        // just came into a fight) rather than lagging a tick behind it, and before PowerGrid.Step so
+        // an Engineer bot's nudge this tick is actually reflected in this tick's allocation.
+        StepCrewBots(deltaSeconds);
+        // After crew bots (so a bot's own action this tick is visible to a sensor) and before
+        // PowerGrid.Step (so a PowerLossSensor reads last tick's settled allocation, same timing
+        // every other GetEffectivePower caller already relies on).
+        StepComponentLogic(deltaSeconds);
         PowerGrid.Step(deltaSeconds);
         Shield.Step(deltaSeconds, GetEffectivePower(PowerSystemId.Shields));
     }
@@ -235,17 +268,15 @@ public sealed partial class World
             t.AmmoRemaining, t.Definition.MagazineCapacity, t.Charge, t.Definition.MaxCharge, t.Damaged)).ToArray(),
         Ship.AmmoStorages,
         Ship.SuitLockers,
-        Ship.ToolStations,
         Ship.SystemDevices,
         Ship.SystemDevices.Select(d => new ShipSystemState(d.Id, d.System, !IsDeviceConnected(d.Id))).ToArray(),
         Ship.ReactorBlock,
         Ship.DistributionBlock,
         Ship.NavigationConsole,
-        GalaxyMap.Points,
+        CreateGalaxyPoints(),
         Ship.AirlockConsole,
-        Ship.WiringTerminal,
         Ship.HelmConsole,
-        Ship.StorageRack,
+        Ship.StorageRacks,
         RackSlots,
         Station.Npcs,
         Station.Crates,
@@ -304,21 +335,31 @@ public sealed partial class World
                 c.Inventory.HeldSlotOf(ItemType.Cutter) is var cutterSlot && cutterSlot >= 0
                     ? c.Inventory.TankCharge(cutterSlot)
                     : null,
-                IsCutting(c.PlayerId));
+                IsCutting(c.PlayerId),
+                c.IsBot, c.BotName, c.Role,
+                c.Inventory.HeldSlotOf(ItemType.WeldingTool) is var welderSlot && welderSlot >= 0
+                    ? c.Inventory.TankCharge(welderSlot)
+                    : null,
+                IsWelding(c.PlayerId),
+                c.LayingWireFromPin);
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(Phase, _shipMapPosition, _dockedPointId, _travelTargetPointId),
         Credits,
         ActiveQuest,
         new Dictionary<ShipUpgradeTrack, int>(UpgradeLevels),
-        WireNetwork.Nodes,
-        WireNetwork.Links,
-        CreateWireLinkStates(),
+        Components,
+        CreateComponentStates(),
+        Wires,
+        CreateWireStates(),
+        Ship.ComponentMounts,
+        CreateComponentMountStates(),
         AsteroidField.Asteroids,
         AsteroidField.OreDeposits,
         CreateOreDepositStates(),
         _droppedItems.ToArray(),
         new ShipFieldState(
             _shipFieldPosition.X, _shipFieldPosition.Y, _shipRotationDegrees,
-            _shipVelocity.X, _shipVelocity.Y, _shipThrust.X, _shipThrust.Y, _shipAutoStabilize));
+            _shipVelocity.X, _shipVelocity.Y, _shipThrust.X, _shipThrust.Y, _shipAutoStabilize),
+        _recruitRoster);
 }

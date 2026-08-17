@@ -19,7 +19,4 @@ public static class OxygenTankDefinitions
     // Cutting is the expensive use: about half a minute of continuous flame per tank, so working a
     // vein dry costs most of a tank and a careless burn costs the trip home.
     public const float CutterDrainPerSecond = 3.2f;
-
-    // What the socket accepts, and what has a socket at all.
-    public static bool HasSocket(ItemType type) => type is ItemType.Spacesuit or ItemType.Cutter;
 }

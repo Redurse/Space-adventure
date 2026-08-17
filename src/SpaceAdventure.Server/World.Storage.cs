@@ -9,17 +9,59 @@ namespace SpaceAdventure.Server;
 // "rearrange" as three separate commands.
 public sealed partial class World
 {
-    private ItemType?[] _rackSlots = new ItemType?[StorageRack.Capacity];
+    private ItemType?[] _rackSlots = Array.Empty<ItemType?>();
 
     public IReadOnlyList<ItemType?> RackSlots => _rackSlots;
 
+    private static readonly ItemType[] RackToolsAndTanks =
+    {
+        ItemType.Wrench, ItemType.Wrench, ItemType.Wrench,
+        ItemType.Screwdriver, ItemType.Screwdriver, ItemType.Screwdriver,
+        ItemType.Cutter, ItemType.Cutter, ItemType.Cutter,
+        ItemType.WeldingTool, ItemType.WeldingTool, ItemType.WeldingTool,
+        ItemType.OxygenTank, ItemType.OxygenTank, ItemType.OxygenTank,
+        ItemType.WeldingTank, ItemType.WeldingTank, ItemType.WeldingTank,
+    };
+
+    private static readonly ItemType[] RackSuppliesAndWeapons =
+    {
+        ItemType.FuelRod, ItemType.FuelRod, ItemType.FuelRod,
+        ItemType.MedKit, ItemType.MedKit, ItemType.MedKit,
+        ItemType.WireSpool, ItemType.WireSpool, ItemType.WireSpool,
+        ItemType.Knife, ItemType.Knife, ItemType.Knife,
+        ItemType.Rifle, ItemType.Rifle, ItemType.Rifle,
+        ItemType.LaserRifle, ItemType.LaserRifle, ItemType.LaserRifle,
+    };
+
+    // Every hull's starter kit (game_design.md section 13): 3 units of every hand tool/tank/weapon/
+    // consumable that used to be scattered across the ship as individual ToolStation pickups, split
+    // evenly across the two shelves every hull carries - tools+tanks in the first, supplies+weapons
+    // in the second, regardless of which rooms those two shelves happen to sit in on this hull.
+    // Called from InitializeShipState (constructor + every ship purchase), same as
+    // InitializeComponentMounts - a bought hull's shelves start full again, not carrying over
+    // whatever the previous hull's shelves happened to hold.
+    private void InitializeRackSlots()
+    {
+        _rackSlots = new ItemType?[Ship.StorageRacks.Count * StorageRack.Capacity];
+        for (var i = 0; i < RackToolsAndTanks.Length; i++)
+            _rackSlots[i] = RackToolsAndTanks[i];
+
+        if (Ship.StorageRacks.Count > 1)
+        {
+            var secondShelfOffset = StorageRack.Capacity;
+            for (var i = 0; i < RackSuppliesAndWeapons.Length; i++)
+                _rackSlots[secondShelfOffset + i] = RackSuppliesAndWeapons[i];
+        }
+    }
+
     // Deliberately survives a change of hull (World.ShipPurchase.cs): the cargo is the crew's, and
     // silently binning it because they traded up would be a nasty surprise. Only a fresh World
-    // starts with an empty rack.
+    // starts with the seeded starter kit above.
     public void LoadRackSlots(IReadOnlyList<ItemType?> slots)
     {
-        _rackSlots = new ItemType?[StorageRack.Capacity];
-        for (var i = 0; i < Math.Min(slots.Count, StorageRack.Capacity); i++)
+        var totalCapacity = Ship.StorageRacks.Count * StorageRack.Capacity;
+        _rackSlots = new ItemType?[totalCapacity];
+        for (var i = 0; i < Math.Min(slots.Count, totalCapacity); i++)
             _rackSlots[i] = slots[i];
     }
 
@@ -63,13 +105,44 @@ public sealed partial class World
             character.Inventory.HeldSlotIndices.Remove(to.Index);
     }
 
+    // A drag that ended over empty space instead of another slot: same reachability rule as an
+    // ordinary move (you can't drop what you can't otherwise touch), same tank-first safeguard as
+    // moving onto the rack (a plugged tank never just vanishes), but the item lands on the floor at
+    // the character's own feet as a DroppedItem instead of landing in another slot.
+    private void TryDropItem(Character character, SlotRef from)
+    {
+        if (!IsSlotReachable(character, from))
+            return;
+
+        var item = ReadSlot(character, from);
+        if (item is null)
+            return;
+
+        if (from.Kind == ItemSlotKind.Main && character.Inventory.TankCharge(from.Index) is not null &&
+            !character.Inventory.TryDetachTank(from.Index))
+            return;
+
+        if (!WriteSlot(character, from, null))
+            return;
+        if (from.Kind == ItemSlotKind.Main)
+            character.Inventory.HeldSlotIndices.Remove(from.Index);
+
+        _droppedItems.Add(new DroppedItem($"drop-{_nextDroppedItemId++}", item.Value,
+            character.Position.X, character.Position.Y, character.RoomId));
+    }
+
+    // A rack slot's global index (0..RackSlots.Count) maps back to a physical shelf by which
+    // StorageRack.Capacity-sized band it falls in - SlotRef itself never needed a "which shelf"
+    // field this way, only this one lookup did.
+    private StorageRack RackFor(int globalSlotIndex) => Ship.StorageRacks[globalSlotIndex / StorageRack.Capacity];
+
     private bool IsSlotReachable(Character character, SlotRef slot) => slot.Kind switch
     {
         ItemSlotKind.Main => slot.Index >= 0 && slot.Index < Inventory.MainSlotCount &&
                              !character.OnEnemyShip && !character.IsOutside,
-        ItemSlotKind.Rack => slot.Index >= 0 && slot.Index < StorageRack.Capacity &&
+        ItemSlotKind.Rack => slot.Index >= 0 && slot.Index < _rackSlots.Length &&
                              !character.OnStation && !character.OnEnemyShip && !character.IsOutside &&
-                             (Ship.StorageRack.Position - character.Position).Length() < InteractionRadius,
+                             (RackFor(slot.Index).Position - character.Position).Length() < InteractionRadius,
         _ => false,
     };
 

@@ -21,6 +21,22 @@ public static class TradeCatalog
         // generic sell flow (World.Trade.cs) is what turns mined ore into credits at the station
         // (game_design.md Phase 3, M18), rather than a separate quest-turn-in mechanism.
         new TradeGood(ItemType.Mineral, BuyPrice: 999, SellPrice: 35),
+        // Purchasable wiring components (ComponentKind, World.ComponentMounts.cs, M23) - priced by
+        // complexity, all comfortably under Spacesuit's 150 (small modular parts, not major gear).
+        new TradeGood(ItemType.GateNot, BuyPrice: 25, SellPrice: 10),
+        new TradeGood(ItemType.Relay, BuyPrice: 30, SellPrice: 12),
+        new TradeGood(ItemType.LightToggle, BuyPrice: 25, SellPrice: 10),
+        new TradeGood(ItemType.GateAnd, BuyPrice: 35, SellPrice: 15),
+        new TradeGood(ItemType.GateOr, BuyPrice: 35, SellPrice: 15),
+        new TradeGood(ItemType.GateXor, BuyPrice: 35, SellPrice: 15),
+        new TradeGood(ItemType.AlarmKlaxon, BuyPrice: 40, SellPrice: 16),
+        new TradeGood(ItemType.OxygenSensor, BuyPrice: 45, SellPrice: 18),
+        new TradeGood(ItemType.BreachSensor, BuyPrice: 45, SellPrice: 18),
+        new TradeGood(ItemType.PowerLossSensor, BuyPrice: 45, SellPrice: 18),
+        new TradeGood(ItemType.MotionSensor, BuyPrice: 55, SellPrice: 22),
+        new TradeGood(ItemType.AutoDoorController, BuyPrice: 60, SellPrice: 24),
+        new TradeGood(ItemType.Timer, BuyPrice: 70, SellPrice: 28),
+        new TradeGood(ItemType.Memory, BuyPrice: 90, SellPrice: 35),
     };
 
     public static TradeGood? Find(ItemType item) => Goods.FirstOrDefault(g => g.Item == item);

@@ -80,23 +80,6 @@ public sealed partial class Ship
             new SuitLocker("suit-locker-starboard", "life-support", X: 12.3f, Y: 10.6f),
         };
 
-        var toolStations = new[]
-        {
-            new ToolStation("armory-rifle", "armory", X: 5f, Y: 4.8f, ItemType.Rifle),
-            new ToolStation("armory-laser-rifle", "armory", X: 8.5f, Y: 4.8f, ItemType.LaserRifle),
-            new ToolStation("armory-knife", "armory", X: 6.75f, Y: 7.2f, ItemType.Knife),
-            new ToolStation("medkit-cockpit", "cockpit", X: 8.7f, Y: 3.2f, ItemType.MedKit),
-            new ToolStation("toolbox-reactor-wrench", "reactor", X: 4.6f, Y: 8.8f, ItemType.Wrench),
-            new ToolStation("toolbox-reactor-screwdriver", "reactor", X: 5.4f, Y: 8.8f, ItemType.Screwdriver),
-            new ToolStation("toolbox-reactor-welding", "reactor", X: 6.2f, Y: 8.8f, ItemType.WeldingTool),
-            new ToolStation("toolbox-reactor-cutter", "reactor", X: 7f, Y: 8.8f, ItemType.Cutter),
-            new ToolStation("wirespool-reactor", "reactor", X: 7.8f, Y: 8.8f, ItemType.WireSpool),
-            new ToolStation("rod-rack-reactor", "reactor", X: 8.8f, Y: 8.8f, ItemType.FuelRod),
-            // A tank rack at each suit locker, since this hull has an airlock on either beam.
-            new ToolStation("tank-rack-port", "shields-bay", X: 1.2f, Y: 12.4f, ItemType.OxygenTank),
-            new ToolStation("tank-rack-starboard", "life-support", X: 12.3f, Y: 12.4f, ItemType.OxygenTank),
-        };
-
         // Every breaker panel hangs in the reactor hall, as asked - one place to run to when the
         // enemy severs something - except the two systems that physically live in the side bays
         // and the engines at the very bottom of them.
@@ -117,9 +100,12 @@ public sealed partial class Ship
         var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 8.7f, Y: 10f);
         var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 5f, Y: 1.2f);
         var airlockConsole = new AirlockConsole("airlock-console", "cockpit", X: 8.5f, Y: 1.2f);
-        var wiringTerminal = new WiringTerminal("wiring-terminal", "reactor", X: 4.8f, Y: 10f);
         var helmConsole = new HelmConsole("helm-console", "cockpit", X: 6.75f, Y: 2.4f);
-        var storageRack = new StorageRack("rack-reactor", "reactor", X: 4.8f, Y: 12.6f);
+        var storageRacks = new[]
+        {
+            new StorageRack("rack-reactor", "reactor", X: 4.8f, Y: 12.6f),
+            new StorageRack("rack-armory", "armory", X: 8f, Y: 7f),
+        };
 
         var wallBlocks = new List<WallBlock>();
         // Only the edges that actually face vacuum: the spine's flanks are open to the side bays
@@ -130,9 +116,20 @@ public sealed partial class Ship
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[3], top: true, bottom: true, left: true, right: false));   // shields bay
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[4], top: true, bottom: true, left: false, right: true));   // life support
 
+        var componentMounts = new[]
+        {
+            new ComponentMount("mount-cockpit-1", "cockpit", X: 6.75f, Y: 3f),
+            new ComponentMount("mount-armory-1", "armory", X: 6f, Y: 6f),
+            new ComponentMount("mount-reactor-1", "reactor", X: 10f, Y: 10f),
+            new ComponentMount("mount-shields-bay-1", "shields-bay", X: 2f, Y: 10f),
+            new ComponentMount("mount-life-support-1", "life-support", X: 11.5f, Y: 10f),
+            new ComponentMount("mount-shields-bay-door", "shields-bay", X: 2f, Y: 17f, TargetDoorId: "door-airlock-port"),
+        };
+
         var cockpit = rooms[0];
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, toolStations, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, airlockConsole, wiringTerminal, helmConsole, storageRack, cockpit.Center, cockpit.Id,
-            forwardDegrees: ShipCatalog.ForwardDegrees(ShipKind.Corvette)); // bow up the plan: this hull flies nose-first, not broadside
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+            reactorBlock, distributionBlock, navigationConsole, airlockConsole, helmConsole, storageRacks, cockpit.Center, cockpit.Id,
+            forwardDegrees: ShipCatalog.ForwardDegrees(ShipKind.Corvette), // bow up the plan: this hull flies nose-first, not broadside
+            componentMounts: componentMounts);
     }
 }

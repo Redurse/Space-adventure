@@ -106,6 +106,19 @@ public sealed partial class World
 
         Credits += quest.RewardCredits;
         AdjustStanding(DockedFaction, FactionDefinitions.StandingPerQuestTurnIn);
+        if (FactionDefinitions.Rival(DockedFaction) is { } rival)
+            AdjustStanding(rival, FactionDefinitions.RivalStandingPerQuestTurnIn);
+        ActiveQuest = null;
+    }
+
+    // Unlike turning in, this needs no docked gate at all - giving up on a job is a decision you
+    // can make wherever you are, not something you do in person at a counter.
+    private void TryAbandonQuest()
+    {
+        if (ActiveQuest is not { } quest)
+            return;
+
+        AdjustStanding(OwnerOf(quest.IssuedByPointId), FactionDefinitions.StandingPenaltyForAbandoningQuest);
         ActiveQuest = null;
     }
 }

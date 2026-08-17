@@ -41,11 +41,15 @@ public sealed partial class World
     }
 
     // True while the ship is parked alongside the berth slowly enough to mate with it - what arms
-    // the helm's "Стыковка" button (the client mirrors this to decide whether to draw it).
+    // the helm's "Стыковка" button (the client mirrors this to decide whether to draw it). A
+    // faction whose territory this is can refuse the ship outright at deep enough hostility
+    // (World.Factions.cs) - the approach itself is still allowed, so nothing strands the ship
+    // mid-flight, but the button never arms and the crew is left to fix things elsewhere.
     public bool CanDockNow =>
         Phase == VoyagePhase.StationApproach &&
         (DockBerthPosition - _shipFieldPosition).Length() < DockCaptureRadius &&
-        _shipVelocity.Length() < DockMaxSpeed;
+        _shipVelocity.Length() < DockMaxSpeed &&
+        GetStanding(OwnerOf(_travelTargetPointId!)) > FactionDefinitions.WarThreshold;
 
     // The deliberate press. Ignored unless actually alongside, so a mashed button can't dock the
     // ship from across the field. The capture radius is deliberately forgiving and the mating

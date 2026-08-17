@@ -62,7 +62,10 @@ public sealed class FieldRenderer
                 DrawOreBlock(spriteBatch, deposit, state, WorldToScreen(deposit.Position), totalSeconds);
         }
 
-        foreach (var dropped in snapshot.DroppedItems)
+        // RoomId is null only for the original EVA-space drops - anything dropped on a ship/station
+        // floor (World.Storage.cs) belongs to ShipRenderer/StationRenderer instead, whose room-space
+        // coordinates aren't this scene's ship-local exterior frame.
+        foreach (var dropped in snapshot.DroppedItems.Where(d => d.RoomId is null))
             DrawDroppedItem(spriteBatch, dropped, WorldToScreen(dropped.Position), totalSeconds);
 
         // The cutting flame, out of the character toward whatever they're aiming at - the tool's
@@ -72,6 +75,14 @@ public sealed class FieldRenderer
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
             DrawCuttingFlame(spriteBatch, WorldToScreen(new Vec2(character.X, character.Y)),
+                new Vector2(aim.X, aim.Y), totalSeconds);
+        }
+
+        foreach (var character in snapshot.Characters.Where(c => c.Welding && c.IsOutside))
+        {
+            var aim = ShipLocalFrame.ToLocalDirection(
+                new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
+            DrawWeldingFlame(spriteBatch, _pixel, WorldToScreen(new Vec2(character.X, character.Y)),
                 new Vector2(aim.X, aim.Y), totalSeconds);
         }
 
@@ -367,7 +378,16 @@ public sealed class FieldRenderer
 
     // internal + static so the interior renderers light the same torch: a cutter works anywhere,
     // there just isn't any ore inside a ship to bite on.
-    internal static void DrawCuttingFlame(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, Vector2 aim, float totalSeconds)
+    internal static void DrawCuttingFlame(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, Vector2 aim, float totalSeconds) =>
+        DrawToolFlame(spriteBatch, pixel, origin, aim, totalSeconds, new Color(70, 130, 255), new Color(120, 200, 255));
+
+    // The welder's flame: same shape and reach as the cutter's (World.Welding.cs uses the same
+    // WelderReachUnits), but yellow-orange rather than blue - a torch welding metal, not cutting
+    // rock, and a color a player can tell apart from across the room.
+    internal static void DrawWeldingFlame(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, Vector2 aim, float totalSeconds) =>
+        DrawToolFlame(spriteBatch, pixel, origin, aim, totalSeconds, new Color(255, 120, 0), new Color(255, 200, 60));
+
+    private static void DrawToolFlame(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, Vector2 aim, float totalSeconds, Color outer, Color mid)
     {
         if (aim.LengthSquared() < 0.001f)
             return;
@@ -375,11 +395,11 @@ public sealed class FieldRenderer
 
         var rotation = MathF.Atan2(aim.Y, aim.X);
         var flicker = 0.85f + 0.15f * MathF.Sin(totalSeconds * 40f);
-        var length = 1.7f * ShipRenderer.PixelsPerUnit * flicker; // World.CutterReachUnits
+        var length = 1.7f * ShipRenderer.PixelsPerUnit * flicker; // World.CutterReachUnits / World.WelderReachUnits
 
-        spriteBatch.Draw(pixel, origin, null, new Color(70, 130, 255) * 0.35f, rotation, new Vector2(0f, 0.5f),
+        spriteBatch.Draw(pixel, origin, null, outer * 0.35f, rotation, new Vector2(0f, 0.5f),
             new Vector2(length, 14f), SpriteEffects.None, 0f);
-        spriteBatch.Draw(pixel, origin, null, new Color(120, 200, 255) * 0.75f, rotation, new Vector2(0f, 0.5f),
+        spriteBatch.Draw(pixel, origin, null, mid * 0.75f, rotation, new Vector2(0f, 0.5f),
             new Vector2(length * 0.92f, 7f), SpriteEffects.None, 0f);
         spriteBatch.Draw(pixel, origin, null, Color.White * 0.9f, rotation, new Vector2(0f, 0.5f),
             new Vector2(length * 0.55f, 3f), SpriteEffects.None, 0f);

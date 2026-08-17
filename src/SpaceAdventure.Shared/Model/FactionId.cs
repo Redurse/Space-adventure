@@ -7,4 +7,6 @@ public enum FactionId
     Independent, // unaligned outposts - never take sides, always neutral
     Consortium,  // trade-focused; owns the wealthier stations
     FreeFleet,   // ex-military privateers; the ones you usually end up fighting
+    MinersGuild, // ore economy, not a side in the Consortium/FreeFleet war - has its own standing,
+                 // but (like Independent) no Rival, so nothing ripples to it from that fight
 }

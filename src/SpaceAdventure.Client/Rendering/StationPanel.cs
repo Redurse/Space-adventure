@@ -16,6 +16,12 @@ public sealed class StationPanel
     private const int RowWidth = 210;
     private static readonly Vector2 TradeListOrigin = new(0, 170);
     private static readonly Vector2 SellColumnOffset = new(230, 0);
+    private static readonly Vector2 ComponentColumnOffset = new(460, 0);
+
+    // TradeCatalog.Goods[0..9] are general gear (fits the original single column); the 14 wiring
+    // components appended after them (M23) get their own third column instead of stretching the
+    // list past the panel's height.
+    private const int ComponentColumnStart = 10;
 
     private readonly SpriteFont _font;
 
@@ -24,10 +30,14 @@ public sealed class StationPanel
         _font = font;
     }
 
-    // "Купить" column — one row per TradeCatalog.Goods entry, in catalog order.
+    // "Купить" column(s) — one row per TradeCatalog.Goods entry, in catalog order; entries from
+    // ComponentColumnStart on spill into a second buy column so the list never grows past the panel.
     public static Rectangle GetGoodRect(int index, Vector2 panelOrigin)
     {
-        var origin = panelOrigin + TradeListOrigin + new Vector2(0, index * RowHeight);
+        var (columnOffset, row) = index < ComponentColumnStart
+            ? (Vector2.Zero, index)
+            : (ComponentColumnOffset, index - ComponentColumnStart);
+        var origin = panelOrigin + TradeListOrigin + columnOffset + new Vector2(0, row * RowHeight);
         return new Rectangle((int)origin.X, (int)origin.Y, RowWidth, RowHeight - 2);
     }
 
@@ -68,6 +78,13 @@ public sealed class StationPanel
     {
         var origin = panelOrigin + TradeListOrigin + new Vector2(0, index * RowHeight);
         return new Rectangle((int)origin.X, (int)origin.Y, RowWidth, RowHeight - 2);
+    }
+
+    // The Recruiter's board — one row per BotCandidate currently on offer, same geometry.
+    public static Rectangle GetCandidateRect(int index, Vector2 panelOrigin)
+    {
+        var origin = panelOrigin + TradeListOrigin + new Vector2(0, index * RowHeight);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth + 60, RowHeight - 2);
     }
 
     // The Shipwright's hull list — one row per ShipKind, same geometry as the other lists.
@@ -127,6 +144,9 @@ public sealed class StationPanel
             case NpcKind.Shipwright:
                 DrawShipyard(spriteBatch, snapshot, panelOrigin);
                 return;
+            case NpcKind.Recruiter:
+                DrawRecruiterBoard(spriteBatch, snapshot, panelOrigin);
+                return;
             default:
                 DrawTraderLists(spriteBatch, snapshot, playerId, panelOrigin);
                 return;
@@ -164,6 +184,34 @@ public sealed class StationPanel
             }
 
             spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), color, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
+    }
+
+    // The Recruiter's board (game_design.md section 10 - "случайный набор кандидатов... у каждого
+    // своё имя/характеристики/специализация"). Hired crew already aboard (World.Recruiting.cs's
+    // World.MaxHiredBots) shows as a plain headcount rather than a list — there's nothing to click
+    // on a crew member who's just doing their job.
+    private void DrawRecruiterBoard(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin)
+    {
+        var headerOrigin = panelOrigin + TradeListOrigin + new Vector2(0, -20);
+        var hired = snapshot.Characters.Count(c => c.IsBot);
+        spriteBatch.DrawString(_font, $"Экипаж на найме: {hired}/4", headerOrigin, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        if (snapshot.RecruitCandidates.Count == 0)
+        {
+            spriteBatch.DrawString(_font, "Сейчас никого нет на примете.", new Vector2(headerOrigin.X, headerOrigin.Y + RowHeight),
+                Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+            return;
+        }
+
+        for (var i = 0; i < snapshot.RecruitCandidates.Count; i++)
+        {
+            var candidate = snapshot.RecruitCandidates[i];
+            var rect = GetCandidateRect(i, panelOrigin);
+            var label = $"{candidate.Name} ({CrewRoles.Name(candidate.Role)}) - {candidate.Cost}";
+            var affordable = snapshot.Credits >= candidate.Cost;
+            spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), affordable ? Color.White : Color.Gray,
+                0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
         }
     }
 
@@ -234,6 +282,11 @@ public sealed class StationPanel
 
         spriteBatch.DrawString(_font, $"Задание: {quest.Describe()} (+{quest.RewardCredits} кред.)",
             dialogueOrigin + new Vector2(0, 20), Color.LightGray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+
+        // Same button as the turn-in above, shown instead of it while the job can't be finished
+        // here - giving up costs standing with whoever issued it (World.Quests.cs's TryAbandonQuest).
+        spriteBatch.DrawString(_font, "[Клик] Отказаться от задания", actionPosition,
+            Color.OrangeRed, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
     }
 
     private void DrawTraderLists(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 panelOrigin)
@@ -241,6 +294,7 @@ public sealed class StationPanel
         var buyHeaderOrigin = panelOrigin + TradeListOrigin + new Vector2(0, -20);
         spriteBatch.DrawString(_font, "Купить", buyHeaderOrigin, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
         spriteBatch.DrawString(_font, "Продать", buyHeaderOrigin + SellColumnOffset, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, "Компоненты", buyHeaderOrigin + ComponentColumnOffset, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
 
         for (var i = 0; i < TradeCatalog.Goods.Count; i++)
         {

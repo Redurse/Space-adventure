@@ -8,4 +8,5 @@ public enum StationKind
     Outpost,  // bare minimum: administrator + trader. The home station.
     Trade,    // adds a mechanic - the well-supplied commercial hub
     Shipyard, // the only kind that sells hulls
+    Mining,   // the Miners' Guild's own base - its trader pays a premium for ore (World.Trade.cs)
 }

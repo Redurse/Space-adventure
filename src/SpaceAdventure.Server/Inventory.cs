@@ -7,7 +7,7 @@ namespace SpaceAdventure.Server;
 // for row space (headset/clothing/headwear).
 public sealed class Inventory
 {
-    public const int MainSlotCount = 9;
+    public const int MainSlotCount = 10;
 
     public ItemType?[] MainSlots { get; } = new ItemType?[MainSlotCount];
     public Dictionary<EquipSlot, ItemType?> Equipped { get; } = new()
@@ -53,19 +53,22 @@ public sealed class Inventory
     public bool HasWorkingTank(int slotIndex) => TankCharge(slotIndex) > 0f;
 
     // Moving a tank out of the row and into a socket. Both ends have to be real: a tank in hand or
-    // in the row, and something with a socket that hasn't already got one.
+    // in the row, and something with a socket that hasn't already got one - and the tank has to be
+    // the kind that socket actually takes (TankSockets): a welding tank offered to a cutter is
+    // refused the same as an empty hand would be.
     public bool TryAttachTank(int sourceSlotIndex, int targetSlotIndex)
     {
-        if (sourceSlotIndex < 0 || sourceSlotIndex >= MainSlotCount || MainSlots[sourceSlotIndex] != ItemType.OxygenTank)
+        if (sourceSlotIndex < 0 || sourceSlotIndex >= MainSlotCount ||
+            MainSlots[sourceSlotIndex] is not { } sourceItem || !TankSockets.IsTank(sourceItem))
             return false;
         if (targetSlotIndex != WornSuitSlot && (targetSlotIndex < 0 || targetSlotIndex >= MainSlotCount))
             return false;
-        if (SocketedItem(targetSlotIndex) is not { } target || !OxygenTankDefinitions.HasSocket(target))
+        if (SocketedItem(targetSlotIndex) is not { } target || TankSockets.AcceptedTank(target) != sourceItem)
             return false;
         if (TankCharge(targetSlotIndex) is not null)
             return false;
 
-        SetTank(targetSlotIndex, MainSlotTanks[sourceSlotIndex] ?? OxygenTankDefinitions.FullCharge);
+        SetTank(targetSlotIndex, MainSlotTanks[sourceSlotIndex] ?? TankSockets.FullChargeOf(sourceItem));
         MainSlots[sourceSlotIndex] = null;
         MainSlotTanks[sourceSlotIndex] = null;
         HeldSlotIndices.Remove(sourceSlotIndex);
@@ -73,19 +76,21 @@ public sealed class Inventory
     }
 
     // Back out of the socket into the row - including an empty one, which is what makes room for a
-    // fresh tank.
+    // fresh tank. Which item type comes back out is read off the socket's owner, not assumed.
     public bool TryDetachTank(int slotIndex)
     {
         if (slotIndex != WornSuitSlot && (slotIndex < 0 || slotIndex >= MainSlotCount))
             return false;
         if (TankCharge(slotIndex) is not { } charge)
             return false;
+        if (SocketedItem(slotIndex) is not { } owner || TankSockets.AcceptedTank(owner) is not { } tankType)
+            return false;
 
         var freeIndex = Array.IndexOf(MainSlots, null);
         if (freeIndex < 0)
             return false;
 
-        MainSlots[freeIndex] = ItemType.OxygenTank;
+        MainSlots[freeIndex] = tankType;
         MainSlotTanks[freeIndex] = charge;
         SetTank(slotIndex, null);
         return true;
@@ -93,8 +98,14 @@ public sealed class Inventory
 
     public void RefillTank(int slotIndex)
     {
-        if (TankCharge(slotIndex) is not null)
-            SetTank(slotIndex, OxygenTankDefinitions.FullCharge);
+        if (TankCharge(slotIndex) is null)
+            return;
+        // The slot might hold the tank itself (a spare riding loose in the row) rather than a tool
+        // it's plugged into - AcceptedTank falls through to the item itself in that case.
+        var item = SocketedItem(slotIndex);
+        if (item is null)
+            return;
+        SetTank(slotIndex, TankSockets.FullChargeOf(TankSockets.AcceptedTank(item.Value) ?? item.Value));
     }
 
     // Burns oxygen out of a socket; returns false once it's dry, which is what every user of a tank
@@ -153,7 +164,7 @@ public sealed class Inventory
 
         MainSlots[freeIndex] = type;
         // A tank picked up off a rack is a full one; anything else arrives with an empty socket.
-        MainSlotTanks[freeIndex] = type == ItemType.OxygenTank ? OxygenTankDefinitions.FullCharge : null;
+        MainSlotTanks[freeIndex] = TankSockets.IsTank(type) ? TankSockets.FullChargeOf(type) : null;
         return true;
     }
 

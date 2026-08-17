@@ -159,14 +159,14 @@ public partial class Game1
         var parts = text.Split(':', 2);
         return parts.Length == 2 && int.TryParse(parts[1], out var port)
             ? (parts[0], port)
-            : (text, Wire.DefaultPort);
+            : (text, SpaceAdventure.Shared.Networking.Wire.DefaultPort);
     }
 
     // The host is a player like any other - their own session is the same SoloSession solo mode
     // uses, with the listen socket as the only difference.
     private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom)
     {
-        var session = new SoloSession(shipKind, loadFrom, _openToNetwork ? Wire.DefaultPort : null);
+        var session = new SoloSession(shipKind, loadFrom, _openToNetwork ? SpaceAdventure.Shared.Networking.Wire.DefaultPort : null);
         _session = session;
         _client = new GameClient(session.Connection, session.PlayerId);
         _sessionStarted = true;
@@ -223,7 +223,7 @@ public partial class Game1
         }
 
         var hostLine = _openToNetwork
-            ? $"[H] Кооп: ОТКРЫТ, порт {Wire.DefaultPort} — друзья вводят {LocalAddresses()}"
+            ? $"[H] Кооп: ОТКРЫТ, порт {SpaceAdventure.Shared.Networking.Wire.DefaultPort} — друзья вводят {LocalAddresses()}"
             : "[H] Кооп: закрыт (игра только для вас)";
         _spriteBatch.DrawString(_font, hostLine, new Vector2(60, 460),
             _openToNetwork ? Color.LightGreen : Color.LightGray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
@@ -242,7 +242,7 @@ public partial class Game1
         _spriteBatch.DrawString(_font, text, new Vector2(60, 178), Color.Gold, 0f, Vector2.Zero, 1.2f, SpriteEffects.None, 0f);
 
         _spriteBatch.DrawString(_font, "[Enter] подключиться    [Esc] назад", new Vector2(60, 250), Color.LightSteelBlue, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, $"Хост должен включить кооп ([H] в меню) и открыть порт {Wire.DefaultPort}.",
+        _spriteBatch.DrawString(_font, $"Хост должен включить кооп ([H] в меню) и открыть порт {SpaceAdventure.Shared.Networking.Wire.DefaultPort}.",
             new Vector2(60, 280), Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
 
         if (_joinError is { } error)

@@ -2,18 +2,20 @@ using SpaceAdventure.Shared.Model;
 
 namespace SpaceAdventure.Client.Rendering;
 
-public enum BlockKind { None, Reactor, Distribution, System, Navigation, Station, Wiring, Rack }
+public enum BlockKind { None, Reactor, Distribution, System, Navigation, Station, Rack, Connections }
 
 // Which block, if any, the player currently has "open" (game_design.md sections 1, 5, 10 — click
-// a block to walk up to its terminal). System carries which of the 5 power systems it is.
-public readonly record struct ClickTarget(BlockKind Kind, PowerSystemId System = default)
+// a block to walk up to its terminal). System carries which of the 5 power systems it is;
+// Connections (screwdriver-only, World.Wiring.cs's component graph) carries which component's pins
+// to list instead; Rack carries which physical shelf (a hull carries two, game_design.md section 13).
+public readonly record struct ClickTarget(BlockKind Kind, PowerSystemId System = default, string? TargetComponentId = null)
 {
     public static readonly ClickTarget None = new(BlockKind.None);
     public static readonly ClickTarget Reactor = new(BlockKind.Reactor);
     public static readonly ClickTarget Distribution = new(BlockKind.Distribution);
     public static readonly ClickTarget Navigation = new(BlockKind.Navigation);
     public static readonly ClickTarget Station = new(BlockKind.Station);
-    public static readonly ClickTarget Wiring = new(BlockKind.Wiring);
-    public static readonly ClickTarget Rack = new(BlockKind.Rack);
     public static ClickTarget ForSystem(PowerSystemId system) => new(BlockKind.System, system);
+    public static ClickTarget ForConnections(string componentId) => new(BlockKind.Connections, TargetComponentId: componentId);
+    public static ClickTarget ForRack(string rackId) => new(BlockKind.Rack, TargetComponentId: rackId);
 }

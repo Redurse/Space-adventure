@@ -18,6 +18,9 @@ public sealed partial class World
     {
         // Station layouts hang off this hull's airlock door position, so they have to follow it.
         RebuildStationLayouts();
+        InitializeWiring();
+        InitializeComponentMounts();
+        InitializeRackSlots();
 
         _roomOxygen.Clear();
         foreach (var room in Ship.Rooms)
