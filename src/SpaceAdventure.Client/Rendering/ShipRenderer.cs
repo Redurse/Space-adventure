@@ -27,12 +27,16 @@ public sealed class ShipRenderer
     private const int RibSpacing = 26;
 
     private readonly Texture2D _pixel;
+    private readonly Texture2D _floorPlate;
+    private readonly Texture2D _wallPlate;
     private readonly SpriteFont _font;
 
     public ShipRenderer(GraphicsDevice graphicsDevice, SpriteFont font)
     {
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
+        _floorPlate = TileTextures.CreateFloorPlate(graphicsDevice);
+        _wallPlate = TileTextures.CreateWallPlate(graphicsDevice);
         _font = font;
     }
 
@@ -492,7 +496,7 @@ public sealed class ShipRenderer
         var rect = GetRoomRect(room, origin);
         var accent = RoomDecor.Accent(room.Id);
 
-        spriteBatch.Draw(_pixel, rect, new Color(35, 40, 47));
+        TileTextures.DrawTiled(spriteBatch, _floorPlate, TileTextures.FloorTileSize, rect, new Color(35, 40, 47));
         DrawFloorGrating(spriteBatch, rect);
         RoomDecor.DrawDeckMarkings(spriteBatch, _pixel, rect, accent);
         RoomDecor.DrawLightPool(spriteBatch, _pixel, rect, accent);
@@ -542,7 +546,8 @@ public sealed class ShipRenderer
 
     private void DrawWallBand(SpriteBatch spriteBatch, Rectangle band, bool horizontal, bool alarmed)
     {
-        spriteBatch.Draw(_pixel, band, alarmed ? new Color(92, 60, 62) : new Color(70, 78, 90));
+        TileTextures.DrawTiled(spriteBatch, _wallPlate, TileTextures.WallTileSize, band,
+            alarmed ? new Color(92, 60, 62) : new Color(70, 78, 90));
         var conduit = (alarmed ? Color.OrangeRed : Color.SteelBlue) * 0.45f;
 
         if (horizontal)
@@ -573,7 +578,8 @@ public sealed class ShipRenderer
     {
         const int size = WallThickness + 6;
         var rect = new Rectangle(x - size / 2, y - size / 2, size, size);
-        spriteBatch.Draw(_pixel, rect, alarmed ? new Color(110, 70, 72) : new Color(88, 96, 110));
+        TileTextures.DrawTiled(spriteBatch, _wallPlate, TileTextures.WallTileSize, rect,
+            alarmed ? new Color(110, 70, 72) : new Color(88, 96, 110));
         DrawRectOutline(spriteBatch, rect, Color.Black * 0.45f, 1);
         DrawRivets(spriteBatch, rect);
     }
