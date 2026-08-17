@@ -132,6 +132,7 @@ public partial class Game1 : Game
     private SlotRef? _pendingDropItemFrom; // drag ended over empty space (World.Storage.cs)
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
     private readonly EffectTracker _effectTracker = new();
+    private readonly AtmosphereField _atmosphere = new();
     private WorldSnapshot? _previousSnapshot;
 
     // Every panel origin, viewport rect and hit-test box in this class is written in these fixed
@@ -382,6 +383,7 @@ public partial class Game1 : Game
             _effectTracker.Detect(_previousSnapshot, latestForEffects);
             _previousSnapshot = latestForEffects;
         }
+        _atmosphere.Step((float)gameTime.ElapsedGameTime.TotalSeconds, _client.LatestSnapshot);
 
         base.Update(gameTime);
     }
@@ -674,7 +676,7 @@ public partial class Game1 : Game
                 // Behind the periscope you are outside the ship looking at it, so it's drawn closed
                 // up - and so is the station it's docked to, for the same reason.
                 var fromOutside = MannedTurret(snapshot) is not null;
-                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, hullPlating: fromOutside);
+                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, hullPlating: fromOutside, atmosphere: _atmosphere.Particles);
                 // A docked station is laid out in these same coordinates, joined to the ship by the
                 // shared airlock rectangle - drawn alongside the interior rather than instead of it,
                 // so there's no moment where the view swaps to "the station screen".

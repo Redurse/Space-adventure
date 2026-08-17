@@ -62,7 +62,8 @@ public sealed class ShipRenderer
     // furniture behind that plating are not things they can see. Without it the ship reads as an
     // open floor plan floating in space while you're supposedly outside it.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock,
-        float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null, bool hullPlating = false)
+        float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null, bool hullPlating = false,
+        IEnumerable<AtmosphereParticle>? atmosphere = null)
     {
         var forwardDegrees = ShipCatalog.ForwardDegrees(snapshot.CurrentShipKind);
 
@@ -172,6 +173,29 @@ public sealed class ShipRenderer
         if (effects is not null)
             foreach (var effect in effects.Where(e => e.Kind != EffectKind.Cut)) // Cut is exterior-only, drawn by FieldRenderer
                 DrawSparkBurst(spriteBatch, origin + new Vector2(effect.Position.X, effect.Position.Y) * PixelsPerUnit, effect.Progress, effect.Kind == EffectKind.Weld ? Color.White : Color.PaleGreen);
+
+        if (atmosphere is not null)
+            foreach (var particle in atmosphere)
+                DrawAtmosphereParticle(spriteBatch, particle, origin);
+    }
+
+    // A breach's steam, a damaged system's sparks, a starved reactor's embers - continuous rather
+    // than a one-shot burst, so each is just a soft dot that drifts and fades over its own lifetime
+    // (AtmosphereParticle.Progress) instead of DrawSparkBurst's radiating rays.
+    private void DrawAtmosphereParticle(SpriteBatch spriteBatch, AtmosphereParticle particle, Vector2 origin)
+    {
+        var center = origin + new Vector2(particle.Position.X, particle.Position.Y) * PixelsPerUnit;
+        var alpha = 1f - particle.Progress;
+        var color = particle.Kind switch
+        {
+            AtmosphereKind.Steam => Color.WhiteSmoke * (alpha * 0.32f),
+            AtmosphereKind.Spark => Color.Lerp(Color.Yellow, Color.OrangeRed, particle.Progress) * alpha,
+            _ => Color.Lerp(Color.Orange, new Color(90, 20, 10), particle.Progress) * alpha,
+        };
+        // Steam swells as it disperses; sparks and embers shrink towards nothing.
+        var scale = particle.Kind == AtmosphereKind.Steam ? 1f + particle.Progress * 1.6f : 1f - particle.Progress * 0.6f;
+        var size = particle.Size * PixelsPerUnit * scale;
+        spriteBatch.Draw(_pixel, center, null, color, 0f, new Vector2(0.5f, 0.5f), new Vector2(size, size), SpriteEffects.None, 0f);
     }
 
     // Barotrauma-style brief spark burst for a tool action that just landed (welding a breach,
