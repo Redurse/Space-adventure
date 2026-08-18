@@ -208,7 +208,9 @@ public sealed class InventoryPanel
         spriteBatch.DrawString(font, label, new Vector2(rect.X + (rect.Width - size.X) / 2f, rect.Y + (rect.Height - size.Y) / 2f), Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
     }
 
-    private static Color ItemColor(ItemType type) => type switch
+    // internal so ShipRenderer's held-item icon (drawn beside a character, not in a panel slot at
+    // all) uses the exact same colour a player already knows that item by from their own inventory.
+    internal static Color ItemColor(ItemType type) => type switch
     {
         ItemType.AmmoCrate => Color.SaddleBrown,
         ItemType.Spacesuit => Color.CadetBlue,

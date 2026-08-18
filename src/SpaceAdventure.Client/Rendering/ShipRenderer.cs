@@ -163,14 +163,20 @@ public sealed class ShipRenderer
             BoardingRenderer.DrawShot(spriteBatch, _pixel, shot, origin);
 
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
+        {
+            var facing = new Vector2(character.FacingX, character.FacingY);
             FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * PixelsPerUnit,
-                new Vector2(character.FacingX, character.FacingY), totalSeconds);
+                origin + new Vector2(character.X, character.Y) * PixelsPerUnit + HeldToolOffset(facing),
+                facing, totalSeconds);
+        }
 
         foreach (var character in snapshot.Characters.Where(c => c.Welding && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
+        {
+            var facing = new Vector2(character.FacingX, character.FacingY);
             FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * PixelsPerUnit,
-                new Vector2(character.FacingX, character.FacingY), totalSeconds);
+                origin + new Vector2(character.X, character.Y) * PixelsPerUnit + HeldToolOffset(facing),
+                facing, totalSeconds);
+        }
 
         if (effects is not null)
             foreach (var effect in effects.Where(e => e.Kind != EffectKind.Cut)) // Cut is exterior-only, drawn by FieldRenderer
@@ -644,6 +650,62 @@ public sealed class ShipRenderer
         spriteBatch.DrawString(_font, "!", center + new Vector2(-3, -18), Color.Red, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
     }
 
+    // Out in front of the body along the way the character is facing - far enough out that a
+    // held-item icon doesn't overlap it, the same distance a tool's flame is now drawn from
+    // (DrawWeldingFlame/DrawCuttingFlame in ShipRenderer.Draw and FieldRenderer.Draw), so the beam
+    // reads as coming out of the tool in hand rather than out of the character's chest.
+    internal static Vector2 HeldToolOffset(Vector2 facing)
+    {
+        if (facing.LengthSquared() < 0.01f)
+            facing = new Vector2(1f, 0f);
+        else
+            facing = Vector2.Normalize(facing);
+        return facing * (CharacterDiameter * PixelsPerUnit / 2f + 10f);
+    }
+
+    internal static IReadOnlyList<ItemType> HeldItemTypes(InventoryState? inventory) =>
+        inventory is null
+            ? Array.Empty<ItemType>()
+            : inventory.HeldMainSlotIndices.Select(i => inventory.MainSlots[i]).OfType<ItemType>().ToArray();
+
+    // A held tool/item reads as a small coloured chip out in front of the body - the same colour and
+    // 1-2 letter label InventoryPanel already shows it by in a slot, just without the slot frame
+    // (this project has no item sprites to actually put in someone's hand). Two held items (a
+    // two-handed tool's "both hands" or two one-handed ones) sit side by side rather than stacked.
+    // internal + static, pixel/font passed explicitly, so FieldRenderer's own (simpler) EVA
+    // DrawCharacter draws the exact same icon for a suited crewmate holding a cutter outside.
+    internal static void DrawHeldItems(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font,
+        IReadOnlyList<ItemType> held, Vector2 center, Vector2 facing)
+    {
+        if (held.Count == 0)
+            return;
+
+        var offset = HeldToolOffset(facing);
+        var side = new Vector2(-offset.Y, offset.X);
+        if (side.LengthSquared() > 0.01f)
+            side.Normalize();
+
+        const int iconSize = 13;
+        for (var i = 0; i < held.Count; i++)
+        {
+            var lateral = held.Count == 1 ? 0f : (i == 0 ? -1f : 1f) * (iconSize * 0.65f);
+            DrawHeldItemIcon(spriteBatch, pixel, font, held[i], center + offset + side * lateral, iconSize);
+        }
+    }
+
+    private static void DrawHeldItemIcon(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, ItemType item, Vector2 pos, int size)
+    {
+        var rect = new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size);
+        spriteBatch.Draw(pixel, rect, InventoryPanel.ItemColor(item));
+        DrawRectOutline(spriteBatch, pixel, rect, Color.Black * 0.6f, 1);
+
+        var label = ItemDefinitions.ShortLabel(item);
+        if (label.Length == 0)
+            return;
+        var textSize = font.MeasureString(label) * 0.4f;
+        spriteBatch.DrawString(font, label, pos - textSize / 2f, Color.White, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
+    }
+
     // Simple humanoid read (helmet + torso) rather than a flat square — no sprite sheet, but a
     // second smaller square as a "helmet" plus a facing notch is enough to read as a person from
     // this camera height. FacingX/Y drives the notch so idle characters still show which way
@@ -671,6 +733,12 @@ public sealed class ShipRenderer
         if (character.IsBot && character.Role is { } role)
             spriteBatch.DrawString(_font, $"{character.BotName} ({CrewRoles.Name(role)})", new Vector2(rect.X - 10, rect.Y - 14),
                 Color.LightSkyBlue, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+        // A human crewmate reads the same way a hired bot does - name floating over the head,
+        // always on, not just when hovered - so telling a crew of several players apart doesn't
+        // depend on remembering whose colour is whose.
+        else if (!character.IsBot && character.Nickname is { Length: > 0 } nickname)
+            spriteBatch.DrawString(_font, nickname, new Vector2(rect.X - 10, rect.Y - 14),
+                Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
 
         // Facing notch: a tiny bright square nudged toward FacingX/Y, off the body's edge.
         var facing = new Vector2(character.FacingX, character.FacingY);
@@ -681,6 +749,12 @@ public sealed class ShipRenderer
             var notchCenter = center + facing * (size / 2f + 1);
             spriteBatch.Draw(_pixel, new Rectangle((int)notchCenter.X - notchSize / 2, (int)notchCenter.Y - notchSize / 2, notchSize, notchSize), Color.White);
         }
+        else
+        {
+            facing = new Vector2(1f, 0f); // idle characters still need a direction to hold a tool toward
+        }
+
+        DrawHeldItems(spriteBatch, _pixel, _font, HeldItemTypes(character.Inventory), center, facing);
 
         if (character.CarryingAmmoCrate)
         {

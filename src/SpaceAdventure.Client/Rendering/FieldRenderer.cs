@@ -74,16 +74,18 @@ public sealed class FieldRenderer
         {
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
-            DrawCuttingFlame(spriteBatch, WorldToScreen(new Vec2(character.X, character.Y)),
-                new Vector2(aim.X, aim.Y), totalSeconds);
+            var direction = new Vector2(aim.X, aim.Y);
+            DrawCuttingFlame(spriteBatch, WorldToScreen(new Vec2(character.X, character.Y)) + ShipRenderer.HeldToolOffset(direction),
+                direction, totalSeconds);
         }
 
         foreach (var character in snapshot.Characters.Where(c => c.Welding && c.IsOutside))
         {
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
-            DrawWeldingFlame(spriteBatch, _pixel, WorldToScreen(new Vec2(character.X, character.Y)),
-                new Vector2(aim.X, aim.Y), totalSeconds);
+            var direction = new Vector2(aim.X, aim.Y);
+            DrawWeldingFlame(spriteBatch, _pixel, WorldToScreen(new Vec2(character.X, character.Y)) + ShipRenderer.HeldToolOffset(direction),
+                direction, totalSeconds);
         }
 
         DrawEngines(spriteBatch, snapshot, origin, hullCenter, totalSeconds);
@@ -583,6 +585,10 @@ public sealed class FieldRenderer
             var notchCenter = screenCenter + facing * (size / 2f + 1);
             spriteBatch.Draw(_pixel, new Rectangle((int)notchCenter.X - notchSize / 2, (int)notchCenter.Y - notchSize / 2, notchSize, notchSize), Color.White);
         }
+
+        // Same held-item chip as indoors (ShipRenderer.DrawHeldItems) - a suited EVA crewmate holding
+        // a cutter still reads as holding something, not just glowing from an invisible tool.
+        ShipRenderer.DrawHeldItems(spriteBatch, _pixel, _font, ShipRenderer.HeldItemTypes(character.Inventory), screenCenter, facing);
 
         // Same always-on nameplate as indoors (ShipRenderer.DrawCharacter) - a suited EVA crewmate
         // is still someone specific, not just an anonymous orange square drifting past.
