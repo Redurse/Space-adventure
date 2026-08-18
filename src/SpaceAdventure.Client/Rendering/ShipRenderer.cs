@@ -767,13 +767,43 @@ public sealed class ShipRenderer
 
         var hipColor = bodyColor * 0.72f;
         var hipCenter = center - facing * (size * 0.12f);
+
+        // Feet: two small dark ovals peeking out behind the hips - the one part of a standing
+        // figure that still shows past the torso when looking straight down at them, and drawn
+        // first so the hip capsule covers where they join the legs.
+        var footColor = new Color(28, 28, 32);
+        var footBack = hipCenter - facing * (size * 0.15f);
+        HudIcons.FillCircle(spriteBatch, pixel, footBack - perp * (size * 0.13f), size * 0.085f, footColor);
+        HudIcons.FillCircle(spriteBatch, pixel, footBack + perp * (size * 0.13f), size * 0.085f, footColor);
+
         DrawCapsule(spriteBatch, pixel, hipCenter, perp, size * 0.62f, size * 0.40f, hipColor);
 
+        // Arms: small capsules off both sides of the shoulders, drawn before the shoulder capsule
+        // so it covers their inner ends and reads as a socket rather than two separate blobs.
         var shoulderCenter = center + facing * (size * 0.06f);
+        var armColor = bodyColor * 0.85f;
+        DrawCapsule(spriteBatch, pixel, shoulderCenter - perp * (size * 0.36f), facing, size * 0.22f, size * 0.15f, armColor);
+        DrawCapsule(spriteBatch, pixel, shoulderCenter + perp * (size * 0.36f), facing, size * 0.22f, size * 0.15f, armColor);
+
         DrawCapsule(spriteBatch, pixel, shoulderCenter, perp, size * 0.92f, size * 0.48f, bodyColor);
+        // A lit edge on the leading side, a shadowed one trailing - one flat tone reads as a cutout,
+        // the same tone with a light on it reads as a body with some actual shape to it
+        // (HullSkin.DrawPlateShading uses the same trick on the hull's own armour plates).
+        var shoulderHighlight = shoulderCenter + facing * (size * 0.02f) - perp * (size * 0.14f);
+        var shoulderShadow = shoulderCenter - facing * (size * 0.10f) + perp * (size * 0.18f);
+        HudIcons.FillCircle(spriteBatch, pixel, shoulderHighlight, size * 0.14f, Color.White * 0.16f);
+        HudIcons.FillCircle(spriteBatch, pixel, shoulderShadow, size * 0.14f, Color.Black * 0.16f);
+
+        // Neck: a short, slightly darker band closing the gap between shoulders and head, so the
+        // two don't read as one shape stacked on another with nothing between them.
+        var neckCenter = center + facing * (size * 0.14f);
+        HudIcons.FillCircle(spriteBatch, pixel, neckCenter, size * 0.15f, bodyColor * 0.8f);
 
         var headCenter = center + facing * (size * 0.22f);
         HudIcons.FillCircle(spriteBatch, pixel, headCenter, size * 0.30f, visorColor);
+        // Helmet rim - a ring round the visor's own edge, so the head reads as a helmet with a
+        // faceplate set into it rather than a flat coloured disc.
+        HudIcons.DrawRingArc(spriteBatch, pixel, headCenter, size * 0.30f, 0f, 360f, bodyColor * 0.7f, 14, MathF.Max(1.4f, size * 0.05f));
 
         var noseCenter = headCenter + facing * (size * 0.20f);
         HudIcons.FillCircle(spriteBatch, pixel, noseCenter, MathF.Max(1.5f, size * 0.045f), Color.White);
