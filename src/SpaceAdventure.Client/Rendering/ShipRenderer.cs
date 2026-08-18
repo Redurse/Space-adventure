@@ -723,25 +723,18 @@ public sealed class ShipRenderer
 
     private static void DrawHeldItemIcon(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, ItemType item, Rectangle rect, float rotation)
     {
-        // The cutter/welder read as a tool actually in hand, drawn top-down (the same angle the
-        // character itself is seen from) with nothing else around them - a backdrop chip and hand
-        // glyphs make sense for an abstract "this is what's equipped" square, less so once the tool
-        // has its own recognizable silhouette to look at directly.
+        // Every held item reads as the thing itself, in the character's hand, with nothing drawn
+        // around it - no backdrop chip, no hand glyphs (those still make sense in the hotbar, an
+        // abstract "this slot is equipped" square, but not once the item has its own recognizable
+        // silhouette to look at directly).
         if (IsTopDownGunTool(item))
         {
+            // The cutter/welder get their own top-down silhouette (the same angle the character
+            // itself is seen from) rather than the side-view hotbar icon.
             var rectCenter = new Vector2(rect.Center.X, rect.Center.Y);
             ItemIcons.DrawGunToolTopDown(spriteBatch, pixel, rectCenter, rotation, HeldIconSize, item);
             return;
         }
-
-        spriteBatch.Draw(pixel, rect, Color.Black * 0.35f);
-        DrawRectOutline(spriteBatch, pixel, rect, Color.Black * 0.6f, 1);
-
-        // Gripping it, not just floating beside it - drawn under the item itself so the fingers read
-        // as wrapped around it rather than stamped on top (InventoryPanel.DrawHands - the same hands
-        // the hotbar shows once an item is actually in hand, always lit here since this chip only
-        // ever draws for something that is).
-        InventoryPanel.DrawHands(spriteBatch, pixel, rect, ItemDefinitions.HandsRequired(item), held: true);
 
         const int margin = 2;
         if (ItemIcons.HasIcon(item))
