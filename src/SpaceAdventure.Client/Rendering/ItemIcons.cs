@@ -48,17 +48,27 @@ public static class ItemIcons
         return origin + new Vector2(x * cos - y * sin, x * sin + y * cos);
     }
 
+    // The whole gallery of tools is designed against a comfortably large canvas, but the actual
+    // destination is a ~30px hotbar slot - a fraction like "0.02 of scale" that reads fine at design
+    // size rounds down to a fraction of a screen pixel there and disappears into mush. Every bar and
+    // ring line is floored to this many actual screen pixels regardless of what its own fraction
+    // would otherwise give, so fine linework stays legible instead of sub-pixel.
+    private const float MinPixels = 1.6f;
+    private const float MinRadiusPixels = 1.1f;
+
     private static void Bar(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float baseAngle, float scale,
         float alongAxis, float acrossAxis, float length, float thickness, Color color, float extraRotation = 0f)
     {
         var world = Point(origin, baseAngle, scale, alongAxis, acrossAxis);
+        var thicknessPixels = MathF.Max(thickness * scale, MinPixels);
         spriteBatch.Draw(pixel, world, null, color, baseAngle + extraRotation, new Vector2(0.5f, 0.5f),
-            new Vector2(length * scale, thickness * scale), SpriteEffects.None, 0f);
+            new Vector2(MathF.Max(length * scale, thicknessPixels), thicknessPixels), SpriteEffects.None, 0f);
     }
 
     private static void Circle(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float baseAngle, float scale,
         float alongAxis, float acrossAxis, float radius, Color color) =>
-        HudIcons.FillCircle(spriteBatch, pixel, Point(origin, baseAngle, scale, alongAxis, acrossAxis), radius * scale, color);
+        HudIcons.FillCircle(spriteBatch, pixel, Point(origin, baseAngle, scale, alongAxis, acrossAxis),
+            MathF.Max(radius * scale, MinRadiusPixels), color);
 
     // A ring/arc - startDegrees/endDegrees are measured in the tool's own rotated frame (0 points
     // toward the nose), so a partial arc (a trigger guard's opening, a carry handle's gap) turns
@@ -67,8 +77,9 @@ public static class ItemIcons
         float alongAxis, float acrossAxis, float radius, float startDegrees, float endDegrees, Color color, float thickness, int segments = 12)
     {
         var tiltDegrees = baseAngle * (180f / MathF.PI);
-        HudIcons.DrawRingArc(spriteBatch, pixel, Point(origin, baseAngle, scale, alongAxis, acrossAxis), radius * scale,
-            startDegrees + tiltDegrees, endDegrees + tiltDegrees, color, segments, thickness * scale);
+        HudIcons.DrawRingArc(spriteBatch, pixel, Point(origin, baseAngle, scale, alongAxis, acrossAxis),
+            MathF.Max(radius * scale, MinRadiusPixels), startDegrees + tiltDegrees, endDegrees + tiltDegrees, color, segments,
+            MathF.Max(thickness * scale, MinPixels));
     }
 
     private static void DrawScrewdriver(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
