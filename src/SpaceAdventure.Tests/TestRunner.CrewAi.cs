@@ -263,7 +263,11 @@ internal static partial class TestRunner
         for (var i = 0; i < 30; i++)
             world.Step(RealtimeStep);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // stand up - hands off the helm entirely
-        for (var i = 0; i < 15; i++)
+        // A handful of ticks, not the full brake - at ShipMaxSpeed(5)/ShipAutoStabilizeDecelerationPerSecond(6)
+        // the captain-bot's own brake (engaged the instant nobody's left at helm) fully zeroes the
+        // ship's momentum in under a second, so checking too long after standing up would just as
+        // often catch it already stopped - which would say nothing about whether it was ever moving.
+        for (var i = 0; i < 5; i++)
             world.Step(RealtimeStep);
 
         var moving = world.CreateSnapshot().ShipField;

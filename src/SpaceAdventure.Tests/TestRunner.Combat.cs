@@ -10,7 +10,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-beta")); // a picket of two
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         var atArrival = world.CreateSnapshot();
@@ -339,9 +339,32 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot)); // hold it
 
         WalkAcrossShipTo(world, 7.2f, 0.7f); // back to the shields device
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // repair
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
+
+        // Repair is gradual now (World.SystemRepair.cs's minigame) rather than fixed by that one
+        // press - staying put with the tool in hand lets the passive trickle finish it on its own.
+        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
+            world.Step(RealtimeStep);
 
         return stillDamagedWithoutTool && world.IsDeviceConnected("system-shields");
+    }
+
+    // The gradual-repair rework's own regression guard - a single F press used to fix a device
+    // outright; now it only starts the minigame (World.SystemRepair.cs), so the device must still
+    // read as damaged right after it.
+    private static bool World_RepairSystem_SinglePressDoesNotInstantlyFixIt()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.CutWire("trunk-shields");
+        WalkAcrossShipTo(world, 7.2f, 0.7f);
+
+        var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot));
+        WalkAcrossShipTo(world, 7.2f, 0.7f);
+
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // one press only
+        return !world.IsDeviceConnected("system-shields");
     }
 
     private static bool Reactor_RemovingAllRods_ZerosOutput()
@@ -473,7 +496,7 @@ internal static partial class TestRunner
         // the 6s attack cooldown after arriving), rather than sampling long after — shield regen
         // is fast enough to mask the dip by then.
         var absorbedAHit = false;
-        for (var i = 0; i < 15 * 30 && !absorbedAHit; i++)
+        for (var i = 0; i < 60 * 30 && !absorbedAHit; i++)
         {
             world.Step(RealtimeStep);
             if (world.CreateSnapshot().Shield.Points < pointsBeforeAttack)

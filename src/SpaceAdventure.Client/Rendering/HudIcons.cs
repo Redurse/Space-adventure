@@ -74,14 +74,6 @@ public static class HudIcons
         DrawPerson(spriteBatch, pixel, center + new Vector2(0, 3f * scale), 1.05f * scale, color);
     }
 
-    // No design yet (the "Управление" button) - a plain empty frame so the button reads as
-    // present-but-inert rather than a rendering bug.
-    public static void DrawBlankGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
-    {
-        var half = 8f * scale;
-        DrawRectOutline(spriteBatch, pixel, new Rectangle((int)(center.X - half), (int)(center.Y - half), (int)(half * 2), (int)(half * 2)), color, 1);
-    }
-
     // Four bars of increasing height - the "Информация" button's own glyph (a stats/report look).
     public static void DrawBarsGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
     {
@@ -137,6 +129,35 @@ public static class HudIcons
             center + new Vector2(hullWidth * 0.2f, hullHeight / 2f),
             center + new Vector2(hullWidth / 2f, 0),
             color);
+    }
+
+    // Main menu's "Сетевая игра" section icon: three connected nodes - the simplest "network" look
+    // that doesn't collide with DrawCrewGlyph's three people (that one means crew, not a wire graph).
+    public static void DrawSignalGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
+    {
+        var left = center + new Vector2(-8f * scale, 6f * scale);
+        var right = center + new Vector2(8f * scale, 6f * scale);
+        var top = center + new Vector2(0, -7f * scale);
+        DrawLine(spriteBatch, pixel, left, top, color, 1.6f * scale);
+        DrawLine(spriteBatch, pixel, right, top, color, 1.6f * scale);
+        FillCircle(spriteBatch, pixel, left, 3f * scale, color);
+        FillCircle(spriteBatch, pixel, right, 3f * scale, color);
+        FillCircle(spriteBatch, pixel, top, 3f * scale, color);
+    }
+
+    // Suit-locker card icon (SuitLockerPanel): helmet + shoulders, in the same CadetBlue a worn
+    // suit already tints a character (ShipRenderer.DrawCharacter's outline ring/visor colour) -
+    // the closest a "no art assets" project gets to the reference screenshot's suit portrait.
+    public static void DrawSuitGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
+    {
+        var helmetCenter = center + new Vector2(0, -8f * scale);
+        FillCircle(spriteBatch, pixel, helmetCenter, 7f * scale, color);
+        FillCircle(spriteBatch, pixel, helmetCenter, 4f * scale, color * 0.55f);
+        var bodyWidth = 16f * scale;
+        var bodyHeight = 13f * scale;
+        spriteBatch.Draw(pixel, new Rectangle(
+            (int)(center.X - bodyWidth / 2f), (int)center.Y,
+            (int)bodyWidth, (int)bodyHeight), color);
     }
 
     // Character tab (placeholder, does nothing yet) - a fingerprint approximated as nested

@@ -10,7 +10,7 @@ internal static partial class TestRunner
     private static void ApproachBerth(World world, string targetPointId = "trade-station")
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: targetPointId));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
             world.Step(RealtimeStep);
 
         MoveCharacterTo(world, 1, 3f, 3f);
@@ -62,7 +62,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "trade-station"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
             world.Step(RealtimeStep);
 
         // Arrival parks the ship a long way off the berth (StationApproachStartDistance).
@@ -168,7 +168,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "trade-station"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
             world.Step(RealtimeStep);
 
         MoveCharacterTo(world, 1, 3f, 3f);

@@ -206,7 +206,7 @@ internal static partial class TestRunner
     private static void EnterBattle(World world, int playerId = 1)
     {
         world.ApplyCommand(playerId, new ClientCommand(playerId, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
     }
 

@@ -11,8 +11,15 @@ public sealed class StarSystem
     public string Name { get; }
     public IReadOnlyList<GalaxyPoint> Points { get; }
     public AsteroidField Field { get; }
+    // Where this system's own node sits on the GALACTIC map (GalaxyMap.cs's Corridors) - a fixed,
+    // hand-placed layout position, unrelated to GalaxyPoint.X/Y (which live in this system's own
+    // local field space). Kept apart so the galactic map (a small graph of a few systems) and a
+    // system's own detailed map (real field coordinates, free-form click targets) never share a
+    // coordinate space by accident.
+    public float GalaxyX { get; }
+    public float GalaxyY { get; }
 
-    public StarSystem(string id, string name, IReadOnlyList<GalaxyPoint> points, AsteroidField field)
+    public StarSystem(string id, string name, IReadOnlyList<GalaxyPoint> points, AsteroidField field, float galaxyX = 0f, float galaxyY = 0f)
     {
         Id = id;
         Name = name;
@@ -20,5 +27,7 @@ public sealed class StarSystem
         // belongs to the system it was handed to.
         Points = points.Select(p => p with { SystemId = id }).ToArray();
         Field = field;
+        GalaxyX = galaxyX;
+        GalaxyY = galaxyY;
     }
 }

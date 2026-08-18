@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using SpaceAdventure.Shared.Model;
+using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Client.Rendering;
 
@@ -12,8 +13,12 @@ namespace SpaceAdventure.Client.Rendering;
 // axis against those rectangles), but the hull built on top of them does not: the plates are cut
 // at the corners and the bow is a dome, so the ship reads as a hull rather than as a floor plan.
 //
-// Seen through a turret periscope the same shell is drawn closed up, with deck plating over the
-// compartments instead of their interiors.
+// Always drawn the same way regardless of where the camera is (manning a turret, walking the
+// decks, drifting outside) - the ship is one continuous space, not a "closed up" exterior model
+// swapped in for the interior one. A turret's periscope view used to substitute deck plating for
+// the compartments here specifically so a breach couldn't be seen through from behind the gun;
+// now ShipRenderer always draws the real interior (including any breach), so there is nothing
+// left for a separate "closed" mode to hide.
 public static partial class HullSkin
 {
     // How far the armour stands off the compartment walls, and how much is taken off each corner.
@@ -26,11 +31,11 @@ public static partial class HullSkin
     private static readonly Color PlateLit = new(70, 80, 95);
     private static readonly Color Edge = new(120, 133, 152);
     private static readonly Color Seam = new(30, 36, 45);
-    private static readonly Color Deck = new(58, 66, 78);
 
     public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, Texture2D hullPlate, IReadOnlyList<Room> rooms,
         IReadOnlyList<AirlockOuterDoor> ports, IReadOnlyList<ShipSystemDevice> devices, Vector2 origin,
-        float forwardDegrees, bool closedUp)
+        float forwardDegrees, ShipKind shipKind = ShipKind.Frigate, float totalSeconds = 0f,
+        IReadOnlyList<ShipSystemState>? systemStates = null)
     {
         if (rooms.Count == 0)
             return;
@@ -58,18 +63,15 @@ public static partial class HullSkin
             Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.6f, 2.5f);
             DrawPlateShading(spriteBatch, pixel, room, origin);
             DrawFlankGreebles(spriteBatch, pixel, room, hullCenter, origin);
+            if (RoomHasDamagedDevice(room, devices, systemStates))
+                DrawHullDamage(spriteBatch, pixel, room, origin, totalSeconds);
         }
 
-        // Periscope view: the decks are plating, not rooms. Drawn inside the shell so the shell's
-        // own edge survives as the ship's outline.
-        if (closedUp)
-            foreach (var room in rooms)
-                DrawDeckPlating(spriteBatch, pixel, room, origin);
-
         // Paint and fittings last: they sit on top of the armour, not under it.
-        DrawLivery(spriteBatch, pixel, rooms, bow, origin);
+        DrawLivery(spriteBatch, pixel, rooms, bow, origin, shipKind);
         DrawDockingCollars(spriteBatch, pixel, ports, hullCenter, origin);
         DrawNavigationLights(spriteBatch, pixel, rooms, bow, origin);
+        DrawViewports(spriteBatch, pixel, rooms, hullCenter, origin, totalSeconds);
     }
 
     // A dome on the front of the forward-most compartment: a half ellipse from one flank to the
@@ -299,6 +301,24 @@ public static partial class HullSkin
             }
         }
         return best;
+    }
+
+    // Whether any system device physically inside this room is currently damaged - the trigger
+    // for DrawHullDamage's scorch marks. No systemStates at all (an older/test call site) just
+    // means nothing is ever damaged, not a crash.
+    private static bool RoomHasDamagedDevice(Room room, IReadOnlyList<ShipSystemDevice> devices, IReadOnlyList<ShipSystemState>? systemStates)
+    {
+        if (systemStates is null)
+            return false;
+        foreach (var device in devices)
+        {
+            if (device.RoomId != room.Id)
+                continue;
+            foreach (var state in systemStates)
+                if (state.DeviceId == device.Id && state.Damaged)
+                    return true;
+        }
+        return false;
     }
 
     private static Vector2 HullCenter(IReadOnlyList<Room> rooms, Vector2 origin)

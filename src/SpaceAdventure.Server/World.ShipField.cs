@@ -14,7 +14,12 @@ namespace SpaceAdventure.Server;
 // transform to find the nearest WallBlock to breach.
 public sealed partial class World
 {
-    private const float ShipMaxSpeed = 8f;
+    // Calibrated so a straight run across a 300x300 system (AsteroidField.CreateDefault's own
+    // size) takes about a minute (game_design.md - two-tier map, "за минуту он долетал от одного
+    // края системы к другому") - the same cruise speed applies whether a human is flying or the
+    // autopilot is (World.Voyage.cs's StepTraveling no longer runs the unmanned case on a faster
+    // clock than a manned one).
+    private const float ShipMaxSpeed = 5f;
     private const float ShipThrustAccelerationPerSecond = 4f;
     private const float ShipAutoStabilizeDecelerationPerSecond = 6f;
     private const float ShipRotationDegreesPerSecond = 90f;
@@ -97,12 +102,17 @@ public sealed partial class World
         return _shipFieldPosition + _shipVelocity * dt;
     }
 
-    private void StepShipFieldPhysics(double deltaSeconds, bool fullPower = false)
+    // ignoreAsteroids is set only by the open cruise between points (World.Voyage.cs's
+    // StepTraveling) - a long-distance transit is meant to be a safe background trip the crew can
+    // walk around during, not an obstacle course through whatever the belt happens to sit between
+    // two points; asteroids only matter as physical hazards once you're actually doing something
+    // in the field (mining, fighting, docking), not passing through en route to somewhere else.
+    private void StepShipFieldPhysics(double deltaSeconds, bool fullPower = false, bool ignoreAsteroids = false)
     {
         var candidatePosition = IntegrateShipFieldMotion(deltaSeconds, fullPower)
             .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
 
-        if (TryFindHullCollision(candidatePosition, _shipRotationDegrees, out var localContactPoint))
+        if (!ignoreAsteroids && TryFindHullCollision(candidatePosition, _shipRotationDegrees, out var localContactPoint))
         {
             // Refusing the whole step is what used to wedge the ship against a rock: pressed
             // against one, every direction with any component into it was thrown away too, so
@@ -230,6 +240,6 @@ public sealed partial class World
         var nearest = Ship.WallBlocks.Where(b => !IsAtDoorPosition(b))
             .OrderBy(b => (b.Position - localContactPoint).Length()).FirstOrDefault();
         if (nearest is not null)
-            _breachedWallBlockIds.Add(nearest.Id);
+            DamageWallBlock(nearest.Id, WallBlockMaxHp);
     }
 }

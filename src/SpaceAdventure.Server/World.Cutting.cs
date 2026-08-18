@@ -45,14 +45,14 @@ public sealed partial class World
 
             character.Inventory.DrainTank(slot, OxygenTankDefinitions.CutterDrainPerSecond * (float)deltaSeconds);
 
-            // The torch lights anywhere - inside the ship, aboard a station, on a boarded hull - and
-            // burns its tank while it does. Ore only exists in field space, so that's the only place
-            // the flame has anything to bite on; there is nothing special about being outdoors
-            // beyond that.
-            if (!character.IsOutside)
-                continue;
-
-            CutAlongFlame(character, deltaSeconds);
+            // The torch lights anywhere and burns its tank while it does. Outside, the only thing
+            // it has to bite on is ore (field space); indoors, aboard your own ship, it bites into
+            // the ship's own wall blocks instead (World.WallBlocks.cs) - a station or a boarded
+            // enemy hull have neither, so there's nothing for it to do there.
+            if (character.IsOutside)
+                CutAlongFlame(character, deltaSeconds);
+            else if (!character.OnStation && !character.OnEnemyShip)
+                CutWallAlongFlame(character, deltaSeconds);
         }
     }
 

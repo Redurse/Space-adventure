@@ -23,6 +23,10 @@ public sealed class VoyagePanel
             VoyagePhase.Battle => "Бой на месте прибытия",
             VoyagePhase.Traveling when voyage.TravelTargetPointId is not null =>
                 $"Курс на {PointName(snapshot, voyage.TravelTargetPointId)}... {DistanceRemaining(snapshot):0} ед.",
+            // A free-form click (game_design.md - "может тыкнуть в любое место системы") has no
+            // name to show, just the distance closing.
+            VoyagePhase.Traveling when voyage.TravelTargetPosition is not null =>
+                $"Курс на точку... {DistanceRemaining(snapshot):0} ед.",
             _ => "В открытом космосе - выберите курс на навигационной консоли",
         };
 
@@ -34,9 +38,8 @@ public sealed class VoyagePanel
     private static string PointName(WorldSnapshot snapshot, string? pointId) =>
         snapshot.GalaxyPoints.FirstOrDefault(p => p.Id == pointId)?.Name ?? "?";
 
-    private static float DistanceRemaining(WorldSnapshot snapshot)
-    {
-        var target = snapshot.GalaxyPoints.FirstOrDefault(p => p.Id == snapshot.Voyage.TravelTargetPointId);
-        return target is null ? 0f : (target.Position - snapshot.Voyage.ShipMapPosition).Length();
-    }
+    private static float DistanceRemaining(WorldSnapshot snapshot) =>
+        snapshot.Voyage.TravelTargetPosition is { } target
+            ? (target - snapshot.Voyage.ShipMapPosition).Length()
+            : 0f;
 }

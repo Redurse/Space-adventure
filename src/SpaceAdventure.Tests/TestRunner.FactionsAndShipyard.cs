@@ -11,7 +11,7 @@ internal static partial class TestRunner
     private static void WinBattleAt(World world, string sectorId)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: sectorId));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         for (var round = 0; round < 8 && world.Phase == VoyagePhase.Battle; round++)
@@ -248,7 +248,7 @@ internal static partial class TestRunner
         EquipSuit(world, 1); // see World_Faction_HostileStanding_BlocksQuestOffers
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-delta"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
         var baselineSize = world.CreateSnapshot().EnemyShips.Count;
 
@@ -257,7 +257,7 @@ internal static partial class TestRunner
             return false; // didn't actually anger them enough - setup problem, not the behavior under test
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-delta"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         return world.CreateSnapshot().EnemyShips.Count == baselineSize + 1;
@@ -330,7 +330,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));

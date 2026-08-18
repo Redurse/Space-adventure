@@ -41,4 +41,16 @@ public sealed record CharacterState(
     // Which pin a wire-lay is anchored at, null when not laying (World.Wiring.cs's
     // HandlePinInteract) - lets every client, not just this one, draw the trailing wire from that
     // pin to wherever this character currently stands.
-    PinRef? LayingWireFromPin = null);
+    PinRef? LayingWireFromPin = null,
+    // Typed once at the menu and remembered client-side (PlayerSettingsStore), null for a hired
+    // bot (BotName is its name instead). Shown as an always-on nameplate (ShipRenderer/
+    // FieldRenderer's DrawCharacter) and in the crew roster (CrewPanel/InfoPanel).
+    string? Nickname = null,
+    // Round-trip time in ms, measured server-side off the client's own echoed timestamp
+    // (World.cs's ApplyCommand, ClientCommand.LastServerTimestampMs) - needs no clock sync between
+    // machines since both ends of the measurement are the server's own clock.
+    float PingMs = 0f,
+    // Which wall block this character's welder/cutter is currently lit and aimed at, null when
+    // neither tool is lit or nothing is in reach (World.WallBlocks.cs's GetWallToolTargetId) - lets
+    // every client, not just this one, show that block's own health bar while it's being worked.
+    string? WallToolTargetBlockId = null);

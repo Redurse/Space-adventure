@@ -13,7 +13,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1); // starts already docked at home-station - travel elsewhere first
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
             world.Step(RealtimeStep);
 
         return world.Phase == VoyagePhase.StationApproach;
@@ -68,7 +68,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         MoveCharacterTo(world, 1, 23f, 3f);

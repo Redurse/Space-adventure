@@ -11,7 +11,7 @@ internal static partial class TestRunner
     private static void CastOffIntoSpace(World world)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
             world.Step(RealtimeStep);
     }
 
@@ -20,7 +20,7 @@ internal static partial class TestRunner
     private static void EnterAsteroidFieldAndManHelm(World world)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
             world.Step(RealtimeStep);
 
         world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
@@ -39,7 +39,7 @@ internal static partial class TestRunner
     // so a straight HelmThrustX:1 is all that's needed to reach the docking capture zone.
     private static void DockAtStation(World world)
     {
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
             world.Step(RealtimeStep);
 
         // Three attempts, because the recovery below is best-effort: a badly shot-up ship can need
@@ -242,7 +242,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
             world.Step(RealtimeStep);
 
         MoveCharacterTo(world, 1, 3f, 3f); // corridor -> reactor -> cockpit, at the doors' shared height

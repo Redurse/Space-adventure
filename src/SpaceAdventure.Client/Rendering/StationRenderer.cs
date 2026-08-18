@@ -14,9 +14,15 @@ namespace SpaceAdventure.Client.Rendering;
 // atmosphere simulation (Station.cs's doc comment) - oxygen is always drawn full, doors are
 // always open except the one connector back to the ship, which follows the ship's own outer
 // airlock door state.
-public sealed class StationRenderer
+public sealed partial class StationRenderer
 {
-    public const int NpcMarkerSize = 20;
+    public const int NpcMarkerSize = 22;
+
+    // A warm rose-gold rather than any of RoomDecor's own ship accents (cockpit blue, armory red,
+    // reactor orange, shields teal, life-support green, cargo tan) - crossing the connector should
+    // read as "somewhere else" the instant the deck markings and wall lamps change colour, not
+    // just because the room happens to have different furniture in it.
+    private static readonly Color StationAccent = new(214, 150, 130);
 
     private readonly ShipRenderer _shipRenderer;
     private readonly Texture2D _pixel;
@@ -36,9 +42,9 @@ public sealed class StationRenderer
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, string? talkingToNpcId, float totalSeconds = 0f)
     {
         foreach (var room in snapshot.StationRooms)
-            _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin);
+            _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin, StationAccent);
         foreach (var room in snapshot.StationRooms)
-            _shipRenderer.DrawRoomWalls(spriteBatch, room, oxygen: 100f, origin);
+            _shipRenderer.DrawRoomWalls(spriteBatch, room, oxygen: 100f, origin, StationAccent);
 
         foreach (var door in snapshot.StationDoors)
             _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen: true, origin);
@@ -96,22 +102,29 @@ public sealed class StationRenderer
         _ => Color.Gray,
     };
 
-    // Station property standing out in the open (game_design.md section 10) - drawn in the same
-    // crate brown ShipRenderer uses for the ship's own ammo storage, so it reads as "a container
-    // you can take something out of" without a new visual idiom.
+    // Station property standing out in the open (game_design.md section 10) - a proper latched
+    // container now (ShipRenderer's own beveled-panel-plus-rivets look, the same one every power
+    // block uses) with the actual item's own icon sitting on the lid, rather than a flat brown
+    // square and a text abbreviation.
     private void DrawCrate(SpriteBatch spriteBatch, StationCrate crate, Vector2 origin)
     {
-        const int size = 16;
+        const int size = 20;
         var rect = ShipRenderer.GetBlockRect(crate.Position, size, origin);
-        spriteBatch.Draw(_pixel, rect, Color.SaddleBrown * 0.9f);
-        spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(crate.Item), new Vector2(rect.Right + 3, rect.Y),
-            Color.Khaki, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        ShipRenderer.DrawPanel(spriteBatch, _pixel, rect, new Color(96, 68, 46), new Color(150, 110, 74), 2);
+        var iconRect = new Rectangle(rect.X + 3, rect.Y + 3, rect.Width - 6, rect.Height - 6);
+        if (ItemIcons.HasIcon(crate.Item))
+            ItemIcons.Draw(spriteBatch, _pixel, crate.Item, iconRect);
+        else
+            spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(crate.Item), new Vector2(rect.Right + 3, rect.Y),
+                Color.Khaki, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
     private void DrawNpc(SpriteBatch spriteBatch, StationNpc npc, Vector2 origin, bool talkingTo)
     {
         var rect = GetNpcRect(npc, origin);
-        spriteBatch.Draw(_pixel, rect, NpcColor(npc.Kind) * 0.85f);
+        var color = NpcColor(npc.Kind);
+        HudIcons.FillCircle(spriteBatch, _pixel, RectCenter(rect), rect.Width / 2f, color * 0.35f);
+        DrawNpcGlyph(spriteBatch, npc.Kind, rect, color);
         if (talkingTo)
         {
             const int margin = 3;
@@ -122,4 +135,6 @@ public sealed class StationRenderer
         }
         spriteBatch.DrawString(_font, npc.Name, new Vector2(rect.X - 10, rect.Bottom + 4), Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
     }
+
+    private static Vector2 RectCenter(Rectangle rect) => new(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f);
 }

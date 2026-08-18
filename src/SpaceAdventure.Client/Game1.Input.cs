@@ -67,7 +67,7 @@ public partial class Game1
 
     private static float ShortestAngle(float degrees) => ((degrees % 360f) + 540f) % 360f - 180f;
 
-    // Reused for aim while manning a turret — movement is locked server-side at that point.
+    // Reused for aim while manning a turret вЂ” movement is locked server-side at that point.
     private static float ReadAimDirection(KeyboardState keyboard)
     {
         float dir = 0;
@@ -213,6 +213,21 @@ public partial class Game1
         return null;
     }
 
+    // Which row slot (holding anything at all) the cursor sits over right now - the tooltip's own
+    // hover test, separate from HoveredToolSlotIndex above since a tooltip applies to every item,
+    // not just the ones with a tank socket.
+    private int? HoveredMainSlotIndex(InventoryState inventory, Vector2 rowOrigin)
+    {
+        for (var i = 0; i < inventory.MainSlots.Count; i++)
+        {
+            if (inventory.MainSlots[i] is null)
+                continue;
+            if (InventoryPanel.GetMainSlotRect(i, rowOrigin).Contains(_designMouse))
+                return i;
+        }
+        return null;
+    }
+
     // targetSlot: a row index, or -1 for the suit being worn (Inventory.WornSuitSlot).
     private void QueueSocketClick(InventoryState inventory, int targetSlot)
     {
@@ -276,7 +291,7 @@ public partial class Game1
 
     // Double-clicking an item sends it straight across to the container you have open, into the
     // first free slot. Clearing your hands into the rack is the common case, and dragging items
-    // across one at a time to do it is busywork. Only armed while a rack is open — "across" has
+    // across one at a time to do it is busywork. Only armed while a rack is open вЂ” "across" has
     // to have somewhere to mean.
     private SlotRef? QuickMoveTarget(WorldSnapshot snapshot, SlotRef from)
     {
@@ -292,7 +307,7 @@ public partial class Game1
                 if (globalIndex < snapshot.RackSlots.Count && snapshot.RackSlots[globalIndex] is null)
                     return new SlotRef(ItemSlotKind.Rack, globalIndex);
             }
-            return null; // this shelf is full — better to do nothing than to swap with an arbitrary slot
+            return null; // this shelf is full вЂ” better to do nothing than to swap with an arbitrary slot
         }
 
         var inventory = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory;
@@ -367,6 +382,22 @@ public partial class Game1
         return null;
     }
 
+    // 1-9 then 0 for the tenth slot - the same row of number keys Barotrauma binds its hotbar to.
+    // Edge-triggered (a held key doesn't keep re-toggling), and only read where the distribution
+    // block isn't open, since 1-5 already mean something else there (ReadPowerSystemSelection).
+    private static readonly Keys[] InventoryHotkeys =
+        { Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6, Keys.D7, Keys.D8, Keys.D9, Keys.D0 };
+
+    private int? ReadInventoryHotkeySlot(KeyboardState keyboard)
+    {
+        for (var i = 0; i < InventoryHotkeys.Length; i++)
+        {
+            if (keyboard.IsKeyDown(InventoryHotkeys[i]) && _prevGameplayKeyboard.IsKeyUp(InventoryHotkeys[i]))
+                return i;
+        }
+        return null;
+    }
+
     private static float ReadPowerDirection(KeyboardState keyboard)
     {
         float direction = 0;
@@ -391,6 +422,25 @@ public partial class Game1
         if (!clicked)
             return (-1, -1, null, null, -1, false, false, null, false, null);
 
+        // The pause menu (Game1.Update's Esc handling) sits over literally everything else, so its
+        // own 4 buttons are checked before even the turret early-return below. "Главное меню" only
+        // sets a flag here rather than tearing the session down on the spot - this method runs in
+        // the middle of Update, well before this frame's _client.SendInput, and ReturnToMainMenu
+        // nulls _client out; Update itself checks the flag right after this call returns and bails
+        // out of the rest of the frame before anything downstream can touch a null _client.
+        if (_pauseMenuOpen)
+        {
+            if (PauseMenuPanel.GetButtonRect(0, PauseMenuPanelOrigin).Contains(_designMouse))
+                _pauseMenuOpen = false; // Продолжить
+            else if (PauseMenuPanel.GetButtonRect(2, PauseMenuPanelOrigin).Contains(_designMouse))
+                Exit(); // Закончить раунд - just flags the game loop to stop, safe to call anytime
+            else if (PauseMenuPanel.GetButtonRect(3, PauseMenuPanelOrigin).Contains(_designMouse))
+                _pendingReturnToMainMenu = true; // Главное меню
+            // Button 1 (Настройки) has no screen behind it yet - a dim placeholder, same convention
+            // as the top-bar "Управление" button before it got the ship editor.
+            return (-1, -1, null, null, -1, false, false, null, false, null);
+        }
+
         var snapshot = _client.LatestSnapshot;
         var me = snapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
 
@@ -399,6 +449,105 @@ public partial class Game1
         // at whatever used to be under the cursor rather than what's there now.
         if (snapshot is not null && MannedTurret(snapshot) is not null)
             return (-1, -1, null, null, -1, false, false, null, false, null);
+
+        // The 3 top-bar buttons and, while it's open, InfoPanel's own 5 tab buttons - pure client
+        // state toggles, no server command involved, so they're handled here directly rather than
+        // riding through this method's already-full return tuple.
+        if (GetTopBarButtonRect(0).Contains(_designMouse))
+        {
+            _crewPanelOpen = !_crewPanelOpen;
+            return (-1, -1, null, null, -1, false, false, null, false, null);
+        }
+        if (GetTopBarButtonRect(1).Contains(_designMouse))
+        {
+            _shipEditorOpen = !_shipEditorOpen;
+            if (_shipEditorOpen)
+            {
+                _infoPanelOpen = false;
+                _openBlock = ClickTarget.None;
+            }
+            return (-1, -1, null, null, -1, false, false, null, false, null);
+        }
+        if (GetTopBarButtonRect(2).Contains(_designMouse))
+        {
+            _infoPanelOpen = !_infoPanelOpen;
+            if (_infoPanelOpen)
+            {
+                _openBlock = ClickTarget.None;
+                _shipEditorOpen = false;
+            }
+            return (-1, -1, null, null, -1, false, false, null, false, null);
+        }
+        if (_infoPanelOpen)
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                if (!InfoPanel.GetTabRect(i, InfoPanelOrigin).Contains(_designMouse))
+                    continue;
+                _infoPanelTab = (InfoTab)i;
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+        }
+        if (_shipEditorOpen && snapshot is not null)
+        {
+            for (var i = 0; i < snapshot.Components.Count; i++)
+            {
+                if (!ShipEditorPanel.GetRowRect(i, ShipEditorPanelOrigin).Contains(_designMouse))
+                    continue;
+                _shipEditorSelectedComponentId = snapshot.Components[i].Id;
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+        }
+        // The crew panel's own picker row (CrewPanel.Draw) - clicking the role you're already on
+        // clears it (a second click is the only "unpick" gesture, there's no separate button for
+        // it), clicking a different one sets it. Both just arm a pending flag Update() reads once
+        // and forwards through SendInput; the server (World.cs ApplyCommand) is the actual source
+        // of truth for character.Role, same as every other "set on click" field here.
+        if (_crewPanelOpen)
+        {
+            for (var i = 0; i < CrewPanel.OptionCount; i++)
+            {
+                if (!CrewPanel.GetOwnRoleIconRect(i, CrewPanelOrigin).Contains(_designMouse))
+                    continue;
+                var picked = CrewPanel.RoleAtOption(i);
+                if (picked is null || me?.Role == picked)
+                {
+                    _pendingClearOwnRole = true;
+                    _pendingSetOwnRoleTo = null;
+                }
+                else
+                {
+                    _pendingSetOwnRoleTo = picked;
+                    _pendingClearOwnRole = false;
+                }
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+        }
+
+        // Дурак переводной (World.CardGame.cs) - own-hand card clicks and the Взять/Бито buttons.
+        // No _openBlock gating: CardGamePanel.Draw already no-ops unless the local player is one
+        // of the 2 participants, so the same condition gates the clicks here.
+        if (snapshot?.CardGame is { } cardGame && (cardGame.Player1Id == _client.PlayerId || cardGame.Player2Id == _client.PlayerId))
+        {
+            var myHand = cardGame.Player1Id == _client.PlayerId ? cardGame.Player1Hand : cardGame.Player2Hand;
+            for (var i = 0; i < myHand.Count; i++)
+            {
+                if (!CardGamePanel.GetOwnHandCardRect(i, myHand.Count, CardGamePanelOrigin).Contains(_designMouse))
+                    continue;
+                _pendingPlayCard = myHand[i];
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+            if (CardGamePanel.GetTakeButtonRect(CardGamePanelOrigin).Contains(_designMouse))
+            {
+                _pendingCardGameTake = true;
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+            if (CardGamePanel.GetEndRoundButtonRect(CardGamePanelOrigin).Contains(_designMouse))
+            {
+                _pendingCardGameEndRound = true;
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+        }
 
         var slotCount = me?.Inventory?.MainSlots.Count ?? 0;
         for (var i = 0; i < slotCount; i++)
@@ -430,6 +579,18 @@ public partial class Game1
             }
         }
 
+        if (_galacticMapOpen)
+        {
+            var galacticMapOrigin = GalacticMapPanel.ComputeOrigin(GalaxyMapPanelOrigin, snapshot.StarSystems, _galacticMapZoom, _galacticMapPanOffset);
+            foreach (var system in snapshot.StarSystems)
+            {
+                if (!GalacticMapPanel.GetNodeRect(system, galacticMapOrigin, _galacticMapZoom).Contains(_designMouse))
+                    continue;
+                _pendingWarpToSystemId = system.Id;
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+        }
+
         if (_openBlock.Kind == BlockKind.Navigation)
         {
             var mapOrigin = GalaxyMapPanel.ComputeMapOrigin(GalaxyMapPanelOrigin, snapshot.GalaxyPoints, _mapZoom, _mapPanOffset);
@@ -439,14 +600,17 @@ public partial class Game1
                     return (-1, -1, point.Id, null, -1, false, false, null, false, null);
             }
 
-            // Warp target - rides as a field like the other Administrator/Recruiter actions
-            // (GalaxyMapPanel's own tuple is already at its practical limit).
-            var otherSystems = snapshot.StarSystems.Where(s => s.Id != snapshot.CurrentSystemId).ToList();
-            for (var i = 0; i < otherSystems.Count; i++)
+            // Empty map background - a free-form destination (game_design.md, "может тыкнуть в
+            // любое место системы"), not just a point of interest. Only within the current
+            // system's own bounded field (and clear of the system-list sidebar off to the right)
+            // counts - anywhere else on this screen is some other panel's text, not the map.
+            var currentField = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
+            var clickedField = GalaxyMapPanel.ScreenToField(new Vector2(_designMouse.X, _designMouse.Y), mapOrigin, _mapZoom);
+            if (_designMouse.X < GalaxyMapPanelOrigin.X + 660 &&
+                clickedField.X >= 0 && clickedField.X <= currentField.Width &&
+                clickedField.Y >= 0 && clickedField.Y <= currentField.Height)
             {
-                if (!GalaxyMapPanel.GetSystemRect(i, GalaxyMapPanelOrigin).Contains(_designMouse))
-                    continue;
-                _pendingWarpToSystemId = otherSystems[i].Id;
+                _pendingTravelToPosition = clickedField;
                 return (-1, -1, null, null, -1, false, false, null, false, null);
             }
         }
@@ -587,6 +751,8 @@ public partial class Game1
             ShipRenderer.GetBlockRect(snapshot.NavigationConsole.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
         {
             _openBlock = _openBlock.Kind == BlockKind.Navigation ? ClickTarget.None : ClickTarget.Navigation;
+            _infoPanelOpen = false; // one full-viewport takeover at a time
+            _shipEditorOpen = false;
             return (-1, -1, null, null, -1, false, false, null, false, null);
         }
 
@@ -597,6 +763,18 @@ public partial class Game1
             _openBlock = _openBlock.Kind == BlockKind.Rack && _openBlock.TargetComponentId == rack.Id
                 ? ClickTarget.None
                 : ClickTarget.ForRack(rack.Id);
+            return (-1, -1, null, null, -1, false, false, null, false, null);
+        }
+
+        // Read-only card (SuitLockerPanel) - the actual take/put-back is still the F-key interact
+        // (World.Interact.cs, gated on this locker's own stock), this just shows what's in it.
+        foreach (var locker in snapshot.SuitLockers)
+        {
+            if (!NearEnough(locker.Position) || !ShipRenderer.GetBlockRect(locker.Position, ShipRenderer.NormalBlockSize, origin).Contains(_designMouse))
+                continue;
+            _openBlock = _openBlock.Kind == BlockKind.SuitLocker && _openBlock.TargetComponentId == locker.Id
+                ? ClickTarget.None
+                : ClickTarget.ForSuitLocker(locker.Id);
             return (-1, -1, null, null, -1, false, false, null, false, null);
         }
 
@@ -614,7 +792,7 @@ public partial class Game1
             }
         }
 
-        // Junction boxes ("щитки") have no function of their own to click for - only screwdriver
+        // Junction boxes ("С‰РёС‚РєРё") have no function of their own to click for - only screwdriver
         // opens anything here, unlike Distribution/SystemDevice above which fall back to their
         // normal panel otherwise.
         if (HoldingScrewdriver())
@@ -769,7 +947,7 @@ public partial class Game1
         return (throttle, turn);
     }
 
-    // Walking out of interaction range auto-closes whatever's open — matches the same radius
+    // Walking out of interaction range auto-closes whatever's open вЂ” matches the same radius
     // that gated opening it in the first place, so you can't keep adjusting a slider you've
     // wandered away from.
     private void CloseBlockIfWalkedAway(WorldSnapshot? snapshot)
@@ -1032,9 +1210,16 @@ public partial class Game1
                 : "Нужен гаечный ключ или отвёртка в руке";
         }
 
-        var nearLocker = snapshot.SuitLockers.Any(l => (l.Position - myPosition).Length() < TurretInteractionRadius);
-        if (nearLocker)
-            return me.WearingSuit ? "[F] снять скафандр" : "[F] надеть скафандр";
+        var nearLocker = snapshot.SuitLockers.FirstOrDefault(l => (l.Position - myPosition).Length() < TurretInteractionRadius);
+        if (nearLocker is not null)
+        {
+            // Each locker holds exactly one suit now (World.SuitLockers.cs) - the hint reflects
+            // whether F will actually do anything here, not just whether a locker is nearby.
+            var hasSuit = snapshot.SuitLockerStates.FirstOrDefault(s => s.LockerId == nearLocker.Id)?.HasSuit ?? false;
+            if (me.WearingSuit)
+                return hasSuit ? "Шкаф занят" : "[F] снять скафандр";
+            return hasSuit ? "[F] надеть скафандр" : "Шкаф пуст";
+        }
 
         var myRoom = snapshot.Rooms.FirstOrDefault(r => r.Contains(myPosition));
         var nearBreachedBlock = myRoom is null

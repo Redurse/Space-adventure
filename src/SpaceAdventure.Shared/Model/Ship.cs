@@ -17,8 +17,8 @@ public sealed partial class Ship
     public ReactorBlock ReactorBlock { get; }
     public PowerDistributionBlock DistributionBlock { get; }
     public NavigationConsole NavigationConsole { get; }
-    public AirlockConsole AirlockConsole { get; }
     public HelmConsole HelmConsole { get; }
+    public CardTable CardTable { get; }
     // Two per hull (game_design.md section 13) - a starter kit of 3 units of every hand
     // tool/tank/weapon/consumable used to live scattered across the ship as individual ToolStation
     // pickups; it now lives here instead, split across these two shelves (World.ShipPurchase.cs's
@@ -48,11 +48,11 @@ public sealed partial class Ship
         ReactorBlock reactorBlock,
         PowerDistributionBlock distributionBlock,
         NavigationConsole navigationConsole,
-        AirlockConsole airlockConsole,
         HelmConsole helmConsole,
         IReadOnlyList<StorageRack> storageRacks,
         Vec2 spawnPoint,
         string spawnRoomId,
+        CardTable cardTable,
         float forwardDegrees = 0f,
         IReadOnlyList<ComponentMount>? componentMounts = null)
     {
@@ -69,8 +69,8 @@ public sealed partial class Ship
         ReactorBlock = reactorBlock;
         DistributionBlock = distributionBlock;
         NavigationConsole = navigationConsole;
-        AirlockConsole = airlockConsole;
         HelmConsole = helmConsole;
+        CardTable = cardTable;
         StorageRacks = storageRacks;
         SpawnPoint = spawnPoint;
         SpawnRoomId = spawnRoomId;
@@ -127,8 +127,7 @@ public sealed partial class Ship
             new Room("quarters", "Каюты", 13, 0, 5, 6),
             new Room("engine", "Машинное отделение", 18, 0, 5, 6),
             // Small airtight chamber appended at the row's far end (game_design.md Phase 3, M16):
-            // one normal door in from engine, one AirlockOuterDoor out to vacuum. Distinct name
-            // from the existing "Шлюз" AirlockConsole button (docking/NPCs, unrelated feature).
+            // one normal door in from engine, one AirlockOuterDoor out to vacuum.
             new Room("airlock-chamber", "Шлюзовая камера", 23, 0, 3, 6),
         };
 
@@ -208,14 +207,14 @@ public sealed partial class Ship
         // the galaxy map.
         var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 1.5f, Y: 1.5f);
 
-        // Airlock in the corridor (game_design.md section 10) — click it while docked to visit
-        // the station's NPCs.
-        var airlockConsole = new AirlockConsole("airlock-console", "corridor", X: 10.5f, Y: 1.5f);
-
         // Helm console on the bridge (game_design.md Phase 3, M15) — stand here to take manual
         // control of the ship in open space. Kept away from the bow turret's periscope (1.5, 3)
         // and the laser rifle armory (3.5, 5) so their interaction radii don't overlap with this.
         var helmConsole = new HelmConsole("helm-console", "cockpit", X: 3f, Y: 4f);
+
+        // A quiet corner of the cockpit, clear of the nav console/helm/turret/mount above - two
+        // crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).
+        var cardTable = new CardTable("card-table", "cockpit", X: 4f, Y: 1f);
 
         // Outer-hull wall blocks: every room's top/bottom is exterior (the ship is one row
         // wide); only cockpit's left and the airlock chamber's right are exterior side walls not
@@ -254,7 +253,7 @@ public sealed partial class Ship
 
         var corridor = rooms.First(r => r.Id == "corridor");
         return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, airlockConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
-            componentMounts: componentMounts);
+            reactorBlock, distributionBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
+            cardTable, componentMounts: componentMounts);
     }
 }

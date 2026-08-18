@@ -17,7 +17,11 @@ namespace SpaceAdventure.Client.Rendering;
 // middle of the screen crowding the row that changes every few seconds.
 public sealed class InventoryPanel
 {
-    public const int SlotSize = 34;
+    // Bumped from 34 - the new tool/tank icons (ItemIcons) pack a fair bit of shape into one slot;
+    // this buys them real extra pixels rather than just a legibility-floor hack on top of the same
+    // cramped size. RackPanel's own grid derives its width from this too and still comfortably fits
+    // DesignWidth at 10 columns.
+    public const int SlotSize = 44;
     public const int SlotSpacing = 5;
     public const int StripHeight = 8;
     public const int StripGap = 2;
@@ -53,22 +57,28 @@ public sealed class InventoryPanel
 
     public static Rectangle GetMainSlotRect(int index, Vector2 rowOrigin) => GetSlotRect(index, rowOrigin);
 
+    // Above the slot rather than below it - the row sits flush on the bottom screen edge
+    // (Game1.InventoryRowOrigin anchors the *slot's* bottom to it now, not the strip's), so a strip
+    // below would hang half off-screen. Above also puts it right next to the number badge's own
+    // corner, both landing in the same glance instead of one being on the far edge of the slot.
     public static Rectangle GetHoldStripRect(int index, Vector2 rowOrigin)
     {
         var slotRect = GetMainSlotRect(index, rowOrigin);
-        return new Rectangle(slotRect.X, slotRect.Bottom + StripGap, SlotSize, StripHeight);
+        return new Rectangle(slotRect.X, slotRect.Y - StripGap - StripHeight, SlotSize, StripHeight);
     }
 
-    // The socket an oxygen tank plugs into, hanging under the slot of whatever carries one - a suit
-    // or a cutter (OxygenTankDefinitions). Drawn under the hold strip so it never covers it.
+    // The socket an oxygen tank plugs into, hanging over the slot of whatever carries one - a suit
+    // or a cutter (OxygenTankDefinitions).
     public const int SocketSize = 20;
 
-    // above: the equipment slots sit on the very bottom edge of the screen, so their socket has to
-    // hang over the slot instead of under it - drawn below, the suit's socket fell off the screen
-    // entirely, which meant a tank could never be put into a worn suit at all.
-    public static Rectangle GetSocketRect(Rectangle slotRect, bool above = false) =>
+    // above: hangs over the slot instead of under it - drawn below, the equip row's own socket
+    // (right on the bottom screen edge) fell off-screen entirely, and a tank could never be put
+    // into a worn suit at all. extraClearance pushes it further up clear of the hold strip, which
+    // now occupies the band immediately above a *main-row* slot (equip slots have no strip of
+    // their own, so they pass 0).
+    public static Rectangle GetSocketRect(Rectangle slotRect, bool above = false, int extraClearance = 0) =>
         new(slotRect.X + (slotRect.Width - SocketSize) / 2,
-            above ? slotRect.Y - SocketSize - 4 : slotRect.Bottom + StripGap + StripHeight + 3,
+            above ? slotRect.Y - SocketSize - 4 - extraClearance : slotRect.Bottom + StripGap + StripHeight + 3,
             SocketSize, SocketSize);
 
     // hoveredMainSlotIndex: which row slot's tool socket to reveal this frame (Game1's
@@ -96,18 +106,59 @@ public sealed class InventoryPanel
             var rect = GetMainSlotRect(i, rowOrigin);
             var item = inventory.MainSlots[i];
             DrawSlot(spriteBatch, _pixel, _font, rect, item, string.Empty);
+            DrawHotkeyBadge(spriteBatch, i, rect);
 
-            if (item is { } itemType && ItemDefinitions.IsHoldable(itemType))
+            var isHoldable = item is { } itemType && ItemDefinitions.IsHoldable(itemType);
+            if (item is { } heldItemType && isHoldable)
             {
                 var held = inventory.HeldMainSlotIndices.Contains(i);
-                DrawHands(spriteBatch, _pixel, rect, ItemDefinitions.HandsRequired(itemType), held);
+                DrawHands(spriteBatch, _pixel, rect, ItemDefinitions.HandsRequired(heldItemType), held);
                 var stripRect = GetHoldStripRect(i, rowOrigin);
                 spriteBatch.Draw(_pixel, stripRect, held ? Color.LimeGreen : Color.DarkGoldenrod);
             }
 
+            // A tool's tank always comes with a strip (every socketed item is also holdable), so
+            // the hover socket needs to clear it now that the strip sits above the slot too.
             if (item is { } socketed && TankSockets.HasSocket(socketed) && hoveredMainSlotIndex == i)
-                DrawSocket(spriteBatch, GetSocketRect(rect, above: true), inventory.MainSlotTanks[i]);
+                DrawSocket(spriteBatch, GetSocketRect(rect, above: true, extraClearance: isHoldable ? StripGap + StripHeight : 0), inventory.MainSlotTanks[i]);
+
+            // Always-on charge readout for whatever tank this slot's own contents carry - the
+            // welding tool/cutter's socketed tank, a bare tank sitting loose in the row, or the
+            // suit's own bottle - same fraction the hover-only socket bar above already shows, just
+            // visible at a glance without having to mouse over it first. Stays below the slot -
+            // only the hold strip moved, this didn't need to.
+            if (inventory.MainSlotTanks[i] is { } charge && TankTypeFor(item) is { } tankType)
+                DrawChargeBar(spriteBatch, new Rectangle(rect.X, rect.Bottom + 2, SlotSize, ChargeBarHeight), charge / TankSockets.FullChargeOf(tankType));
         }
+    }
+
+    private const int ChargeBarHeight = 4;
+
+    // The socket's own accepted tank type if this item has one, or the item itself if it's a bare
+    // tank riding loose in the row (mirrors Inventory.RefillTank's identical fallback server-side).
+    private static ItemType? TankTypeFor(ItemType? item) =>
+        item is { } type ? TankSockets.AcceptedTank(type) ?? (TankSockets.IsTank(type) ? type : null) : null;
+
+    private void DrawChargeBar(SpriteBatch spriteBatch, Rectangle rect, float fraction)
+    {
+        spriteBatch.Draw(_pixel, rect, Color.Black * 0.5f);
+        var filled = new Rectangle(rect.X, rect.Y, System.Math.Max(1, (int)(rect.Width * MathHelper.Clamp(fraction, 0f, 1f))), rect.Height);
+        var color = fraction > 0.6f ? Color.LimeGreen : fraction > 0.25f ? Color.Orange : Color.OrangeRed;
+        spriteBatch.Draw(_pixel, filled, color);
+    }
+
+    private const int HotkeyBadgeSize = 15;
+
+    // A folded-corner wedge in the slot's own top-left, the number tucked inside it - not a label
+    // floating above the slot, so it rides along with the slot itself rather than needing its own
+    // reserved strip of screen space.
+    private void DrawHotkeyBadge(SpriteBatch spriteBatch, int index, Rectangle rect)
+    {
+        var apex = new Vector2(rect.X, rect.Y);
+        Primitives.FillTriangle(spriteBatch, _pixel, apex, apex + new Vector2(HotkeyBadgeSize, 0), apex + new Vector2(0, HotkeyBadgeSize), Color.Black * 0.65f);
+
+        var label = index < 9 ? (index + 1).ToString() : "0";
+        spriteBatch.DrawString(_font, label, apex + new Vector2(2, 0), Color.White, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
     }
 
     // Empty socket: an outlined hole. Filled: a bar of what's left in the bottle, which is the only
@@ -240,5 +291,40 @@ public sealed class InventoryPanel
         spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
         spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
         spriteBatch.Draw(pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
+    }
+
+    // Full item info on hover: name (plus a tank's remaining charge, if this slot has one) and a
+    // one-line description. Anchored so its bottom edge sits just above the slot - the row lives on
+    // the bottom edge of the screen, so a tooltip growing downward from the cursor would usually
+    // land off-screen entirely.
+    public void DrawTooltip(SpriteBatch spriteBatch, ItemType item, float? tankCharge, Vector2 anchorAboveSlot)
+    {
+        var name = ItemDefinitions.DisplayName(item);
+        var percent = tankCharge is { } charge && TankTypeFor(item) is { } tankType
+            ? (int?)MathHelper.Clamp(charge / TankSockets.FullChargeOf(tankType) * 100f, 0f, 100f)
+            : null;
+        var description = ItemDescriptions.Describe(item);
+
+        const float titleScale = 0.55f;
+        const float bodyScale = 0.48f;
+        var nameSize = _font.MeasureString(name) * titleScale;
+        var percentText = percent is { } p ? $" ({p}%)" : "";
+        var percentSize = _font.MeasureString(percentText) * titleScale;
+        var descSize = description is not null ? _font.MeasureString(description) * bodyScale : Vector2.Zero;
+
+        const float lineGap = 4f;
+        var width = System.Math.Max(nameSize.X + percentSize.X, descSize.X) + 20f;
+        var height = nameSize.Y + 16f + (description is not null ? descSize.Y + lineGap : 0f);
+
+        var boxRect = new Rectangle((int)anchorAboveSlot.X, (int)(anchorAboveSlot.Y - height), (int)width, (int)height);
+        spriteBatch.Draw(_pixel, boxRect, new Color(15, 20, 17) * 0.95f);
+        DrawRectOutline(spriteBatch, _pixel, boxRect, new Color(90, 110, 95), 1);
+
+        var textOrigin = new Vector2(boxRect.X + 10, boxRect.Y + 8);
+        spriteBatch.DrawString(_font, name, textOrigin, Color.White, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        if (percent is not null)
+            spriteBatch.DrawString(_font, percentText, textOrigin + new Vector2(nameSize.X, 0), Color.Orange, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        if (description is not null)
+            spriteBatch.DrawString(_font, description, textOrigin + new Vector2(0, nameSize.Y + lineGap), Color.LightGray, 0f, Vector2.Zero, bodyScale, SpriteEffects.None, 0f);
     }
 }

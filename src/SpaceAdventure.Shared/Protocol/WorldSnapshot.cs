@@ -22,7 +22,6 @@ public sealed record WorldSnapshot(
     PowerDistributionBlock DistributionBlock,
     NavigationConsole NavigationConsole,
     IReadOnlyList<GalaxyPoint> GalaxyPoints,
-    AirlockConsole AirlockConsole,
     HelmConsole HelmConsole,
     // The ship's cargo shelving (now two per hull, World.ShipPurchase.cs's InitializeRackSlots) and
     // what's currently on it - one flat array covering every shelf, RackFor's own
@@ -96,4 +95,23 @@ public sealed record WorldSnapshot(
     // CanDock already uses for docking.
     IReadOnlyList<StarSystemSummary> StarSystems,
     string CurrentSystemId,
-    bool CanWarpNow);
+    bool CanWarpNow,
+    // The server's own clock at the moment this snapshot was built (Environment.TickCount64) -
+    // clients echo it straight back in their next ClientCommand (LastServerTimestampMs) purely so
+    // the server can measure round-trip time off its own clock without needing to synchronize
+    // clocks across machines (World.cs's ApplyCommand, CharacterState.PingMs).
+    long ServerTimestampMs,
+    // Which suit lockers currently have a suit to hand out (World.SuitLockers.cs) - each locker
+    // holds exactly one, unlike the old unlimited equip toggle this replaced.
+    IReadOnlyList<SuitLockerState> SuitLockerStates,
+    // The card table's fixed position (Ship.CardTable) and, whenever a hand of Дурак переводной
+    // is actually in progress there, its full state (World.CardGame.cs) - null the rest of the
+    // time, the same "unbound session" shape ActiveQuest above already uses.
+    CardTable CardTable,
+    CardGameState? CardGame,
+    // The limited, non-crossing warp graph itself (GalaxyMap.Corridors) - which pairs of systems
+    // above a jump is actually possible between, for GalacticMapPanel to draw as lines and to know
+    // which systems are even worth offering as a jump target from here. Appended at the end rather
+    // than next to StarSystems so it doesn't shift every positional argument after it at World.cs's
+    // CreateSnapshot call site.
+    IReadOnlyList<GalaxyCorridor> GalaxyCorridors);

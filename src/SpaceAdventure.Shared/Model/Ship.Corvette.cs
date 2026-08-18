@@ -71,13 +71,13 @@ public sealed partial class Ship
 
         var ammoStorages = new[]
         {
-            new AmmoStorage("ammo-storage-armory", "armory", X: 6.75f, Y: 5f),
+            new AmmoStorage("ammo-storage-armory", "armory", X: 6.75f, Y: 4.9f),
         };
 
         var suitLockers = new[]
         {
-            new SuitLocker("suit-locker-port", "shields-bay", X: 1.2f, Y: 10.6f),
-            new SuitLocker("suit-locker-starboard", "life-support", X: 12.3f, Y: 10.6f),
+            new SuitLocker("suit-locker-port", "shields-bay", X: 1.2f, Y: 8.5f),
+            new SuitLocker("suit-locker-starboard", "life-support", X: 12.3f, Y: 8.5f),
         };
 
         // Every breaker panel hangs in the reactor hall, as asked - one place to run to when the
@@ -87,26 +87,34 @@ public sealed partial class Ship
         // panel location - moving it would relocate life support to a different compartment.
         var systemDevices = new[]
         {
-            new ShipSystemDevice("system-shields", "reactor", X: 5.2f, Y: 9.3f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-shields-2", "reactor", X: 4.8f, Y: 14f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-weapon-charger", "reactor", X: 6.75f, Y: 14f, PowerSystemId.WeaponCharger),
-            new ShipSystemDevice("system-secondary", "reactor", X: 8.7f, Y: 14f, PowerSystemId.Secondary),
-            new ShipSystemDevice("system-oxygen", "life-support", X: 11.5f, Y: 9.2f, PowerSystemId.Oxygen),
-            // The two engine breakers, still big, now in the reactor hall with everything else.
-            new ShipSystemDevice("system-engine", "reactor", X: 7.5f, Y: 9.3f, PowerSystemId.Engine, SizeScale: 1.7f),
-            new ShipSystemDevice("system-engine-2", "reactor", X: 8.9f, Y: 12.2f, PowerSystemId.Engine, SizeScale: 1.7f),
+            // Both shield generators moved to the shields bay they're named for, stacked one above
+            // the other on the same centreline (x=1.8) rather than crammed into the reactor hall.
+            new ShipSystemDevice("system-shields", "shields-bay", X: 1.8f, Y: 13.1f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-shields-2", "shields-bay", X: 1.8f, Y: 14.3f, PowerSystemId.Shields),
+            new ShipSystemDevice("system-weapon-charger", "armory", X: 6.75f, Y: 6.1f, PowerSystemId.WeaponCharger),
+            new ShipSystemDevice("system-secondary", "life-support", X: 11.1f, Y: 14f, PowerSystemId.Secondary),
+            new ShipSystemDevice("system-oxygen", "life-support", X: 11.2f, Y: 12.9f, PowerSystemId.Oxygen),
+            // Mirrored across the spine (x=2 port, x=11.5 starboard, same y) rather than paired
+            // side by side in the reactor hall.
+            new ShipSystemDevice("system-engine", "shields-bay", X: 2f, Y: 17.8f, PowerSystemId.Engine, SizeScale: 1.7f),
+            new ShipSystemDevice("system-engine-2", "life-support", X: 11.5f, Y: 17.8f, PowerSystemId.Engine, SizeScale: 1.7f),
         };
 
         // Low in the hall and much larger than other classes' - this compartment is built around it.
-        var reactorBlock = new ReactorBlock("reactor-block", "reactor", X: 6.75f, Y: 12.6f, SizeScale: 1.8f);
-        var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 8.7f, Y: 10f);
-        var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 5f, Y: 1.2f);
-        var airlockConsole = new AirlockConsole("airlock-console", "cockpit", X: 8.5f, Y: 1.2f);
-        var helmConsole = new HelmConsole("helm-console", "cockpit", X: 6.75f, Y: 2.4f);
+        var reactorBlock = new ReactorBlock("reactor-block", "reactor", X: 6.75f, Y: 14f, SizeScale: 1.8f);
+        var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 6.75f, Y: 12.3f);
+        // Nav and the card table flank the helm on the cockpit's own centreline (x=6.75), mirrored
+        // around it - x=5.1 and x=8.4 sit the same distance either side.
+        var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 5.1f, Y: 2.1f);
+        var helmConsole = new HelmConsole("helm-console", "cockpit", X: 6.75f, Y: 0.9f);
+        // Two crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).
+        var cardTable = new CardTable("card-table", "cockpit", X: 8.4f, Y: 2.1f);
         var storageRacks = new[]
         {
-            new StorageRack("rack-reactor", "reactor", X: 4.8f, Y: 12.6f),
-            new StorageRack("rack-armory", "armory", X: 8f, Y: 7f),
+            // Mirrored across the reactor hall's own centreline (x=6.75): 8.7 and 4.8 sit the same
+            // distance either side, at the same depth.
+            new StorageRack("rack-reactor", "reactor", X: 8.7f, Y: 8.7f),
+            new StorageRack("rack-armory", "reactor", X: 4.8f, Y: 8.7f),
         };
 
         var wallBlocks = new List<WallBlock>();
@@ -130,7 +138,8 @@ public sealed partial class Ship
 
         var cockpit = rooms[0];
         return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, airlockConsole, helmConsole, storageRacks, cockpit.Center, cockpit.Id,
+            reactorBlock, distributionBlock, navigationConsole, helmConsole, storageRacks, cockpit.Center, cockpit.Id,
+            cardTable,
             forwardDegrees: ShipCatalog.ForwardDegrees(ShipKind.Corvette), // bow up the plan: this hull flies nose-first, not broadside
             componentMounts: componentMounts);
     }

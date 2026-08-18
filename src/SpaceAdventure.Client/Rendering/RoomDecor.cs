@@ -11,7 +11,7 @@ namespace SpaceAdventure.Client.Rendering;
 // None of it is collision - the walking and the sight lines still use the compartment's rectangle.
 // That separation is the whole trick: the room can be drawn as any shape at all as long as the
 // drawn shape stays inside the real one.
-public static class RoomDecor
+public static partial class RoomDecor
 {
     private const int FilletSegments = 7;
 

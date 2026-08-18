@@ -20,7 +20,17 @@ public sealed class Character
     // ever sends it a ClientCommand. BotName/Role are null for an ordinary player.
     public bool IsBot { get; init; }
     public string? BotName { get; init; }
-    public CrewRole? Role { get; init; }
+    // set, not init, unlike IsBot/BotName above - a bot's Role is fixed for its whole time aboard
+    // (set once at hire, World.Recruiting.cs), but a live player can pick/clear their own from the
+    // crew panel at any time (ApplyCommand's SetOwnRoleTo/ClearOwnRolePressed) - purely a
+    // self-identification label, not a job assignment, so nothing else needs to react to it changing.
+    public CrewRole? Role { get; set; }
+    // Typed at the menu, echoed on every ClientCommand (World.cs's ApplyCommand) - null until the
+    // first command arrives, and always null for a bot (BotName is its name instead).
+    public string? Nickname { get; set; }
+    // Round-trip time in ms, updated in ApplyCommand off the client's own echoed timestamp
+    // (CharacterState.PingMs's own doc comment has the full reasoning).
+    public float PingMs { get; set; }
     public Vec2 Position { get; set; }
     public string RoomId { get; set; }
     public string? ManningTurretId { get; set; }
@@ -38,6 +48,9 @@ public sealed class Character
     public bool SuitSealed => WearingSuit && Inventory.HasWorkingTank(Inventory.WornSuitSlot);
     public float SuitActionRemaining { get; set; } // >0 while mid-equip/unequip, movement locked
     public bool SuitActionEquipping { get; set; } // target state the in-progress action will set
+    // Which locker the in-progress action started at - taking a suit out empties it, putting one
+    // back fills it, resolved once the action finishes (World.Movement.cs).
+    public string? SuitActionLockerId { get; set; }
     public Vec2 FacingDirection { get; set; } = new Vec2(-1, 0); // last nonzero move direction
     // Where the head is turned, which is a different question from where the feet are going: the
     // suit lamp shines along it (the client's vision cone), and it's aimed with the mouse. Zero

@@ -21,6 +21,8 @@ public sealed partial class World
         InitializeWiring();
         InitializeComponentMounts();
         InitializeRackSlots();
+        InitializeSuitLockers();
+        InitializeWallBlocks();
 
         _roomOxygen.Clear();
         foreach (var room in Ship.Rooms)
@@ -31,7 +33,7 @@ public sealed partial class World
         foreach (var outerDoor in Ship.AirlockOuterDoors)
             _doorOpen[outerDoor.Id] = false; // opening to vacuum is always a deliberate choice
 
-        _breachedWallBlockIds.Clear();
+        _systemRepairProgress.Clear(); // a new/swapped hull's devices start undamaged anyway
     }
 
     // Net price: the new hull's list price minus what the yard gives back for the current one.
@@ -61,6 +63,8 @@ public sealed partial class World
         foreach (var turret in Ship.Turrets)
             _turretRuntimes[turret.Id] = new TurretRuntime(turret);
         _turretAimInput.Clear();
+        // The old hull's CardTable (and everyone about to be moved off it below) is gone with it.
+        _cardGame = null;
 
         InitializeShipState();
 

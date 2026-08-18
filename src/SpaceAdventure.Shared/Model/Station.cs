@@ -25,8 +25,18 @@ public sealed partial class Station
     // positioned so ShipConnector lands exactly on the ship's outer airlock door. Docking snaps the
     // hull onto DockBerthPosition with zero rotation (World.StationDocking.cs), after which those
     // two frames differ by exactly WorldOffset - which is what lets one camera and one coordinate
-    // system cover ship, station and open space with no jump anywhere in between.
-    public Vec2 WorldOffset { get; }
+    // system cover ship, station and open space with no jump anywhere in between. Settable (not
+    // just constructor-assigned) because the same shared per-kind Station instance is repositioned
+    // to whichever GalaxyPoint's own map position the ship is actually approaching right now
+    // (RepositionTo, called from World.Voyage.cs's Arrive) - otherwise every station of the same
+    // kind would physically sit at the one spot this class happened to be built at.
+    public Vec2 WorldOffset { get; private set; }
+
+    // Moves this station (and everything anchored to it - Position, DockingPortPosition, the
+    // docked room layout) so its own Position lands exactly on worldCenter - the GalaxyPoint's real
+    // map coordinate, not the fixed spot every station used to share regardless of which one was
+    // actually being flown to.
+    public void RepositionTo(Vec2 worldCenter) => WorldOffset = worldCenter - Center;
 
     public Vec2 Center { get; }
     public Vec2 HalfExtents { get; }

@@ -29,6 +29,10 @@ public sealed partial class World
     // with the jetpack rather than something that has already gone wrong by the time you see it.
     private const float PushOffSpeed = 2.4f;
     private const float EvaEntryNudge = 1.1f; // > the door's own 1-unit width, so it clears the rect entirely
+    // How close to a passable breach's own center counts as "walked at it" - roughly a door's own
+    // half-width, so a big-enough hole (World.WallBlocks.cs's IsPassableBreach) is as easy to walk
+    // through as an actual airlock, not a pinhole you have to line up on exactly.
+    private const float BreachCrossingRadius = 0.6f;
     private const float JetpackAccelerationPerSecond = 1f; // gentle correction thrust, not a main engine
     private const float JetpackFuelPerSecond = 10f;
     // A push-off starts right at the edge of the very zone that re-attaches a drifting character,
@@ -57,10 +61,11 @@ public sealed partial class World
 
     private static Vec2 RotateWorldToLocal(Vec2 world, float rotationDegrees) => RotateLocalToWorld(world, -rotationDegrees);
 
-    // Only reachable from inside the airlock chamber, moving into a currently-open outer door,
-    // while wearing a suit (walking into vacuum unsuited would just be instant death for no
-    // gameplay benefit, so it's gated out entirely rather than modeled). Attaches to the ship at
-    // the door's own position so the character doesn't visually jump anywhere on the crossing.
+    // Only reachable from inside the airlock chamber, moving into a currently-open outer door (or,
+    // now, a breach wide enough to fit through - World.WallBlocks.cs's IsPassableBreach), while
+    // wearing a suit (walking into vacuum unsuited would just be instant death for no gameplay
+    // benefit, so it's gated out entirely rather than modeled). Attaches to the ship at the
+    // crossing point's own wall so the character doesn't visually jump anywhere on the crossing.
     private bool TryCrossIntoVacuum(Character character, Vec2 moveDelta)
     {
         // Outside means anywhere the ship is actually out in the field, physically: an asteroid
@@ -72,13 +77,24 @@ public sealed partial class World
         if (!character.SuitSealed || Phase == VoyagePhase.Station)
             return false;
 
+        var room = Ship.Rooms.FirstOrDefault(r => r.Id == character.RoomId);
+        if (room is null)
+            return false;
+
         // Whichever room the door is actually cut into, rather than one hardcoded chamber id: a
         // hull can carry its ports in any compartment (the Corvette puts one on each beam), and
         // keying this to a room name meant a crew on such a ship could never get outside at all.
         var next = character.Position + moveDelta;
         var outerDoor = Ship.AirlockOuterDoors.FirstOrDefault(d =>
             d.RoomId == character.RoomId && IsDoorOpen(d.Id) && d.Contains(next));
-        if (outerDoor is null)
+        // No open door here - maybe there's a hole instead. A single broken block is still a
+        // pinhole (nothing to see through so much as around); only a breach wide enough to
+        // actually fit through (two broken blocks side by side) works as a way out.
+        var breachBlock = outerDoor is null
+            ? Ship.WallBlocks.FirstOrDefault(b => b.RoomId == character.RoomId && IsPassableBreach(b) &&
+                (b.Position - next).Length() <= BreachCrossingRadius)
+            : null;
+        if (outerDoor is null && breachBlock is null)
             return false;
 
         var (hullCenter, _) = GetHullLocalBounds();
@@ -87,13 +103,49 @@ public sealed partial class World
         // Straight onto the plating beside the door, boots down - no nudge out into open space.
         // Standing back in the door's own rectangle is harmless now that going back inside also
         // requires actually walking *toward* the hull (StepShipAttachedWalk).
-        // Snapped from the character's own crossing point (next), not the door's fixed center -
-        // the door is a whole unit wide, so anchoring to its center always re-planted the character
-        // there regardless of where across the doorway they actually walked through, reading as a
-        // small teleport on every exit.
-        character.EvaLocalOffset = SnapToHullSurface(next - hullCenter);
+        // Placed at the crossing point's own known wall (ExitPositionAt), not SnapToHullSurface's
+        // generic "nearest exterior face" scan: that scan judges distance from wherever the
+        // character's crossing point happens to land, and on a chamber that isn't roughly square
+        // the nearest face by raw distance isn't always the face actually being crossed -
+        // occasionally popping the character out through a different wall than the one they just
+        // walked at, which read exactly like a teleport. The door/block's wall is fixed hull
+        // layout, never a guess.
+        var crossingAt = outerDoor?.Position ?? breachBlock!.Position;
+        character.EvaLocalOffset = ExitPositionAt(room, crossingAt, next, HullWalkClearance) - hullCenter;
         character.EvaVelocity = Vec2.Zero;
         return true;
+    }
+
+    // Which of the room's own four walls a point at its boundary actually sits on - fixed by the
+    // hull's layout (compares the point to the room's bounds), never by wherever the character
+    // crossing it happens to be standing. Shared by an airlock door and a wide-enough breach alike
+    // (World.WallBlocks.cs) - both are just "a known point on the hull", geometrically.
+    private static Vec2 OutwardDirectionAt(Room room, Vec2 position)
+    {
+        var faces = new (float Distance, Vec2 Direction)[]
+        {
+            (MathF.Abs(position.X - room.Left), new Vec2(-1, 0)),
+            (MathF.Abs(position.X - room.Right), new Vec2(1, 0)),
+            (MathF.Abs(position.Y - room.Top), new Vec2(0, -1)),
+            (MathF.Abs(position.Y - room.Bottom), new Vec2(0, 1)),
+        };
+        var closest = faces[0];
+        foreach (var face in faces)
+            if (face.Distance < closest.Distance)
+                closest = face;
+        return closest.Direction;
+    }
+
+    // Where a character crossing at this known hull point ends up: pushed straight out past that
+    // point's own wall by `clearance`, keeping whichever coordinate runs *along* the wall exactly
+    // as they walked it - so the only thing that changes is "inside the plating" becoming "just
+    // outside it", not where along the doorway/breach they crossed.
+    private static Vec2 ExitPositionAt(Room room, Vec2 position, Vec2 crossingPoint, float clearance)
+    {
+        var direction = OutwardDirectionAt(room, position);
+        return direction.X != 0
+            ? new Vec2(direction.X > 0 ? room.Right + clearance : room.Left - clearance, crossingPoint.Y)
+            : new Vec2(crossingPoint.X, direction.Y > 0 ? room.Bottom + clearance : room.Top - clearance);
     }
 
     // Walking while attached to the ship: normally just slides the local offset tangentially
@@ -118,20 +170,28 @@ public sealed partial class World
         var outerDoor = steppingInward
             ? Ship.AirlockOuterDoors.FirstOrDefault(d => IsDoorOpen(d.Id) && d.Contains(absoluteLocalPos))
             : null;
-        if (outerDoor is null)
+        // No door underfoot - maybe a wide-enough breach is (same rule TryCrossIntoVacuum uses
+        // going the other way): a hole big enough to fit through works exactly like an open
+        // airlock for getting back in, too.
+        var breachBlock = steppingInward && outerDoor is null
+            ? Ship.WallBlocks.FirstOrDefault(b => IsPassableBreach(b) && (b.Position - absoluteLocalPos).Length() <= BreachCrossingRadius)
+            : null;
+        if (outerDoor is null && breachBlock is null)
         {
             character.EvaLocalOffset = SnapToHullSurface(candidateOffset);
             return;
         }
 
-        // Nudged inward past the door rather than placed exactly on it - the door's own rectangle
-        // is a full unit wide, so landing anywhere inside it (even while clearly walking further
-        // in) would otherwise still satisfy TryCrossIntoVacuum's check on the very next tick and
-        // immediately bounce back outside, mirroring the exit-side bug this same fix pattern
-        // addresses in TryCrossIntoVacuum above.
-        var towardHull = (hullCenter - outerDoor.Position).Normalized();
+        // Nudged inward past the door/breach rather than placed exactly on it - the crossing
+        // point's own footprint is a full unit wide, so landing anywhere inside it (even while
+        // clearly walking further in) would otherwise still satisfy TryCrossIntoVacuum's check on
+        // the very next tick and immediately bounce back outside, mirroring the exit-side bug this
+        // same fix pattern addresses in TryCrossIntoVacuum above.
+        var entryRoomId = outerDoor?.RoomId ?? breachBlock!.RoomId;
+        var entryPosition = outerDoor?.Position ?? breachBlock!.Position;
+        var towardHull = (hullCenter - entryPosition).Normalized();
         character.IsOutside = false;
-        character.RoomId = outerDoor.RoomId; // back into whichever compartment this port belongs to
+        character.RoomId = entryRoomId; // back into whichever compartment this port/breach belongs to
         character.Position = absoluteLocalPos + towardHull * EvaEntryNudge;
         character.EvaAttachedTo = EvaAttachment.None;
         character.EvaLocalOffset = Vec2.Zero;

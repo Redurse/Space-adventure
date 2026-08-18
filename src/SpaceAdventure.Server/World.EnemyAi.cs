@@ -50,10 +50,10 @@ public sealed partial class World
             return;
         }
 
-        var candidates = Ship.WallBlocks.Where(b => !_breachedWallBlockIds.Contains(b.Id) && !IsAtDoorPosition(b)).ToList();
+        var candidates = Ship.WallBlocks.Where(b => !IsWallBlockBreached(b.Id) && !IsAtDoorPosition(b)).ToList();
         if (candidates.Count == 0)
             return; // every wall block already breached
 
-        _breachedWallBlockIds.Add(candidates[_random.Next(candidates.Count)].Id);
+        DamageWallBlock(candidates[_random.Next(candidates.Count)].Id, WallBlockMaxHp);
     }
 }

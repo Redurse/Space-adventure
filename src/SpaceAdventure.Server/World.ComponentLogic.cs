@@ -28,7 +28,7 @@ public sealed partial class World
             _signalOutput[sensor.Id] = _roomOxygen.GetValueOrDefault(sensor.RoomId, FullOxygen) < OxygenSafeThreshold;
 
         foreach (var sensor in _components.Where(c => c.Kind == ComponentKind.BreachSensor))
-            _signalOutput[sensor.Id] = Ship.WallBlocks.Any(b => b.RoomId == sensor.RoomId && _breachedWallBlockIds.Contains(b.Id));
+            _signalOutput[sensor.Id] = Ship.WallBlocks.Any(b => b.RoomId == sensor.RoomId && IsWallBlockBreached(b.Id));
 
         foreach (var sensor in _components.Where(c => c.Kind == ComponentKind.PowerLossSensor))
             _signalOutput[sensor.Id] = PowerGrid.Reactor.CurrentOutput <= 0f;

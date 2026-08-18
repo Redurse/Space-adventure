@@ -33,8 +33,12 @@ public sealed class ShipRenderer
     private readonly Texture2D _wallPlate;
     private readonly Texture2D _hullPlate;
     private readonly SpriteFont _font;
+    private readonly Starfield _starfield;
 
-    public ShipRenderer(GraphicsDevice graphicsDevice, SpriteFont font)
+    // worldViewport: the same rect Game1's WorldViewportOrigin/WorldViewportSize describe - passed
+    // in rather than duplicated here so the starfield always fills exactly the area the ship is
+    // actually drawn into, not a guess at it.
+    public ShipRenderer(GraphicsDevice graphicsDevice, SpriteFont font, Rectangle worldViewport)
     {
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
@@ -42,6 +46,7 @@ public sealed class ShipRenderer
         _wallPlate = TileTextures.CreateWallPlate(graphicsDevice);
         _hullPlate = TileTextures.CreateHullPlate(graphicsDevice);
         _font = font;
+        _starfield = new Starfield(_pixel, worldViewport);
     }
 
     // Shared by Draw() and by Game1's mouse hit-testing so click regions always match what's
@@ -61,30 +66,26 @@ public sealed class ShipRenderer
             (int)(width * PixelsPerUnit),
             (int)(height * PixelsPerUnit));
 
-    // hullPlating: draw the ship closed up, seen from outside. That's the view from a turret
-    // periscope - the gunner is looking along the plating at the field, and the decks, crew and
-    // furniture behind that plating are not things they can see. Without it the ship reads as an
-    // open floor plan floating in space while you're supposedly outside it.
+    // One continuous space, drawn the same way no matter where the camera is currently looking
+    // from (a crew station, a manned turret's periscope, drifting outside in a suit) - there used
+    // to be a second "closed up" mode substituted in for the turret view specifically, so a
+    // breach couldn't be seen through from behind the gun; that's exactly backwards from how a
+    // real hull breach should read, so the ship is never drawn any other way now.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock,
-        float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null, bool hullPlating = false,
+        float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null,
         IEnumerable<AtmosphereParticle>? atmosphere = null)
     {
         var forwardDegrees = ShipCatalog.ForwardDegrees(snapshot.CurrentShipKind);
 
-        if (hullPlating)
-        {
-            HullSkin.Draw(spriteBatch, _pixel, _hullPlate, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
-                origin, forwardDegrees, closedUp: true);
-            foreach (var turret in snapshot.Turrets)
-                DrawTurret(spriteBatch, turret, snapshot.TurretStates.FirstOrDefault(s => s.Id == turret.Id),
-                    snapshot.Rooms, snapshot.Turrets, origin, showPeriscope: false);
-            return;
-        }
+        // Space itself, under absolutely everything - fixed to the screen (not translated by
+        // origin) so it reads as an infinitely distant backdrop rather than a world object the
+        // camera pans across.
+        _starfield.Draw(spriteBatch, totalSeconds);
 
         // The armour the compartments sit inside, under everything else - what shows of it is the
         // plated border around the decks and the bow sticking out ahead of them.
         HullSkin.Draw(spriteBatch, _pixel, _hullPlate, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
-            origin, forwardDegrees, closedUp: false);
+            origin, forwardDegrees, snapshot.CurrentShipKind, totalSeconds, snapshot.SystemStates);
 
         // Floors first, walls second: the bulkheads are thick and straddle the boundary between
         // two rooms, so a room drawn later would otherwise paint its floor over its neighbour's
@@ -114,15 +115,19 @@ public sealed class ShipRenderer
             if (!state.Breached)
                 continue;
             var block = snapshot.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
-            if (block is not null)
-                DrawBreachedWallBlock(spriteBatch, block, origin, totalSeconds);
+            var room = block is null ? null : snapshot.Rooms.FirstOrDefault(r => r.Id == block.RoomId);
+            if (block is not null && room is not null)
+                DrawBreachedWallBlock(spriteBatch, block, room, origin, totalSeconds);
         }
 
         foreach (var storage in snapshot.AmmoStorages)
             DrawAmmoStorage(spriteBatch, storage, origin);
 
         foreach (var locker in snapshot.SuitLockers)
-            DrawSuitLocker(spriteBatch, locker, origin);
+        {
+            var hasSuit = snapshot.SuitLockerStates.FirstOrDefault(s => s.LockerId == locker.Id)?.HasSuit ?? false;
+            DrawSuitLocker(spriteBatch, locker, origin, hasSuit);
+        }
 
         DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.Rooms.Select(r => r.Id), origin, totalSeconds);
 
@@ -139,7 +144,6 @@ public sealed class ShipRenderer
         DrawReactorBlock(spriteBatch, snapshot.ReactorBlock, snapshot.Reactor, openBlock.Kind == BlockKind.Reactor, origin);
         DrawDistributionBlock(spriteBatch, snapshot.DistributionBlock, openBlock.Kind == BlockKind.Distribution, origin);
         DrawNavigationConsole(spriteBatch, snapshot.NavigationConsole, openBlock.Kind == BlockKind.Navigation, origin);
-        DrawAirlockConsole(spriteBatch, snapshot.AirlockConsole, snapshot.Voyage.Phase == VoyagePhase.Station, openBlock.Kind == BlockKind.Station, origin);
         for (var rackIndex = 0; rackIndex < snapshot.StorageRacks.Count; rackIndex++)
         {
             var rack = snapshot.StorageRacks[rackIndex];
@@ -149,6 +153,7 @@ public sealed class ShipRenderer
         ComponentRenderer.Draw(spriteBatch, _pixel, _font, snapshot, origin, totalSeconds);
         var anyoneAtHelm = snapshot.Characters.Any(c => c.IsAtHelm);
         DrawHelmConsole(spriteBatch, snapshot.HelmConsole, anyoneAtHelm, origin);
+        DrawCardTable(spriteBatch, snapshot.CardTable, snapshot.CardGame is not null, origin);
 
         foreach (var turret in snapshot.Turrets)
         {
@@ -293,12 +298,19 @@ public sealed class ShipRenderer
         DrawPanel(spriteBatch, rect, Color.SaddleBrown * 0.85f, Color.SaddleBrown, 1);
     }
 
-    private void DrawSuitLocker(SpriteBatch spriteBatch, SuitLocker locker, Vector2 origin)
+    // An upright cabinet, not a flat floor tile - a vertical seam down the middle like a locker
+    // door, plus a small status light (lit CadetBlue with a suit inside, dim when it's been taken
+    // and not yet put back - SuitLockerPanel shows the same state in more detail on click).
+    private void DrawSuitLocker(SpriteBatch spriteBatch, SuitLocker locker, Vector2 origin, bool hasSuit)
     {
-        const int size = 16;
         var center = origin + new Vector2(locker.X, locker.Y) * PixelsPerUnit;
-        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
-        DrawPanel(spriteBatch, rect, Color.CadetBlue * 0.7f, Color.CadetBlue, 1);
+        var rect = GetBlockRect(locker.Position, NormalBlockSize, origin);
+        DrawPanel(spriteBatch, rect, Color.SlateGray * 0.7f, Color.LightSteelBlue, 1);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - 1, rect.Y + 2, 2, rect.Height - 4), Color.LightSteelBlue * 0.6f);
+
+        const int lightSize = 4;
+        var lightColor = hasSuit ? Color.CadetBlue : new Color(60, 70, 68);
+        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - lightSize / 2, rect.Y + 3, lightSize, lightSize), lightColor);
     }
 
     public const int DroppedItemHitSize = 20;
@@ -402,14 +414,6 @@ public sealed class ShipRenderer
         spriteBatch.DrawString(_font, "Карта", new Vector2(rect.X + 1, rect.Y + 7), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
-    // Airlock in the corridor (game_design.md section 10) — only actually usable while docked;
-    // dims when the ship isn't at a station so it doesn't look clickable when it can't be.
-    private void DrawAirlockConsole(SpriteBatch spriteBatch, AirlockConsole console, bool usable, bool isOpen, Vector2 origin)
-    {
-        var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
-        DrawPanel(spriteBatch, rect, (usable ? Color.SeaGreen : Color.DimGray) * 0.6f, isOpen ? Color.Gold : usable ? Color.LightGreen : Color.Gray, isOpen ? 3 : 2);
-        spriteBatch.DrawString(_font, "Шлюз", new Vector2(rect.X + 1, rect.Y + 7), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
-    }
 
     // Pilot's console (game_design.md Phase 3, M15) — click it to man it and bring up the helm's
     // joystick panel instead of the ship view.
@@ -418,6 +422,17 @@ public sealed class ShipRenderer
         var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
         DrawPanel(spriteBatch, rect, Color.DarkGoldenrod * 0.6f, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2);
         spriteBatch.DrawString(_font, "Штурв", new Vector2(rect.X + 1, rect.Y + 7), Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+    }
+
+    // A quiet card table - not clickable, just a felt surface bolted to the deck; two crew
+    // standing beside it together is what actually starts a hand (World.CardGame.cs's
+    // StepCardGame). Lit up gold whenever a hand happens to be running there, the same "isOpen"
+    // glow every other console gets, so it's obvious at a glance the table isn't just furniture.
+    private void DrawCardTable(SpriteBatch spriteBatch, CardTable table, bool inUse, Vector2 origin)
+    {
+        var rect = GetBlockRect(table.Position, MediumBlockSize, origin);
+        DrawPanel(spriteBatch, rect, new Color(24, 90, 52) * 0.75f, inUse ? Color.Gold : new Color(90, 140, 100), inUse ? 3 : 2);
+        spriteBatch.DrawString(_font, "Карты", new Vector2(rect.X + 1, rect.Y + 7), Color.White, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
     }
 
     private static string SystemShortLabel(PowerSystemId system) => system switch
@@ -525,15 +540,21 @@ public sealed class ShipRenderer
     // holding-steady breach barely shows, a room actually suffocating goes visibly red. The floor
     // gets a paneled-grating pattern instead of a flat fill (this project has no image assets, so
     // the "texture" is drawn as a grid of seams rather than an actual sprite).
-    internal void DrawRoomFloor(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin)
+    // accentOverride: station rooms pass their own warm "commercial" accent here instead of the
+    // per-room-id lookup below (StationRenderer.Draw) - everything else about the compartment
+    // (grating, oxygen tint, name plate) stays exactly as it is on the ship, only the accent-tinted
+    // decor (deck markings, light pool, wall lamps, corner fillets) shifts, which is enough for the
+    // station to read as a different kind of place without forking this whole method.
+    internal void DrawRoomFloor(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin, Color? accentOverride = null)
     {
         var rect = GetRoomRect(room, origin);
-        var accent = RoomDecor.Accent(room.Id);
+        var accent = accentOverride ?? RoomDecor.Accent(room.Id);
 
         TileTextures.DrawTiled(spriteBatch, _floorPlate, TileTextures.FloorTileSize, rect, new Color(35, 40, 47));
         DrawFloorGrating(spriteBatch, rect);
         RoomDecor.DrawDeckMarkings(spriteBatch, _pixel, rect, accent);
         RoomDecor.DrawLightPool(spriteBatch, _pixel, rect, accent);
+        RoomDecor.DrawFurniture(spriteBatch, _pixel, rect, room.Id, accent);
 
         var deficit = Math.Clamp((100f - oxygen) / 100f, 0f, 1f);
         if (deficit > 0f)
@@ -555,11 +576,11 @@ public sealed class ShipRenderer
     // shadowed outer one, ribs every RibSpacing pixels, a service conduit running down the middle
     // and bolted plates over the corners. VisibilityMask raycasts against that same boundary line,
     // so what blocks sight is exactly what's drawn here.
-    internal void DrawRoomWalls(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin)
+    internal void DrawRoomWalls(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin, Color? accentOverride = null)
     {
         var rect = GetRoomRect(room, origin);
         var alarmed = oxygen < 70f;
-        var accent = RoomDecor.Accent(room.Id);
+        var accent = accentOverride ?? RoomDecor.Accent(room.Id);
         const int half = WallThickness / 2;
 
         // Rounded inside corners before the bulkheads themselves, so the wall slabs cover the seam
@@ -641,15 +662,59 @@ public sealed class ShipRenderer
 
     // Pulses via totalSeconds instead of a flat red square — reads as an active hazard light
     // rather than a static marker (SS13's breach warning strobe).
-    private void DrawBreachedWallBlock(SpriteBatch spriteBatch, WallBlock block, Vector2 origin, float totalSeconds)
+    // A real hole, not just a warning marker - sized to fully punch through the wall band's own
+    // thickness (DrawRoomWalls' WallThickness) rather than sitting half-buried in it, filled with
+    // dark space and a few fixed stars (seeded off the block's own position so they don't shimmer
+    // frame to frame) so the plating genuinely reads as breached, with a thin pulsing hazard frame
+    // around the opening for the "this is damage, not empty space" read at a glance.
+    // Punches an actual hole rather than painting a fake starfield over it: this game has no
+    // background starfield layer at all, and FieldRenderer draws every asteroid/ship/EVA character
+    // unconditionally at its real position with no regard for the hull's own opacity (it only ever
+    // reads as "outside the ship" because those things are normally positioned away from the hull's
+    // footprint). FieldRenderer.Draw runs after this method in Game1's own draw order, so as long as
+    // this leaves the block's own screen rect plain black (matching GraphicsDevice.Clear), whatever
+    // FieldRenderer paints there next - a nearby asteroid, an enemy ship, empty void if nothing's
+    // close - shows through exactly as it would look through a real gap in the plating, without any
+    // extra portal/render-target machinery. Barotrauma's own breaches work the same way: they don't
+    // fake the ocean, they just stop drawing the hull over it.
+    private void DrawBreachedWallBlock(SpriteBatch spriteBatch, WallBlock block, Room room, Vector2 origin, float totalSeconds)
     {
-        const int size = 14;
         var center = origin + new Vector2(block.X, block.Y) * PixelsPerUnit;
-        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
-        var flicker = 0.55f + 0.45f * MathF.Sin(totalSeconds * 6f);
-        DrawHazardStripes(spriteBatch, rect, horizontal: true);
-        spriteBatch.Draw(_pixel, rect, Color.Red * (flicker * 0.6f));
-        spriteBatch.DrawString(_font, "!", center + new Vector2(-3, -18), Color.Red, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+        var onTopOrBottom = MathF.Abs(block.Y - room.Top) < 0.01f || MathF.Abs(block.Y - room.Bottom) < 0.01f;
+        const int along = 40; // short of the full 48px block pitch, so adjacent holes still read as separate bites
+        var width = onTopOrBottom ? along : WallThickness;
+        var height = onTopOrBottom ? WallThickness : along;
+        var rect = new Rectangle((int)center.X - width / 2, (int)center.Y - height / 2, width, height);
+
+        spriteBatch.Draw(_pixel, rect, Color.Black);
+
+        const int frame = 3;
+        DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, rect.Width, frame), horizontal: onTopOrBottom);
+        DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Bottom - frame, rect.Width, frame), horizontal: onTopOrBottom);
+        DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, frame, rect.Height), horizontal: onTopOrBottom);
+        DrawHazardStripes(spriteBatch, new Rectangle(rect.Right - frame, rect.Y, frame, rect.Height), horizontal: onTopOrBottom);
+
+        var flicker = 0.5f + 0.5f * MathF.Sin(totalSeconds * 6f);
+        DrawRectOutline(spriteBatch, rect, Color.OrangeRed * flicker, 1);
+    }
+
+    // Same black-backing + colour-scaled-by-fraction bar every other Hp readout in this project
+    // uses (InventoryPanel.DrawChargeBar, FieldRenderer's ore deposit bar) - a wall's own Hp is
+    // otherwise invisible, this is what a lit welder/cutter aimed at one reveals.
+    // internal, called from Game1's HUD batch rather than from this class's own Draw() - the scene
+    // batch it used to live in gets multiplied by the sight-cone/room-lighting mask
+    // (BuildVisibilityMask), which hid the bar the instant the block itself fell into a blind spot;
+    // the HUD batch is drawn after that composite, same exemption InfoPanel/CrewPanel already get.
+    internal void DrawWallToolTargetBar(SpriteBatch spriteBatch, WallBlock block, WallBlockState state, Vector2 origin)
+    {
+        const int width = 32;
+        const int height = 6;
+        var center = origin + new Vector2(block.X, block.Y) * PixelsPerUnit;
+        var bar = new Rectangle((int)center.X - width / 2, (int)center.Y - 22, width, height);
+        var fill = state.Fraction > 0.6f ? Color.LimeGreen : state.Fraction > 0.25f ? Color.Orange : Color.OrangeRed;
+        spriteBatch.Draw(_pixel, bar, Color.Black * 0.7f);
+        spriteBatch.Draw(_pixel, new Rectangle(bar.X, bar.Y, (int)(bar.Width * state.Fraction), bar.Height), fill);
+        DrawRectOutline(spriteBatch, bar, Color.LightGray * 0.7f, 1);
     }
 
     // Out in front of the body along the way the character is facing - far enough out that a
@@ -846,10 +911,19 @@ public sealed class ShipRenderer
                 Color.LightSkyBlue, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
         // A human crewmate reads the same way a hired bot does - name floating over the head,
         // always on, not just when hovered - so telling a crew of several players apart doesn't
-        // depend on remembering whose colour is whose.
+        // depend on remembering whose colour is whose. Once they've picked their own Role from
+        // CrewPanel, it's shown in the name label too, the same way a bot's already is above.
         else if (!character.IsBot && character.Nickname is { Length: > 0 } nickname)
-            spriteBatch.DrawString(_font, nickname, new Vector2(rect.X - 10, rect.Y - 14),
-                Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+            spriteBatch.DrawString(_font, character.Role is { } playerRole ? $"{nickname} ({CrewRoles.Name(playerRole)})" : nickname,
+                new Vector2(rect.X - 10, rect.Y - 14), Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+
+        // The crew panel's role picker (CrewPanel.GetOwnRoleIconRect) is the only way a live
+        // player's Role ever gets set - drawing the same glyph HudIcons.DrawRoleGlyph already
+        // gives CrewPanel/InfoPanel rows here is what makes that choice visible in the ship view
+        // itself, for a bot's fixed Role too since both read from the same field.
+        if (character.Role is { } headRole)
+            HudIcons.DrawRoleGlyph(spriteBatch, _pixel, new Vector2(center.X, rect.Y - 26), 0.5f,
+                character.IsBot ? Color.LightSkyBlue : Color.White, headRole);
 
         DrawHeldItems(spriteBatch, _pixel, _font, HeldItemTypes(character.Inventory), center, facing);
 

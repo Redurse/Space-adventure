@@ -130,4 +130,42 @@ public sealed record ClientCommand(
     bool AbandonQuestPressed = false,
     // Which system to warp to, the one frame the button was clicked (World.StarSystems.cs) - null
     // means no click that frame, same convention as TravelToPointId. Only honored while CanWarpNow.
-    string? WarpToSystemId = null);
+    string? WarpToSystemId = null,
+    // Sent every tick once known (not edge-triggered) - simplest way to keep the server's copy
+    // current without a separate one-shot "set nickname" handshake; null/empty is just ignored
+    // rather than overwriting an already-known name with nothing.
+    string? Nickname = null,
+    // Which role to self-assign, the one frame the player clicks a role icon in the crew panel
+    // (CrewPanel.cs) - purely a self-identification label with no gameplay restriction, unlike a
+    // hired bot's own Role (a live player can still do any job regardless of what's shown here).
+    // Null means no click that frame; there's no way to encode "clear" through a nullable enum
+    // alone, hence the separate bool below - the same split AttachTankFromSlot/DetachTankSlot
+    // already uses for "set" vs "unset" on one thing.
+    CrewRole? SetOwnRoleTo = null,
+    // Edge-triggered like SetOwnRoleTo's own click, just for the "no role" option in the same picker.
+    bool ClearOwnRolePressed = false,
+    // Дурак переводной (World.CardGame.cs, CardGamePanel): playing a card out of hand, whether
+    // that's an attack, a beat, or a перевод is resolved server-side from context - the client
+    // just names the exact card by rank/suit (a 36-card deck never has a duplicate, so that's
+    // unambiguous) rather than a fragile hand-slot index. Null suit means no card played this
+    // frame, same "null/negative = nothing happened" convention as every other edge-triggered
+    // field above.
+    int? PlayCardRank = null,
+    CardSuit? PlayCardSuit = null,
+    // The defender giving up on the current pending attack(s), taking every card on the table into
+    // their hand - edge-triggered like DoorToggleId.
+    bool CardGameTakePressed = false,
+    // The attacker's "Бито" - only legal once every pending attack has actually been beaten,
+    // discards the round and refills both hands from the deck. Edge-triggered like the above.
+    bool CardGameEndRoundPressed = false,
+    // Echoed back verbatim from the most recent WorldSnapshot.ServerTimestampMs this client has
+    // seen (0 before the first snapshot arrives) - lets the server measure this player's round
+    // trip off its own clock (CharacterState.PingMs).
+    long LastServerTimestampMs = 0,
+    // A free-form destination in the current system's own field space - clicking anywhere on the
+    // system map, not just a known point of interest (game_design.md - two-tier map). Set together,
+    // the one frame the click happened; null means no click, same convention as TravelToPointId.
+    // Only one of TravelToPointId/TravelToX+Y is ever set for a given click - the server resolves
+    // whichever is present (World.Voyage.cs's TryStartTravel).
+    float? TravelToX = null,
+    float? TravelToY = null);

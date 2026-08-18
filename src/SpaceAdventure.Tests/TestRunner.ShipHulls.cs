@@ -40,7 +40,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
         StepFor(world, 60);
 
-        MoveCharacterTo(world, 1, 6.75f, 2.4f); // helm console
+        MoveCharacterTo(world, 1, 6.75f, 0.9f); // helm console
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
         for (var i = 0; i < 8 * 30; i++)
         {
@@ -65,7 +65,8 @@ internal static partial class TestRunner
         EnterAsteroidFieldStationary(world);
 
         MoveCharacterTo(world, 1, 6.75f, 11f);  // down the spine into the reactor hall
-        MoveCharacterTo(world, 1, 12.3f, 10.6f); // starboard bay, at its suit locker
+        MoveCharacterTo(world, 1, 12.3f, 11f);  // across through the door, still on its row
+        MoveCharacterTo(world, 1, 12.3f, 8.5f); // up to the starboard bay's suit locker
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // suit up
         StepFor(world, 90);
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).WearingSuit)
@@ -73,10 +74,24 @@ internal static partial class TestRunner
 
         // Tanks live in the starter rack stock now (World.Storage.cs's InitializeRackSlots) - a
         // suit with an empty socket won't get anyone through the port, so grab one before crossing
-        // back to the starboard bay's airlock.
-        TakeTankFromRack(world);
+        // back to the starboard bay's airlock. Walked here by hand rather than through
+        // TakeTankFromRack/WalkAcrossShipTo: that helper's "doorRow=3" shortcut assumes every door
+        // sits at the same height, true on the row-laid-out hulls it was written for but not on the
+        // Corvette's own spine-and-bays layout, where it would just walk into a wall.
+        var rackSlots = world.CreateSnapshot().RackSlots;
+        var rackSlotIndex = rackSlots.ToList().IndexOf(ItemType.OxygenTank);
+        var rack = world.Ship.StorageRacks[rackSlotIndex / StorageRack.Capacity];
+        MoveCharacterTo(world, 1, 12.3f, 11f); // back down to the door row
+        MoveCharacterTo(world, 1, 9.5f, 11f);  // through the door into the reactor hall
+        MoveCharacterTo(world, 1, rack.X, 11f); // along the hall to the rack's own column
+        MoveCharacterTo(world, 1, rack.X, rack.Y); // up to the rack itself
+        var freeMainSlot = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToList().IndexOf(null);
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Rack, rackSlotIndex), MoveItemTo: new SlotRef(ItemSlotKind.Main, freeMainSlot)));
         AttachTankTo(world, WornSuitSlotIndex);
 
+        MoveCharacterTo(world, 1, 12.3f, 11f); // back down to the door row
+        MoveCharacterTo(world, 1, 9.5f, 11f);  // through the door, back into the reactor hall
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 9f, 11f); // reactor side, lined up with the door to life-support
         MoveCharacterTo(world, 1, 12.5f, 9.5f); // through the door, line up with the port

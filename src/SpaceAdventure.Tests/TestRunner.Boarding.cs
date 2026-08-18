@@ -11,7 +11,7 @@ internal static partial class TestRunner
     private static void BoardEnemyShip(World world, ItemType weapon)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         var slot = TakeFromRack(world, weapon);

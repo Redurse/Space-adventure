@@ -60,8 +60,12 @@ public sealed partial class World
 
         foreach (var room in Ship.Rooms)
         {
-            var breachCount = Ship.WallBlocks.Count(b => b.RoomId == room.Id && _breachedWallBlockIds.Contains(b.Id));
-            var oxygen = _roomOxygen[room.Id] - OxygenLeakPerBreachPerSecond * breachCount * (float)deltaSeconds;
+            // Scales with how badly each block is actually hurt, not just whether it's fully
+            // breached - a wall dented but not yet through leaks a little, one punched clean
+            // through leaks the full rate, and everything in between is a straight ramp.
+            var leak = Ship.WallBlocks.Where(b => b.RoomId == room.Id)
+                .Sum(b => OxygenLeakPerBreachPerSecond * (1f - WallBlockHp(b.Id) / WallBlockMaxHp));
+            var oxygen = _roomOxygen[room.Id] - leak * (float)deltaSeconds;
             _roomOxygen[room.Id] = Math.Clamp(oxygen, 0f, FullOxygen);
         }
 

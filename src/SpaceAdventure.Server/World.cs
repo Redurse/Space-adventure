@@ -68,7 +68,6 @@ public sealed partial class World
     private readonly Dictionary<int, Vec2> _moveInput = new();
     private readonly Dictionary<string, TurretRuntime> _turretRuntimes;
     private readonly Dictionary<string, float> _turretAimInput = new();
-    private readonly HashSet<string> _breachedWallBlockIds = new();
 
     // A block sitting under a door's own rectangle - regular interior Door or the vacuum
     // AirlockOuterDoor - is excluded from random breach selection (World.EnemyAi.cs,
@@ -119,6 +118,11 @@ public sealed partial class World
 
         var home = GalaxyMap.GetPoint(GalaxyMap.HomePointId);
         _dockedPointId = home.Id;
+        // Anchored to the home point's own map position (Station.RepositionTo, same as any other
+        // arrival - World.Voyage.cs's Arrive) rather than left at Station.Default.cs's fixed build
+        // spot, so a fresh crew's very first "docked" position already matches where the map says
+        // home is.
+        Station.RepositionTo(home.Position);
         _shipFieldPosition = DockBerthPosition;
         // A fresh run starts docked, which is itself a save point (game_design.md section 5) -
         // set directly rather than via EnterStation, whose refuel/repair pass is meaningless on a
@@ -145,6 +149,10 @@ public sealed partial class World
             runtime.MannedByPlayerId = null;
             _turretAimInput.Remove(runtime.Definition.Id); // otherwise the barrel keeps swinging by itself
         }
+        // A hand of Дурак переводной can't continue solo any more than a turret can stay manned
+        // by someone who just left.
+        if (_cardGame is { } cardGame && (cardGame.Player1Id == playerId || cardGame.Player2Id == playerId))
+            _cardGame = null;
     }
 
     public void ApplyCommand(int playerId, ClientCommand command)
@@ -159,6 +167,29 @@ public sealed partial class World
         PowerGrid.ApplyInput(command.PowerSystemIndex, command.PowerDirection);
 
         var character = _characters[playerId];
+
+        // Sent every tick once the client knows it - ignore an empty/missing one rather than
+        // overwrite an already-known name with nothing (e.g. a stray command that raced ahead of
+        // the menu's own first send).
+        if (!string.IsNullOrEmpty(command.Nickname))
+            character.Nickname = command.Nickname;
+        // A live player's own role is a self-identification label only (unlike a hired bot's,
+        // World.CrewAi.cs never reads it) - no docked/proximity gate needed, same as Nickname above.
+        if (command.SetOwnRoleTo is { } roleToSet)
+            character.Role = roleToSet;
+        else if (command.ClearOwnRolePressed)
+            character.Role = null;
+
+        if (command.PlayCardRank is { } cardRank && command.PlayCardSuit is { } cardSuit)
+            TryPlayCard(character, cardRank, cardSuit);
+        if (command.CardGameTakePressed)
+            TryCardGameTake(character);
+        if (command.CardGameEndRoundPressed)
+            TryCardGameEndRound(character);
+        // 0 means "no snapshot seen yet" (WorldSnapshot.ServerTimestampMs's own doc comment) -
+        // nothing to measure a round trip against on that first tick.
+        if (command.LastServerTimestampMs > 0)
+            character.PingMs = Math.Max(0, Environment.TickCount64 - command.LastServerTimestampMs);
 
         if (command.InteractPressed)
             HandleInteract(character);
@@ -183,8 +214,8 @@ public sealed partial class World
         if (command.ToggleReactorSlotIndex >= 0)
             ToggleReactorSlot(character, command.ToggleReactorSlotIndex);
 
-        if (command.TravelToPointId is not null)
-            TryStartTravel(command.TravelToPointId);
+        if (command.TravelToPointId is not null || (command.TravelToX is not null && command.TravelToY is not null))
+            TryStartTravel(command.TravelToPointId, command.TravelToX, command.TravelToY);
 
         if (command.BuyItemType is { } buyItemType)
             TryBuyItem(character, buyItemType);
@@ -269,6 +300,7 @@ public sealed partial class World
         StepTurrets(deltaSeconds);
         StepCutting(deltaSeconds);
         StepWelding(deltaSeconds);
+        StepSystemRepair(deltaSeconds);
         StepPersonalShots(deltaSeconds);
         StepOxygenTanks(deltaSeconds);
         StepBoarding(deltaSeconds);
@@ -288,6 +320,7 @@ public sealed partial class World
         // PowerGrid.Step (so a PowerLossSensor reads last tick's settled allocation, same timing
         // every other GetEffectivePower caller already relies on).
         StepComponentLogic(deltaSeconds);
+        StepCardGame(deltaSeconds);
         PowerGrid.Step(deltaSeconds);
         Shield.Step(deltaSeconds, GetEffectivePower(PowerSystemId.Shields));
     }
@@ -305,12 +338,15 @@ public sealed partial class World
         Ship.AmmoStorages,
         Ship.SuitLockers,
         Ship.SystemDevices,
-        Ship.SystemDevices.Select(d => new ShipSystemState(d.Id, d.System, !IsDeviceConnected(d.Id))).ToArray(),
+        Ship.SystemDevices.Select(d =>
+        {
+            var (percent, tickPosition) = GetSystemRepairDisplay(d.Id);
+            return new ShipSystemState(d.Id, d.System, !IsDeviceConnected(d.Id), percent, tickPosition);
+        }).ToArray(),
         Ship.ReactorBlock,
         Ship.DistributionBlock,
         Ship.NavigationConsole,
         CreateGalaxyPoints(),
-        Ship.AirlockConsole,
         Ship.HelmConsole,
         Ship.StorageRacks,
         RackSlots,
@@ -346,7 +382,7 @@ public sealed partial class World
             PowerGrid.Reactor.MaxOutput),
         new ShieldState(Shield.Points, ShieldSystem.MaxPoints),
         Ship.WallBlocks,
-        Ship.WallBlocks.Select(b => new WallBlockState(b.Id, _breachedWallBlockIds.Contains(b.Id))).ToArray(),
+        CreateWallBlockStates(),
         Ship.Rooms.Select(r => new RoomOxygenState(r.Id, _roomOxygen[r.Id])).ToArray(),
         new EnemyShipState(Enemy.Hp, Enemy.MaxHp, Enemy.IsRetreating, _remainingEnemyShips),
         _characters.Values.Select(c =>
@@ -377,10 +413,13 @@ public sealed partial class World
                     ? c.Inventory.TankCharge(welderSlot)
                     : null,
                 IsWelding(c.PlayerId),
-                c.LayingWireFromPin);
+                c.LayingWireFromPin,
+                c.Nickname,
+                c.PingMs,
+                GetWallToolTargetId(c));
         }).ToArray(),
         PowerGrid.CreateState(),
-        new VoyageState(Phase, ShipMapPosition, _dockedPointId, _travelTargetPointId),
+        new VoyageState(Phase, ShipMapPosition, _dockedPointId, _travelTargetPointId, _travelTargetPosition),
         Credits,
         ActiveQuest,
         new Dictionary<ShipUpgradeTrack, int>(UpgradeLevels),
@@ -400,5 +439,10 @@ public sealed partial class World
         _recruitRoster,
         CreateStarSystemSummaries(),
         _currentSystemId,
-        CanWarpNow);
+        CanWarpNow,
+        Environment.TickCount64,
+        CreateSuitLockerStates(),
+        Ship.CardTable,
+        CreateCardGameState(),
+        GalaxyMap.Corridors.Select(c => new GalaxyCorridor(c.A, c.B)).ToArray());
 }

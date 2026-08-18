@@ -106,8 +106,10 @@ public sealed partial class World
 
         if (nearbyDamagedSystem is not null)
         {
+            // A held wrench/screwdriver no longer fixes it outright - it starts (or advances) the
+            // repair minigame instead (World.SystemRepair.cs).
             if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
-                RepairDeviceWiring(nearbyDamagedSystem.Id);
+                AttemptSystemRepair(nearbyDamagedSystem.Id);
             return;
         }
 
@@ -124,8 +126,17 @@ public sealed partial class World
 
         if (nearbyLocker is not null)
         {
+            // Each locker holds exactly one suit now (World.SuitLockers.cs) - taking one requires
+            // this locker to actually have one, and putting one back requires this locker to be
+            // the empty one to receive it, same as a ComponentMount only accepting an install into
+            // a free socket.
+            var equipping = !character.WearingSuit;
+            if (equipping != SuitLockerHasSuit(nearbyLocker.Id))
+                return;
+
             character.SuitActionRemaining = SuitActionDurationSeconds;
-            character.SuitActionEquipping = !character.WearingSuit;
+            character.SuitActionEquipping = equipping;
+            character.SuitActionLockerId = nearbyLocker.Id;
             return;
         }
     }

@@ -40,15 +40,38 @@ public partial class Game1 : Game
     // instead, where the design bottom already is the screen bottom.
     private float LetterboxBelowDesign => _renderZoom > 0f ? _renderOffset.Y / _renderZoom : 0f;
     private float HudBottom => DesignHeight + LetterboxBelowDesign - HudBottomMargin;
+    // The slot itself sits flush on the bottom edge now - the hold strip moved above it
+    // (InventoryPanel.GetHoldStripRect), so what used to anchor the *whole* block's top has to
+    // anchor just the slot's own top instead, or the strip would float off past the top with
+    // nothing reserving its space and the slot would land RowHeight too high.
     private Vector2 InventoryRowOrigin(int slotCount) => new(
         (DesignWidth - InventoryPanel.RowWidth(slotCount)) / 2f,
-        HudBottom - InventoryPanel.RowHeight);
+        HudBottom - InventoryPanel.SlotSize);
     private Vector2 EquipSlotsOrigin => new(
         DesignWidth - InventoryPanel.EquipRowWidth - HudEdgeMargin,
         HudBottom - InventoryPanel.SlotSize);
     private static readonly Vector2 GalaxyMapPanelOrigin = new(60, 64);
     private static readonly Vector2 StationPanelOrigin = new(60, 64);
     private static readonly Vector2 HelmPanelOrigin = new(120, 100);
+    private static readonly Vector2 InfoPanelOrigin = new(60, 64);
+    private static readonly Vector2 ShipEditorPanelOrigin = new(60, 64);
+    // Centered like PauseMenuPanel below - a 2-player minigame taking over the middle of the
+    // screen, not another HUD corner panel competing for space with the rest of them.
+    private static readonly Vector2 CardGamePanelOrigin =
+        new((DesignWidth - CardGamePanel.PanelWidth) / 2f, (DesignHeight - CardGamePanel.PanelHeight) / 2f);
+    // Centered on the design canvas rather than a fixed HUD corner - this one's a modal, not a
+    // panel that shares the screen with the rest of the HUD.
+    private static readonly Vector2 PauseMenuPanelOrigin =
+        new((DesignWidth - PauseMenuPanel.PanelWidth) / 2f, (DesignHeight - PauseMenuPanel.PanelHeight) / 2f);
+    // The 3 top-bar buttons (game_design.md's newest ask): Crew (slide-out roster), Management
+    // (placeholder, does nothing yet), Info (the full InfoPanel takeover). Sized bigger than an
+    // inventory slot (InventoryPanel.SlotSize=34) so the affordance reads as a different kind of
+    // control, not another item slot.
+    private const int TopBarButtonSize = 44;
+    private const int TopBarButtonGap = 8;
+    // y=34, not the corner itself - DebugOverlay's "Tick: N" text already lives at (10,10).
+    private static readonly Vector2 TopBarOrigin = new(10, 34);
+    private static readonly Vector2 CrewPanelOrigin = new(10, 88);
     // To the right of the radar, which is why it's expressed relative to the helm's own origin -
     // the two are one console and should move together.
     private static readonly Vector2 ShipStatusPanelOffset = new(560, 20);
@@ -58,7 +81,13 @@ public partial class Game1 : Game
     // compartment lighting carries far enough to fill a room but not the whole deck.
     private const float SuitVisionRadius = 9f;
     private const float SuitVisionHalfAngleDegrees = 55f;
-    private const float SuitAmbientRadius = 3f;
+    // Kept deliberately tiny: this pool is shadow-cast independently of the cone, against walls
+    // within its own short reach only - if a wall causing one of the cone's own shadows sits even a
+    // little further out than this radius, the pool fills right up to its own edge regardless
+    // (there's genuinely nothing blocking it that close), leaving a bright gap between the character
+    // and that shadow's true edge. Small enough here that the gap stays inside the character's own
+    // sprite instead of reading as a break in the shadow.
+    private const float SuitAmbientRadius = 0.5f;
     private const float OpenVisionRadius = 13f;
 
     private GraphicsDeviceManager _graphics;
@@ -86,7 +115,9 @@ public partial class Game1 : Game
     private ReactorPanel _reactorPanel = null!;
     private SystemDevicePanel _systemDevicePanel = null!;
     private GalaxyMapPanel _galaxyMapPanel = null!;
+    private GalacticMapPanel _galacticMapPanel = null!;
     private StationPanel _stationPanel = null!;
+    private CardGamePanel _cardGamePanel = null!;
     private HelmPanel _helmPanel = null!;
     private ShipStatusPanel _shipStatusPanel = null!;
     private FieldRenderer _fieldRenderer = null!;
@@ -97,6 +128,24 @@ public partial class Game1 : Game
     private bool _roomLightingReady;
     private RackPanel _rackPanel = null!;
     private ConnectionsPanel _connectionsPanel = null!;
+    private SuitLockerPanel _suitLockerPanel = null!;
+    private SystemRepairPanel _systemRepairPanel = null!;
+    private PauseMenuPanel _pauseMenuPanel = null!;
+    private CrewPanel _crewPanel = null!;
+    private InfoPanel _infoPanel = null!;
+    private ShipEditorPanel _shipEditorPanel = null!;
+    // The 3 top-bar buttons' own state - independent of _openBlock (which means "which physical
+    // console am I standing at"), since none of these need the player to be anywhere in
+    // particular. Crew is an overlay (drawn over whatever's already on screen); Info and the ship
+    // editor are full takeovers like the galaxy map, so opening one closes the others.
+    private bool _crewPanelOpen;
+    private bool _infoPanelOpen;
+    private InfoTab _infoPanelTab = InfoTab.Team;
+    private bool _shipEditorOpen;
+    // The inter-system map (GalacticMapPanel) - opened by the M key from anywhere (Update's own
+    // edge-triggered check), not gated behind walking to a console like _openBlock's other targets.
+    private bool _galacticMapOpen;
+    private string? _shipEditorSelectedComponentId;
     private SlotRef? _dragFrom;
     // Oxygen-tank sockets: clicking one plugs in the tank you're holding, or pulls the tank back
     // out. Edge-triggered like the other click-driven commands, so they're queued here and sent
@@ -118,8 +167,25 @@ public partial class Game1 : Game
     private bool _prevInteractDown;
     private bool _prevFireDown;
     private ButtonState _prevLeftMouseButton = ButtonState.Released;
+    // Edge detection for the 1-9/0 inventory hotkeys (ReadInventoryHotkeySlot) - a whole state
+    // rather than one bool per key, since there are 10 of them and they're read together.
+    private KeyboardState _prevGameplayKeyboard;
     private ClickTarget _openBlock = ClickTarget.None;
+    // Set only while the plain ship-interior camera is what's actually drawn this frame (not the
+    // navigation map/helm/info panel/boarded-enemy views, which all take the viewport over
+    // instead) - null otherwise. Lets the HUD-batch wall-tool Hp bar (below) reuse the same screen
+    // origin the scene batch just drew the ship at, without recomputing the camera or drawing the
+    // bar inside the masked scene batch itself.
+    private Vector2? _shipInteriorOrigin;
     private string? _talkingToNpcId;
+    // Esc's own menu (Game1.Update) - opens only once nothing else is open, edge-triggered like
+    // every other single-key toggle in this project (holding it down mustn't flip it every frame).
+    private bool _pauseMenuOpen;
+    private bool _prevEscapeDown;
+    // Set by the pause menu's "ГЛАВНОЕ МЕНЮ" click (Game1.Input.cs), read and cleared once at the
+    // top of the next Update - see that check's own comment for why this can't just call
+    // ReturnToMainMenu() directly from inside the click handler.
+    private bool _pendingReturnToMainMenu;
     // Edge-triggered hull purchase, cleared the frame after it's sent - HandleMouseClick's return
     // tuple is already at its practical limit, so this one rides as a field instead.
     private ShipKind? _pendingShipPurchase;
@@ -132,6 +198,12 @@ public partial class Game1 : Game
     private SlotRef? _pendingDropItemFrom; // drag ended over empty space (World.Storage.cs)
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
     private string? _pendingWarpToSystemId; // clicked a system on GalaxyMapPanel's own list (World.StarSystems.cs)
+    private Vector2? _pendingTravelToPosition; // clicked empty map background - a free-form destination (World.Voyage.cs)
+    private CrewRole? _pendingSetOwnRoleTo; // clicked a role icon on the crew panel's own row
+    private bool _pendingClearOwnRole; // clicked the same icon a second time, or the "none" option
+    private PlayingCard? _pendingPlayCard; // clicked a card in CardGamePanel - own hand or a defend/перевод play
+    private bool _pendingCardGameTake; // CardGamePanel's "Взять" button
+    private bool _pendingCardGameEndRound; // CardGamePanel's "Бито" button
     // The galaxy map's own camera - purely a client view of server-authoritative positions, so it
     // lives here rather than in any snapshot. Zoom via scroll wheel, pan via right-drag; both only
     // read while the navigation console is actually open.
@@ -139,6 +211,12 @@ public partial class Game1 : Game
     private Vector2 _mapPanOffset = Vector2.Zero;
     private Point? _mapPanLastMouse;
     private int _prevScrollWheelValue;
+    // The galactic map's own camera - separate from the system map's above, since the two views
+    // use completely different coordinate spaces/scales and are never open at once, but a shared
+    // zoom/pan would still leak confusingly from one into the other.
+    private float _galacticMapZoom = 1f;
+    private Vector2 _galacticMapPanOffset = Vector2.Zero;
+    private Point? _galacticMapPanLastMouse;
     private readonly EffectTracker _effectTracker = new();
     private readonly AtmosphereField _atmosphere = new();
     private WorldSnapshot? _previousSnapshot;
@@ -224,15 +302,18 @@ public partial class Game1 : Game
         _pixel = new Texture2D(GraphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
         _debugOverlay = new DebugOverlay(_font);
-        _shipRenderer = new ShipRenderer(GraphicsDevice, _font);
+        _shipRenderer = new ShipRenderer(GraphicsDevice, _font,
+            new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y));
         _powerPanel = new PowerPanel(GraphicsDevice, _font);
         _combatPanel = new CombatPanel(GraphicsDevice, _font);
         _voyagePanel = new VoyagePanel(_font);
         _inventoryPanel = new InventoryPanel(GraphicsDevice, _font);
         _reactorPanel = new ReactorPanel(GraphicsDevice, _font);
-        _systemDevicePanel = new SystemDevicePanel(_font);
-        _galaxyMapPanel = new GalaxyMapPanel(GraphicsDevice, _font);
+        _systemDevicePanel = new SystemDevicePanel(GraphicsDevice, _font);
+        _galaxyMapPanel = new GalaxyMapPanel(GraphicsDevice, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
+        _galacticMapPanel = new GalacticMapPanel(GraphicsDevice, _font);
         _stationPanel = new StationPanel(_font);
+        _cardGamePanel = new CardGamePanel(GraphicsDevice, _font);
         _helmPanel = new HelmPanel(GraphicsDevice, _font);
         _shipStatusPanel = new ShipStatusPanel(GraphicsDevice, _font);
         _fieldRenderer = new FieldRenderer(GraphicsDevice, _font);
@@ -241,7 +322,13 @@ public partial class Game1 : Game
         _visibility = new VisibilityMask(GraphicsDevice);
         _roomLighting = new RoomLighting(GraphicsDevice);
         _rackPanel = new RackPanel(GraphicsDevice, _font);
-        _connectionsPanel = new ConnectionsPanel(_font);
+        _connectionsPanel = new ConnectionsPanel(GraphicsDevice, _font);
+        _suitLockerPanel = new SuitLockerPanel(GraphicsDevice, _font);
+        _systemRepairPanel = new SystemRepairPanel(GraphicsDevice, _font);
+        _pauseMenuPanel = new PauseMenuPanel(GraphicsDevice, _font);
+        _crewPanel = new CrewPanel(GraphicsDevice, _font);
+        _infoPanel = new InfoPanel(GraphicsDevice, _font);
+        _shipEditorPanel = new ShipEditorPanel(GraphicsDevice, _font);
         _existingSave = SaveStore.Load();
     }
 
@@ -249,13 +336,18 @@ public partial class Game1 : Game
     {
         var keyboard = Keyboard.GetState();
 
-        // Escape leaves the game - except on the join screen, where it's "never mind" and steps back
-        // to the ship list rather than quitting outright.
-        if (GamePad.GetState(PlayerIndex.One).Buttons.Back == ButtonState.Pressed || keyboard.IsKeyDown(Keys.Escape))
-        {
-            if (_sessionStarted || !LeaveJoinScreen())
-                Exit();
-        }
+        // Edge-triggered (holding Escape down must fire this once, not every frame) - what it
+        // actually does differs before vs. during a session, so the two branches below split on
+        // _sessionStarted rather than sharing one action.
+        var escapeDown = GamePad.GetState(PlayerIndex.One).Buttons.Back == ButtonState.Pressed || keyboard.IsKeyDown(Keys.Escape);
+        var escapePressed = escapeDown && !_prevEscapeDown;
+        _prevEscapeDown = escapeDown;
+
+        // Before a session exists: leaves the game - except on the ship-select or join screens,
+        // where it's "never mind" and steps back one screen toward the main menu rather than
+        // quitting outright.
+        if (escapePressed && !_sessionStarted && !LeaveSubScreen())
+            Exit();
 
         // F11 toggles back to a window - edge-triggered, or holding the key would flip the mode
         // every single frame.
@@ -287,9 +379,53 @@ public partial class Game1 : Game
         var isAtHelm = myCharacter?.IsAtHelm ?? false;
         var isOutside = myCharacter?.IsOutside ?? false;
 
+        // During a session: Esc closes whatever's open (a block/console, a top-bar panel, the
+        // turret/helm) one thing at a time, same priority a second click on a console already has;
+        // only once nothing is open does it bring up the pause menu instead. Unmanning a turret or
+        // leaving the helm is server-side (World.Interact.cs's F handling, top-priority there too),
+        // so that case is folded into this frame's interactPressed rather than duplicated here.
+        var escapeSendsInteract = false;
+        if (escapePressed)
+        {
+            if (_pauseMenuOpen)
+            {
+                _pauseMenuOpen = false;
+            }
+            else if (_openBlock.Kind != BlockKind.None || _crewPanelOpen || _infoPanelOpen || _shipEditorOpen
+                     || _galacticMapOpen || _talkingToNpcId is not null || isManningTurret || isAtHelm)
+            {
+                _openBlock = ClickTarget.None;
+                _crewPanelOpen = false;
+                _infoPanelOpen = false;
+                _shipEditorOpen = false;
+                _galacticMapOpen = false;
+                _talkingToNpcId = null;
+                escapeSendsInteract = isManningTurret || isAtHelm;
+            }
+            else
+            {
+                _pauseMenuOpen = true;
+            }
+        }
+
+        // M opens the GALACTIC map (game_design.md - two-tier map) from anywhere, unlike the
+        // system-level one (GalaxyMapPanel), which still needs walking up to the navigation
+        // console - edge-triggered like F11 above, or holding the key would flip it every frame.
+        var galacticMapToggleDown = keyboard.IsKeyDown(Keys.M);
+        if (galacticMapToggleDown && !_prevGameplayKeyboard.IsKeyDown(Keys.M) && !_pauseMenuOpen)
+        {
+            _galacticMapOpen = !_galacticMapOpen;
+            if (_galacticMapOpen)
+            {
+                _openBlock = ClickTarget.None;
+                _infoPanelOpen = false;
+                _shipEditorOpen = false;
+            }
+        }
+
         var interactDown = keyboard.IsKeyDown(Keys.F);
         var spaceDown = keyboard.IsKeyDown(Keys.Space);
-        var interactPressed = interactDown && !_prevInteractDown;
+        var interactPressed = (interactDown && !_prevInteractDown) || escapeSendsInteract;
         var spacePressed = spaceDown && !_prevFireDown;
         _prevInteractDown = interactDown;
         _prevFireDown = spaceDown;
@@ -325,6 +461,21 @@ public partial class Game1 : Game
         if (mapOpen && scrollDelta != 0)
             _mapZoom = Math.Clamp(_mapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.3f, 3f);
 
+        // Galactic map camera - same right-drag/scroll gesture as the system map above, own
+        // independent zoom/pan state (GalacticMapPanel.cs).
+        if (_galacticMapOpen && mouse.RightButton == ButtonState.Pressed)
+        {
+            if (_galacticMapPanLastMouse is { } lastGalacticMouse)
+                _galacticMapPanOffset += new Vector2(mouse.Position.X - lastGalacticMouse.X, mouse.Position.Y - lastGalacticMouse.Y);
+            _galacticMapPanLastMouse = mouse.Position;
+        }
+        else
+        {
+            _galacticMapPanLastMouse = null;
+        }
+        if (_galacticMapOpen && scrollDelta != 0)
+            _galacticMapZoom = Math.Clamp(_galacticMapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.3f, 3f);
+
         // Dragging gets first refusal on the button: a press that lands on an item slot starts a
         // drag instead of counting as a click, so releasing over the rack doesn't also read as
         // "clicked empty space, close the panel".
@@ -335,6 +486,21 @@ public partial class Game1 : Game
             dragTookTheClick
                 ? (-1, -1, (string?)null, (ItemType?)null, -1, false, false, (ShipUpgradeTrack?)null, false, (string?)null)
                 : HandleMouseClick(mouse);
+
+        // Bail out of the rest of this frame immediately - _client is about to become null, and
+        // everything below (up to and including this frame's _client.SendInput) assumes it isn't.
+        if (_pendingReturnToMainMenu)
+        {
+            _pendingReturnToMainMenu = false;
+            ReturnToMainMenu();
+            base.Update(gameTime);
+            return;
+        }
+
+        // Number-row hotkey for holding a slot's item, same edge-triggered field a hold-strip click
+        // sends - only when nothing else already claimed this tick's toggle.
+        if (toggleHoldSlotIndex < 0 && !distributionOpen && ReadInventoryHotkeySlot(keyboard) is { } hotkeySlot)
+            toggleHoldSlotIndex = hotkeySlot;
         // Stabilization is a mode the pilot leaves on, not a one-frame pulse: the server takes it
         // as an instruction for this tick only, so the client latches it and keeps sending it until
         // the controls are touched again.
@@ -392,6 +558,21 @@ public partial class Game1 : Game
         var warpToSystemId = _pendingWarpToSystemId;
         _pendingWarpToSystemId = null;
 
+        var travelToPosition = _pendingTravelToPosition;
+        _pendingTravelToPosition = null;
+
+        var setOwnRoleTo = _pendingSetOwnRoleTo;
+        var clearOwnRolePressed = _pendingClearOwnRole;
+        _pendingSetOwnRoleTo = null;
+        _pendingClearOwnRole = false;
+
+        var playCard = _pendingPlayCard;
+        var cardGameTakePressed = _pendingCardGameTake;
+        var cardGameEndRoundPressed = _pendingCardGameEndRound;
+        _pendingPlayCard = null;
+        _pendingCardGameTake = false;
+        _pendingCardGameEndRound = false;
+
         // Right-click backs out of a pending wire-lay without walking back to its start pin -
         // harmless to send every frame it's held, the server just clears an already-null anchor.
         var wireLayCancelPressed = mouse.RightButton == ButtonState.Pressed && myCharacter?.LayingWireFromPin is not null;
@@ -403,7 +584,9 @@ public partial class Game1 : Game
         var weldHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingWelder();
 
         _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, pushOffDirection.X, pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, lookDirection.X, lookDirection.Y,
-            tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId);
+            tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
+            _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
+            _client.LatestSnapshot?.ServerTimestampMs ?? 0, travelToPosition?.X, travelToPosition?.Y);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
 
@@ -415,6 +598,7 @@ public partial class Game1 : Game
         }
         _atmosphere.Step((float)gameTime.ElapsedGameTime.TotalSeconds, _client.LatestSnapshot);
 
+        _prevGameplayKeyboard = keyboard;
         base.Update(gameTime);
     }
 
@@ -437,9 +621,55 @@ public partial class Game1 : Game
     // Applied to the whole scene batch, so one number moves the camera, the world and the hit
     // tests together instead of each renderer growing a scale parameter.
     private float SceneZoom(WorldSnapshot snapshot) =>
-        MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation
+        MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen
             ? TurretViewZoom
             : 1f;
+
+    internal static Rectangle GetTopBarButtonRect(int index) =>
+        new((int)TopBarOrigin.X + index * (TopBarButtonSize + TopBarButtonGap), (int)TopBarOrigin.Y, TopBarButtonSize, TopBarButtonSize);
+
+    private static Vector2 RectCenter(Rectangle rect) => new(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f);
+
+    private static readonly Color TopBarPlate = new(26, 27, 32);
+    private static readonly Color TopBarGold = new(214, 178, 112);
+
+    private void DrawTopBar(SpriteBatch spriteBatch)
+    {
+        var crewRect = GetTopBarButtonRect(0);
+        var managementRect = GetTopBarButtonRect(1);
+        var infoRect = GetTopBarButtonRect(2);
+
+        DrawTopBarButtonFrame(spriteBatch, crewRect);
+        HudIcons.DrawCrewGlyph(spriteBatch, _pixel, RectCenter(crewRect), 0.85f, TopBarGold);
+        if (_crewPanelOpen)
+            DrawSlotHighlight(crewRect, Color.LightSkyBlue);
+
+        DrawTopBarButtonFrame(spriteBatch, managementRect);
+        HudIcons.DrawShipGlyph(spriteBatch, _pixel, RectCenter(managementRect), 0.7f, TopBarGold);
+        if (_shipEditorOpen)
+            DrawSlotHighlight(managementRect, Color.LightSkyBlue);
+
+        DrawTopBarButtonFrame(spriteBatch, infoRect);
+        HudIcons.DrawBarsGlyph(spriteBatch, _pixel, RectCenter(infoRect), 0.85f, TopBarGold);
+        if (_infoPanelOpen)
+            DrawSlotHighlight(infoRect, Color.LightSkyBlue);
+    }
+
+    // A bevelled plate with a gold medallion behind the glyph, rather than a flat icon on a solid
+    // square - closer to the "engraved emblem" look a roster/top-bar button reads best as.
+    private void DrawTopBarButtonFrame(SpriteBatch spriteBatch, Rectangle rect)
+    {
+        spriteBatch.Draw(_pixel, rect, TopBarPlate);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, 2), Color.White * 0.12f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, 2, rect.Height), Color.White * 0.10f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - 2, rect.Width, 2), Color.Black * 0.4f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - 2, rect.Y, 2, rect.Height), Color.Black * 0.4f);
+
+        var center = RectCenter(rect);
+        HudIcons.FillCircle(spriteBatch, _pixel, center, rect.Width * 0.40f, new Color(40, 38, 34));
+        HudIcons.DrawRingArc(spriteBatch, _pixel, center, rect.Width * 0.40f, 0f, 360f, TopBarGold * 0.75f, 20, 1.6f);
+        ShipRenderer.DrawRectOutline(spriteBatch, _pixel, rect, TopBarGold * 0.55f, 1);
+    }
 
     private (Turret Turret, TurretState State)? MannedTurret(WorldSnapshot snapshot)
     {
@@ -456,7 +686,7 @@ public partial class Game1 : Game
     // else - the ship interior/field view is never rotated except behind a periscope.
     private float TurretViewRotationDegrees(WorldSnapshot snapshot)
     {
-        if (MannedTurret(snapshot) is not { } manned || _openBlock.Kind is BlockKind.Navigation)
+        if (MannedTurret(snapshot) is not { } manned || _openBlock.Kind is BlockKind.Navigation || _infoPanelOpen)
             return 0f;
         var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
         return -90f - mount.OutwardDegrees;
@@ -505,7 +735,10 @@ public partial class Game1 : Game
     {
         _roomLightingReady = false;
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
-        if (me is null || me.IsAtHelm || _openBlock.Kind is BlockKind.Navigation)
+        // Info takes over the viewport the same way the galaxy map/helm do - a HUD screen, not
+        // something seen through the character's own eyes, so it reads the same regardless of
+        // where they're standing or how dark the room is (matches Navigation/IsAtHelm above).
+        if (me is null || me.IsAtHelm || _openBlock.Kind is BlockKind.Navigation || _infoPanelOpen)
             return false;
 
         // A gunner at a periscope is looking through the hull, not standing in a dark corridor:
@@ -674,7 +907,7 @@ public partial class Game1 : Game
         if (!_sessionStarted)
         {
             GraphicsDevice.Clear(Color.Black);
-            DrawMenu();
+            DrawMenu((float)gameTime.TotalGameTime.TotalSeconds);
             base.Draw(gameTime);
             return;
         }
@@ -703,6 +936,7 @@ public partial class Game1 : Game
             Matrix.CreateTranslation(screenPivot.X, screenPivot.Y, 0f) *
             Matrix.CreateScale(sceneZoom, sceneZoom, 1f) * _renderScale;
         _spriteBatch.Begin(transformMatrix: sceneTransform);
+        _shipInteriorOrigin = null;
         if (_client.LatestSnapshot is { } snapshot)
         {
             var myCharacter = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
@@ -713,8 +947,17 @@ public partial class Game1 : Game
             // Everything else shares one continuous camera: the ship interior is always drawn,
             // with whatever's outside it (asteroids, ore, EVA characters) layered on top in the
             // same ship-local frame, so walking through the airlock never swaps renderer or scale.
-            if (_openBlock.Kind == BlockKind.Navigation)
-                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset);
+            if (_galacticMapOpen)
+            {
+                // Nothing to draw here - the galactic map is a HUD-batch overlay now (see below),
+                // exempt from the sight-cone/room-lighting mask like Info/Crew already are. It used
+                // to live in this scene batch, which meant standing in a blind spot when pressing M
+                // made the whole map fade to black along with everything else.
+            }
+            else if (_openBlock.Kind == BlockKind.Navigation)
+                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, totalSeconds);
+            else if (_infoPanelOpen)
+                _infoPanel.Draw(_spriteBatch, snapshot, _client.PlayerId, _infoPanelTab, InfoPanelOrigin);
             else if (myIsAtHelm)
             {
                 _helmPanel.Draw(_spriteBatch, snapshot, HelmPanelOrigin);
@@ -727,10 +970,11 @@ public partial class Game1 : Game
                 var (origin, hullCenter, _) = myCharacter is not null
                     ? ComputeCamera(snapshot, myCharacter)
                     : (WorldViewportOrigin, ShipLocalFrame.GetHullCenter(snapshot.Rooms), Vec2.Zero);
+                _shipInteriorOrigin = origin;
                 // Behind the periscope you are outside the ship looking at it, so it's drawn closed
                 // up - and so is the station it's docked to, for the same reason.
                 var fromOutside = MannedTurret(snapshot) is not null;
-                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, hullPlating: fromOutside, atmosphere: _atmosphere.Particles);
+                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles);
                 // A docked station is laid out in these same coordinates, joined to the ship by the
                 // shared airlock rectangle - drawn alongside the interior rather than instead of it,
                 // so there's no moment where the view swaps to "the station screen".
@@ -763,6 +1007,7 @@ public partial class Game1 : Game
             // below), not a full-screen takeover - drawn whenever talking to someone; it no-ops
             // internally if _talkingToNpcId is null.
             _stationPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, StationPanelOrigin, _talkingToNpcId);
+            _cardGamePanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, CardGamePanelOrigin);
 
             // Only one block's terminal is shown at a time, at the same HUD slot — you have to
             // actually be "in" it (game_design.md section 1) rather than seeing everything always.
@@ -781,12 +1026,73 @@ public partial class Game1 : Game
                     _rackPanel.Draw(_spriteBatch, hudSnapshot, PowerPanelOrigin, CurrentOpenRackOffset(hudSnapshot));
                     break;
                 case BlockKind.Connections when _openBlock.TargetComponentId is { } targetComponentId:
-                    _connectionsPanel.Draw(_spriteBatch, hudSnapshot, targetComponentId, PowerPanelOrigin);
+                    _connectionsPanel.Draw(_spriteBatch, hudSnapshot, targetComponentId,
+                        new Rectangle((int)PowerPanelOrigin.X, (int)PowerPanelOrigin.Y, ConnectionsPanel.Width, 0));
+                    break;
+                case BlockKind.SuitLocker when _openBlock.TargetComponentId is { } lockerId:
+                    _suitLockerPanel.Draw(_spriteBatch, hudSnapshot, lockerId, _client.PlayerId, PowerPanelOrigin);
                     break;
             }
 
             _combatPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, ComputeHint(hudSnapshot, _client.PlayerId), CombatPanelOrigin);
             _voyagePanel.Draw(_spriteBatch, hudSnapshot, VoyagePanelOrigin);
+
+            // Drawn here, in the HUD batch, rather than inside ShipRenderer's own scene batch -
+            // that batch gets multiplied by the sight-cone/room-lighting mask right after it ends,
+            // which used to hide this bar the instant the wall itself fell into a blind spot, even
+            // though the flame lighting it up is coming from the player's own hands. The HUD batch
+            // runs after that composite, same exemption Info/Crew get.
+            if (_shipInteriorOrigin is { } wallToolOrigin)
+            {
+                foreach (var character in hudSnapshot.Characters)
+                {
+                    if (character.WallToolTargetBlockId is not { } targetId)
+                        continue;
+                    var block = hudSnapshot.WallBlocks.FirstOrDefault(b => b.Id == targetId);
+                    var state = hudSnapshot.WallBlockStates.FirstOrDefault(s => s.Id == targetId);
+                    if (block is not null && state is not null)
+                        _shipRenderer.DrawWallToolTargetBar(_spriteBatch, block, state, wallToolOrigin);
+                }
+
+                // Same HUD-batch exemption as the wall bar just above - shown while standing next
+                // to a damaged system device, same proximity TurretInteractionRadius uses for its
+                // own repair hint (ComputeHint), so the card and the hint text never disagree about
+                // whether you're "at" it.
+                var repairMe = hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
+                if (repairMe is not null)
+                {
+                    var repairPosition = new Vec2(repairMe.X, repairMe.Y);
+                    var nearbyDamaged = hudSnapshot.SystemDevices.FirstOrDefault(d =>
+                        (d.Position - repairPosition).Length() < TurretInteractionRadius &&
+                        (hudSnapshot.SystemStates.FirstOrDefault(s => s.DeviceId == d.Id)?.Damaged ?? false));
+                    if (nearbyDamaged is not null)
+                    {
+                        var holdingRepairTool = HeldItemTypes(repairMe.Inventory).Contains(ItemType.Wrench) ||
+                                                 HeldItemTypes(repairMe.Inventory).Contains(ItemType.Screwdriver);
+                        var repairState = hudSnapshot.SystemStates.FirstOrDefault(s => s.DeviceId == nearbyDamaged.Id);
+                        var cardOrigin = wallToolOrigin + new Vector2(nearbyDamaged.X, nearbyDamaged.Y) * ShipRenderer.PixelsPerUnit
+                            + new Vector2(-SystemRepairPanel.PanelWidth / 2f, -SystemRepairPanel.PanelHeight - 30);
+                        _systemRepairPanel.Draw(_spriteBatch, ComponentRenderer.SystemLabel(nearbyDamaged.System), holdingRepairTool,
+                            repairState?.RepairProgress ?? 0f, repairState?.RepairTickPosition ?? 0f, cardOrigin);
+                    }
+                }
+            }
+
+            // HUD batch rather than the scene batch it used to share with the system map - exempt
+            // from the sight-cone/room-lighting composite above, same reasoning as InfoPanel/Crew:
+            // a full-screen overlay reachable from anywhere (the M key) shouldn't go dark just
+            // because the ship interior underneath happens to be sitting in a blind spot right now.
+            if (_galacticMapOpen)
+                _galacticMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin, _galacticMapZoom, _galacticMapPanOffset);
+
+            DrawTopBar(_spriteBatch);
+            if (_crewPanelOpen)
+                _crewPanel.Draw(_spriteBatch, hudSnapshot, CrewPanelOrigin, _client.PlayerId);
+            // HUD batch rather than the scene batch InfoPanel uses - it's never rotated/zoomed or
+            // masked by sight/lighting regardless of camera state, with no need to mirror
+            // InfoPanel's SceneZoom/TurretViewRotationDegrees/BuildVisibilityMask exemptions.
+            if (_shipEditorOpen)
+                _shipEditorPanel.Draw(_spriteBatch, hudSnapshot, _shipEditorSelectedComponentId, _connectionsPanel, ShipEditorPanelOrigin);
             var myInventory = hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory;
             var carriedSlotCount = myInventory?.MainSlots.Count ?? 0;
             var rowOrigin = InventoryRowOrigin(carriedSlotCount);
@@ -804,6 +1110,26 @@ public partial class Game1 : Game
             // Last, so the item being dragged rides over every panel it passes across.
             if (_dragFrom is { } dragged && ItemInSlot(hudSnapshot, dragged) is { } draggedItem)
                 InventoryPanel.DrawDraggedItem(_spriteBatch, _pixel, _font, _designMouse, draggedItem);
+
+            // Full item info while hovering a slot - skipped mid-drag, where "what's under the
+            // cursor" means the drag, not whatever slot it happens to be passing over.
+            if (_dragFrom is null && myInventory is not null && HoveredMainSlotIndex(myInventory, rowOrigin) is { } hoveredSlot
+                && myInventory.MainSlots[hoveredSlot] is { } hoveredItem)
+            {
+                var slotRect = InventoryPanel.GetMainSlotRect(hoveredSlot, rowOrigin);
+                _inventoryPanel.DrawTooltip(_spriteBatch, hoveredItem, myInventory.MainSlotTanks[hoveredSlot], new Vector2(slotRect.X, slotRect.Y - 16));
+            }
+
+            // The gunner's reticle, drawn last so nothing else ever sits over it - tracks the raw
+            // cursor in this unrotated HUD batch rather than the rotated scene, so it stays glued
+            // to the mouse regardless of TurretViewRotationDegrees.
+            if (MannedTurret(hudSnapshot) is not null)
+                TurretReticle.Draw(_spriteBatch, _pixel, new Vector2(_designMouse.X, _designMouse.Y), new Color(190, 225, 240));
+
+            // Last of all - the one overlay that's meant to sit over literally everything else,
+            // including the reticle (there's nothing to aim at while it's up).
+            if (_pauseMenuOpen)
+                _pauseMenuPanel.Draw(_spriteBatch, PauseMenuPanelOrigin, _designMouse);
         }
         _debugOverlay.Draw(_spriteBatch, _client.LatestSnapshot);
         _spriteBatch.End();

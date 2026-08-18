@@ -105,7 +105,7 @@ internal static partial class TestRunner
     private static void EnterAsteroidFieldStationary(World world)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
             world.Step(RealtimeStep);
     }
 

@@ -11,7 +11,7 @@ internal static partial class TestRunner
     private static void BreachEveryRoom(World world)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         for (var i = 0; i < 600 * 30; i++)
@@ -26,7 +26,7 @@ internal static partial class TestRunner
     private static void BreachRoom(World world, string roomId)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), roomId); i++)
@@ -57,7 +57,7 @@ internal static partial class TestRunner
 
         // Enemy AI only attacks once in Battle — get there first via the galaxy map.
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         // A single breach only leaks oxygen slowly — wait for an actual breach, then keep
@@ -113,7 +113,7 @@ internal static partial class TestRunner
 
             // PowerSystemId order: Oxygen(0), Engine, Shields, WeaponCharger, Secondary.
             world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f, TravelToPointId: "sector-alpha"));
-            for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+            for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
                 world.Step(RealtimeStep);
 
             for (var i = 0; i < 7 * 30; i++) // just past the first 6s attack-cooldown tick

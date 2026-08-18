@@ -18,7 +18,11 @@ public static partial class HullSkin
 {
     private static readonly Color Nozzle = new(38, 44, 54);
     private static readonly Color NozzleMouth = new(22, 26, 33);
-    private static readonly Color Livery = new(206, 142, 58);
+    // A saturated red-orange rather than the muted tan this used to be - FTL's own ships are always
+    // painted in one bold, flat colour, never a naval grey-on-grey, and red is the one most players
+    // associate with "a ship from that game" at a glance. The Frigate's own colour (LiveryFor
+    // below) - every other class gets one of its own.
+    private static readonly Color Livery = new(196, 58, 46);
 
     // A bell at the tail end of whichever compartment each engine sits in, at the engine's own
     // lateral position. A ship whose engines only exist as a glow while moving looks, at rest, like
@@ -185,9 +189,12 @@ public static partial class HullSkin
 
     // Paint down the spine, from the bow to the tail: a dark band edged in the ship's own colour.
     // Livery is most of what separates a vessel from a shape - navies and haulers alike paint their
-    // hulls, and an unpainted one reads as untextured geometry.
-    private static void DrawLivery(SpriteBatch spriteBatch, Texture2D pixel, IReadOnlyList<Room> rooms, Vector2 bow, Vector2 origin)
+    // hulls, and an unpainted one reads as untextured geometry. Each class gets its own colour
+    // (LiveryFor) rather than sharing one, so trading up (or down) at the Shipwright actually looks
+    // like a different ship, not a reskin.
+    private static void DrawLivery(SpriteBatch spriteBatch, Texture2D pixel, IReadOnlyList<Room> rooms, Vector2 bow, Vector2 origin, ShipKind shipKind)
     {
+        var livery = LiveryFor(shipKind);
         var side = new Vector2(-bow.Y, bow.X);
         var nose = ForwardMost(rooms, bow);
         var spine = Vector2.Dot(new Vector2(nose.Center.X, nose.Center.Y), side);
@@ -205,8 +212,70 @@ public static partial class HullSkin
         // Starts at the base of the nose rather than out on the dome: paint that runs over the
         // canopy looks like paint over a windscreen.
         Band(spriteBatch, pixel, bow, side, front + 0.1f, back - 0.2f, spine, 0.42f, origin, Color.Black * 0.2f);
-        Band(spriteBatch, pixel, bow, side, front + 0.1f, back - 0.2f, spine - 0.46f, 0.07f, origin, Livery * 0.8f);
-        Band(spriteBatch, pixel, bow, side, front + 0.1f, back - 0.2f, spine + 0.46f, 0.07f, origin, Livery * 0.8f);
+        Band(spriteBatch, pixel, bow, side, front + 0.1f, back - 0.2f, spine - 0.46f, 0.07f, origin, livery * 0.8f);
+        Band(spriteBatch, pixel, bow, side, front + 0.1f, back - 0.2f, spine + 0.46f, 0.07f, origin, livery * 0.8f);
+    }
+
+    // Frigate keeps the red this whole overhaul started with (game_design.md's own starter class,
+    // and the colour most players will associate with "the ship" regardless of what they fly
+    // later). The other three each get a colour that fits their own role: Scout cool and minimal
+    // (cheapest, weakest), Cruiser gold (priciest, the flagship), Corvette green (the one hull that
+    // flies nose-first instead of broadside, worth reading as visually distinct on sight).
+    private static Color LiveryFor(ShipKind shipKind) => shipKind switch
+    {
+        ShipKind.Scout => new Color(70, 150, 170),
+        ShipKind.Cruiser => new Color(198, 160, 74),
+        ShipKind.Corvette => new Color(90, 168, 82),
+        _ => Livery,
+    };
+
+    // A couple of small windows on the bridge/cockpit's own outward flank - a glimpse of the same
+    // starfield ShipRenderer draws behind everything else. There's no way to actually sample that
+    // screen-fixed layer from here (this hull is drawn in world space, and the window has to move
+    // with it), so each one fakes its own tiny patch instead: a dark pane with a handful of dots
+    // that twinkle on their own schedule, seeded off the room and slot so neighbouring windows
+    // never fall in step with each other.
+    private static void DrawViewports(SpriteBatch spriteBatch, Texture2D pixel, IReadOnlyList<Room> rooms, Vector2 hullCenter, Vector2 origin, float totalSeconds)
+    {
+        foreach (var room in rooms)
+        {
+            if (!room.Id.Contains("cockpit") && !room.Id.Contains("bridge"))
+                continue;
+
+            var center = RoomCenter(room, origin);
+            var outward = center - hullCenter;
+            if (outward.LengthSquared() < 1f)
+                continue;
+            outward.Normalize();
+            var side = new Vector2(-outward.Y, outward.X);
+            var reach = MathF.Min(room.Width, room.Height) * ShipRenderer.PixelsPerUnit / 2f - 5f;
+
+            for (var slot = -1; slot <= 1; slot += 2)
+            {
+                var windowCenter = center + outward * reach + side * (slot * 14f);
+                DrawViewport(spriteBatch, pixel, windowCenter, totalSeconds, room.Id.GetHashCode() + slot);
+            }
+        }
+    }
+
+    private static void DrawViewport(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float totalSeconds, int seed)
+    {
+        const float radius = 7f;
+        HudIcons.FillCircle(spriteBatch, pixel, center, radius + 2f, Edge * 0.7f);
+        HudIcons.FillCircle(spriteBatch, pixel, center, radius, new Color(8, 10, 16));
+
+        var random = new Random(seed);
+        for (var i = 0; i < 3; i++)
+        {
+            var angle = (float)random.NextDouble() * MathF.PI * 2f;
+            var dist = (float)random.NextDouble() * radius * 0.7f;
+            var starPosition = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * dist;
+            var phase = (float)random.NextDouble() * MathF.PI * 2f;
+            var alpha = MathF.Max(0f, 0.4f + 0.4f * MathF.Sin(totalSeconds * (1.5f + i * 0.6f) + phase));
+            spriteBatch.Draw(pixel, starPosition, null, Color.White * alpha, 0f, new Vector2(0.5f, 0.5f),
+                new Vector2(1.5f, 1.5f), SpriteEffects.None, 0f);
+        }
+        HudIcons.DrawRingArc(spriteBatch, pixel, center, radius, 0f, 360f, Color.White * 0.3f, 12, 1f);
     }
 
     // One quad, not a filled polygon: Primitives fills by sweeping overlapping strips from a centre
@@ -223,41 +292,6 @@ public static partial class HullSkin
 
         spriteBatch.Draw(pixel, start, null, color, MathF.Atan2(run.Y, run.X), new Vector2(0f, 0.5f),
             new Vector2(run.Length(), halfWidth * 2f * ShipRenderer.PixelsPerUnit), SpriteEffects.None, 0f);
-    }
-
-    // The roof of a compartment seen from outside: seams, a couple of access hatches and a bank of
-    // rivets, keyed off the compartment's id so a given deck always looks the same.
-    private static void DrawDeckPlating(SpriteBatch spriteBatch, Texture2D pixel, Room room, Vector2 origin)
-    {
-        var rect = RoomRect(room, origin);
-        var random = new Random(AsteroidTexture.Seed(room.Id));
-        var tone = 1f + (float)(random.NextDouble() - 0.5) * 0.14f;
-        spriteBatch.Draw(pixel, rect, new Color((int)(Deck.R * tone), (int)(Deck.G * tone), (int)(Deck.B * tone)));
-
-        for (var x = rect.X + 26; x < rect.Right; x += 26)
-            spriteBatch.Draw(pixel, new Rectangle(x, rect.Y, 1, rect.Height), Seam);
-        for (var y = rect.Y + 26; y < rect.Bottom; y += 26)
-            spriteBatch.Draw(pixel, new Rectangle(rect.X, y, rect.Width, 1), Seam);
-        spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, rect.Width, 3), PlateLit);
-
-        var hatches = 1 + random.Next(3);
-        for (var i = 0; i < hatches; i++)
-        {
-            var w = 26 + random.Next(3) * 26;
-            var h = 26 + random.Next(2) * 26;
-            if (rect.Width < w + 40 || rect.Height < h + 40)
-                continue;
-            var hatch = new Rectangle(rect.X + 20 + random.Next(rect.Width - w - 40),
-                rect.Y + 20 + random.Next(rect.Height - h - 40), w, h);
-            spriteBatch.Draw(pixel, hatch, new Color(40, 47, 57));
-            spriteBatch.Draw(pixel, new Rectangle(hatch.X, hatch.Y, hatch.Width, 2), PlateLit * 0.7f);
-            spriteBatch.Draw(pixel, new Rectangle(hatch.X, hatch.Bottom - 2, hatch.Width, 2), Color.Black * 0.4f);
-            for (var rivet = hatch.X + 5; rivet < hatch.Right - 3; rivet += 9)
-            {
-                spriteBatch.Draw(pixel, new Rectangle(rivet, hatch.Y + 4, 2, 2), Color.Black * 0.45f);
-                spriteBatch.Draw(pixel, new Rectangle(rivet, hatch.Bottom - 6, 2, 2), Color.Black * 0.45f);
-            }
-        }
     }
 
     private static Room? FindRoom(IReadOnlyList<Room> rooms, string id)

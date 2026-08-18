@@ -11,7 +11,7 @@ internal static partial class TestRunner
     private static void EngageSector(World world, string sectorId)
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: sectorId));
-        for (var i = 0; i < 10 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
     }
 

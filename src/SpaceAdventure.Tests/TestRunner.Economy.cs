@@ -75,7 +75,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
         if (world.Phase != VoyagePhase.Battle)
             return false; // must actually have left the station for this test to mean anything
@@ -178,7 +178,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
         if (world.Phase != VoyagePhase.Battle)
             return false;
@@ -210,7 +210,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1); // stays in the corridor (spawn point) while it gets dangerous
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "corridor"); i++)
@@ -270,7 +270,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1); // pilot, sends commands
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "corridor"); i++)
@@ -378,7 +378,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
         if (world.Phase != VoyagePhase.Battle)
             return false;

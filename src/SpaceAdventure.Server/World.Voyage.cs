@@ -8,11 +8,6 @@ namespace SpaceAdventure.Server;
 // starts docked at the home station.
 public sealed partial class World
 {
-    // Autopilot cruise while nobody's at the helm (World.StarSystems.cs's TryWarpTo companion
-    // mechanic) - the same field flight everyone already flies during a fight or a docking
-    // approach, just running several times faster while there's nothing yet to react to.
-    private const float TimeCompressionFactor = 8f;
-    private const float TransitArrivalRadius = 8f; // close enough to hand off to Arrive()
     private const float TransitSlowdownRadius = 25f; // start easing off the throttle before overshoot
 
     public GalaxyMap GalaxyMap { get; } = GalaxyMap.CreateStarter();
@@ -22,10 +17,22 @@ public sealed partial class World
     private string _currentSystemId = "";
     private string? _dockedPointId;
     private string? _travelTargetPointId;
+    // The autopilot's actual steering target (World.Voyage.cs's StepTraveling) - set alongside
+    // _travelTargetPointId for a named point, or alone for a free-form click with no point behind
+    // it. Split from _travelTargetPointId because that field's other job (remembering which
+    // station the ship is captured into, for CanDockNow/TryDockAtStation) has to survive even
+    // when the ship wasn't actually aimed at that station in the first place (see Arrive()).
+    private Vec2? _travelTargetPosition;
     // Who owns the ship currently being fought - captured on arrival, since the sector's point id
     // is no longer around by the time the fight ends (World.Factions.cs).
     private FactionId? _battleFaction;
     private string? _battleSectorPointId; // same reason, for bounty quests (World.Quests.cs)
+    // The sector just cleared (ResolveEnemyLosses) - excluded from the universal incidental-capture
+    // scan (StepTraveling) until the ship gets safely clear of it, even though the small position
+    // nudge alone isn't enough: a redirected course to some OTHER destination can still curve back
+    // within its CaptureRadius depending on geometry, and without this it would restart the same
+    // fight instantly. Cleared once far enough away (StepTraveling) or once deliberately re-targeted.
+    private string? _recentlyDisengagedSectorId;
     private int _remainingEnemyShips; // hulls of the squadron still flying
     private string? _crewShipId; // which enemy hull the current boarding crew belongs to
 
@@ -59,23 +66,53 @@ public sealed partial class World
 
     private void StepTraveling(double deltaSeconds)
     {
-        if (_travelTargetPointId is not { } targetId)
+        if (_travelTargetPosition is not { } target)
             return; // idling in open space with nowhere chosen yet
 
-        var target = GalaxyMap.GetPoint(targetId);
-        // Taking the helm by hand hands control back and drops the time compression - the same
-        // rule the captain-bot's own auto-stabilize already follows (World.CrewAi.cs) for exactly
-        // the same reason: a human at the console overrides automatic flight, not the other way
-        // round.
+        // Taking the helm by hand hands control back - the same rule the captain-bot's own
+        // auto-stabilize already follows (World.CrewAi.cs) for exactly the same reason: a human at
+        // the console overrides automatic flight, not the other way round. Autopilot and manual
+        // flight now run on the same clock at the same cruise speed (World.ShipField.cs's
+        // ShipMaxSpeed) - a real, walkable trip either way, not a compressed blip while unmanned.
         var humanAtHelm = _characters.Values.Any(c => !c.IsBot && c.IsAtHelm);
-        var effectiveDelta = humanAtHelm ? deltaSeconds : deltaSeconds * TimeCompressionFactor;
         if (!humanAtHelm)
-            AutopilotToward(target.Position, effectiveDelta);
+            AutopilotToward(target, deltaSeconds);
 
-        StepShipFieldPhysics(effectiveDelta, fullPower: !humanAtHelm);
+        StepShipFieldPhysics(deltaSeconds, fullPower: !humanAtHelm, ignoreAsteroids: true);
 
-        if ((target.Position - _shipFieldPosition).Length() <= TransitArrivalRadius)
-            Arrive(target);
+        // Re-arm the just-cleared sector once the ship is well clear of it (3x its own radius,
+        // comfortably more than a redirected course could plausibly clip through by accident) -
+        // otherwise it would stay permanently immune to ever ambushing this ship again.
+        if (_recentlyDisengagedSectorId is { } clearedSectorId &&
+            (GalaxyMap.GetPoint(clearedSectorId).Position - _shipFieldPosition).Length() > GalaxyMap.GetPoint(clearedSectorId).CaptureRadius * 3f)
+            _recentlyDisengagedSectorId = null;
+
+        // Every point of interest in the system catches the ship on its own radius, not just
+        // whichever one the player actually clicked - flying near a hostile sector on the way to
+        // somewhere else is exactly as much an arrival as steering straight at it (game_design.md -
+        // two-tier map, "у каждой точки интереса есть радиус когда она подхватывает игрока"). A few
+        // exceptions, all only capturing when deliberately targeted:
+        // - AsteroidField: unlike a station or a sector, it isn't a separate scene to cut away to -
+        //   the ship is already flying among these same rocks the whole time it's Traveling, and
+        //   EnterAsteroidField's own re-centering is a deliberate "I want to stop here and mine"
+        //   convenience, not something merely passing near the belt's marker (which several routes
+        //   do, since it sits at the system's own centre) should trigger by accident.
+        // - Station: casting off (TryStartTravel) leaves the ship sitting exactly on the station's
+        //   own map position (Station.RepositionTo anchors docking there now) - without this
+        //   exception, the very first Traveling tick after undocking would immediately re-catch the
+        //   ship on the station it just left, forever, regardless of where it was actually headed.
+        // - _recentlyDisengagedSectorId: the sector just cleared - a redirected course to some other
+        //   destination can still pass back within its CaptureRadius depending on geometry (the
+        //   small disengage nudge in ResolveEnemyLosses only guarantees clearance along one line,
+        //   not every possible new heading), which would otherwise restart the same fight instantly.
+        var caught = GalaxyMap.GetSystem(_currentSystemId).Points
+            .Where(p => p.Kind is not (GalaxyPointKind.AsteroidField or GalaxyPointKind.Station) || p.Id == _travelTargetPointId)
+            .Where(p => p.Id != _recentlyDisengagedSectorId || p.Id == _travelTargetPointId)
+            .Where(p => (p.Position - _shipFieldPosition).Length() <= p.CaptureRadius)
+            .OrderBy(p => (p.Position - _shipFieldPosition).Length())
+            .FirstOrDefault();
+        if (caught is not null)
+            Arrive(caught);
     }
 
     // Flies the ship toward a point the way a player would with the joystick: full throttle once
@@ -107,6 +144,11 @@ public sealed partial class World
 
     private void Arrive(GalaxyPoint target)
     {
+        // Whatever the player actually clicked (a named point, a free-form spot, or nothing this
+        // trip - just drifted close enough), the point that caught the ship wins from here: every
+        // branch below clears the steering target the same way an explicit arrival always has.
+        _travelTargetPosition = null;
+
         if (target.Kind == GalaxyPointKind.WarpPoint)
         {
             // Parked, not drifting - same guarantee every other arrival gives, so residual
@@ -123,7 +165,10 @@ public sealed partial class World
             _battleSectorPointId = target.Id;
             // Battle happens in real field space, so the enemy hulls are somewhere you can
             // physically fly to, shoot at and board (World.Boarding.cs) - not an abstract HP bar.
-            _shipFieldPosition = AsteroidField.Center;
+            // Starts wherever the ship already was, not re-centred on the system - the universal
+            // capture-radius scan above can trigger this from anywhere near the sector's own
+            // marker (which is rarely the system's centre), and snapping the ship across the map
+            // to fight reads as a teleport bug, not "you got jumped".
             _shipVelocity = Vec2.Zero;
             _shipThrust = Vec2.Zero;
             _shipRotationDegrees = 0f;
@@ -142,8 +187,17 @@ public sealed partial class World
         }
         else
         {
-            // _travelTargetPointId deliberately stays set - still "heading to" this station until
-            // the manual docking approach (World.StationDocking.cs) actually captures the dock.
+            // Set here rather than relied upon from before the trip started: the universal capture
+            // scan above can hand this station the ship even when it wasn't the intended
+            // destination (a free-form click elsewhere that happened to pass close by), so
+            // CanDockNow/TryDockAtStation (World.StationDocking.cs) need it stamped fresh on every
+            // arrival, not just a click-through from TryStartTravel.
+            _travelTargetPointId = target.Id;
+            // Physically anchor the (shared, per-kind) station structure to THIS point's own map
+            // position before computing anything relative to it - otherwise every station docks at
+            // the one fixed spot Station.Default.cs happened to build it at, regardless of which
+            // point's marker the ship actually flew to, which reads as a teleport on arrival.
+            Station.RepositionTo(target.Position);
             EnterStationApproach();
         }
     }
@@ -177,6 +231,25 @@ public sealed partial class World
         if (_battleSectorPointId is { } sectorId)
         {
             NoteBountyTargetDestroyed(sectorId);
+            // Arrive() no longer recentres the ship on the system when a fight starts (it now
+            // stays wherever the universal capture-radius scan caught it - StepTraveling), which
+            // means it can still be sitting inside this very sector's own CaptureRadius the moment
+            // the fight ends. Left alone, the very next Traveling tick would catch it again and
+            // restart the fight instantly, forever. Nudge it just clear of that radius instead -
+            // reads as "disengaging", not a teleport, and small enough that a real player would
+            // barely notice it.
+            var sector = GalaxyMap.GetPoint(sectorId);
+            var awayFromSector = _shipFieldPosition - sector.Position;
+            if (awayFromSector.Length() < sector.CaptureRadius + 1f)
+            {
+                var direction = awayFromSector.Length() > 0.01f ? awayFromSector.Normalized() : new Vec2(1f, 0f);
+                _shipFieldPosition = (sector.Position + direction * (sector.CaptureRadius + 1f))
+                    .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+            }
+            // The nudge above only guarantees clearance along the one line it pushed along - the
+            // exclusion (StepTraveling) is what actually protects against a redirected course
+            // curving back through this sector's radius regardless of geometry.
+            _recentlyDisengagedSectorId = sectorId;
             _battleSectorPointId = null;
         }
         _battleFaction = null;
@@ -214,23 +287,44 @@ public sealed partial class World
         ResetStationCrimeState(); // a new visit finds the crates restocked and the guards calm
         PowerGrid.Reactor.Refuel();
         RefillOxygenTanks(); // a station resupplies air the same way it refuels and repairs
-        _breachedWallBlockIds.Clear();
+        InitializeWallBlocks(); // a station patches the hull back to full the same way
         foreach (var room in Ship.Rooms)
             _roomOxygen[room.Id] = FullOxygen;
         RegenerateRecruitRoster();
     }
 
-    // From the navigation console: pick a destination. Ignored mid-fight (can't flee to the
-    // map) and for an unknown point id.
-    private void TryStartTravel(string? pointId)
+    // From the navigation console: pick a destination, either a known point of interest (pointId)
+    // or any free-form spot in the system's own bounded field (x/y - game_design.md, "не обязательно
+    // к точкам интереса он может тыкнуть в любое место системы"). Ignored mid-fight (can't flee to
+    // the map), for an unknown point id, and when neither a point nor coordinates were actually
+    // clicked this frame.
+    private void TryStartTravel(string? pointId, float? x, float? y)
     {
-        if (pointId is null || Phase == VoyagePhase.Battle)
+        if (Phase == VoyagePhase.Battle)
             return;
-        // Only this system's own points - nothing in the current UI ever offers another system's
-        // (GalaxyPoints is scoped the same way, World.Factions.cs's CreateGalaxyPoints), and flying
-        // there without a warp would be a coordinate-space coincidence, not a real destination.
-        if (GalaxyMap.GetSystem(_currentSystemId).Points.All(p => p.Id != pointId))
-            return;
+
+        Vec2 position;
+        if (pointId is not null)
+        {
+            // Only this system's own points - nothing in the current UI ever offers another
+            // system's (GalaxyPoints is scoped the same way, World.Factions.cs's
+            // CreateGalaxyPoints), and flying there without a warp would be a coordinate-space
+            // coincidence, not a real destination.
+            if (GalaxyMap.GetSystem(_currentSystemId).Points.All(p => p.Id != pointId))
+                return;
+            position = GalaxyMap.GetPoint(pointId).Position;
+        }
+        else if (x is { } px && y is { } py)
+        {
+            // Clamped to the same hard edge the ship's own flight physics already respects
+            // (StepShipFieldPhysics) - clicking past the barrier just aims at the barrier instead
+            // of a spot the ship could never actually reach.
+            position = new Vec2(px, py).Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+        }
+        else
+        {
+            return; // no click this frame
+        }
 
         // Casting off takes the station's rooms out of the docked layout, so anyone still standing
         // in them would be left walking around geometry that no longer connects to anything -
@@ -244,6 +338,10 @@ public sealed partial class World
 
         Phase = VoyagePhase.Traveling;
         _dockedPointId = null;
+        // A free-form click has no point behind it - _travelTargetPointId stays null (nothing named
+        // to show), while _travelTargetPosition (the only thing StepTraveling actually steers by)
+        // is set either way.
         _travelTargetPointId = pointId;
+        _travelTargetPosition = position;
     }
 }

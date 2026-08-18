@@ -13,7 +13,7 @@ internal static partial class TestRunner
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++) // ~1.6s travel time, generous margin
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++) // generous margin over a real cruise at ShipMaxSpeed
             world.Step(RealtimeStep);
 
         return world.Phase == VoyagePhase.Battle;
@@ -25,7 +25,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         FireBowTurretUntilEnemyDefeated(world, 1);
@@ -44,7 +44,7 @@ internal static partial class TestRunner
         // one command — a second ApplyCommand with default power fields would otherwise reset
         // the slider input before it ever gets a tick to act on.
         world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
         for (var i = 0; i < 10 * 30; i++) // let the slider ramp to full and actually burn fuel for a while
             world.Step(RealtimeStep);
@@ -89,11 +89,47 @@ internal static partial class TestRunner
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
         var before = world.CreateSnapshot().Voyage.ShipMapPosition;
-        for (var i = 0; i < 15; i++) // half a second — well short of the ~1.6s full trip
+        // 2s - past even a full about-turn (ShipRotationDegreesPerSecond's slowest case, up to 180
+        // degrees) before the autopilot's throttle re-engages (AutopilotToward cuts thrust above a
+        // 25-degree heading error), and still nowhere near arrival at the now much longer cruise.
+        for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
         var after = world.CreateSnapshot().Voyage.ShipMapPosition;
 
         return (after - before).Length() > 0f && world.Phase == VoyagePhase.Traveling; // moving, not yet arrived
+    }
+
+    // Free-form destination (game_design.md - click anywhere in the system, not just a point of
+    // interest): a coordinate with nothing at it still starts real, gradual flight.
+    private static bool World_Voyage_FreeFormClickFliesShipTowardArbitraryPoint()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        world.ApplyCommand(1, new ClientCommand(1, TravelToX: 140f, TravelToY: 150f)); // open space near the starting berth
+        var before = world.CreateSnapshot().Voyage.ShipMapPosition;
+        for (var i = 0; i < 15; i++) // half a second
+            world.Step(RealtimeStep);
+        var after = world.CreateSnapshot().Voyage.ShipMapPosition;
+
+        return (after - before).Length() > 0f && world.Phase == VoyagePhase.Traveling;
+    }
+
+    // The generalized capture-radius scan (World.Voyage.cs's StepTraveling): every point of
+    // interest catches the ship on its own radius, not just whichever one was actually clicked -
+    // flying close enough to sector-alpha (without ever naming it) still starts the fight.
+    private static bool World_Voyage_FreeFormClickNearHostileSectorStillTriggersBattle()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        // 5 units off sector-alpha's own (52, 97) marker - inside its CaptureRadius (8) but not the
+        // point itself, so this can only pass through the proximity scan, not an id match.
+        world.ApplyCommand(1, new ClientCommand(1, TravelToX: 57f, TravelToY: 97f));
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
+            world.Step(RealtimeStep);
+
+        return world.Phase == VoyagePhase.Battle;
     }
 
     private static bool World_Voyage_CannotChangeDestinationMidBattle()
@@ -102,7 +138,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station")); // try to flee
@@ -157,7 +193,7 @@ internal static partial class TestRunner
         // character 2 (the unsuited control) isn't spawned until right before measuring — see why
         // in World_Decompression_DrainsHealthInBreachedRoom just above.
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 5 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "engine"); i++)

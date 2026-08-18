@@ -229,7 +229,9 @@ public static class ComponentRenderer
         };
     }
 
-    private static string SystemLabel(PowerSystemId system) => system switch
+    // internal so SystemRepairPanel's card title (Game1.cs) reads the same name a wired-up
+    // Device's own ComponentLabel already uses, rather than a second, possibly-drifting copy.
+    internal static string SystemLabel(PowerSystemId system) => system switch
     {
         PowerSystemId.Oxygen => "Кислород",
         PowerSystemId.Engine => "Двигатель",

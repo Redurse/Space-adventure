@@ -197,24 +197,47 @@ public sealed class FieldRenderer
         spriteBatch.Draw(_pixel, housingCenter + outward * (housingLength * 0.45f), null, new Color(40, 44, 52), rotation,
             new Vector2(0.5f, 0.5f), new Vector2(housingLength * 0.25f, housingWidth * 0.85f), SpriteEffects.None, 0f);
 
-        if (thrust <= 0.05f)
-            return;
-
-        // The flame flickers rather than sitting still - a static cone reads as a painted-on decal,
-        // and the flicker is what makes "the engines are running" legible at a glance. Each nacelle
-        // gets its own phase off its id, so a pair of them doesn't pulse in lockstep.
+        // FTL's ships never go dark at the tail - a small blue idle glow burns at every nacelle
+        // whether or not anyone's on the stick, and only grows into a full flame under real thrust.
+        // A chemical-rocket orange cone at rest would read as "on fire", not "idling".
         var phase = totalSeconds * 22f + deviceId.Length * 1.7f;
         var flicker = 0.75f + 0.25f * MathF.Sin(phase);
+        var idlePulse = 0.85f + 0.15f * MathF.Sin(totalSeconds * 2.4f + deviceId.Length * 0.9f);
         var mouth = baseScreen + outward * (housingLength * 0.75f);
-        var flameLength = (14f + thrust * 46f) * flicker * sizeScale;
-        var flameWidth = housingWidth * 0.7f;
+        var idleLength = 9f * idlePulse * sizeScale;
+        var burnLength = thrust > 0.05f ? (14f + thrust * 46f) * flicker * sizeScale : 0f;
+        var flameLength = MathF.Max(idleLength, burnLength);
+        var flameWidth = housingWidth * (thrust > 0.05f ? 0.7f : 0.5f);
+        var burn = Math.Clamp(thrust * 3f, 0f, 1f);
 
-        spriteBatch.Draw(_pixel, mouth, null, Color.OrangeRed * (0.35f + thrust * 0.35f), rotation, new Vector2(0f, 0.5f),
+        // Deep blue outer glow, then a brighter cyan core, then a near-white hot centre - blended
+        // toward the same palette whether it's a bare idle flicker or a full burn, so the ramp-up
+        // never has a colour seam.
+        spriteBatch.Draw(_pixel, mouth, null, new Color(40, 90, 220) * (0.30f + burn * 0.35f), rotation, new Vector2(0f, 0.5f),
             new Vector2(flameLength, flameWidth), SpriteEffects.None, 0f);
-        spriteBatch.Draw(_pixel, mouth, null, Color.Orange * (0.6f + thrust * 0.4f), rotation, new Vector2(0f, 0.5f),
+        spriteBatch.Draw(_pixel, mouth, null, new Color(90, 180, 255) * (0.55f + burn * 0.35f), rotation, new Vector2(0f, 0.5f),
             new Vector2(flameLength * 0.6f, flameWidth * 0.6f), SpriteEffects.None, 0f);
-        spriteBatch.Draw(_pixel, mouth, null, Color.LightYellow * (0.7f + thrust * 0.3f), rotation, new Vector2(0f, 0.5f),
+        spriteBatch.Draw(_pixel, mouth, null, new Color(220, 240, 255) * (0.6f + burn * 0.4f), rotation, new Vector2(0f, 0.5f),
             new Vector2(flameLength * 0.3f, flameWidth * 0.32f), SpriteEffects.None, 0f);
+
+        // A drifting trail behind the flame proper, only once there's real thrust to leave one -
+        // stateless like the flicker above (no actual particles to track), just dots recomputed
+        // every frame from how far totalSeconds has carried each one along a repeating cycle.
+        if (burn > 0.15f)
+        {
+            const int trailCount = 5;
+            const float trailRange = 50f;
+            for (var i = 0; i < trailCount; i++)
+            {
+                var cycle = (totalSeconds * 46f + i * (trailRange / trailCount) + deviceId.Length * 3f) % trailRange / trailRange;
+                var dist = flameLength + cycle * trailRange * sizeScale;
+                var dotAlpha = (1f - cycle) * burn * 0.5f;
+                var dotSize = (1f - cycle) * flameWidth * 0.4f + 1.5f;
+                var dotPosition = mouth + outward * dist;
+                spriteBatch.Draw(_pixel, dotPosition, null, new Color(120, 190, 255) * dotAlpha, 0f, new Vector2(0.5f, 0.5f),
+                    new Vector2(dotSize, dotSize), SpriteEffects.None, 0f);
+            }
+        }
     }
 
     // The station seen from open space: its actual compartments, one block per room, at the exact

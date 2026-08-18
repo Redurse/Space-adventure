@@ -59,42 +59,20 @@ public sealed partial class World
             if (character.OnEnemyShip || character.OnStation)
                 continue;
 
-            WeldAlongFlame(character);
+            WeldAlongFlame(character, deltaSeconds);
         }
     }
 
-    private void WeldAlongFlame(Character character)
+    // Repairs gradually now (WelderRepairPerSecond, World.WallBlocks.cs) rather than un-breaching
+    // a block the instant the flame grazes it - patching a hull is work you watch happen, the same
+    // way the cutter's damage is, not a free instant fix. Aiming at an already-healthy block is
+    // harmless: FindAimedWallBlock still reports it (for the client's Hp bar - GetWallToolTargetId)
+    // but there's nothing to add to a block already at WallBlockMaxHp.
+    private void WeldAlongFlame(Character character, double deltaSeconds)
     {
-        var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection.Normalized() : character.FacingDirection;
-        if (aim.Length() < 0.01f)
+        var block = FindAimedWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius);
+        if (block is null)
             return;
-
-        // Indoors, the flame and the block it's aimed at share the ship's own interior coordinate
-        // space. Outside, the character is tracked in world/field space (GetEvaWorldPosition) while
-        // WallBlock.Position is still in that same interior frame, so the block's position has to be
-        // rotated and translated out to world space the same way the hull plating itself is drawn
-        // out there (World.Eva.cs) before the two can be compared.
-        var origin = character.IsOutside ? GetEvaWorldPosition(character) : character.Position;
-        var (hullCenter, _) = GetHullLocalBounds();
-
-        // Sampled along the flame rather than tested at its tip - same reasoning as the cutter: a
-        // breach beside the character would otherwise be missed by a flame pointed past it.
-        for (var i = 1; i <= WelderSamples; i++)
-        {
-            var point = origin + aim * (WelderReachUnits * i / WelderSamples);
-            var block = Ship.WallBlocks.FirstOrDefault(b =>
-            {
-                if (!_breachedWallBlockIds.Contains(b.Id))
-                    return false;
-                if (character.IsOutside)
-                    return (_shipFieldPosition + RotateLocalToWorld(b.Position - hullCenter, _shipRotationDegrees) - point).Length() <= WeldPointRadius;
-                return b.RoomId == character.RoomId && (b.Position - point).Length() <= WeldPointRadius;
-            });
-            if (block is null)
-                continue;
-
-            _breachedWallBlockIds.Remove(block.Id);
-            return; // one block at a time: the flame welds what it is pointed at
-        }
+        RepairWallBlock(block.Id, WelderRepairPerSecond * (float)deltaSeconds);
     }
 }

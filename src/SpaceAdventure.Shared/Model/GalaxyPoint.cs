@@ -14,7 +14,12 @@ public sealed record GalaxyPoint(string Id, string Name, float X, float Y, Galax
     // Which StarSystem this point belongs to. Left blank in the literals below - StarSystem's own
     // constructor stamps every point it's given with its own Id, so the point data doesn't have to
     // repeat its system on every single line.
-    string SystemId = "")
+    string SystemId = "",
+    // How close the ship has to come for this point to catch it (World.Voyage.cs's generalized
+    // arrival scan) - every point of interest has its own radius rather than one shared constant, so
+    // a busier point (a station's berth) could later be made more forgiving than a bare warp marker
+    // without touching anything else. Defaults to the radius every point used before this existed.
+    float CaptureRadius = 8f)
 {
     public Vec2 Position => new(X, Y);
 }
