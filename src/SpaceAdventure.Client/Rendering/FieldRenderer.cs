@@ -403,6 +403,60 @@ public sealed class FieldRenderer
             new Vector2(length * 0.92f, 7f), SpriteEffects.None, 0f);
         spriteBatch.Draw(pixel, origin, null, Color.White * 0.9f, rotation, new Vector2(0f, 0.5f),
             new Vector2(length * 0.55f, 3f), SpriteEffects.None, 0f);
+
+        // The contact point, at the far end of the beam - a bright flare with sparks kicked off
+        // sideways, the way an actual torch throws slag, rather than the beam just ending in mid-air.
+        DrawWeldSparkFlare(spriteBatch, pixel, origin + aim * (length * 0.55f), aim, totalSeconds);
+    }
+
+    // A small rotating starburst at the weld point plus a scatter of individual streaks flying
+    // outward and away from the beam. Continuous rather than TransientEffect's one-shot
+    // DrawSparkBurst, so it needs no stored particle state: each streak's own angle/reach/phase is a
+    // pure function of totalSeconds and its own index, looping forever for as long as the tool is
+    // held.
+    private static void DrawWeldSparkFlare(SpriteBatch spriteBatch, Texture2D pixel, Vector2 tip, Vector2 aim, float totalSeconds)
+    {
+        var pulse = 0.75f + 0.25f * MathF.Sin(totalSeconds * 55f);
+        spriteBatch.Draw(pixel, tip, null, Color.White * pulse, 0f, new Vector2(0.5f, 0.5f),
+            new Vector2(9f, 9f) * pulse, SpriteEffects.None, 0f);
+
+        // A short 6-ray star, slowly rotating so it doesn't read as a static asterisk stamped on top.
+        const int rayCount = 6;
+        var spin = totalSeconds * 3f;
+        for (var i = 0; i < rayCount; i++)
+        {
+            var angle = spin + i * MathF.PI * 2f / rayCount;
+            var rayLength = 6f + 4f * MathF.Sin(totalSeconds * 30f + i * 1.7f);
+            spriteBatch.Draw(pixel, tip, null, Color.LightYellow * 0.8f, angle, new Vector2(0f, 0.5f),
+                new Vector2(rayLength, 1.5f), SpriteEffects.None, 0f);
+        }
+
+        // A handful of individual sparks, each flying out on its own straight line biased away from
+        // the beam (mostly sideways/backwards, the way real slag actually kicks off a weld) and
+        // looping back to the tip once it's flown far enough.
+        var side = new Vector2(-aim.Y, aim.X);
+        const int sparkCount = 5;
+        for (var i = 0; i < sparkCount; i++)
+        {
+            var lateral = HashNoise(i) * 2f - 1f; // -1..1, which side and how far off-axis
+            var cycle = (totalSeconds * (1.6f + i * 0.35f) + HashNoise(i + 17)) % 1f;
+            var direction = -aim * 0.4f + side * lateral;
+            if (direction.LengthSquared() > 0.0001f)
+                direction.Normalize();
+            var reach = 4f + cycle * 22f;
+            var pos = tip + direction * reach;
+            var alpha = 1f - cycle;
+            spriteBatch.Draw(pixel, pos, null, Color.Lerp(Color.White, Color.OrangeRed, cycle) * alpha, 0f,
+                new Vector2(0.5f, 0.5f), new Vector2(2.5f, 2.5f), SpriteEffects.None, 0f);
+        }
+    }
+
+    // Deterministic 0..1 noise, same trick TileTextures.Hash uses - no seed state, so spark #i always
+    // gets the same lateral offset and phase across frames instead of jittering randomly.
+    private static float HashNoise(int i)
+    {
+        var value = MathF.Sin(i * 12.9898f + 78.233f) * 43758.5453f;
+        return value - MathF.Floor(value);
     }
 
     // A block of ore: a real body sitting on the rock, with the bar showing how much of it is left
