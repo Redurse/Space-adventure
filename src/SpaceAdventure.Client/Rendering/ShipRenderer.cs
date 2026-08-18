@@ -700,6 +700,8 @@ public sealed class ShipRenderer
         return new Rectangle((int)pos.X - HeldIconSize / 2, (int)pos.Y - HeldIconSize / 2, HeldIconSize, HeldIconSize);
     }
 
+    private static bool IsTopDownGunTool(ItemType item) => item is ItemType.WeldingTool or ItemType.Cutter;
+
     // Where a currently-held Cutter/WeldingTool's own drawn muzzle sits, so FieldRenderer's flame can
     // start exactly there instead of a generic offset off the character's centre - null if the
     // character isn't holding one (or is holding one but it's not the item this frame's Cutting/
@@ -715,11 +717,23 @@ public sealed class ShipRenderer
 
         var rect = HeldItemIconRect(held, index, center, facing);
         var facingAngle = MathF.Atan2(facing.Y, facing.X);
-        return ItemIcons.GetMuzzleWorldPosition(tool, rect, facingAngle);
+        var rectCenter = new Vector2(rect.Center.X, rect.Center.Y);
+        return ItemIcons.GetTopDownMuzzleWorldPosition(rectCenter, facingAngle, HeldIconSize);
     }
 
     private static void DrawHeldItemIcon(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, ItemType item, Rectangle rect, float rotation)
     {
+        // The cutter/welder read as a tool actually in hand, drawn top-down (the same angle the
+        // character itself is seen from) with nothing else around them - a backdrop chip and hand
+        // glyphs make sense for an abstract "this is what's equipped" square, less so once the tool
+        // has its own recognizable silhouette to look at directly.
+        if (IsTopDownGunTool(item))
+        {
+            var rectCenter = new Vector2(rect.Center.X, rect.Center.Y);
+            ItemIcons.DrawGunToolTopDown(spriteBatch, pixel, rectCenter, rotation, HeldIconSize, item);
+            return;
+        }
+
         spriteBatch.Draw(pixel, rect, Color.Black * 0.35f);
         DrawRectOutline(spriteBatch, pixel, rect, Color.Black * 0.6f, 1);
 

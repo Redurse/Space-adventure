@@ -54,6 +54,34 @@ public static class ItemIcons
         return Point(origin, rotation, scale, 0.47f, 0f);
     }
 
+    // A simplified top-down silhouette for the two gun tools - what you'd actually see looking
+    // straight down at a held cutter/welder (no side-view grip/trigger guard, since those are hidden
+    // under the hand from directly above): a barrel pointing along `rotation`, a tank straddling it,
+    // and a glowing muzzle. Used for the in-world held-item display, which - unlike the side-view
+    // Draw() above (still used by the hotbar/dragged-item, where a "held in hand" side profile is
+    // the established look) - draws no backdrop or hand glyphs of its own around these two.
+    public static void DrawGunToolTopDown(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float rotation, float scale, ItemType type)
+    {
+        var (tank, nozzle) = type == ItemType.Cutter
+            ? (new Color(70, 150, 90), new Color(110, 200, 255))
+            : (new Color(214, 130, 40), new Color(255, 170, 60));
+        var metal = new Color(96, 100, 110);
+        var dark = new Color(38, 38, 44);
+
+        Bar(spriteBatch, pixel, origin, rotation, scale, -0.12f, 0f, 0.46f, 0.20f, metal); // body
+        Bar(spriteBatch, pixel, origin, rotation, scale, -0.12f, -0.055f, 0.38f, 0.045f, Color.White * 0.22f); // highlight
+        Bar(spriteBatch, pixel, origin, rotation, scale, 0.08f, 0f, 0.30f, 0.30f, tank); // tank straddling the body
+        Circle(spriteBatch, pixel, origin, rotation, scale, 0.08f, -0.10f, 0.032f, dark); // valve knob
+        RingArc(spriteBatch, pixel, origin, rotation, scale, 0.08f, -0.10f, 0.032f, 0f, 360f, Color.White * 0.3f, 0.01f, 8);
+        Bar(spriteBatch, pixel, origin, rotation, scale, 0.34f, 0f, 0.26f, 0.115f, new Color(64, 68, 78)); // barrel
+        Circle(spriteBatch, pixel, origin, rotation, scale, 0.5f, 0f, 0.075f, nozzle); // muzzle
+        RingArc(spriteBatch, pixel, origin, rotation, scale, 0.5f, 0f, 0.075f, 0f, 360f, Color.White * 0.5f, 0.016f, 12); // muzzle rim
+    }
+
+    // Companion to DrawGunToolTopDown - the exact same alongAxis its own muzzle circle sits at.
+    public static Vector2 GetTopDownMuzzleWorldPosition(Vector2 origin, float rotation, float scale) =>
+        Point(origin, rotation, scale, 0.5f, 0f);
+
     // Every part of a tool is placed in its own local frame - `alongAxis` runs along the tilt,
     // `acrossAxis` perpendicular to it, both fractions of `scale` - so the whole tool rotates and
     // scales together as one rigid body instead of being placed in absolute pixels.
