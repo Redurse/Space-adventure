@@ -17,10 +17,13 @@ public static class TileTextures
 {
     public const int FloorTileSize = 48; // one world unit at ShipRenderer.PixelsPerUnit
     public const int WallTileSize = 16;
+    public const int HullTileSize = 64;
 
     public static Texture2D CreateFloorPlate(GraphicsDevice device) => Build(device, FloorTileSize, FloorPixel);
 
     public static Texture2D CreateWallPlate(GraphicsDevice device) => Build(device, WallTileSize, WallPixel);
+
+    public static Texture2D CreateHullPlate(GraphicsDevice device) => Build(device, HullTileSize, HullPixel);
 
     // Tiles `texture` across `rect` in `tileSize` cells, tinted uniformly - the same colour the
     // caller's old flat fill used. Edge cells are clipped to `rect` rather than overflowing past it.
@@ -88,6 +91,29 @@ public static class TileTextures
         var streak = (Hash(x, 0) - 0.5f) * 0.12f;
         var grain = (Hash(x / 2, y / 2) - 0.5f) * 0.08f;
         return 0.88f + streak + grain;
+    }
+
+    // A raised armour panel, not a flat plate: a bevelled edge (bright top/left, dark bottom/right,
+    // the same convention ShipRenderer's own DrawPanel uses), a rivet at each corner, fine grain, and
+    // the odd larger weathered patch - a hull that's been out flying looks used, not showroom-new,
+    // which is most of what separates a cartoon pixel-art ship from a flat colour cutout.
+    private static float HullPixel(int x, int y)
+    {
+        var value = 0.94f + (Hash(x / 2, y / 2) - 0.5f) * 0.05f;
+
+        const int bevel = 4;
+        if (x < bevel || y < bevel) value += 0.05f;
+        if (x >= HullTileSize - bevel || y >= HullTileSize - bevel) value -= 0.07f;
+
+        // Coarse low-frequency patches - a wide hash lookup per 20px block, so the weathering reads
+        // as a handful of dull patches rather than per-pixel speckle.
+        if (Hash(x / 20, y / 20) < 0.16f)
+            value -= 0.1f;
+
+        if (IsNearCorner(x, y, HullTileSize))
+            value -= 0.34f;
+
+        return value;
     }
 
     private static bool IsNearCorner(int x, int y, int size)

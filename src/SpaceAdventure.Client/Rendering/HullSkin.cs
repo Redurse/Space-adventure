@@ -28,7 +28,7 @@ public static partial class HullSkin
     private static readonly Color Seam = new(30, 36, 45);
     private static readonly Color Deck = new(58, 66, 78);
 
-    public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, IReadOnlyList<Room> rooms,
+    public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, Texture2D hullPlate, IReadOnlyList<Room> rooms,
         IReadOnlyList<AirlockOuterDoor> ports, IReadOnlyList<ShipSystemDevice> devices, Vector2 origin,
         float forwardDegrees, bool closedUp)
     {
@@ -50,7 +50,12 @@ public static partial class HullSkin
             var plate = PlatePolygon(room, origin);
             var center = RoomCenter(room, origin);
             Primitives.FillPolygon(spriteBatch, pixel, center, plate, Plate);
-            Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.55f, 2f);
+            // Textured core, flat bezel: the room's own rect sits inside every cut corner the
+            // margin-expanded plate has, so tiling square across it never spills past the plate's
+            // own silhouette - the untextured sliver around it reads as a raised panel frame, the
+            // same bevelled-border look ShipRenderer's own DrawPanel uses everywhere else.
+            TileTextures.DrawTiled(spriteBatch, hullPlate, TileTextures.HullTileSize, RoomRect(room, origin), Plate);
+            Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.6f, 2.5f);
             DrawPlateShading(spriteBatch, pixel, room, origin);
             DrawFlankGreebles(spriteBatch, pixel, room, hullCenter, origin);
         }

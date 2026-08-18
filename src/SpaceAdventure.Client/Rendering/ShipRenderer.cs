@@ -31,6 +31,7 @@ public sealed class ShipRenderer
     private readonly Texture2D _pixel;
     private readonly Texture2D _floorPlate;
     private readonly Texture2D _wallPlate;
+    private readonly Texture2D _hullPlate;
     private readonly SpriteFont _font;
 
     public ShipRenderer(GraphicsDevice graphicsDevice, SpriteFont font)
@@ -39,6 +40,7 @@ public sealed class ShipRenderer
         _pixel.SetData(new[] { Color.White });
         _floorPlate = TileTextures.CreateFloorPlate(graphicsDevice);
         _wallPlate = TileTextures.CreateWallPlate(graphicsDevice);
+        _hullPlate = TileTextures.CreateHullPlate(graphicsDevice);
         _font = font;
     }
 
@@ -71,7 +73,7 @@ public sealed class ShipRenderer
 
         if (hullPlating)
         {
-            HullSkin.Draw(spriteBatch, _pixel, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
+            HullSkin.Draw(spriteBatch, _pixel, _hullPlate, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
                 origin, forwardDegrees, closedUp: true);
             foreach (var turret in snapshot.Turrets)
                 DrawTurret(spriteBatch, turret, snapshot.TurretStates.FirstOrDefault(s => s.Id == turret.Id),
@@ -81,7 +83,7 @@ public sealed class ShipRenderer
 
         // The armour the compartments sit inside, under everything else - what shows of it is the
         // plated border around the decks and the bow sticking out ahead of them.
-        HullSkin.Draw(spriteBatch, _pixel, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
+        HullSkin.Draw(spriteBatch, _pixel, _hullPlate, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
             origin, forwardDegrees, closedUp: false);
 
         // Floors first, walls second: the bulkheads are thick and straddle the boundary between
