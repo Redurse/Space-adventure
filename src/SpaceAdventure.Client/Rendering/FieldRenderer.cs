@@ -575,19 +575,12 @@ public sealed class FieldRenderer
         // crewman shrank to a third of their size the moment they stepped through the airlock -
         // inside and outside are one continuous space at one scale, and the person has to be too.
         var size = (int)(0.7f * ShipRenderer.PixelsPerUnit);
-        var rect = new Rectangle((int)screenCenter.X - size / 2, (int)screenCenter.Y - size / 2, size, size);
-        spriteBatch.Draw(_pixel, rect, Color.OrangeRed * 0.9f);
-
-        var visorSize = Math.Max(4, size / 2);
-        spriteBatch.Draw(_pixel, new Rectangle((int)screenCenter.X - visorSize / 2, (int)screenCenter.Y - visorSize / 2, visorSize, visorSize), Color.CadetBlue);
 
         if (facing.LengthSquared() > 0.01f)
-        {
             facing.Normalize();
-            const int notchSize = 4;
-            var notchCenter = screenCenter + facing * (size / 2f + 1);
-            spriteBatch.Draw(_pixel, new Rectangle((int)notchCenter.X - notchSize / 2, (int)notchCenter.Y - notchSize / 2, notchSize, notchSize), Color.White);
-        }
+        else
+            facing = new Vector2(1f, 0f);
+        ShipRenderer.DrawHumanBody(spriteBatch, _pixel, screenCenter, size, Color.OrangeRed * 0.9f, Color.CadetBlue, facing);
 
         // Same held-item chip as indoors (ShipRenderer.DrawHeldItems) - a suited EVA crewmate holding
         // a cutter still reads as holding something, not just glowing from an invisible tool.

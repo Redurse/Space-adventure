@@ -762,10 +762,44 @@ public sealed class ShipRenderer
         spriteBatch.DrawString(font, label, pos - textSize / 2f, Color.White, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
     }
 
-    // Simple humanoid read (helmet + torso) rather than a flat square — no sprite sheet, but a
-    // second smaller square as a "helmet" plus a facing notch is enough to read as a person from
-    // this camera height. FacingX/Y drives the notch so idle characters still show which way
-    // they're looking.
+    // A rounded top-down read (shoulders around a head, not a flat square stack) rather than a bare
+    // helmet-on-a-box - no sprite sheet, but a hip capsule, a shoulder capsule and a head circle
+    // built from the same rect+HudIcons.FillCircle rounding every tool icon already uses reads as an
+    // actual person from this camera height. FacingX/Y offsets the shoulders/head forward and picks
+    // which side the (unlit) hip capsule trails on, plus a small bright nose on the head, so a
+    // standing-still character still visibly has a front and a back.
+    internal static void DrawHumanBody(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, int size, Color bodyColor, Color visorColor, Vector2 facing)
+    {
+        var perp = new Vector2(-facing.Y, facing.X);
+
+        var hipColor = bodyColor * 0.72f;
+        var hipCenter = center - facing * (size * 0.12f);
+        DrawCapsule(spriteBatch, pixel, hipCenter, perp, size * 0.62f, size * 0.40f, hipColor);
+
+        var shoulderCenter = center + facing * (size * 0.06f);
+        DrawCapsule(spriteBatch, pixel, shoulderCenter, perp, size * 0.92f, size * 0.48f, bodyColor);
+
+        var headCenter = center + facing * (size * 0.22f);
+        HudIcons.FillCircle(spriteBatch, pixel, headCenter, size * 0.30f, visorColor);
+
+        var noseCenter = headCenter + facing * (size * 0.20f);
+        HudIcons.FillCircle(spriteBatch, pixel, noseCenter, MathF.Max(1.5f, size * 0.045f), Color.White);
+    }
+
+    // A rect with its two short ends rounded off - a rivet-free version of the same "bar plus end
+    // circles" capsule ItemIcons builds tanks and handles from. `across` is the (already normalised)
+    // direction the capsule's long axis runs; the rect is rotated to match it exactly (rather than
+    // staying screen-aligned while only the end caps move), so a corner can never poke out past the
+    // rounding at a diagonal facing.
+    private static void DrawCapsule(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, Vector2 across, float width, float height, Color color)
+    {
+        var angle = MathF.Atan2(across.Y, across.X);
+        spriteBatch.Draw(pixel, center, null, color, angle, new Vector2(0.5f, 0.5f), new Vector2(width, height), SpriteEffects.None, 0f);
+        var capOffset = across * (width / 2f - height / 2f);
+        HudIcons.FillCircle(spriteBatch, pixel, center - capOffset, height / 2f, color);
+        HudIcons.FillCircle(spriteBatch, pixel, center + capOffset, height / 2f, color);
+    }
+
     internal void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin)
     {
         var size = (int)(CharacterDiameter * PixelsPerUnit);
@@ -778,13 +812,17 @@ public sealed class ShipRenderer
             DrawRectOutline(spriteBatch, new Rectangle(rect.X - ringMargin, rect.Y - ringMargin, rect.Width + ringMargin * 2, rect.Height + ringMargin * 2), Color.CadetBlue, 2);
         }
 
+        var facing = new Vector2(character.FacingX, character.FacingY);
+        if (facing.LengthSquared() > 0.01f)
+            facing.Normalize();
+        else
+            facing = new Vector2(1f, 0f); // idle characters still need a direction to hold a tool toward
+
         // Hired crew (World.Recruiting.cs) reads as a body of a different colour, not another
         // anonymous crewmate - the point of hiring one is knowing it's there and doing its job.
-        spriteBatch.Draw(_pixel, rect, character.IsBot ? Color.SteelBlue * 0.9f : Color.OrangeRed * 0.9f);
-        // "Helmet": a smaller, lighter square centered on the body reads as a head/visor.
-        var helmetSize = Math.Max(4, size / 2);
+        var bodyColor = character.IsBot ? Color.SteelBlue * 0.9f : Color.OrangeRed * 0.9f;
         var visorColor = character.WearingSuit ? Color.CadetBlue : new Color(255, 220, 190);
-        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - helmetSize / 2, (int)center.Y - helmetSize / 2, helmetSize, helmetSize), visorColor);
+        DrawHumanBody(spriteBatch, _pixel, center, size, bodyColor, visorColor, facing);
 
         if (character.IsBot && character.Role is { } role)
             spriteBatch.DrawString(_font, $"{character.BotName} ({CrewRoles.Name(role)})", new Vector2(rect.X - 10, rect.Y - 14),
@@ -795,20 +833,6 @@ public sealed class ShipRenderer
         else if (!character.IsBot && character.Nickname is { Length: > 0 } nickname)
             spriteBatch.DrawString(_font, nickname, new Vector2(rect.X - 10, rect.Y - 14),
                 Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
-
-        // Facing notch: a tiny bright square nudged toward FacingX/Y, off the body's edge.
-        var facing = new Vector2(character.FacingX, character.FacingY);
-        if (facing.LengthSquared() > 0.01f)
-        {
-            facing.Normalize();
-            const int notchSize = 3;
-            var notchCenter = center + facing * (size / 2f + 1);
-            spriteBatch.Draw(_pixel, new Rectangle((int)notchCenter.X - notchSize / 2, (int)notchCenter.Y - notchSize / 2, notchSize, notchSize), Color.White);
-        }
-        else
-        {
-            facing = new Vector2(1f, 0f); // idle characters still need a direction to hold a tool toward
-        }
 
         DrawHeldItems(spriteBatch, _pixel, _font, HeldItemTypes(character.Inventory), center, facing);
 
