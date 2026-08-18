@@ -685,7 +685,7 @@ public sealed class ShipRenderer
         if (side.LengthSquared() > 0.01f)
             side.Normalize();
 
-        const int iconSize = 13;
+        const int iconSize = 26;
         for (var i = 0; i < held.Count; i++)
         {
             var lateral = held.Count == 1 ? 0f : (i == 0 ? -1f : 1f) * (iconSize * 0.65f);
@@ -696,9 +696,23 @@ public sealed class ShipRenderer
     private static void DrawHeldItemIcon(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, ItemType item, Vector2 pos, int size)
     {
         var rect = new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size);
-        spriteBatch.Draw(pixel, rect, InventoryPanel.ItemColor(item));
+        spriteBatch.Draw(pixel, rect, Color.Black * 0.35f);
         DrawRectOutline(spriteBatch, pixel, rect, Color.Black * 0.6f, 1);
 
+        // Gripping it, not just floating beside it - drawn under the item itself so the fingers read
+        // as wrapped around it rather than stamped on top (InventoryPanel.DrawHands - the same hands
+        // the hotbar shows once an item is actually in hand, always lit here since this chip only
+        // ever draws for something that is).
+        InventoryPanel.DrawHands(spriteBatch, pixel, rect, ItemDefinitions.HandsRequired(item), held: true);
+
+        const int margin = 2;
+        if (ItemIcons.HasIcon(item))
+        {
+            ItemIcons.Draw(spriteBatch, pixel, item, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2));
+            return;
+        }
+
+        spriteBatch.Draw(pixel, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2), InventoryPanel.ItemColor(item));
         var label = ItemDefinitions.ShortLabel(item);
         if (label.Length == 0)
             return;

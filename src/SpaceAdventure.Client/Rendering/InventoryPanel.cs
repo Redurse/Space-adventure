@@ -133,6 +133,13 @@ public sealed class InventoryPanel
         spriteBatch.Draw(pixel, rect, Color.DimGray * 0.5f);
         DrawRectOutline(spriteBatch, pixel, rect, Color.LightGray, 1);
 
+        if (item is { } pictured && ItemIcons.HasIcon(pictured))
+        {
+            const int margin = 3;
+            ItemIcons.Draw(spriteBatch, pixel, pictured, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2));
+            return;
+        }
+
         var (fill, letter) = item switch
         {
             { } type => (ItemColor(type), ItemDefinitions.ShortLabel(type)),
@@ -162,7 +169,9 @@ public sealed class InventoryPanel
     // one glyph for a one-handed tool and two for something like the welding rig or a rifle. Dim
     // while the item is just carried, lit once it's actually in hand — so "why can't I pick up the
     // cutter" answers itself when the two-handed welder next to it is showing both hands lit.
-    private static void DrawHands(SpriteBatch spriteBatch, Texture2D pixel, Rectangle slot, int handsRequired, bool held)
+    // internal so ShipRenderer's held-item chip (always "held" by definition, so always lit) draws
+    // the exact same hands gripping the item in-world, not just in the hotbar slot.
+    internal static void DrawHands(SpriteBatch spriteBatch, Texture2D pixel, Rectangle slot, int handsRequired, bool held)
     {
         var color = held ? Color.LimeGreen : Color.Gainsboro * 0.4f;
         var y = slot.Bottom - HandHeight - 2;
@@ -200,9 +209,15 @@ public sealed class InventoryPanel
     {
         var rect = new Rectangle(cursor.X - SlotSize / 2, cursor.Y - SlotSize / 2, SlotSize, SlotSize);
         const int margin = 4;
-        spriteBatch.Draw(pixel, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2), ItemColor(item) * 0.9f);
         DrawRectOutline(spriteBatch, pixel, rect, Color.White, 1);
 
+        if (ItemIcons.HasIcon(item))
+        {
+            ItemIcons.Draw(spriteBatch, pixel, item, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2));
+            return;
+        }
+
+        spriteBatch.Draw(pixel, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2), ItemColor(item) * 0.9f);
         var label = ItemDefinitions.ShortLabel(item);
         var size = font.MeasureString(label) * 0.7f;
         spriteBatch.DrawString(font, label, new Vector2(rect.X + (rect.Width - size.X) / 2f, rect.Y + (rect.Height - size.Y) / 2f), Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
