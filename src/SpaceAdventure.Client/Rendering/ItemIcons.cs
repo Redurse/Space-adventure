@@ -7,11 +7,10 @@ namespace SpaceAdventure.Client.Rendering;
 
 // Recognizable tool/tank silhouettes for the handful of item types a player actually looks at
 // constantly (the hotbar, the held-item chip beside a character) - this project has no image
-// assets, so each is a handful of rotated bars in the same single-pixel style as everything else
-// (HullSkin, RoomDecor, ComponentRenderer's rivets/ribs), angled like a held tool rather than drawn
-// flat, to read as close as a procedural silhouette can get to an actual sprite. Anything not
-// covered here falls back to InventoryPanel's plain coloured square + short label, which is why
-// callers check HasIcon first.
+// assets, so each is built from rotated bars, circles and ring arcs (HudIcons' own primitives) in
+// the same single-pixel style as everything else, angled like a held tool rather than drawn flat.
+// Anything not covered here falls back to InventoryPanel's plain coloured square + short label,
+// which is why callers check HasIcon first.
 public static class ItemIcons
 {
     // Tools are drawn tilted nose-up-right, the way a held tool actually reads at a glance, rather
@@ -37,20 +36,39 @@ public static class ItemIcons
         }
     }
 
-    // A rotated bar in the tool's own local frame: `alongAxis`/`acrossAxis` are fractions of `scale`
-    // measured along the tilt and perpendicular to it, `length`/`thickness` likewise - so every part
-    // of a tool scales and rotates together as one rigid body instead of being placed in absolute
-    // pixels.
-    private static void Bar(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float baseAngle, float scale,
-        float alongAxis, float acrossAxis, float length, float thickness, Color color, float extraRotation = 0f)
+    // Every part of a tool is placed in its own local frame - `alongAxis` runs along the tilt,
+    // `acrossAxis` perpendicular to it, both fractions of `scale` - so the whole tool rotates and
+    // scales together as one rigid body instead of being placed in absolute pixels.
+    private static Vector2 Point(Vector2 origin, float baseAngle, float scale, float alongAxis, float acrossAxis)
     {
         var cos = MathF.Cos(baseAngle);
         var sin = MathF.Sin(baseAngle);
         var x = alongAxis * scale;
         var y = acrossAxis * scale;
-        var world = origin + new Vector2(x * cos - y * sin, x * sin + y * cos);
+        return origin + new Vector2(x * cos - y * sin, x * sin + y * cos);
+    }
+
+    private static void Bar(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float baseAngle, float scale,
+        float alongAxis, float acrossAxis, float length, float thickness, Color color, float extraRotation = 0f)
+    {
+        var world = Point(origin, baseAngle, scale, alongAxis, acrossAxis);
         spriteBatch.Draw(pixel, world, null, color, baseAngle + extraRotation, new Vector2(0.5f, 0.5f),
             new Vector2(length * scale, thickness * scale), SpriteEffects.None, 0f);
+    }
+
+    private static void Circle(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float baseAngle, float scale,
+        float alongAxis, float acrossAxis, float radius, Color color) =>
+        HudIcons.FillCircle(spriteBatch, pixel, Point(origin, baseAngle, scale, alongAxis, acrossAxis), radius * scale, color);
+
+    // A ring/arc - startDegrees/endDegrees are measured in the tool's own rotated frame (0 points
+    // toward the nose), so a partial arc (a trigger guard's opening, a carry handle's gap) turns
+    // together with the tool instead of always facing the same way on screen.
+    private static void RingArc(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float baseAngle, float scale,
+        float alongAxis, float acrossAxis, float radius, float startDegrees, float endDegrees, Color color, float thickness, int segments = 12)
+    {
+        var tiltDegrees = baseAngle * (180f / MathF.PI);
+        HudIcons.DrawRingArc(spriteBatch, pixel, Point(origin, baseAngle, scale, alongAxis, acrossAxis), radius * scale,
+            startDegrees + tiltDegrees, endDegrees + tiltDegrees, color, segments, thickness * scale);
     }
 
     private static void DrawScrewdriver(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
@@ -58,40 +76,60 @@ public static class ItemIcons
         var origin = new Vector2(rect.Center.X, rect.Center.Y);
         var scale = MathF.Min(rect.Width, rect.Height);
         const float a = ToolTilt;
+        var handle = new Color(206, 62, 36);
+        var handleDark = new Color(150, 40, 22);
 
-        Bar(spriteBatch, pixel, origin, a, scale, -0.46f, 0f, 0.12f, 0.30f, new Color(25, 24, 26)); // butt cap
-        Bar(spriteBatch, pixel, origin, a, scale, -0.26f, 0f, 0.34f, 0.34f, new Color(206, 62, 36)); // handle
-        Bar(spriteBatch, pixel, origin, a, scale, -0.30f, -0.09f, 0.24f, 0.09f, Color.White * 0.3f); // handle highlight
-        Bar(spriteBatch, pixel, origin, a, scale, -0.05f, 0f, 0.10f, 0.16f, new Color(40, 40, 44)); // ferrule
-        Bar(spriteBatch, pixel, origin, a, scale, 0.24f, 0f, 0.48f, 0.085f, new Color(212, 215, 220)); // shaft
-        Bar(spriteBatch, pixel, origin, a, scale, 0.20f, -0.02f, 0.36f, 0.03f, Color.White * 0.5f); // shaft highlight
-        Bar(spriteBatch, pixel, origin, a, scale, 0.47f, 0f, 0.06f, 0.11f, Color.White * 0.85f); // flat tip
+        // A tapered, rounded handle: three overlapping circles shrinking toward the ferrule, bridged
+        // by a bar so the joins between them don't pinch to nothing - reads as an actual moulded
+        // grip rather than a straight-sided box.
+        Circle(spriteBatch, pixel, origin, a, scale, -0.44f, 0f, 0.155f, handleDark);
+        Bar(spriteBatch, pixel, origin, a, scale, -0.29f, 0f, 0.32f, 0.30f, handle);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.44f, 0f, 0.13f, handle);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.14f, 0f, 0.11f, handle);
+        Bar(spriteBatch, pixel, origin, a, scale, -0.32f, -0.09f, 0.22f, 0.06f, Color.White * 0.3f); // highlight
+
+        // Two moulded grip rings crossing the handle.
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.32f, 0f, 0.15f, 0f, 360f, Color.Black * 0.3f, 0.028f, 16);
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.20f, 0f, 0.125f, 0f, 360f, Color.Black * 0.28f, 0.024f, 16);
+
+        Bar(spriteBatch, pixel, origin, a, scale, -0.02f, 0f, 0.09f, 0.15f, new Color(40, 40, 44)); // ferrule
+        Bar(spriteBatch, pixel, origin, a, scale, 0.24f, 0f, 0.48f, 0.078f, new Color(214, 217, 222)); // shaft
+        Bar(spriteBatch, pixel, origin, a, scale, 0.20f, -0.018f, 0.36f, 0.026f, Color.White * 0.55f); // shaft highlight
+        Circle(spriteBatch, pixel, origin, a, scale, 0.48f, 0f, 0.045f, Color.White * 0.9f); // tip
     }
 
+    // An adjustable spanner, not a ring-and-open-end combination wrench: a plain rounded handle,
+    // a shaft, and a wide head with a jaw notch cut into the front plus the little knurled wheel
+    // that winds the jaw open and shut - the shape Barotrauma's own wrench tool reads as.
     private static void DrawWrench(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
     {
         var origin = new Vector2(rect.Center.X, rect.Center.Y);
         var scale = MathF.Min(rect.Width, rect.Height);
         const float a = ToolTilt;
-        var metal = new Color(202, 206, 212);
-        var shade = new Color(120, 124, 132);
+        var metal = new Color(198, 202, 208);
+        var shade = new Color(116, 120, 128);
+        var dark = new Color(40, 40, 46);
 
-        Bar(spriteBatch, pixel, origin, a, scale, 0.02f, 0f, 0.42f, 0.15f, metal); // shaft
-        Bar(spriteBatch, pixel, origin, a, scale, 0.02f, -0.045f, 0.38f, 0.04f, Color.White * 0.4f); // shaft highlight
+        // Plain rounded handle at the back, with a small hanging hole rather than a full ring.
+        Circle(spriteBatch, pixel, origin, a, scale, -0.42f, 0f, 0.135f, metal);
+        Bar(spriteBatch, pixel, origin, a, scale, -0.27f, 0f, 0.32f, 0.24f, metal);
+        Bar(spriteBatch, pixel, origin, a, scale, -0.30f, -0.055f, 0.24f, 0.05f, Color.White * 0.35f); // highlight
+        Circle(spriteBatch, pixel, origin, a, scale, -0.42f, 0f, 0.05f, dark); // hanging hole
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.42f, 0f, 0.05f, 0f, 360f, Color.Black * 0.3f, 0.014f, 10);
 
-        // A closed ring at the back - four bars round a hollow centre, rather than a filled square
-        // with a hole punched in whatever the caller's own background happens to be.
-        const float ringR = 0.20f;
-        const float ringT = 0.075f;
-        Bar(spriteBatch, pixel, origin, a, scale, -0.34f, -ringR + ringT / 2f, ringR * 2f, ringT, metal); // top
-        Bar(spriteBatch, pixel, origin, a, scale, -0.34f, ringR - ringT / 2f, ringR * 2f, ringT, shade); // bottom (shadowed)
-        Bar(spriteBatch, pixel, origin, a, scale, -0.34f - ringR + ringT / 2f, 0f, ringR * 2f, ringT, metal, MathF.PI / 2f); // left
-        Bar(spriteBatch, pixel, origin, a, scale, -0.34f + ringR - ringT / 2f, 0f, ringR * 2f, ringT, metal, MathF.PI / 2f); // right
+        Bar(spriteBatch, pixel, origin, a, scale, 0.06f, 0f, 0.36f, 0.13f, metal); // shaft
+        Bar(spriteBatch, pixel, origin, a, scale, 0.04f, -0.035f, 0.32f, 0.03f, Color.White * 0.4f); // shaft highlight
 
-        // An open jaw at the front - two prongs splayed apart from the shaft, the classic open mouth.
-        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, 0f, 0.14f, 0.20f, metal); // base of the jaw
-        Bar(spriteBatch, pixel, origin, a, scale, 0.42f, -0.10f, 0.20f, 0.09f, metal, -0.45f); // upper prong
-        Bar(spriteBatch, pixel, origin, a, scale, 0.42f, 0.10f, 0.20f, 0.09f, shade, 0.45f); // lower prong (shadowed)
+        // The adjustable head: a chunky block with a notch cut into its front face, a fixed jaw
+        // above the notch and a movable jaw below it, and the thumbwheel that winds the gap shut.
+        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, 0.01f, 0.24f, 0.26f, metal); // head block
+        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, -0.07f, 0.20f, 0.05f, Color.White * 0.3f); // head highlight
+        Bar(spriteBatch, pixel, origin, a, scale, 0.44f, 0.10f, 0.18f, 0.09f, dark); // jaw notch (cut away)
+        Bar(spriteBatch, pixel, origin, a, scale, 0.42f, -0.055f, 0.20f, 0.10f, metal); // fixed jaw (upper)
+        Bar(spriteBatch, pixel, origin, a, scale, 0.44f, 0.145f, 0.18f, 0.075f, shade); // movable jaw (lower, shadowed)
+        Circle(spriteBatch, pixel, origin, a, scale, 0.24f, 0.155f, 0.055f, dark); // thumbwheel
+        RingArc(spriteBatch, pixel, origin, a, scale, 0.24f, 0.155f, 0.055f, 0f, 360f, shade, 0.014f, 8);
+        RingArc(spriteBatch, pixel, origin, a, scale, 0.24f, 0.155f, 0.03f, 0f, 360f, Color.White * 0.25f, 0.012f, 8);
     }
 
     // Shared silhouette for the welder and the cutter - a gripped tool, barrel out front, a tank
@@ -104,14 +142,38 @@ public static class ItemIcons
         var metal = new Color(96, 100, 110);
         var dark = new Color(38, 38, 44);
 
-        Bar(spriteBatch, pixel, origin, a, scale, -0.22f, 0.20f, 0.24f, 0.16f, dark, 1.15f); // grip, angled down from the body
-        Bar(spriteBatch, pixel, origin, a, scale, -0.06f, 0f, 0.36f, 0.28f, metal); // body/receiver
-        Bar(spriteBatch, pixel, origin, a, scale, -0.06f, -0.08f, 0.30f, 0.07f, Color.White * 0.22f); // top highlight
-        Bar(spriteBatch, pixel, origin, a, scale, -0.02f, -0.24f, 0.26f, 0.20f, tank); // tank mounted on top
-        Bar(spriteBatch, pixel, origin, a, scale, -0.06f, -0.30f, 0.18f, 0.05f, Color.White * 0.3f); // tank highlight
-        Bar(spriteBatch, pixel, origin, a, scale, 0.02f, 0.13f, 0.10f, 0.10f, dark); // trigger guard
-        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, 0f, 0.30f, 0.12f, new Color(64, 68, 78)); // barrel
-        Bar(spriteBatch, pixel, origin, a, scale, 0.48f, 0f, 0.10f, 0.16f, nozzle); // hot tip
+        // Front grip, angled down from the body with a rounded heel rather than a flat-cut end.
+        Bar(spriteBatch, pixel, origin, a, scale, -0.22f, 0.20f, 0.24f, 0.155f, dark, 1.15f);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.30f, 0.35f, 0.078f, dark);
+        Bar(spriteBatch, pixel, origin, a, scale, -0.24f, 0.15f, 0.15f, 0.04f, Color.White * 0.12f, 1.15f); // grip highlight
+
+        // A second handle at the tail, in line with the body rather than hanging below it - both
+        // hands needed to hold the tool up (ItemDefinitions.HandsRequired), the rear one steadying it
+        // the way a rifle's stock does. Shaped the same way the front grip is (a bar plus a rounded
+        // end cap), not a bare circle, so it actually reads as a handle.
+        Bar(spriteBatch, pixel, origin, a, scale, -0.42f, 0.05f, 0.22f, 0.135f, dark);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.53f, 0.09f, 0.072f, dark); // rounded butt
+        Bar(spriteBatch, pixel, origin, a, scale, -0.44f, 0.01f, 0.16f, 0.035f, Color.White * 0.15f); // handle highlight
+
+        Bar(spriteBatch, pixel, origin, a, scale, -0.06f, 0f, 0.36f, 0.27f, metal); // body/receiver
+        Bar(spriteBatch, pixel, origin, a, scale, -0.06f, -0.08f, 0.30f, 0.06f, Color.White * 0.22f); // top highlight
+        Circle(spriteBatch, pixel, origin, a, scale, -0.20f, 0.05f, 0.035f, Color.Black * 0.4f); // rivet
+        Circle(spriteBatch, pixel, origin, a, scale, 0.06f, 0.05f, 0.035f, Color.Black * 0.4f); // rivet
+
+        // A trigger guard as an actual open ring rather than a filled rectangle.
+        RingArc(spriteBatch, pixel, origin, a, scale, 0.00f, 0.16f, 0.09f, 20f, 340f, dark, 0.035f, 10);
+
+        // Tank mounted on top, capped at both ends like a real cylinder instead of a flat-topped box.
+        Bar(spriteBatch, pixel, origin, a, scale, -0.02f, -0.24f, 0.22f, 0.19f, tank);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.13f, -0.24f, 0.095f, tank);
+        Circle(spriteBatch, pixel, origin, a, scale, 0.09f, -0.24f, 0.095f, tank);
+        Circle(spriteBatch, pixel, origin, a, scale, 0.02f, -0.31f, 0.035f, dark); // valve knob
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.02f, -0.24f, 0.088f, -150f, -40f, Color.White * 0.45f, 0.025f, 8); // sheen
+
+        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, 0f, 0.28f, 0.115f, new Color(64, 68, 78)); // barrel
+        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, -0.05f, 0.24f, 0.02f, Color.White * 0.3f); // barrel highlight
+        Circle(spriteBatch, pixel, origin, a, scale, 0.47f, 0f, 0.078f, nozzle); // hot tip, rounded
+        RingArc(spriteBatch, pixel, origin, a, scale, 0.47f, 0f, 0.078f, 0f, 360f, Color.White * 0.5f, 0.018f, 12); // tip rim
     }
 
     private static void DrawTank(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, Color body, Color band)
@@ -119,11 +181,24 @@ public static class ItemIcons
         var origin = new Vector2(rect.Center.X, rect.Center.Y);
         var scale = MathF.Min(rect.Width, rect.Height);
         const float a = 0f; // tanks stand upright rather than tilt like a held tool
+        const float halfWidth = 0.21f;
 
-        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.42f, 0.16f, 0.10f, new Color(48, 48, 54)); // valve
-        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.05f, 0.62f, 0.42f, body, MathF.PI / 2f); // cylinder body
-        Bar(spriteBatch, pixel, origin, a, scale, -0.09f, -0.05f, 0.40f, 0.09f, Color.White * 0.28f, MathF.PI / 2f); // side highlight
-        Bar(spriteBatch, pixel, origin, a, scale, 0.13f, -0.05f, 0.40f, 0.06f, Color.Black * 0.22f, MathF.PI / 2f); // side shadow
+        // A true rounded cylinder: a bar for the straight run plus a circular cap at each end,
+        // instead of a flat-topped rectangle.
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.05f, 0.62f, halfWidth * 2f, body, MathF.PI / 2f);
+        Circle(spriteBatch, pixel, origin, a, scale, 0f, -0.36f, halfWidth, body);
+        Circle(spriteBatch, pixel, origin, a, scale, 0f, 0.26f, halfWidth, body);
+
+        Bar(spriteBatch, pixel, origin, a, scale, -0.09f, -0.05f, 0.40f, 0.07f, Color.White * 0.28f, MathF.PI / 2f); // side highlight
+        RingArc(spriteBatch, pixel, origin, a, scale, 0f, -0.36f, halfWidth * 0.8f, 130f, 230f, Color.White * 0.3f, 0.025f, 8); // cap sheen
+        Bar(spriteBatch, pixel, origin, a, scale, 0.13f, -0.05f, 0.40f, 0.05f, Color.Black * 0.22f, MathF.PI / 2f); // side shadow
+
         Bar(spriteBatch, pixel, origin, a, scale, 0f, 0.10f, 0.42f, 0.13f, band); // identifying colour band
+
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.42f, 0.16f, 0.10f, new Color(48, 48, 54)); // valve body
+        Circle(spriteBatch, pixel, origin, a, scale, 0f, -0.47f, 0.05f, new Color(60, 60, 66)); // valve knob
+
+        // A carrying handle - a partial ring standing off the top of the tank, open at the bottom.
+        RingArc(spriteBatch, pixel, origin, a, scale, 0f, -0.50f, 0.10f, 200f, 340f, new Color(70, 70, 78), 0.028f, 10);
     }
 }
