@@ -90,18 +90,16 @@ public static class ItemIcons
         var handle = new Color(206, 62, 36);
         var handleDark = new Color(150, 40, 22);
 
-        // A tapered, rounded handle: three overlapping circles shrinking toward the ferrule, bridged
-        // by a bar so the joins between them don't pinch to nothing - reads as an actual moulded
-        // grip rather than a straight-sided box.
-        Circle(spriteBatch, pixel, origin, a, scale, -0.44f, 0f, 0.155f, handleDark);
-        Bar(spriteBatch, pixel, origin, a, scale, -0.29f, 0f, 0.32f, 0.30f, handle);
-        Circle(spriteBatch, pixel, origin, a, scale, -0.44f, 0f, 0.13f, handle);
-        Circle(spriteBatch, pixel, origin, a, scale, -0.14f, 0f, 0.11f, handle);
-        Bar(spriteBatch, pixel, origin, a, scale, -0.32f, -0.09f, 0.22f, 0.06f, Color.White * 0.3f); // highlight
+        // A clearly oblong handle - one bar noticeably longer than it is thick, capped with a
+        // rounded end each side - rather than round ends big enough to read as a ball on their own.
+        Bar(spriteBatch, pixel, origin, a, scale, -0.29f, 0f, 0.38f, 0.22f, handle);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.48f, 0f, 0.11f, handleDark); // back cap
+        Circle(spriteBatch, pixel, origin, a, scale, -0.10f, 0f, 0.10f, handle); // front cap
+        Bar(spriteBatch, pixel, origin, a, scale, -0.32f, -0.065f, 0.28f, 0.045f, Color.White * 0.3f); // highlight
 
-        // Two moulded grip rings crossing the handle.
-        RingArc(spriteBatch, pixel, origin, a, scale, -0.32f, 0f, 0.15f, 0f, 360f, Color.Black * 0.3f, 0.028f, 16);
-        RingArc(spriteBatch, pixel, origin, a, scale, -0.20f, 0f, 0.125f, 0f, 360f, Color.Black * 0.28f, 0.024f, 16);
+        // Two moulded grip rings crossing the handle, sized to sit on it rather than bulge past it.
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.34f, 0f, 0.105f, 0f, 360f, Color.Black * 0.3f, 0.022f, 16);
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.20f, 0f, 0.095f, 0f, 360f, Color.Black * 0.28f, 0.02f, 16);
 
         Bar(spriteBatch, pixel, origin, a, scale, -0.02f, 0f, 0.09f, 0.15f, new Color(40, 40, 44)); // ferrule
         Bar(spriteBatch, pixel, origin, a, scale, 0.24f, 0f, 0.48f, 0.078f, new Color(214, 217, 222)); // shaft
@@ -131,16 +129,19 @@ public static class ItemIcons
         Bar(spriteBatch, pixel, origin, a, scale, 0.06f, 0f, 0.36f, 0.13f, metal); // shaft
         Bar(spriteBatch, pixel, origin, a, scale, 0.04f, -0.035f, 0.32f, 0.03f, Color.White * 0.4f); // shaft highlight
 
-        // The adjustable head: a chunky block with a notch cut into its front face, a fixed jaw
-        // above the notch and a movable jaw below it, and the thumbwheel that winds the gap shut.
-        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, 0.01f, 0.24f, 0.26f, metal); // head block
-        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, -0.07f, 0.20f, 0.05f, Color.White * 0.3f); // head highlight
-        Bar(spriteBatch, pixel, origin, a, scale, 0.44f, 0.10f, 0.18f, 0.09f, dark); // jaw notch (cut away)
-        Bar(spriteBatch, pixel, origin, a, scale, 0.42f, -0.055f, 0.20f, 0.10f, metal); // fixed jaw (upper)
-        Bar(spriteBatch, pixel, origin, a, scale, 0.44f, 0.145f, 0.18f, 0.075f, shade); // movable jaw (lower, shadowed)
-        Circle(spriteBatch, pixel, origin, a, scale, 0.24f, 0.155f, 0.055f, dark); // thumbwheel
-        RingArc(spriteBatch, pixel, origin, a, scale, 0.24f, 0.155f, 0.055f, 0f, 360f, shade, 0.014f, 8);
-        RingArc(spriteBatch, pixel, origin, a, scale, 0.24f, 0.155f, 0.03f, 0f, 360f, Color.White * 0.25f, 0.012f, 8);
+        // The adjustable head: one big block, a wide dark notch bitten out of its front face, and
+        // two jaws either side of the notch reaching well past the block's own edge - kept large and
+        // uncluttered rather than several small shapes crammed together, so the "open mouth" is
+        // unmistakable even shrunk down to a 30px slot.
+        Bar(spriteBatch, pixel, origin, a, scale, 0.34f, 0f, 0.30f, 0.32f, metal); // head block
+        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, -0.09f, 0.22f, 0.06f, Color.White * 0.3f); // head highlight
+        Bar(spriteBatch, pixel, origin, a, scale, 0.50f, 0f, 0.20f, 0.15f, dark); // jaw notch (bitten out)
+        Bar(spriteBatch, pixel, origin, a, scale, 0.44f, -0.115f, 0.28f, 0.10f, metal); // fixed jaw (upper)
+        Bar(spriteBatch, pixel, origin, a, scale, 0.44f, 0.135f, 0.28f, 0.09f, shade); // movable jaw (lower, shadowed)
+
+        // The knurled adjustment wheel, clear of the jaw entirely so it doesn't merge into it.
+        Circle(spriteBatch, pixel, origin, a, scale, 0.20f, 0.19f, 0.065f, dark);
+        RingArc(spriteBatch, pixel, origin, a, scale, 0.20f, 0.19f, 0.065f, 0f, 360f, shade, 0.016f, 10);
     }
 
     // Shared silhouette for the welder and the cutter - a gripped tool, barrel out front, a tank

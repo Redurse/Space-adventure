@@ -685,7 +685,7 @@ public sealed class ShipRenderer
         if (side.LengthSquared() > 0.01f)
             side.Normalize();
 
-        const int iconSize = 26;
+        const int iconSize = 30;
         for (var i = 0; i < held.Count; i++)
         {
             var lateral = held.Count == 1 ? 0f : (i == 0 ? -1f : 1f) * (iconSize * 0.65f);
