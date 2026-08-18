@@ -806,12 +806,6 @@ public sealed class ShipRenderer
         var center = new Vector2(origin.X + character.X * PixelsPerUnit, origin.Y + character.Y * PixelsPerUnit);
         var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
 
-        if (character.WearingSuit)
-        {
-            const int ringMargin = 3;
-            DrawRectOutline(spriteBatch, new Rectangle(rect.X - ringMargin, rect.Y - ringMargin, rect.Width + ringMargin * 2, rect.Height + ringMargin * 2), Color.CadetBlue, 2);
-        }
-
         var facing = new Vector2(character.FacingX, character.FacingY);
         if (facing.LengthSquared() > 0.01f)
             facing.Normalize();
