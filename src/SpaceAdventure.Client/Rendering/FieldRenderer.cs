@@ -416,38 +416,48 @@ public sealed class FieldRenderer
     // held.
     private static void DrawWeldSparkFlare(SpriteBatch spriteBatch, Texture2D pixel, Vector2 tip, Vector2 aim, float totalSeconds)
     {
-        var pulse = 0.75f + 0.25f * MathF.Sin(totalSeconds * 55f);
-        spriteBatch.Draw(pixel, tip, null, Color.White * pulse, 0f, new Vector2(0.5f, 0.5f),
-            new Vector2(9f, 9f) * pulse, SpriteEffects.None, 0f);
+        var pulse = 0.8f + 0.2f * MathF.Sin(totalSeconds * 55f);
 
-        // A short 6-ray star, slowly rotating so it doesn't read as a static asterisk stamped on top.
-        const int rayCount = 6;
-        var spin = totalSeconds * 3f;
-        for (var i = 0; i < rayCount; i++)
+        // A hot white core plus a slowly-turning 4-point cross flare - the classic "muzzle flash
+        // star" the reference screenshot's flash reads as, brighter and longer than the spark trails
+        // below so it stays the single brightest thing on screen.
+        spriteBatch.Draw(pixel, tip, null, Color.White * pulse, 0f, new Vector2(0.5f, 0.5f),
+            new Vector2(7f, 7f) * pulse, SpriteEffects.None, 0f);
+        var starLength = 16f * pulse;
+        for (var arm = 0; arm < 4; arm++)
         {
-            var angle = spin + i * MathF.PI * 2f / rayCount;
-            var rayLength = 6f + 4f * MathF.Sin(totalSeconds * 30f + i * 1.7f);
-            spriteBatch.Draw(pixel, tip, null, Color.LightYellow * 0.8f, angle, new Vector2(0f, 0.5f),
-                new Vector2(rayLength, 1.5f), SpriteEffects.None, 0f);
+            var angle = arm * MathF.PI / 4f + totalSeconds * 1.5f;
+            spriteBatch.Draw(pixel, tip, null, Color.White * (0.7f * pulse), angle, new Vector2(0.5f, 0.5f),
+                new Vector2(starLength, 2f), SpriteEffects.None, 0f);
         }
 
-        // A handful of individual sparks, each flying out on its own straight line biased away from
-        // the beam (mostly sideways/backwards, the way real slag actually kicks off a weld) and
-        // looping back to the tip once it's flown far enough.
+        // A wider scatter of individual spark trails - each a short streak with a fading tail flying
+        // out on its own straight path, not a dot, closer to the reference's sparks shooting off in
+        // several directions from the flash. Biased away from the beam (mostly sideways/backwards,
+        // the way real slag actually kicks off a weld) but spread across a full half-circle rather
+        // than just directly sideways. Continuous rather than TransientEffect's one-shot
+        // DrawSparkBurst: each streak's own angle/reach/phase is a pure function of totalSeconds and
+        // its own index, so no particle state needs to be stored.
         var side = new Vector2(-aim.Y, aim.X);
-        const int sparkCount = 5;
+        const int sparkCount = 9;
         for (var i = 0; i < sparkCount; i++)
         {
-            var lateral = HashNoise(i) * 2f - 1f; // -1..1, which side and how far off-axis
-            var cycle = (totalSeconds * (1.6f + i * 0.35f) + HashNoise(i + 17)) % 1f;
-            var direction = -aim * 0.4f + side * lateral;
+            var spread = HashNoise(i) * 2f - 1f; // -1..1 across the whole arc behind the beam
+            var direction = -aim * (0.3f + HashNoise(i + 41) * 0.5f) + side * spread;
             if (direction.LengthSquared() > 0.0001f)
                 direction.Normalize();
-            var reach = 4f + cycle * 22f;
+
+            var cycle = (totalSeconds * (1.4f + i * 0.31f) + HashNoise(i + 17)) % 1f;
+            var reach = 5f + cycle * 30f;
+            var trailLength = 5f + cycle * 6f;
             var pos = tip + direction * reach;
             var alpha = 1f - cycle;
-            spriteBatch.Draw(pixel, pos, null, Color.Lerp(Color.White, Color.OrangeRed, cycle) * alpha, 0f,
-                new Vector2(0.5f, 0.5f), new Vector2(2.5f, 2.5f), SpriteEffects.None, 0f);
+            var angle = MathF.Atan2(direction.Y, direction.X);
+            var color = Color.Lerp(Color.White, Color.OrangeRed, cycle) * alpha;
+            // Origin at the far (x=1) edge, not the near one: the streak trails behind `pos` along
+            // where the spark came from, rather than ahead of it.
+            spriteBatch.Draw(pixel, pos, null, color, angle, new Vector2(1f, 0.5f),
+                new Vector2(trailLength, 1.6f), SpriteEffects.None, 0f);
         }
     }
 
@@ -573,5 +583,11 @@ public sealed class FieldRenderer
             var notchCenter = screenCenter + facing * (size / 2f + 1);
             spriteBatch.Draw(_pixel, new Rectangle((int)notchCenter.X - notchSize / 2, (int)notchCenter.Y - notchSize / 2, notchSize, notchSize), Color.White);
         }
+
+        // Same always-on nameplate as indoors (ShipRenderer.DrawCharacter) - a suited EVA crewmate
+        // is still someone specific, not just an anonymous orange square drifting past.
+        if (!character.IsBot && character.Nickname is { Length: > 0 } nickname)
+            spriteBatch.DrawString(_font, nickname, new Vector2(screenCenter.X - 10, screenCenter.Y - size / 2f - 14),
+                Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
     }
 }
