@@ -5,20 +5,28 @@ using SpaceAdventure.Shared.Model;
 
 namespace SpaceAdventure.Client.Rendering;
 
-// Recognizable tool/tank silhouettes for the handful of item types a player actually looks at
-// constantly (the hotbar, the held-item chip beside a character) - this project has no image
-// assets, so each is built from rotated bars, circles and ring arcs (HudIcons' own primitives) in
-// the same single-pixel style as everything else, angled like a held tool rather than drawn flat.
-// Anything not covered here falls back to InventoryPanel's plain coloured square + short label,
-// which is why callers check HasIcon first.
-public static class ItemIcons
+// Recognizable silhouettes for every carryable item type - this project has no image assets, so
+// each is built from rotated bars, circles and ring arcs (HudIcons' own primitives) in the same
+// single-pixel style as everything else, angled like a held tool rather than drawn flat. Split
+// across three files by family: this one plus tools/tanks here, ItemIcons.Gear.cs for weapons/
+// consumables/raw goods, ItemIcons.Components.cs for the 14 purchasable wiring parts (one shared
+// "chip" template with a per-kind glyph, since they're all small electronics in the same family,
+// not 14 unrelated objects). Anything not covered falls back to InventoryPanel's plain coloured
+// square + short label, which is why callers check HasIcon first.
+public static partial class ItemIcons
 {
     // Tools are drawn tilted nose-up-right, the way a held tool actually reads at a glance, rather
     // than dead flat in the slot.
     private const float ToolTilt = -0.58f;
 
     public static bool HasIcon(ItemType type) => type is ItemType.Wrench or ItemType.Screwdriver
-        or ItemType.WeldingTool or ItemType.Cutter or ItemType.OxygenTank or ItemType.WeldingTank;
+        or ItemType.WeldingTool or ItemType.Cutter or ItemType.OxygenTank or ItemType.WeldingTank
+        or ItemType.AmmoCrate or ItemType.Spacesuit or ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle
+        or ItemType.FuelRod or ItemType.MedKit or ItemType.WireSpool or ItemType.Mineral
+        or ItemType.GateAnd or ItemType.GateOr or ItemType.GateNot or ItemType.GateXor
+        or ItemType.Timer or ItemType.Memory or ItemType.Relay
+        or ItemType.OxygenSensor or ItemType.BreachSensor or ItemType.PowerLossSensor or ItemType.MotionSensor
+        or ItemType.AutoDoorController or ItemType.AlarmKlaxon or ItemType.LightToggle;
 
     // rotation: the angle to actually draw the tool at, in the same frame ShipRenderer's
     // HeldToolOffset/facing already uses - null keeps the fixed "as if held" tilt every inventory
@@ -28,6 +36,12 @@ public static class ItemIcons
     public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, ItemType type, Rectangle rect, float? rotation = null)
     {
         var angle = rotation ?? ToolTilt;
+        if (ComponentDefinitions.ComponentKindFor(type) is { } componentKind)
+        {
+            DrawComponentChip(spriteBatch, pixel, rect, componentKind);
+            return;
+        }
+
         switch (type)
         {
             case ItemType.Screwdriver: DrawScrewdriver(spriteBatch, pixel, rect, angle); break;
@@ -39,6 +53,15 @@ public static class ItemIcons
             case ItemType.Cutter: DrawGunTool(spriteBatch, pixel, rect, angle, new Color(70, 150, 90), new Color(110, 200, 255)); break;
             case ItemType.OxygenTank: DrawTank(spriteBatch, pixel, rect, new Color(196, 202, 210), new Color(70, 140, 200)); break;
             case ItemType.WeldingTank: DrawTank(spriteBatch, pixel, rect, new Color(170, 152, 92), new Color(214, 90, 40)); break;
+            case ItemType.AmmoCrate: DrawAmmoCrate(spriteBatch, pixel, rect); break;
+            case ItemType.Spacesuit: DrawSpacesuit(spriteBatch, pixel, rect); break;
+            case ItemType.Knife: DrawKnife(spriteBatch, pixel, rect, angle); break;
+            case ItemType.Rifle: DrawRifle(spriteBatch, pixel, rect, angle, laser: false); break;
+            case ItemType.LaserRifle: DrawRifle(spriteBatch, pixel, rect, angle, laser: true); break;
+            case ItemType.FuelRod: DrawFuelRod(spriteBatch, pixel, rect); break;
+            case ItemType.MedKit: DrawMedKit(spriteBatch, pixel, rect); break;
+            case ItemType.WireSpool: DrawWireSpool(spriteBatch, pixel, rect); break;
+            case ItemType.Mineral: DrawMineral(spriteBatch, pixel, rect); break;
         }
     }
 
