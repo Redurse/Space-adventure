@@ -167,17 +167,17 @@ public sealed class ShipRenderer
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
         {
             var facing = new Vector2(character.FacingX, character.FacingY);
-            FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * PixelsPerUnit + HeldToolOffset(facing),
-                facing, totalSeconds);
+            var center = origin + new Vector2(character.X, character.Y) * PixelsPerUnit;
+            var muzzle = GetHeldToolMuzzle(ItemType.Cutter, character.Inventory, center, facing) ?? center + HeldToolOffset(facing);
+            FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);
         }
 
         foreach (var character in snapshot.Characters.Where(c => c.Welding && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
         {
             var facing = new Vector2(character.FacingX, character.FacingY);
-            FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * PixelsPerUnit + HeldToolOffset(facing),
-                facing, totalSeconds);
+            var center = origin + new Vector2(character.X, character.Y) * PixelsPerUnit;
+            var muzzle = GetHeldToolMuzzle(ItemType.WeldingTool, character.Inventory, center, facing) ?? center + HeldToolOffset(facing);
+            FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);
         }
 
         if (effects is not null)
@@ -676,28 +676,50 @@ public sealed class ShipRenderer
     // two-handed tool's "both hands" or two one-handed ones) sit side by side rather than stacked.
     // internal + static, pixel/font passed explicitly, so FieldRenderer's own (simpler) EVA
     // DrawCharacter draws the exact same icon for a suited crewmate holding a cutter outside.
+    private const int HeldIconSize = 30;
+
     internal static void DrawHeldItems(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font,
         IReadOnlyList<ItemType> held, Vector2 center, Vector2 facing)
     {
-        if (held.Count == 0)
-            return;
+        var facingAngle = MathF.Atan2(facing.Y, facing.X);
+        for (var i = 0; i < held.Count; i++)
+            DrawHeldItemIcon(spriteBatch, pixel, font, held[i], HeldItemIconRect(held, i, center, facing), facingAngle);
+    }
 
+    // The chip rect a given held item's icon actually gets drawn into - broken out so the flame's
+    // own origin (GetHeldToolMuzzle below) can be computed from this exact rect/rotation instead of
+    // a separately-tuned guess that only approximately lines up with the texture.
+    private static Rectangle HeldItemIconRect(IReadOnlyList<ItemType> held, int index, Vector2 center, Vector2 facing)
+    {
         var offset = HeldToolOffset(facing);
         var side = new Vector2(-offset.Y, offset.X);
         if (side.LengthSquared() > 0.01f)
             side.Normalize();
-
-        const int iconSize = 30;
-        for (var i = 0; i < held.Count; i++)
-        {
-            var lateral = held.Count == 1 ? 0f : (i == 0 ? -1f : 1f) * (iconSize * 0.65f);
-            DrawHeldItemIcon(spriteBatch, pixel, font, held[i], center + offset + side * lateral, iconSize);
-        }
+        var lateral = held.Count <= 1 ? 0f : (index == 0 ? -1f : 1f) * (HeldIconSize * 0.65f);
+        var pos = center + offset + side * lateral;
+        return new Rectangle((int)pos.X - HeldIconSize / 2, (int)pos.Y - HeldIconSize / 2, HeldIconSize, HeldIconSize);
     }
 
-    private static void DrawHeldItemIcon(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, ItemType item, Vector2 pos, int size)
+    // Where a currently-held Cutter/WeldingTool's own drawn muzzle sits, so FieldRenderer's flame can
+    // start exactly there instead of a generic offset off the character's centre - null if the
+    // character isn't holding one (or is holding one but it's not the item this frame's Cutting/
+    // Welding flag is actually about, which can't happen: only one of each is ever equipped at once).
+    internal static Vector2? GetHeldToolMuzzle(ItemType tool, InventoryState? inventory, Vector2 center, Vector2 facing)
     {
-        var rect = new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size);
+        var held = HeldItemTypes(inventory);
+        var index = -1;
+        for (var i = 0; i < held.Count; i++)
+            if (held[i] == tool) { index = i; break; }
+        if (index < 0)
+            return null;
+
+        var rect = HeldItemIconRect(held, index, center, facing);
+        var facingAngle = MathF.Atan2(facing.Y, facing.X);
+        return ItemIcons.GetMuzzleWorldPosition(tool, rect, facingAngle);
+    }
+
+    private static void DrawHeldItemIcon(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, ItemType item, Rectangle rect, float rotation)
+    {
         spriteBatch.Draw(pixel, rect, Color.Black * 0.35f);
         DrawRectOutline(spriteBatch, pixel, rect, Color.Black * 0.6f, 1);
 
@@ -710,10 +732,14 @@ public sealed class ShipRenderer
         const int margin = 2;
         if (ItemIcons.HasIcon(item))
         {
-            ItemIcons.Draw(spriteBatch, pixel, item, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2));
+            // Turns to point where the character is actually facing, rather than always reading the
+            // same way on screen - the same angle GetHeldToolMuzzle uses, so a gun tool's texture and
+            // its flame never drift out of alignment with each other.
+            ItemIcons.Draw(spriteBatch, pixel, item, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2), rotation);
             return;
         }
 
+        var pos = new Vector2(rect.Center.X, rect.Center.Y);
         spriteBatch.Draw(pixel, new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2), InventoryPanel.ItemColor(item));
         var label = ItemDefinitions.ShortLabel(item);
         if (label.Length == 0)

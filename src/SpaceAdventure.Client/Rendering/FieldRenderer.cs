@@ -75,8 +75,9 @@ public sealed class FieldRenderer
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
             var direction = new Vector2(aim.X, aim.Y);
-            DrawCuttingFlame(spriteBatch, WorldToScreen(new Vec2(character.X, character.Y)) + ShipRenderer.HeldToolOffset(direction),
-                direction, totalSeconds);
+            var center = WorldToScreen(new Vec2(character.X, character.Y));
+            var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.Cutter, character.Inventory, center, direction) ?? center + ShipRenderer.HeldToolOffset(direction);
+            DrawCuttingFlame(spriteBatch, muzzle, direction, totalSeconds);
         }
 
         foreach (var character in snapshot.Characters.Where(c => c.Welding && c.IsOutside))
@@ -84,7 +85,9 @@ public sealed class FieldRenderer
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
             var direction = new Vector2(aim.X, aim.Y);
-            DrawWeldingFlame(spriteBatch, _pixel, WorldToScreen(new Vec2(character.X, character.Y)) + ShipRenderer.HeldToolOffset(direction),
+            var center = WorldToScreen(new Vec2(character.X, character.Y));
+            var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.WeldingTool, character.Inventory, center, direction) ?? center + ShipRenderer.HeldToolOffset(direction);
+            DrawWeldingFlame(spriteBatch, _pixel, muzzle,
                 direction, totalSeconds);
         }
 

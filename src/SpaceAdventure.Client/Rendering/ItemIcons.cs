@@ -20,20 +20,38 @@ public static class ItemIcons
     public static bool HasIcon(ItemType type) => type is ItemType.Wrench or ItemType.Screwdriver
         or ItemType.WeldingTool or ItemType.Cutter or ItemType.OxygenTank or ItemType.WeldingTank;
 
-    public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, ItemType type, Rectangle rect)
+    // rotation: the angle to actually draw the tool at, in the same frame ShipRenderer's
+    // HeldToolOffset/facing already uses - null keeps the fixed "as if held" tilt every inventory
+    // slot/dragged-item draw wants (there's no facing to speak of sitting in a hotbar). The in-world
+    // held-item chip passes the character's real facing instead, so the tool visibly turns to point
+    // where they're aiming rather than always reading the same way on screen.
+    public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, ItemType type, Rectangle rect, float? rotation = null)
     {
+        var angle = rotation ?? ToolTilt;
         switch (type)
         {
-            case ItemType.Screwdriver: DrawScrewdriver(spriteBatch, pixel, rect); break;
-            case ItemType.Wrench: DrawWrench(spriteBatch, pixel, rect); break;
+            case ItemType.Screwdriver: DrawScrewdriver(spriteBatch, pixel, rect, angle); break;
+            case ItemType.Wrench: DrawWrench(spriteBatch, pixel, rect, angle); break;
             // Tank/nozzle tinted the same colour each tool's own flame already is
             // (FieldRenderer.DrawWeldingFlame/DrawCuttingFlame) - the icon and the beam it fires
             // read as the same tool.
-            case ItemType.WeldingTool: DrawGunTool(spriteBatch, pixel, rect, new Color(214, 130, 40), new Color(255, 170, 60)); break;
-            case ItemType.Cutter: DrawGunTool(spriteBatch, pixel, rect, new Color(70, 150, 90), new Color(110, 200, 255)); break;
+            case ItemType.WeldingTool: DrawGunTool(spriteBatch, pixel, rect, angle, new Color(214, 130, 40), new Color(255, 170, 60)); break;
+            case ItemType.Cutter: DrawGunTool(spriteBatch, pixel, rect, angle, new Color(70, 150, 90), new Color(110, 200, 255)); break;
             case ItemType.OxygenTank: DrawTank(spriteBatch, pixel, rect, new Color(196, 202, 210), new Color(70, 140, 200)); break;
             case ItemType.WeldingTank: DrawTank(spriteBatch, pixel, rect, new Color(170, 152, 92), new Color(214, 90, 40)); break;
         }
+    }
+
+    // Where DrawGunTool's own muzzle sits for the exact rect/rotation it would be drawn with - so a
+    // tool's flame can start precisely at its texture's barrel tip instead of a separately-computed
+    // offset that only approximately lines up with it. Null for anything that isn't a gun tool.
+    public static Vector2? GetMuzzleWorldPosition(ItemType type, Rectangle rect, float rotation)
+    {
+        if (type is not (ItemType.WeldingTool or ItemType.Cutter))
+            return null;
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        return Point(origin, rotation, scale, 0.47f, 0f);
     }
 
     // Every part of a tool is placed in its own local frame - `alongAxis` runs along the tilt,
@@ -82,11 +100,10 @@ public static class ItemIcons
             MathF.Max(thickness * scale, MinPixels));
     }
 
-    private static void DrawScrewdriver(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
+    private static void DrawScrewdriver(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, float a)
     {
         var origin = new Vector2(rect.Center.X, rect.Center.Y);
         var scale = MathF.Min(rect.Width, rect.Height);
-        const float a = ToolTilt;
         var handle = new Color(206, 62, 36);
         var handleDark = new Color(150, 40, 22);
 
@@ -110,11 +127,10 @@ public static class ItemIcons
     // An adjustable spanner, not a ring-and-open-end combination wrench: a plain rounded handle,
     // a shaft, and a wide head with a jaw notch cut into the front plus the little knurled wheel
     // that winds the jaw open and shut - the shape Barotrauma's own wrench tool reads as.
-    private static void DrawWrench(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
+    private static void DrawWrench(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, float a)
     {
         var origin = new Vector2(rect.Center.X, rect.Center.Y);
         var scale = MathF.Min(rect.Width, rect.Height);
-        const float a = ToolTilt;
         var metal = new Color(198, 202, 208);
         var shade = new Color(116, 120, 128);
         var dark = new Color(40, 40, 46);
@@ -146,11 +162,10 @@ public static class ItemIcons
 
     // Shared silhouette for the welder and the cutter - a gripped tool, barrel out front, a tank
     // mounted on top and a hot tip at the muzzle - differing only in colour (which tool, which flame).
-    private static void DrawGunTool(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, Color tank, Color nozzle)
+    private static void DrawGunTool(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, float a, Color tank, Color nozzle)
     {
         var origin = new Vector2(rect.Center.X, rect.Center.Y);
         var scale = MathF.Min(rect.Width, rect.Height);
-        const float a = ToolTilt;
         var metal = new Color(96, 100, 110);
         var dark = new Color(38, 38, 44);
 
