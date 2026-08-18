@@ -27,6 +27,11 @@ public sealed class VisibilityMask : IDisposable
 
     private const float FalloffStart = 0.72f; // fraction of the radius where the light starts fading
 
+    // The ambient pool reads as poor, uniform visibility right around the character - not a second
+    // good-visibility cone - so unlike the cone's own bright-centre-fading-to-black it's one flat, dim
+    // value everywhere inside its own reach.
+    private const float AmbientBrightness = 0.3f;
+
     private readonly GraphicsDevice _device;
     private readonly BasicEffect _effect;
     private readonly List<float> _offsets = new();
@@ -61,22 +66,25 @@ public sealed class VisibilityMask : IDisposable
 
         var baseAngle = facing.LengthSquared() > 1e-6f ? MathF.Atan2(facing.Y, facing.X) : 0f;
         _vertexCount = 0;
-        AddLightPolygon(walls, eye, baseAngle, coneHalfAngleDegrees, radius, origin);
+        AddLightPolygon(walls, eye, baseAngle, coneHalfAngleDegrees, radius, origin, flatBrightness: null);
         if (ambientRadius > 0f && coneHalfAngleDegrees < 179.9f)
-            AddLightPolygon(walls, eye, 0f, 180f, ambientRadius, origin);
+            AddLightPolygon(walls, eye, 0f, 180f, ambientRadius, origin, AmbientBrightness);
         Rasterize(renderScale);
         return true;
     }
 
+    // flatBrightness: null keeps the cone's own bright-near/fading-far look (Falloff); a value makes
+    // the whole polygon that one uniform shade instead - the ambient pool's "dim, not really seeing
+    // detail" read, rather than a second cone of good visibility wrapped around the character.
     private void AddLightPolygon(IReadOnlyList<WallSegment> walls, Vector2 eye, float baseAngle,
-        float halfAngleDegrees, float radius, Vector2 origin)
+        float halfAngleDegrees, float radius, Vector2 origin, float? flatBrightness)
     {
         var full = halfAngleDegrees >= 179.9f;
         var span = full ? MathF.PI * 2f : halfAngleDegrees * 2f * MathF.PI / 180f;
         var start = full ? 0f : baseAngle - span / 2f;
 
         ShadowCast.CollectRayOffsets(_offsets, walls, eye, start, span, full);
-        BuildTriangles(walls, eye, start, radius, origin, full);
+        BuildTriangles(walls, eye, start, radius, origin, full, flatBrightness);
     }
 
     public void Composite(SpriteBatch spriteBatch)
@@ -99,19 +107,20 @@ public sealed class VisibilityMask : IDisposable
     }
 
     private void BuildTriangles(IReadOnlyList<WallSegment> walls, Vector2 eye, float start, float radius,
-        Vector2 origin, bool full)
+        Vector2 origin, bool full, float? flatBrightness)
     {
         var rayCount = _offsets.Count;
         var edgeCount = full ? rayCount : rayCount - 1;
         Grow(_vertexCount + edgeCount * 3);
 
+        var centerShade = flatBrightness ?? 1f;
         var center = new VertexPositionColor(
-            new Vector3(origin + eye * ShipRenderer.PixelsPerUnit, 0f), Color.White);
+            new Vector3(origin + eye * ShipRenderer.PixelsPerUnit, 0f), new Color(centerShade, centerShade, centerShade));
 
-        var previous = RimVertex(_offsets[0], walls, eye, start, radius, origin);
+        var previous = RimVertex(_offsets[0], walls, eye, start, radius, origin, flatBrightness);
         for (var i = 1; i <= edgeCount; i++)
         {
-            var current = RimVertex(_offsets[i % rayCount], walls, eye, start, radius, origin);
+            var current = RimVertex(_offsets[i % rayCount], walls, eye, start, radius, origin, flatBrightness);
             _vertices[_vertexCount++] = center;
             _vertices[_vertexCount++] = previous;
             _vertices[_vertexCount++] = current;
@@ -120,14 +129,14 @@ public sealed class VisibilityMask : IDisposable
     }
 
     private VertexPositionColor RimVertex(float offset, IReadOnlyList<WallSegment> walls, Vector2 eye,
-        float start, float radius, Vector2 origin)
+        float start, float radius, Vector2 origin, float? flatBrightness)
     {
         var angle = start + offset;
         var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
         var distance = ShadowCast.Cast(eye, direction, walls, radius);
         var point = eye + direction * distance;
 
-        var shade = Falloff(distance / radius);
+        var shade = flatBrightness ?? Falloff(distance / radius);
         return new VertexPositionColor(
             new Vector3(origin + point * ShipRenderer.PixelsPerUnit, 0f),
             new Color(shade, shade, shade));
