@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -163,16 +164,66 @@ public sealed class InfoPanel
     private void DrawMissionsTab(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
     {
         if (snapshot.ActiveQuest is not { } quest)
-        {
             spriteBatch.DrawString(_font, "Нет активного задания.", origin, Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
-            return;
+        else
+        {
+            spriteBatch.DrawString(_font, $"Задание: {quest.Describe()}", origin, Color.White, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+            spriteBatch.DrawString(_font, $"Награда: {quest.RewardCredits} кред.", origin + new Vector2(0, 26), Color.LightGreen, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            if (quest.Kind == QuestKind.Bounty)
+                spriteBatch.DrawString(_font, quest.ObjectiveComplete ? "Цель уничтожена - можно сдавать." : "Цель ещё не уничтожена.",
+                    origin + new Vector2(0, 50), quest.ObjectiveComplete ? Color.LightGreen : Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
         }
 
-        spriteBatch.DrawString(_font, $"Задание: {quest.Describe()}", origin, Color.White, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
-        spriteBatch.DrawString(_font, $"Награда: {quest.RewardCredits} кред.", origin + new Vector2(0, 26), Color.LightGreen, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-        if (quest.Kind == QuestKind.Bounty)
-            spriteBatch.DrawString(_font, quest.ObjectiveComplete ? "Цель уничтожена - можно сдавать." : "Цель ещё не уничтожена.",
-                origin + new Vector2(0, 50), quest.ObjectiveComplete ? Color.LightGreen : Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        DrawStoryLog(spriteBatch, snapshot.StoryLog, origin + new Vector2(0, 84));
+    }
+
+    // The scripted intro campaign's own recap (World.Campaign.cs) - newest entry at the bottom,
+    // highlighted gold, so the most recent beat reads as "what just happened" the same way a chat
+    // log's latest line does; older ones fade to grey scrollback. Capped to the last few entries -
+    // this tab has no scrolling, and the campaign is short enough that it never needs it.
+    private void DrawStoryLog(SpriteBatch spriteBatch, IReadOnlyList<string> storyLog, Vector2 origin)
+    {
+        if (storyLog.Count == 0)
+            return;
+
+        spriteBatch.DrawString(_font, "Судовой журнал", origin, Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        const int maxLines = 4;
+        var shown = storyLog.Count > maxLines ? storyLog.Skip(storyLog.Count - maxLines).ToArray() : storyLog;
+        for (var i = 0; i < shown.Count; i++)
+        {
+            var isLatest = i == shown.Count - 1;
+            var wrapped = WrapText(shown[i], 96);
+            var row = origin + new Vector2(0, 22 + i * (18 * wrapped.Count));
+            for (var lineIndex = 0; lineIndex < wrapped.Count; lineIndex++)
+                spriteBatch.DrawString(_font, wrapped[lineIndex], row + new Vector2(0, lineIndex * 18),
+                    isLatest ? Color.Gold : Color.DarkGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        }
+    }
+
+    // Plain character-count wrapping (no font measurement) - good enough for this one small panel,
+    // which only ever shows a handful of short Russian sentences.
+    private static List<string> WrapText(string text, int maxCharsPerLine)
+    {
+        var lines = new List<string>();
+        var words = text.Split(' ');
+        var current = "";
+        foreach (var word in words)
+        {
+            var candidate = current.Length == 0 ? word : current + " " + word;
+            if (candidate.Length > maxCharsPerLine && current.Length > 0)
+            {
+                lines.Add(current);
+                current = word;
+            }
+            else
+            {
+                current = candidate;
+            }
+        }
+        if (current.Length > 0)
+            lines.Add(current);
+        return lines;
     }
 
     private void DrawReputationTab(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)

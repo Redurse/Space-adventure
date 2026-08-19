@@ -18,9 +18,6 @@ public sealed partial class GalaxyMapPanel
             case GalaxyPointKind.Station:
                 DrawStationGlyph(spriteBatch, rect, color);
                 break;
-            case GalaxyPointKind.WarpPoint:
-                DrawWarpPointGlyph(spriteBatch, rect, color, totalSeconds);
-                break;
             case GalaxyPointKind.AsteroidField:
                 DrawAsteroidFieldGlyph(spriteBatch, rect, color);
                 break;
@@ -47,19 +44,6 @@ public sealed partial class GalaxyMapPanel
         HudIcons.FillCircle(spriteBatch, _pixel, center, r * 0.32f, Color.White * 0.75f);
         spriteBatch.Draw(_pixel, new Rectangle((int)(center.X - r * 1.3f), (int)center.Y - 1, (int)(r * 0.5f), 2), color);
         spriteBatch.Draw(_pixel, new Rectangle((int)(center.X + r * 0.8f), (int)center.Y - 1, (int)(r * 0.5f), 2), color);
-    }
-
-    // A pair of ring arcs spinning opposite ways - a portal you could actually fall through, not a
-    // marker just sitting there.
-    private void DrawWarpPointGlyph(SpriteBatch spriteBatch, Rectangle rect, Color color, float totalSeconds)
-    {
-        var center = new Vector2(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f);
-        var r = rect.Width / 2f;
-        var spinOuter = totalSeconds * 70f % 360f;
-        var spinInner = -totalSeconds * 110f % 360f;
-        HudIcons.DrawRingArc(spriteBatch, _pixel, center, r, spinOuter, spinOuter + 260f, color, 16, 2f);
-        HudIcons.DrawRingArc(spriteBatch, _pixel, center, r * 0.55f, spinInner, spinInner + 260f, Color.White * 0.8f, 12, 1.6f);
-        HudIcons.FillCircle(spriteBatch, _pixel, center, r * 0.18f, Color.White * 0.9f);
     }
 
     // Three irregular rocks clustered together rather than one neat shape - the same "not one

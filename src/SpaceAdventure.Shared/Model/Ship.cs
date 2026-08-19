@@ -16,6 +16,7 @@ public sealed partial class Ship
     public IReadOnlyList<WallBlock> WallBlocks { get; }
     public ReactorBlock ReactorBlock { get; }
     public PowerDistributionBlock DistributionBlock { get; }
+    public BatteryBlock BatteryBlock { get; }
     public NavigationConsole NavigationConsole { get; }
     public HelmConsole HelmConsole { get; }
     public CardTable CardTable { get; }
@@ -47,6 +48,7 @@ public sealed partial class Ship
         IReadOnlyList<WallBlock> wallBlocks,
         ReactorBlock reactorBlock,
         PowerDistributionBlock distributionBlock,
+        BatteryBlock batteryBlock,
         NavigationConsole navigationConsole,
         HelmConsole helmConsole,
         IReadOnlyList<StorageRack> storageRacks,
@@ -65,9 +67,18 @@ public sealed partial class Ship
         AmmoStorages = ammoStorages;
         SuitLockers = suitLockers;
         SystemDevices = systemDevices;
-        WallBlocks = wallBlocks;
+        // A door is its own airtight seal now, open or closed (World.Atmosphere.cs already gates
+        // room-to-room/vacuum leakage on IsDoorOpen directly) - it doesn't need a hull WallBlock
+        // sitting underneath it too. GenerateOuterWallBlocks generates blindly along an edge's
+        // whole length with no idea where a door was cut into it (e.g. the Corvette's shield-bay/
+        // life-support flanks, each with an AirlockOuterDoor on an otherwise-solid side), so any
+        // block that lands exactly on a door's own footprint is dropped here, once, for every hull.
+        WallBlocks = wallBlocks
+            .Where(b => !doors.Any(d => d.Contains(b.Position)) && !airlockOuterDoors.Any(d => d.Contains(b.Position)))
+            .ToList();
         ReactorBlock = reactorBlock;
         DistributionBlock = distributionBlock;
+        BatteryBlock = batteryBlock;
         NavigationConsole = navigationConsole;
         HelmConsole = helmConsole;
         CardTable = cardTable;
@@ -84,6 +95,9 @@ public sealed partial class Ship
         ShipKind.Scout => CreateScout(),
         ShipKind.Cruiser => CreateCruiser(),
         ShipKind.Corvette => CreateCorvette(),
+        // Custom has no fixed layout to build here - callers must go through FromCustomDefinition
+        // with the player's own CustomShipDefinition instead (World.cs, World.Save.cs).
+        ShipKind.Custom => throw new InvalidOperationException("ShipKind.Custom has no fixed layout - use Ship.FromCustomDefinition."),
         _ => CreateStarter(),
     };
 
@@ -202,6 +216,7 @@ public sealed partial class Ship
         // (game_design.md section 1 — "Distribution-блок рядом с реактором").
         var reactorBlock = new ReactorBlock("reactor-block", "reactor", X: 9.5f, Y: 1f);
         var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 9.5f, Y: 3f);
+        var batteryBlock = new BatteryBlock("battery-block", "reactor", X: 9.5f, Y: 5f);
 
         // Navigation console on the bridge (game_design.md section 5) — click it to bring up
         // the galaxy map.
@@ -253,7 +268,7 @@ public sealed partial class Ship
 
         var corridor = rooms.First(r => r.Id == "corridor");
         return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
+            reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
             cardTable, componentMounts: componentMounts);
     }
 }

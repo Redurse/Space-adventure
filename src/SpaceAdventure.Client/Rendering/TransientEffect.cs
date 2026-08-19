@@ -7,6 +7,7 @@ public enum EffectKind
     Weld,
     Cut,
     Repair,
+    Explosion,
 }
 
 // A brief client-only visual (Barotrauma-style spark/flash) spawned at the moment a tool action

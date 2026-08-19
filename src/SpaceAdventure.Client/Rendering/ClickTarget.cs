@@ -2,7 +2,7 @@ using SpaceAdventure.Shared.Model;
 
 namespace SpaceAdventure.Client.Rendering;
 
-public enum BlockKind { None, Reactor, Distribution, System, Navigation, Station, Rack, Connections, SuitLocker }
+public enum BlockKind { None, Reactor, Distribution, Battery, System, Navigation, Station, Rack, Connections, SuitLocker }
 
 // Which block, if any, the player currently has "open" (game_design.md sections 1, 5, 10 — click
 // a block to walk up to its terminal). System carries which of the 5 power systems it is;
@@ -14,6 +14,7 @@ public readonly record struct ClickTarget(BlockKind Kind, PowerSystemId System =
     public static readonly ClickTarget None = new(BlockKind.None);
     public static readonly ClickTarget Reactor = new(BlockKind.Reactor);
     public static readonly ClickTarget Distribution = new(BlockKind.Distribution);
+    public static readonly ClickTarget Battery = new(BlockKind.Battery);
     public static readonly ClickTarget Navigation = new(BlockKind.Navigation);
     public static readonly ClickTarget Station = new(BlockKind.Station);
     public static ClickTarget ForSystem(PowerSystemId system) => new(BlockKind.System, system);

@@ -11,4 +11,7 @@ public sealed record InventoryState(
     IReadOnlyDictionary<EquipSlot, ItemType?> Equipped,
     IReadOnlyList<int> HeldMainSlotIndices,
     IReadOnlyList<float?> MainSlotTanks,
-    float? WornSuitTank);
+    float? WornSuitTank,
+    // A worn BeltBag's own small sub-inventory (Inventory.BeltBagSlots) - always sent, empty or
+    // not, the same way MainSlots always sends all 10 regardless of how many are actually full.
+    IReadOnlyList<ItemType?> BeltBagSlots);

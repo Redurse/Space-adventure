@@ -18,10 +18,10 @@ public sealed class StationPanel
     private static readonly Vector2 SellColumnOffset = new(230, 0);
     private static readonly Vector2 ComponentColumnOffset = new(460, 0);
 
-    // TradeCatalog.Goods[0..9] are general gear (fits the original single column); the 14 wiring
+    // TradeCatalog.Goods[0..11] are general gear (fits the original single column); the 14 wiring
     // components appended after them (M23) get their own third column instead of stretching the
     // list past the panel's height.
-    private const int ComponentColumnStart = 10;
+    private const int ComponentColumnStart = 12;
 
     private readonly SpriteFont _font;
 

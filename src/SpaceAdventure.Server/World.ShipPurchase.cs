@@ -23,15 +23,22 @@ public sealed partial class World
         InitializeRackSlots();
         InitializeSuitLockers();
         InitializeWallBlocks();
+        RestockAmmoStorages();
 
         _roomOxygen.Clear();
         foreach (var room in Ship.Rooms)
             _roomOxygen[room.Id] = FullOxygen;
 
         foreach (var door in Ship.Doors)
+        {
             _doorOpen[door.Id] = true; // preserves the pre-M16 always-passable behavior
+            _doorHp[door.Id] = DoorMaxHp;
+        }
         foreach (var outerDoor in Ship.AirlockOuterDoors)
+        {
             _doorOpen[outerDoor.Id] = false; // opening to vacuum is always a deliberate choice
+            _doorHp[outerDoor.Id] = DoorMaxHp;
+        }
 
         _systemRepairProgress.Clear(); // a new/swapped hull's devices start undamaged anyway
     }
@@ -57,6 +64,7 @@ public sealed partial class World
 
         Credits -= cost;
         CurrentShipKind = kind;
+        _customShipDefinition = null; // only Ship.Create's fixed kinds are ever sold here
         Ship = Ship.Create(kind);
 
         _turretRuntimes.Clear();

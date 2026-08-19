@@ -1,3 +1,4 @@
+using System.Linq;
 using SpaceAdventure.Shared.Model;
 
 namespace SpaceAdventure.Server;
@@ -47,6 +48,16 @@ public sealed partial class World
             return;
         }
 
+        // Hands are full - putting the box down takes priority over everything else F might
+        // otherwise do here, the same way a manned turret/helm short-circuits the whole chain above.
+        // Its position already tracks this character every tick (World.Wiring.cs's
+        // StepCarriedComponents), so placing it is just letting go - wherever they're standing now.
+        if (character.CarryingComponentId is not null)
+        {
+            character.CarryingComponentId = null;
+            return;
+        }
+
         if (character.Inventory.IsHolding(ItemType.MedKit) && character.Health < Character.MaxHealth)
         {
             TryUseMedKit(character);
@@ -74,7 +85,7 @@ public sealed partial class World
 
         if (nearbyStorage is not null)
         {
-            character.Inventory.TryAdd(ItemType.AmmoCrate); // no-op if the inventory row is full
+            TryTakeAmmoCrate(character, nearbyStorage);
             return;
         }
 
@@ -110,6 +121,45 @@ public sealed partial class World
             // repair minigame instead (World.SystemRepair.cs).
             if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
                 AttemptSystemRepair(nearbyDamagedSystem.Id);
+            return;
+        }
+
+        // Junction boxes ("щитки") are their own breakable, movable device now (game_design.md) -
+        // a damaged one repairs the same way a SystemDevice does (wrench/screwdriver drives the
+        // minigame above, at its own trunk wire this time - IsJunctionDamaged/RepairDeviceWiring both
+        // already handle a Junction's id correctly with no change of their own). An undamaged one is
+        // picked up by wrench instead - only the wrench, matching World.ComponentMounts.cs's own
+        // "wrench touches the hardware" convention (screwdriver stays reserved for ConnectionsPanel's
+        // read-only wiring view).
+        var nearbyJunction = _components.FirstOrDefault(c =>
+            c.Kind == ComponentKind.Junction &&
+            c.RoomId == character.RoomId &&
+            (c.Position - character.Position).Length() < InteractionRadius);
+
+        if (nearbyJunction is not null)
+        {
+            if (IsJunctionDamaged(nearbyJunction.Id))
+            {
+                if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
+                    AttemptSystemRepair(nearbyJunction.Id);
+                return;
+            }
+
+            if (character.Inventory.IsHolding(ItemType.Wrench))
+                character.CarryingComponentId = nearbyJunction.Id;
+            return;
+        }
+
+        // Doors have their own hit points now too (game_design.md) - only a destroyed one has
+        // anything to do here (an intact one is opened/closed by clicking it, not F), repaired by
+        // the same wrench/screwdriver-driven minigame as everything else above.
+        var nearbyDestroyedDoor = AllShipDoors().FirstOrDefault(d =>
+            d.Connects(character.RoomId) && (d.Position - character.Position).Length() < InteractionRadius && IsDoorDestroyed(d.Id));
+
+        if (nearbyDestroyedDoor.Id is not null)
+        {
+            if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
+                AttemptSystemRepair(nearbyDestroyedDoor.Id);
             return;
         }
 

@@ -137,6 +137,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1); // corridor
+        EquipSuit(world, 1); // survives however long it takes the corridor to actually take a hit, and the walk to it once it does
 
         var weldingToolSlot = TakeFromRack(world, ItemType.WeldingTool);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: weldingToolSlot)); // hold it (two hands)
@@ -146,15 +147,22 @@ internal static partial class TestRunner
             world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.WeldingTool),
             ItemType.WeldingTank);
 
-        WalkAcrossShipTo(world, 11.5f, 0.5f); // stand next to the corridor's top wall block
         BreachRoom(world, "corridor"); // stop the moment the corridor takes its first hit
 
         // A room can hold several independent breaches now — the welder is a held, aimed flame
         // (World.Welding.cs) rather than an F-press, so aim it at whichever breach is nearest and
-        // hold it lit for a bit; assert the count drops by exactly one rather than "cleared".
+        // hold it lit for a bit; assert the count drops by exactly one rather than "cleared". Which
+        // wall block actually takes the hit is random (World.EnemyAi.cs) - walk to whichever one it
+        // really was rather than a fixed pre-chosen spot, so the welder is in range regardless of
+        // which wall of the room got hit.
         var breachCountBefore = CountBreaches(world.CreateSnapshot(), "corridor");
         if (breachCountBefore == 0)
             return false;
+
+        var breachedSnapshot = world.CreateSnapshot();
+        var breachedBlock = breachedSnapshot.WallBlocks.First(b =>
+            b.RoomId == "corridor" && breachedSnapshot.WallBlockStates.First(s => s.Id == b.Id).Breached);
+        WalkAcrossShipTo(world, breachedBlock.X, breachedBlock.Y);
 
         for (var i = 0; i < 5 * 30 && CountBreaches(world.CreateSnapshot(), "corridor") == breachCountBefore; i++)
         {

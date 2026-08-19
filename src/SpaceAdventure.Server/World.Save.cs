@@ -29,7 +29,10 @@ public sealed partial class World
             new Dictionary<ShipUpgradeTrack, int>(_upgradeLevels),
             inventory,
             ActiveQuest,
-            RackSlots.ToArray());
+            RackSlots.ToArray(),
+            _customShipDefinition,
+            _campaignStage,
+            _storyLog.ToArray());
     }
 
     public void ClearAutosavePending() => AutosavePending = false;
@@ -39,10 +42,11 @@ public sealed partial class World
     // than trying to unwind whatever was happening.
     public void ApplySave(SaveGame save)
     {
-        if (save.ShipKind != CurrentShipKind)
+        if (save.ShipKind != CurrentShipKind || save.ShipKind == ShipKind.Custom)
         {
             CurrentShipKind = save.ShipKind;
-            Ship = Ship.Create(save.ShipKind);
+            _customShipDefinition = save.ShipKind == ShipKind.Custom ? save.CustomShip : null;
+            Ship = save.ShipKind == ShipKind.Custom ? Ship.FromCustomDefinition(save.CustomShip!) : Ship.Create(save.ShipKind);
             _turretRuntimes.Clear();
             foreach (var turret in Ship.Turrets)
                 _turretRuntimes[turret.Id] = new TurretRuntime(turret);
@@ -61,6 +65,11 @@ public sealed partial class World
         ActiveQuest = save.ActiveQuest;
         if (save.RackSlots is { } rackSlots)
             LoadRackSlots(rackSlots);
+
+        _campaignStage = save.Campaign;
+        _storyLog.Clear();
+        if (save.StoryLog is { } storyLog)
+            _storyLog.AddRange(storyLog);
 
         // Docked at the saved station, exactly as if the ship had just finished its approach.
         var point = GalaxyMap.Points.FirstOrDefault(p => p.Id == save.DockedPointId)

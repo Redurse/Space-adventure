@@ -21,6 +21,35 @@ internal static partial class TestRunner
         world.Step(RealtimeStep); // StepVoyage resolves the kill on the next tick
     }
 
+    // "You can always outrun them" (EnemyMaxSpeed's own doc comment) is a real, working escape now:
+    // flying clear of the SECTOR (World.Voyage.cs's HasFledTheSector, measured from its own marker,
+    // not from the actively-pursuing squadron - see that method's own reasoning) drops the fight
+    // back to open space with no win recorded and the squadron still very much alive.
+    private static bool World_Battle_FlyingClearOfTheSectorFleesTheFightWithoutAWin()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        // Sits far from the low-X field edge (235 of Sol's 300 units, GalaxyMap.cs) - Arrive()
+        // always parks the ship at rotation 0 for a fresh fight, so astern thrust always retreats
+        // in -X regardless of which sector this is, and this one has the room for it.
+        EngageSector(world, "sector-delta");
+        if (world.Phase != VoyagePhase.Battle)
+            return false;
+
+        MoveCharacterTo(world, 1, 3f, 3f);
+        MoveCharacterTo(world, 1, 3f, 4f);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f));
+        for (var i = 0; i < 60; i++)
+            world.Step(RealtimeStep);
+
+        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: -1f)); // straight astern, away from the marker
+        for (var i = 0; i < 30 * 30 && world.Phase == VoyagePhase.Battle; i++)
+            world.Step(RealtimeStep);
+
+        return world.Phase == VoyagePhase.Traveling && world.CreateSnapshot().Enemy.RemainingShips > 0;
+    }
+
     // A defended sector sends its ships in one after another (game_design.md section 12) - killing
     // one doesn't end the fight until the last is gone.
     private static bool World_Squadron_NextShipEngagesAfterEachKill()

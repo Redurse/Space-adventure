@@ -79,11 +79,21 @@ public sealed partial class GalaxyMapPanel
     {
         _starfield.Draw(spriteBatch, totalSeconds);
 
-        spriteBatch.DrawString(_font, $"Карта системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}» - клик (курс, в любую точку), ПКМ тащить (сдвиг), колесо (масштаб), M - карта галактики",
+        spriteBatch.DrawString(_font, $"Карта системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}» - клик (курс, в любую точку), за кольцом — прыжок (M), ПКМ тащить (сдвиг), колесо (масштаб)",
             panelOrigin + new Vector2(0, -24), Color.Yellow, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
 
         var mapOrigin = ComputeMapOrigin(panelOrigin, snapshot.GalaxyPoints, zoom, panOffset);
         DrawSystemBackdrop(spriteBatch, snapshot.GalaxyPoints, mapOrigin, zoom, totalSeconds);
+
+        // The whole edge of the system, not one specific marker (game_design.md - "круг вокруг
+        // системы, откуда можно прыгать"): any position past GalaxyMap.WarpZoneRadius from the
+        // field's own centre (StarSystemSummary.Width/Height, not the points' bounding box
+        // DrawSystemBackdrop uses for its purely decorative rings) arms the jump - colored gold
+        // once CanWarpNow actually agrees, dim purple otherwise.
+        var currentSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
+        var fieldCenterScreen = mapOrigin + new Vector2(currentSystem.Width / 2f, currentSystem.Height / 2f) * PixelsPerUnit * zoom;
+        var warpZoneRadiusPixels = GalaxyMap.WarpZoneRadius * PixelsPerUnit * zoom;
+        DrawWarpZoneRing(spriteBatch, fieldCenterScreen, warpZoneRadiusPixels, snapshot.CanWarpNow, totalSeconds);
 
         foreach (var point in snapshot.GalaxyPoints)
         {
@@ -92,9 +102,14 @@ public sealed partial class GalaxyMapPanel
             var isDocked = point.Id == snapshot.Voyage.DockedPointId;
             var color = isTarget ? Color.Gold
                 : point.Kind == GalaxyPointKind.Station ? Color.SteelBlue
-                : point.Kind == GalaxyPointKind.WarpPoint ? Color.MediumPurple
                 : point.Kind == GalaxyPointKind.AsteroidField ? Color.SaddleBrown
                 : Color.OrangeRed;
+
+            // The radius that actually catches the ship on arrival (World.Voyage.cs's universal
+            // incidental-capture scan) - drawn faint and behind the glyph so it reads as "the
+            // point's own reach" rather than another clickable marker.
+            var captureRadiusPixels = point.CaptureRadius * PixelsPerUnit * zoom;
+            HudIcons.DrawRingArc(spriteBatch, _pixel, new Vector2(rect.Center.X, rect.Center.Y), captureRadiusPixels, 0f, 360f, color * 0.35f, 24, 1.5f);
 
             DrawPointGlyph(spriteBatch, point.Kind, rect, color, totalSeconds);
             DrawRectOutline(spriteBatch, new Rectangle(rect.X - 2, rect.Y - 2, rect.Width + 4, rect.Height + 4), FactionColor(point.Faction), 2);
@@ -104,7 +119,6 @@ public sealed partial class GalaxyMapPanel
             var kindLabel = point.Kind switch
             {
                 GalaxyPointKind.Station => "станция",
-                GalaxyPointKind.WarpPoint => "граница системы",
                 GalaxyPointKind.AsteroidField => "пояс астероидов",
                 _ => "враждебный сектор",
             };
@@ -178,6 +192,18 @@ public sealed partial class GalaxyMapPanel
     }
 
     private static readonly float[] RingFractions = { 0.35f, 0.65f, 1f };
+
+    // A pair of ring arcs spinning opposite ways at the size of the whole warp zone - the same
+    // "portal you could actually fall through" idea a single WarpPoint marker used to have, just
+    // scaled up to the size of the boundary it now represents instead of one small icon.
+    private void DrawWarpZoneRing(SpriteBatch spriteBatch, Vector2 center, float radius, bool armed, float totalSeconds)
+    {
+        var color = armed ? Color.Gold : Color.MediumPurple;
+        var spinOuter = totalSeconds * 20f % 360f;
+        var spinInner = -totalSeconds * 28f % 360f;
+        HudIcons.DrawRingArc(spriteBatch, _pixel, center, radius, spinOuter, spinOuter + 300f, color * 0.55f, 64, 2.5f);
+        HudIcons.DrawRingArc(spriteBatch, _pixel, center, radius * 0.985f, spinInner, spinInner + 300f, Color.White * 0.35f, 64, 1.5f);
+    }
 
     private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)
     {

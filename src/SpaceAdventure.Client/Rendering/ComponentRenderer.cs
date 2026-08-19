@@ -30,13 +30,18 @@ public static class ComponentRenderer
 
     // Junction boxes never had a visual before now (WireNode's old abstract schematic position
     // didn't correspond to anything physical) - a small panel, one per system this hull actually
-    // has a device for, positioned by WireGraphFactory right next to Distribution.
+    // has a device for, positioned by WireGraphFactory right next to Distribution (or wherever a
+    // player has since carried it to - World.Wiring.cs's StepCarriedComponents). Now its own
+    // breakable device (JunctionStates, reusing ShipSystemState's shape), so it reddens the same way
+    // a damaged SystemDevice's own panel would, instead of always looking intact.
     private static void DrawJunctions(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, WorldSnapshot snapshot, Vector2 origin)
     {
         foreach (var junction in snapshot.Components.Where(c => c.Kind == ComponentKind.Junction))
         {
+            var damaged = snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == junction.Id)?.Damaged ?? false;
             var rect = ShipRenderer.GetBlockRect(junction.Position, ShipRenderer.NormalBlockSize, origin);
-            ShipRenderer.DrawPanel(spriteBatch, pixel, rect, Color.SlateGray * 0.7f, Color.LightSteelBlue, 1);
+            ShipRenderer.DrawPanel(spriteBatch, pixel, rect, damaged ? Color.DarkRed * 0.8f : Color.SlateGray * 0.7f,
+                damaged ? Color.OrangeRed : Color.LightSteelBlue, 1);
             spriteBatch.DrawString(font, "Кор", new Vector2(rect.X + 1, rect.Y + 4), Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
         }
     }
@@ -273,14 +278,14 @@ public static class ComponentRenderer
             var state = snapshot.WireStates.FirstOrDefault(s => s.WireId == wire.Id);
             var live = snapshot.ComponentStates.FirstOrDefault(s => s.ComponentId == wire.FromPin.ComponentId)?.SignalValue ?? true;
             var color = state?.Damaged == true ? Color.OrangeRed : live ? Color.LimeGreen : Color.DimGray;
-            DrawLine(spriteBatch, pixel, from.Value, to.Value, color, 2);
+            DrawWirePath(spriteBatch, pixel, from.Value, wire.Bends, to.Value, origin, color, 2);
         }
     }
 
-    // The wire currently being laid, from its anchor pin to wherever that character stands right
-    // now - own player or anyone else in co-op (CharacterState.LayingWireFromPin), the same
-    // anchor-to-moving-point technique FieldRenderer.DrawToolFlame uses, just without an aim
-    // direction: this one just tracks a position.
+    // The wire currently being laid, from its anchor pin, through whatever bends have been fixed so
+    // far, to wherever that character stands right now - own player or anyone else in co-op
+    // (CharacterState.LayingWireFromPin/LayingWireBends), the same anchor-to-moving-point technique
+    // FieldRenderer.DrawToolFlame uses, just without an aim direction: this one just tracks a position.
     private static void DrawWiresInProgress(SpriteBatch spriteBatch, Texture2D pixel, WorldSnapshot snapshot, Vector2 origin, float totalSeconds)
     {
         foreach (var character in snapshot.Characters.Where(c => c.LayingWireFromPin is not null && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
@@ -290,8 +295,26 @@ public static class ComponentRenderer
                 continue;
             var flicker = 0.6f + 0.4f * MathF.Sin(totalSeconds * 8f);
             var characterPoint = origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit;
-            DrawLine(spriteBatch, pixel, anchor.Value, characterPoint, Color.CadetBlue * flicker, 2);
+            DrawWirePath(spriteBatch, pixel, anchor.Value, character.LayingWireBends, characterPoint, origin, Color.CadetBlue * flicker, 2);
         }
+    }
+
+    // Shared by a finished Wire's own Bends and an in-progress lay's own LayingWireBends - both are
+    // just a list of world-space points the path is fixed through between two known screen points.
+    private static void DrawWirePath(SpriteBatch spriteBatch, Texture2D pixel, Vector2 fromScreen,
+        IReadOnlyList<Vec2>? bends, Vector2 toScreen, Vector2 origin, Color color, int thickness)
+    {
+        var previous = fromScreen;
+        if (bends is not null)
+        {
+            foreach (var bend in bends)
+            {
+                var bendScreen = origin + new Vector2(bend.X, bend.Y) * ShipRenderer.PixelsPerUnit;
+                DrawLine(spriteBatch, pixel, previous, bendScreen, color, thickness);
+                previous = bendScreen;
+            }
+        }
+        DrawLine(spriteBatch, pixel, previous, toScreen, color, thickness);
     }
 
     private static void DrawLine(SpriteBatch spriteBatch, Texture2D pixel, Vector2 from, Vector2 to, Color color, int thickness)

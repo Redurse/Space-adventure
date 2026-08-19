@@ -53,4 +53,14 @@ public sealed record CharacterState(
     // Which wall block this character's welder/cutter is currently lit and aimed at, null when
     // neither tool is lit or nothing is in reach (World.WallBlocks.cs's GetWallToolTargetId) - lets
     // every client, not just this one, show that block's own health bar while it's being worked.
-    string? WallToolTargetBlockId = null);
+    string? WallToolTargetBlockId = null,
+    // A Junction box being carried (World.Interact.cs's pickup/place at a Junction, wrench in hand) -
+    // its Component.Id while carried, null otherwise. The junction's own position already tracks this
+    // character every tick (World.Wiring.cs's StepCarriedComponents), so no separate offset/render
+    // path is needed - every client just sees the box already sitting wherever this one carries it.
+    string? CarryingComponentId = null,
+    // Bend points fixed so far along an in-progress wire lay (World.Wiring.cs's HandleWireBend) -
+    // null/empty when not laying or none fixed yet. Lets every client, not just this one, draw the
+    // trailing wire as the same bent path the layer is actually shaping, not just a straight line
+    // to wherever they currently stand.
+    IReadOnlyList<Vec2>? LayingWireBends = null);

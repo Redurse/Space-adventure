@@ -13,9 +13,18 @@ public sealed class Inventory
     public Dictionary<EquipSlot, ItemType?> Equipped { get; } = new()
     {
         [EquipSlot.Headset] = null,
+        [EquipSlot.Suit] = null,
         [EquipSlot.Clothing] = null,
         [EquipSlot.Headwear] = null,
+        [EquipSlot.BeltBag] = null,
+        [EquipSlot.IdCard] = null,
     };
+
+    // A worn BeltBag's own small sub-inventory (World.Storage.cs's TryMoveItem gates every slot
+    // here on Equipped[EquipSlot.BeltBag] actually being a BeltBag) - 2x3, the same shape shown in
+    // the popup that opens above the bag's own icon when the mouse hovers it.
+    public const int BeltBagSlotCount = 6;
+    public ItemType?[] BeltBagSlots { get; } = new ItemType?[BeltBagSlotCount];
 
     // Order matters: the earliest-held item is the first one auto-dropped to make room for a
     // newly-equipped item that needs more hands than are currently free (Barotrauma-style).
@@ -28,27 +37,27 @@ public sealed class Inventory
     public Dictionary<EquipSlot, float?> EquippedTanks { get; } = new()
     {
         [EquipSlot.Headset] = null,
-        [EquipSlot.Clothing] = null,
+        [EquipSlot.Suit] = null,
         [EquipSlot.Headwear] = null,
     };
 
-    // Worn suit: index -1 stands for "the clothing slot" everywhere a socket is addressed, so one
+    // Worn suit: index -1 stands for "the suit slot" everywhere a socket is addressed, so one
     // set of methods covers a cutter in the row and the suit on your back.
     public const int WornSuitSlot = -1;
 
     public float? TankCharge(int slotIndex) =>
-        slotIndex == WornSuitSlot ? EquippedTanks[EquipSlot.Clothing] : MainSlotTanks[slotIndex];
+        slotIndex == WornSuitSlot ? EquippedTanks[EquipSlot.Suit] : MainSlotTanks[slotIndex];
 
     private void SetTank(int slotIndex, float? charge)
     {
         if (slotIndex == WornSuitSlot)
-            EquippedTanks[EquipSlot.Clothing] = charge;
+            EquippedTanks[EquipSlot.Suit] = charge;
         else
             MainSlotTanks[slotIndex] = charge;
     }
 
     private ItemType? SocketedItem(int slotIndex) =>
-        slotIndex == WornSuitSlot ? Equipped[EquipSlot.Clothing] : ItemAt(slotIndex);
+        slotIndex == WornSuitSlot ? Equipped[EquipSlot.Suit] : ItemAt(slotIndex);
 
     public bool HasWorkingTank(int slotIndex) => TankCharge(slotIndex) > 0f;
 

@@ -55,14 +55,33 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: spoolSlot)); // hold it
     }
 
-    // Distribution and every Junction sit along the same row a fixed distance apart
-    // (WireGraphFactory) - this walks to wherever Distribution and the oxygen junction are both
-    // within InteractionRadius at once.
-    private static void MoveToDistributionAndOxygenJunction(World world)
+    // Distribution sits at a fixed spot in the reactor room (Ship.cs); each Junction now takes a
+    // spot along the room's own left/right walls instead (WireGraphFactory) - far enough apart
+    // that nothing reaches two of them from one single spot any more, so these are 3 separate
+    // walks rather than the one midpoint the old row layout allowed.
+    private static void MoveToDistribution(World world)
     {
         MoveCharacterTo(world, 1, 19f, 3f);
         MoveCharacterTo(world, 1, 7f, 3f); // reactor room
-        MoveCharacterTo(world, 1, 10f, 3f); // between distribution (9.5) and junction-oxygen (10.5)
+        MoveCharacterTo(world, 1, 9.5f, 3f); // right on the distribution block
+    }
+
+    // junction-oxygen: PowerSystemId.Oxygen is index 0, so it's the first junction placed - left
+    // wall (room.Left + 1 = 6), first slot down it (room.Top + 1.5 = 1.5).
+    private static void MoveToOxygenJunction(World world)
+    {
+        MoveCharacterTo(world, 1, 19f, 3f);
+        MoveCharacterTo(world, 1, 7f, 3f); // reactor room
+        MoveCharacterTo(world, 1, 6f, 1.5f); // junction-oxygen's own spot on the left wall
+    }
+
+    // junction-engine: PowerSystemId.Engine is index 1, so it's the second junction placed -
+    // right wall (room.Right - 1 = 9), same first slot as junction-oxygen (room.Top + 1.5 = 1.5).
+    private static void MoveToEngineJunction(World world)
+    {
+        MoveCharacterTo(world, 1, 19f, 3f);
+        MoveCharacterTo(world, 1, 7f, 3f); // reactor room
+        MoveCharacterTo(world, 1, 9f, 1.5f); // junction-engine's own spot on the right wall
     }
 
     private static bool HasWireSpool(World world) =>
@@ -73,10 +92,11 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         PickUpAndHoldSpool(world);
-        MoveToDistributionAndOxygenJunction(world);
+        MoveToDistribution(world);
 
         var wiresBefore = world.Wires.Count;
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: new PinRef("distribution", "out-oxygen")));
+        MoveToOxygenJunction(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: new PinRef("junction-oxygen", "in")));
 
         return world.Wires.Count == wiresBefore + 1 && !HasWireSpool(world);
@@ -87,15 +107,14 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         PickUpAndHoldSpool(world);
-        MoveCharacterTo(world, 1, 19f, 3f);
-        MoveCharacterTo(world, 1, 7f, 3f);
-        MoveCharacterTo(world, 1, 10.8f, 3f); // between junction-oxygen (10.5) and junction-engine (11.1)
+        MoveToOxygenJunction(world);
 
         var wiresBefore = world.Wires.Count;
         // Both are inputs - a junction's "in" can never legally pair with another input.
         var oxygenIn = new PinRef("junction-oxygen", "in");
         var engineIn = new PinRef("junction-engine", "in");
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenIn));
+        MoveToEngineJunction(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: engineIn));
 
         var stillLaying = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).LayingWireFromPin == engineIn;
@@ -111,15 +130,17 @@ internal static partial class TestRunner
 
         // First reinforcement succeeds - the trunk wire already there plus this one reaches the cap of 2.
         PickUpAndHoldSpool(world);
-        MoveToDistributionAndOxygenJunction(world);
+        MoveToDistribution(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenOut));
+        MoveToOxygenJunction(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: junctionIn));
         var wiresAfterFirst = world.Wires.Count;
 
         // Second attempt at the same input must be refused - the spool is not spent on a rejection.
         PickUpAndHoldSpool(world);
-        MoveToDistributionAndOxygenJunction(world);
+        MoveToDistribution(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenOut));
+        MoveToOxygenJunction(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: junctionIn));
 
         return world.Wires.Count == wiresAfterFirst && HasWireSpool(world);
@@ -130,7 +151,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         PickUpAndHoldSpool(world);
-        MoveToDistributionAndOxygenJunction(world);
+        MoveToDistribution(world);
 
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: new PinRef("distribution", "out-oxygen")));
         world.ApplyCommand(1, new ClientCommand(1, WireLayCancelPressed: true));
@@ -144,7 +165,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         PickUpAndHoldSpool(world);
-        MoveToDistributionAndOxygenJunction(world);
+        MoveToDistribution(world);
 
         var pin = new PinRef("distribution", "out-oxygen");
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: pin));
@@ -152,6 +173,55 @@ internal static partial class TestRunner
 
         var stillLaying = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).LayingWireFromPin;
         return stillLaying is null && HasWireSpool(world);
+    }
+
+    // Bend points (World.cs's WireBendAtX/Y, World.Wiring.cs's HandleWireBend) - a click mid-lay
+    // that isn't itself finishing the wire fixes a cosmetic waypoint instead, carried onto the
+    // finished Wire's own Bends once the second pin completes it.
+    private static bool World_WireLay_BendPoint_CarriesOntoFinishedWire()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        PickUpAndHoldSpool(world);
+        MoveToDistribution(world);
+
+        world.ApplyCommand(1, new ClientCommand(1, PinInteractId: new PinRef("distribution", "out-oxygen")));
+        world.ApplyCommand(1, new ClientCommand(1, WireBendAtX: 11f, WireBendAtY: 4f));
+        MoveToOxygenJunction(world);
+        world.ApplyCommand(1, new ClientCommand(1, PinInteractId: new PinRef("junction-oxygen", "in")));
+
+        var wire = world.Wires.Last();
+        return wire.Bends is { Count: 1 } bends && (bends[0] - new Vec2(11f, 4f)).Length() < 0.01f;
+    }
+
+    // Right-click now backs out one step at a time (World.Wiring.cs's HandleWireLayCancel): every
+    // fixed bend first, last one first, and only once none are left does it fall back to its old
+    // behavior of clearing the anchor itself.
+    private static bool World_WireLay_CancelPressed_RemovesBendsBeforeTheAnchorItself()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        PickUpAndHoldSpool(world);
+        MoveToDistribution(world);
+
+        world.ApplyCommand(1, new ClientCommand(1, PinInteractId: new PinRef("distribution", "out-oxygen")));
+        world.ApplyCommand(1, new ClientCommand(1, WireBendAtX: 11f, WireBendAtY: 4f));
+        world.ApplyCommand(1, new ClientCommand(1, WireBendAtX: 11.5f, WireBendAtY: 4.5f));
+
+        world.ApplyCommand(1, new ClientCommand(1, WireLayCancelPressed: true)); // pops the second bend
+        var afterFirstCancel = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var oneBendLeftAndStillLaying =
+            (afterFirstCancel.LayingWireBends?.Count ?? 0) == 1 && afterFirstCancel.LayingWireFromPin is not null;
+
+        world.ApplyCommand(1, new ClientCommand(1, WireLayCancelPressed: true)); // pops the first bend
+        var afterSecondCancel = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var noBendsLeftAndStillLaying =
+            (afterSecondCancel.LayingWireBends?.Count ?? 0) == 0 && afterSecondCancel.LayingWireFromPin is not null;
+
+        world.ApplyCommand(1, new ClientCommand(1, WireLayCancelPressed: true)); // no bends left - cancels the anchor itself
+        var anchorClearedAfterThirdCancel = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).LayingWireFromPin is null;
+
+        return oneBendLeftAndStillLaying && noBendsLeftAndStillLaying && anchorClearedAfterThirdCancel && HasWireSpool(world);
     }
 
     // Nothing about wire-laying is private to the player doing it - a second crew member has to see
@@ -162,13 +232,76 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         world.SpawnCharacter(2);
         PickUpAndHoldSpool(world);
-        MoveToDistributionAndOxygenJunction(world);
+        MoveToDistribution(world);
 
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: new PinRef("distribution", "out-oxygen")));
 
         var snapshot = world.CreateSnapshot();
         return snapshot.Characters.Single(c => c.PlayerId == 1).LayingWireFromPin is not null
             && snapshot.Characters.Single(c => c.PlayerId == 2).LayingWireFromPin is null;
+    }
+
+    // A Junction box is its own breakable device now (game_design.md - "щитки") - "damage" is its
+    // own trunk wire (Distribution->Junction) being cut, repaired with the same wrench/screwdriver-
+    // driven minigame a SystemDevice already uses (World.SystemRepair.cs), just standing at the box
+    // itself instead of at one of its downstream devices.
+    private static bool World_Junction_BecomesDamagedOnTrunkCut_AndRepairsWithWrenchHeldInHand()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.CutWire("trunk-oxygen");
+        var damagedRightAfterCut = world.CreateSnapshot().JunctionStates.First(s => s.DeviceId == "junction-oxygen").Damaged;
+
+        MoveToOxygenJunction(world);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // no tool - should fail
+        var stillDamagedWithoutTool = world.IsJunctionDamaged("junction-oxygen");
+
+        var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot));
+        MoveToOxygenJunction(world);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
+
+        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
+            world.Step(RealtimeStep);
+
+        return damagedRightAfterCut && stillDamagedWithoutTool && !world.IsJunctionDamaged("junction-oxygen");
+    }
+
+    // Moving a Junction box (World.Interact.cs's wrench-driven pickup/place, World.Wiring.cs's
+    // StepCarriedComponents) - picking it up starts tracking the carrier's own position every tick;
+    // placing it (F again) just stops tracking wherever they've stopped. Wiring survives the whole
+    // move untouched since a Wire endpoint references its Component by id, never by position - the
+    // system the box serves stays powered throughout the move.
+    private static bool World_Junction_CarryAndPlace_MovesItWithCharacterAndKeepsWiringIntact()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot));
+        MoveToOxygenJunction(world);
+
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // pick up junction-oxygen
+        var carryingRightAfterPickup =
+            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).CarryingComponentId == "junction-oxygen";
+        var poweredWhileCarried = world.IsDeviceConnected("system-oxygen");
+
+        MoveCharacterTo(world, 1, 13f, 3f); // still the reactor room, a different spot within it
+        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var junctionFollowedCharacter =
+            (world.Components.First(c => c.Id == "junction-oxygen").Position - new Vec2(me.X, me.Y)).Length() < 0.01f;
+
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // place it here
+        var carryingClearedAfterPlace =
+            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).CarryingComponentId is null;
+        var placedPosition = world.Components.First(c => c.Id == "junction-oxygen").Position;
+
+        MoveCharacterTo(world, 1, 9f, 3f); // walk away from it
+        var junctionStayedPutAfterPlacing =
+            (world.Components.First(c => c.Id == "junction-oxygen").Position - placedPosition).Length() < 0.01f;
+
+        return carryingRightAfterPickup && poweredWhileCarried && junctionFollowedCharacter &&
+            carryingClearedAfterPlace && junctionStayedPutAfterPlacing;
     }
 
     // Logic components (World.ComponentLogic.cs, M21) - test-seeded directly via World.AddComponent/

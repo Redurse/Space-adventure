@@ -103,6 +103,7 @@ public sealed partial class Ship
         // Low in the hall and much larger than other classes' - this compartment is built around it.
         var reactorBlock = new ReactorBlock("reactor-block", "reactor", X: 6.75f, Y: 14f, SizeScale: 1.8f);
         var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 6.75f, Y: 12.3f);
+        var batteryBlock = new BatteryBlock("battery-block", "reactor", X: 6.75f, Y: 10.6f);
         // Nav and the card table flank the helm on the cockpit's own centreline (x=6.75), mirrored
         // around it - x=5.1 and x=8.4 sit the same distance either side.
         var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 5.1f, Y: 2.1f);
@@ -138,7 +139,7 @@ public sealed partial class Ship
 
         var cockpit = rooms[0];
         return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, helmConsole, storageRacks, cockpit.Center, cockpit.Id,
+            reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, cockpit.Center, cockpit.Id,
             cardTable,
             forwardDegrees: ShipCatalog.ForwardDegrees(ShipKind.Corvette), // bow up the plan: this hull flies nose-first, not broadside
             componentMounts: componentMounts);

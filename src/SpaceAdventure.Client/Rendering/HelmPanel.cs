@@ -54,15 +54,25 @@ public sealed class HelmPanel
         DrawRadar(spriteBatch, snapshot, panelOrigin);
     }
 
-    // Appears only once the ship is parked at the berth (World.StationDocking.cs's CanDockNow).
-    // While approaching, the same slot carries the distance still to cover, so the pilot can tell
-    // "not yet" from "there's no station here at all".
+    // The same slot, both directions (World.StationDocking.cs's HandleDockButtonPressed - one
+    // button either way): while approaching it either arms once alongside the berth or shows the
+    // remaining distance, and once actually docked it offers to cast off instead - no separate
+    // control to hunt for just to leave.
     private void DrawDockButton(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin)
     {
+        var rect = GetDockButtonRect(panelOrigin);
+
+        if (snapshot.Voyage.Phase == VoyagePhase.Station)
+        {
+            spriteBatch.Draw(_pixel, rect, Color.SeaGreen);
+            spriteBatch.DrawString(_font, "[Клик] ОТСТЫКОВАТЬСЯ", new Vector2(rect.X + 6, rect.Y + 9), Color.White,
+                0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            return;
+        }
+
         if (snapshot.Voyage.Phase != VoyagePhase.StationApproach)
             return;
 
-        var rect = GetDockButtonRect(panelOrigin);
         if (snapshot.CanDock)
         {
             spriteBatch.Draw(_pixel, rect, Color.SeaGreen);

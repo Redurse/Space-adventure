@@ -47,7 +47,12 @@ public sealed class Reactor
     }
 
     public bool HasFuelRod => Array.Exists(_rods, r => r is not null);
-    public float CurrentOutput => Fuel > 0 ? MaxOutput : 0;
+
+    // The reactor's own physical kill-switch lever (game_design.md - reactor levers), independent
+    // of the fuel rods: flipping it forces output to zero even with a full load, and restoring it
+    // resumes normal fuel-driven output with no other state to reconcile.
+    public bool EmergencyShutdown { get; set; }
+    public float CurrentOutput => !EmergencyShutdown && Fuel > 0 ? MaxOutput : 0;
 
     public Reactor(float maxOutput, float maxFuel, float fuelPerPowerUnitPerSecond)
     {

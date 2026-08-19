@@ -112,6 +112,7 @@ public sealed partial class World
         if (FactionDefinitions.Rival(DockedFaction) is { } rival)
             AdjustStanding(rival, FactionDefinitions.RivalStandingPerQuestTurnIn);
         ActiveQuest = null;
+        NotifyStoryQuestTurnedIn(quest);
     }
 
     // Unlike turning in, this needs no docked gate at all - giving up on a job is a decision you

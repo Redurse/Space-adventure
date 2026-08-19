@@ -122,7 +122,7 @@ public sealed class FieldRenderer
             var enemyScreen = WorldToScreen(new Vec2(enemy.X, enemy.Y));
             DrawEnemyShipExterior(spriteBatch, enemyScreen, enemy,
                 enemy.IsBoardable ? snapshot.EnemyCrew.Count(c => c.Alive) : -1,
-                rotation + (enemy.RotationDegrees * MathF.PI / 180f));
+                rotation + (enemy.RotationDegrees * MathF.PI / 180f), totalSeconds);
             DrawOffScreenMarker(spriteBatch, enemyScreen, viewportOrigin, viewportSize,
                 enemy.IsBoardable ? "Враг" : "Рейдер", Color.OrangeRed);
         }
@@ -142,8 +142,42 @@ public sealed class FieldRenderer
         }
 
         if (effects is not null)
+        {
             foreach (var effect in effects.Where(e => e.Kind == EffectKind.Cut))
                 DrawSparkBurst(spriteBatch, WorldToScreen(effect.Position), effect.Progress);
+            foreach (var effect in effects.Where(e => e.Kind == EffectKind.Explosion))
+                DrawExplosion(spriteBatch, WorldToScreen(effect.Position), effect.Progress);
+        }
+    }
+
+    // A bigger, longer-lived burst than DrawSparkBurst's tool feedback - an expanding shockwave
+    // ring plus a scatter of hull-chunk debris flung outward, for the one moment a whole ship
+    // actually comes apart rather than just taking a hit.
+    private void DrawExplosion(SpriteBatch spriteBatch, Vector2 center, float progress)
+    {
+        var alpha = 1f - progress;
+        var ringRadius = 8f + progress * 60f;
+        HudIcons.DrawRingArc(spriteBatch, _pixel, center, ringRadius, 0f, 360f, new Color(255, 200, 120) * (alpha * 0.7f), 24, 3f);
+
+        var coreRadius = MathF.Max(0f, 22f * (1f - progress * 2f));
+        if (coreRadius > 0f)
+        {
+            HudIcons.FillCircle(spriteBatch, _pixel, center, coreRadius, Color.White * (alpha * 0.9f));
+            HudIcons.FillCircle(spriteBatch, _pixel, center, coreRadius * 0.6f, new Color(255, 200, 90) * alpha);
+        }
+
+        const int debrisCount = 8;
+        var random = new Random(center.GetHashCode());
+        for (var i = 0; i < debrisCount; i++)
+        {
+            var angle = i * MathF.PI * 2f / debrisCount + (float)random.NextDouble() * 0.5f;
+            var speed = 40f + (float)random.NextDouble() * 70f;
+            var chunk = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * speed * progress;
+            var size = 4f * (1f - progress);
+            if (size > 0.3f)
+                spriteBatch.Draw(_pixel, chunk, null, new Color(70, 60, 55) * alpha, angle, new Vector2(0.5f, 0.5f),
+                    new Vector2(size * 1.6f, size), SpriteEffects.None, 0f);
+        }
     }
 
     // One nacelle per engine block the ship actually carries, hung on the outside of the plating
@@ -333,16 +367,59 @@ public sealed class FieldRenderer
     // crewAlive < 0 means this isn't the hull the boarding party would enter, so it gets no breach
     // marker and no crew count - the breach is a promise that you can get in, and it should only be
     // made about the ship that actually has an interior behind it.
+    // An asymmetric hostile hull rather than a plain rectangle - a jagged raider silhouette,
+    // weathered rust patches, a glowing engine at the tail, and scorch marks that accumulate as
+    // its own health drops, so a fight against it visibly wears the ship down the way the
+    // player's own hull already shows damage (HullSkin's DrawHullDamage).
     private void DrawEnemyShipExterior(SpriteBatch spriteBatch, Vector2 screenCenter,
-        EnemyShipFieldState enemy, int crewAlive, float rotation)
+        EnemyShipFieldState enemy, int crewAlive, float rotation, float totalSeconds)
     {
         const float enemyVisualRadius = 3.5f; // matches World.EnemyHullRadius - what a shell has to hit
         var sizePx = enemyVisualRadius * 2 * ShipRenderer.PixelsPerUnit;
-        var hullColor = enemy.IsRetreating ? new Color(60, 50, 40) : new Color(80, 40, 45);
-        spriteBatch.Draw(_pixel, screenCenter, null, hullColor * 0.95f, rotation, new Vector2(0.5f, 0.5f), new Vector2(sizePx, sizePx * 0.55f), SpriteEffects.None, 0f);
-        // Nose block, so which way it's pointing (and therefore shooting) is readable at a glance.
-        var nose = screenCenter + new Vector2(MathF.Cos(rotation), MathF.Sin(rotation)) * (sizePx * 0.42f);
-        spriteBatch.Draw(_pixel, nose, null, Color.OrangeRed * 0.9f, rotation, new Vector2(0.5f, 0.5f), new Vector2(sizePx * 0.22f, sizePx * 0.3f), SpriteEffects.None, 0f);
+        var hullColor = enemy.IsRetreating ? new Color(70, 58, 46) : new Color(92, 46, 50);
+        var cos = MathF.Cos(rotation);
+        var sin = MathF.Sin(rotation);
+        Vector2 Local(float x, float y)
+        {
+            var s = new Vector2(x, y) * sizePx;
+            return screenCenter + new Vector2(s.X * cos - s.Y * sin, s.X * sin + s.Y * cos);
+        }
+
+        // An arrowhead bow, a blunt asymmetric aft, and a notch out of one flank - a raider looks
+        // scavenged together, not machined.
+        var hull = new[]
+        {
+            Local(0.5f, 0f), Local(0.18f, -0.30f), Local(-0.1f, -0.34f), Local(-0.42f, -0.20f),
+            Local(-0.5f, -0.06f), Local(-0.5f, 0.10f), Local(-0.38f, 0.24f), Local(0.05f, 0.32f), Local(0.2f, 0.16f),
+        };
+        Primitives.FillPolygon(spriteBatch, _pixel, screenCenter, hull, hullColor * 0.95f);
+        Primitives.StrokePolygon(spriteBatch, _pixel, hull, Color.Black * 0.5f, 2f);
+
+        // Rust/weathering patches, seeded off the ship's own id so they stay put frame to frame.
+        var weather = new Random(enemy.Id.GetHashCode());
+        for (var i = 0; i < 3; i++)
+        {
+            var patch = Local(-0.3f + (float)weather.NextDouble() * 0.5f, -0.22f + (float)weather.NextDouble() * 0.44f);
+            HudIcons.FillCircle(spriteBatch, _pixel, patch, sizePx * (0.05f + (float)weather.NextDouble() * 0.05f), Color.Black * 0.18f);
+        }
+
+        // The engine, always lit (a derelict that can still manoeuvre is one that can still fight),
+        // dimmer while retreating rather than out entirely.
+        var enginePulse = 0.7f + 0.3f * MathF.Sin(totalSeconds * 3f + enemy.Id.GetHashCode());
+        var engineColor = enemy.IsRetreating ? new Color(200, 120, 40) : new Color(255, 90, 40);
+        HudIcons.FillCircle(spriteBatch, _pixel, Local(-0.46f, 0.02f), sizePx * 0.09f * enginePulse, engineColor * 0.8f);
+
+        // Scorch marks that accumulate as the hull loses health - none at full health, several
+        // near death, so the fight's progress is visible on the ship itself, not just its bar.
+        var damageFraction = enemy.MaxHp > 0 ? 1f - Math.Clamp(enemy.Hp / enemy.MaxHp, 0f, 1f) : 0f;
+        var scorchCount = (int)(damageFraction * 5f);
+        for (var i = 0; i < scorchCount; i++)
+        {
+            var scorch = new Random(enemy.Id.GetHashCode() + i * 31);
+            var position = Local(-0.35f + (float)scorch.NextDouble() * 0.7f, -0.3f + (float)scorch.NextDouble() * 0.6f);
+            HudIcons.FillCircle(spriteBatch, _pixel, position, sizePx * (0.04f + (float)scorch.NextDouble() * 0.05f), Color.Black * 0.5f);
+            HudIcons.FillCircle(spriteBatch, _pixel, position, sizePx * 0.025f, new Color(255, 100, 40) * 0.3f);
+        }
 
         DrawEnemyHealthBar(spriteBatch, screenCenter, sizePx, enemy);
 

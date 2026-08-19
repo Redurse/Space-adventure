@@ -168,4 +168,21 @@ public sealed record ClientCommand(
     // Only one of TravelToPointId/TravelToX+Y is ever set for a given click - the server resolves
     // whichever is present (World.Voyage.cs's TryStartTravel).
     float? TravelToX = null,
-    float? TravelToY = null);
+    float? TravelToY = null,
+    // A LMB click while laying a wire that didn't land on a pin fixes a bend at that world spot
+    // instead (World.Wiring.cs's HandleWireBend) - null means no such click this frame, same
+    // convention as TravelToX/Y. WireLayCancelPressed now backs out one step at a time: the last
+    // fixed bend if there is one, the whole anchor otherwise (World.Wiring.cs's HandleWireLayCancel) -
+    // no new field needed for that half, just a generalized meaning for the existing one.
+    float? WireBendAtX = null,
+    float? WireBendAtY = null,
+    // The reactor's 3 physical levers (World.cs) - edge-triggered like InteractPressed, and
+    // proximity-checked server-side against Ship.ReactorBlock.Position since these are a physical
+    // in-world interaction rather than a trusted HUD panel click.
+    bool ToggleLightsPressed = false,
+    bool ToggleReactorEmergencyPressed = false,
+    bool ToggleDoorsLockedPressed = false,
+    // Held, not edge-triggered, same shape as CutHeld/WeldHeld - the axe swings at whatever
+    // choppable door is in reach every tick this is true, but World.Doors.cs's own swing cooldown
+    // (not this flag) is what actually paces it into two discrete hits rather than one instant kill.
+    bool AxeSwingHeld = false);

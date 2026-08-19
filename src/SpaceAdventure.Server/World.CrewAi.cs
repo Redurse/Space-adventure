@@ -26,7 +26,7 @@ public sealed partial class World
                     StepSecurityBot(bot, deltaSeconds);
                     break;
                 case CrewRole.Engineer:
-                    StepEngineerBot();
+                    StepEngineerBot(bot);
                     break;
                 case CrewRole.Mechanic:
                     StepMechanicBot(bot, deltaSeconds);
@@ -84,24 +84,23 @@ public sealed partial class World
     private static float ShortestAngle(float degrees) => ((degrees % 360f) + 540f) % 360f - 180f;
 
     // Keeps life support and defense fed before anything else, nudging the slider the same way a
-    // player's held key would (PowerGrid's single adjust slot) - only when nobody else touched it
-    // this tick, since a live Engineer's own input already went through ApplyCommand earlier in
-    // the same tick and this would otherwise immediately overwrite it.
+    // player's held key would - on its own player-keyed slot now (PowerGrid.ApplyInput), so a live
+    // Engineer's own input alongside it just adds up instead of one overwriting the other.
     private static readonly PowerSystemId[] EngineerPriority =
         { PowerSystemId.Oxygen, PowerSystemId.Shields, PowerSystemId.Engine, PowerSystemId.WeaponCharger };
 
-    private void StepEngineerBot()
+    private void StepEngineerBot(Character bot)
     {
         const float TargetShare = 12f; // a modest, sustainable allocation per system - not "max everything"
         foreach (var system in EngineerPriority)
         {
             if (PowerGrid.GetAllocation(system) < TargetShare)
             {
-                PowerGrid.ApplyInput((int)system, 1f);
+                PowerGrid.ApplyInput(bot.PlayerId, (int)system, 1f);
                 return;
             }
         }
-        PowerGrid.ApplyInput(-1, 0f); // everything it cares about is already fed - hands off the slider
+        PowerGrid.ApplyInput(bot.PlayerId, -1, 0f); // everything it cares about is already fed - hands off the slider
     }
 
     // Keeps the reactor topped up and, on the same slow cadence, clears one broken thing ship-wide

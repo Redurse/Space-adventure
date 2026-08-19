@@ -18,6 +18,30 @@ internal static partial class TestRunner
         return snapshot.Credits == creditsBefore - 20 && inventory.MainSlots.Count(s => s == ItemType.Wrench) == 1;
     }
 
+    // Station shopping now covers the two tools' own replacement tanks (game_design.md section
+    // 10), bought fully charged straight from the rack - Inventory.TryAdd already fills any
+    // TankSockets.IsTank item on pickup, the generic buy path (World.Trade.cs's TryBuyItem) needed
+    // nothing of its own beyond the two new TradeCatalog entries.
+    private static bool World_Trade_BuyOxygenAndWeldingTank_AddsFullyChargedTanks()
+    {
+        var world = new World();
+        world.SpawnCharacter(1); // starts docked at the home station
+        var creditsBefore = world.CreateSnapshot().Credits;
+
+        world.ApplyCommand(1, new ClientCommand(1, BuyItemType: ItemType.OxygenTank));
+        world.ApplyCommand(1, new ClientCommand(1, BuyItemType: ItemType.WeldingTank));
+
+        var snapshot = world.CreateSnapshot();
+        var inventory = snapshot.Characters.Single(c => c.PlayerId == 1).Inventory!;
+        var slots = inventory.MainSlots.ToArray();
+        var oxygenSlot = Array.IndexOf(slots, ItemType.OxygenTank);
+        var weldingSlot = Array.IndexOf(slots, ItemType.WeldingTank);
+
+        return snapshot.Credits == creditsBefore - 35 - 35 && oxygenSlot >= 0 && weldingSlot >= 0
+            && inventory.MainSlotTanks[oxygenSlot] == TankSockets.FullChargeOf(ItemType.OxygenTank)
+            && inventory.MainSlotTanks[weldingSlot] == TankSockets.FullChargeOf(ItemType.WeldingTank);
+    }
+
     private static bool World_Trade_BuyItem_FailsWithoutEnoughCredits()
     {
         var world = new World();

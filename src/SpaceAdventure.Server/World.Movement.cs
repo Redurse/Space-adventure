@@ -17,7 +17,7 @@ public sealed partial class World
                 character.SuitActionRemaining = Math.Max(0, character.SuitActionRemaining - (float)deltaSeconds);
                 if (character.SuitActionRemaining <= 0)
                 {
-                    character.Inventory.Equipped[EquipSlot.Clothing] = character.SuitActionEquipping ? ItemType.Spacesuit : null;
+                    character.Inventory.Equipped[EquipSlot.Suit] = character.SuitActionEquipping ? ItemType.Spacesuit : null;
                     if (character.SuitActionLockerId is { } lockerId)
                         SetSuitLockerHasSuit(lockerId, hasSuit: !character.SuitActionEquipping);
                     character.SuitActionLockerId = null;

@@ -207,6 +207,61 @@ internal static partial class TestRunner
         return turret.AmmoRemaining == turret.MagazineCapacity && !me.CarryingAmmoCrate;
     }
 
+    // Regression: AmmoStorage used to be an unlimited pickup - each crate now comes off a finite
+    // per-storage stock (World.Ammo.cs), so running the crate/turret loop enough times has to
+    // actually run the storage dry rather than supplying forever.
+    private static bool World_AmmoStorage_StockIsFiniteAndDepletes()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        for (var i = 0; i < World.AmmoStorageCapacity; i++)
+        {
+            MoveCharacterTo(world, 1, 15f, 3f);
+            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // pick up a crate
+            MoveCharacterTo(world, 1, 1.5f, 3f);
+            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // reload, frees the crate
+        }
+
+        MoveCharacterTo(world, 1, 15f, 3f);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // storage should now be empty
+
+        var snapshot = world.CreateSnapshot();
+        var stock = snapshot.AmmoStorageStates.First(s => s.StorageId == "ammo-storage-quarters");
+        var me = snapshot.Characters.Single(c => c.PlayerId == 1);
+        return stock.Remaining == 0 && !me.CarryingAmmoCrate;
+    }
+
+    // A depleted storage isn't stuck empty forever - a station visit tops it back up, the same
+    // resupply pass that already refuels the reactor and patches the hull (World.Voyage.cs's
+    // EnterStation).
+    private static bool World_AmmoStorage_RestocksAtStation()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        MoveCharacterTo(world, 1, 15f, 3f);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // take one crate
+
+        var before = world.CreateSnapshot().AmmoStorageStates.First(s => s.StorageId == "ammo-storage-quarters").Remaining;
+        if (before != World.AmmoStorageCapacity - 1)
+            return false;
+
+        // Use up the carried crate before heading to the helm - HandleInteract's carrying-a-crate
+        // branch takes priority over sitting down at any console, so a held crate would otherwise
+        // swallow every subsequent [F] press instead of seating the character at the helm.
+        MoveCharacterTo(world, 1, 1.5f, 3f);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+
+        ApproachBerth(world); // undocks, flies out, and back to a berth
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        if (world.Phase != VoyagePhase.Station)
+            return false;
+
+        var after = world.CreateSnapshot().AmmoStorageStates.First(s => s.StorageId == "ammo-storage-quarters").Remaining;
+        return after == World.AmmoStorageCapacity;
+    }
+
     private static bool World_Inventory_PickUpAmmoCrate_OccupiesMainSlot()
     {
         var world = new World();
@@ -245,7 +300,7 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
 
         var inventory = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!;
-        return inventory.Equipped[EquipSlot.Clothing] == ItemType.Spacesuit;
+        return inventory.Equipped[EquipSlot.Suit] == ItemType.Spacesuit;
     }
 
     private static bool Inventory_ToggleHold_OneHandedItemsShareBothHands()

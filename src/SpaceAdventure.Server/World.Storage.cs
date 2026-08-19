@@ -21,6 +21,7 @@ public sealed partial class World
         ItemType.WeldingTool, ItemType.WeldingTool, ItemType.WeldingTool,
         ItemType.OxygenTank, ItemType.OxygenTank, ItemType.OxygenTank,
         ItemType.WeldingTank, ItemType.WeldingTank, ItemType.WeldingTank,
+        ItemType.Axe, ItemType.Axe, ItemType.Axe,
     };
 
     private static readonly ItemType[] RackSuppliesAndWeapons =
@@ -31,6 +32,8 @@ public sealed partial class World
         ItemType.Knife, ItemType.Knife, ItemType.Knife,
         ItemType.Rifle, ItemType.Rifle, ItemType.Rifle,
         ItemType.LaserRifle, ItemType.LaserRifle, ItemType.LaserRifle,
+        ItemType.BeltBag, ItemType.BeltBag, ItemType.BeltBag,
+        ItemType.IdCard, ItemType.IdCard, ItemType.IdCard,
     };
 
     // Every hull's starter kit (game_design.md section 13): 3 units of every hand tool/tank/weapon/
@@ -87,7 +90,21 @@ public sealed partial class World
             !character.Inventory.TryDetachTank(from.Index))
             return;
 
+        // Unequipping a worn BeltBag while it's still carrying anything would strand those items
+        // nowhere - it has to be emptied out first, the same way a rack move refuses to strand a
+        // plugged-in tank above.
+        if (from.Kind == ItemSlotKind.Equip && (EquipSlot)from.Index == EquipSlot.BeltBag &&
+            Array.Exists(character.Inventory.BeltBagSlots, s => s is not null))
+            return;
+
         var destination = ReadSlot(character, to);
+
+        // An equip slot only ever holds the one item type it's defined for (or nothing) - checked
+        // for both ends up front, before either slot is actually written, so a swap can never
+        // strand one side's item because the other end turned out to be invalid partway through.
+        if (!IsAcceptable(to, source) || !IsAcceptable(from, destination))
+            return;
+
         if (!WriteSlot(character, to, source) || !WriteSlot(character, from, destination))
             return;
 
@@ -105,6 +122,9 @@ public sealed partial class World
             character.Inventory.HeldSlotIndices.Remove(to.Index);
     }
 
+    private static bool IsAcceptable(SlotRef slot, ItemType? item) =>
+        item is null || slot.Kind != ItemSlotKind.Equip || EquipSlotDefinitions.SlotFor(item.Value) == (EquipSlot)slot.Index;
+
     // A drag that ended over empty space instead of another slot: same reachability rule as an
     // ordinary move (you can't drop what you can't otherwise touch), same tank-first safeguard as
     // moving onto the rack (a plugged tank never just vanishes), but the item lands on the floor at
@@ -120,6 +140,10 @@ public sealed partial class World
 
         if (from.Kind == ItemSlotKind.Main && character.Inventory.TankCharge(from.Index) is not null &&
             !character.Inventory.TryDetachTank(from.Index))
+            return;
+
+        if (from.Kind == ItemSlotKind.Equip && (EquipSlot)from.Index == EquipSlot.BeltBag &&
+            Array.Exists(character.Inventory.BeltBagSlots, s => s is not null))
             return;
 
         if (!WriteSlot(character, from, null))
@@ -143,19 +167,42 @@ public sealed partial class World
         ItemSlotKind.Rack => slot.Index >= 0 && slot.Index < _rackSlots.Length &&
                              !character.OnStation && !character.OnEnemyShip && !character.IsOutside &&
                              (RackFor(slot.Index).Position - character.Position).Length() < InteractionRadius,
+        // Suit is deliberately excluded - reachable only through the suit-locker's own timed
+        // equip/unequip action (World.Movement.cs), never through a plain drag.
+        ItemSlotKind.Equip => Enum.IsDefined((EquipSlot)slot.Index) && (EquipSlot)slot.Index != EquipSlot.Suit &&
+                              !character.OnEnemyShip && !character.IsOutside,
+        ItemSlotKind.BeltBag => slot.Index >= 0 && slot.Index < Inventory.BeltBagSlotCount &&
+                                character.Inventory.Equipped[EquipSlot.BeltBag] == ItemType.BeltBag &&
+                                !character.OnEnemyShip && !character.IsOutside,
         _ => false,
     };
 
-    private ItemType? ReadSlot(Character character, SlotRef slot) => slot.Kind == ItemSlotKind.Main
-        ? character.Inventory.MainSlots[slot.Index]
-        : _rackSlots[slot.Index];
+    private ItemType? ReadSlot(Character character, SlotRef slot) => slot.Kind switch
+    {
+        ItemSlotKind.Main => character.Inventory.MainSlots[slot.Index],
+        ItemSlotKind.Rack => _rackSlots[slot.Index],
+        ItemSlotKind.Equip => character.Inventory.Equipped[(EquipSlot)slot.Index],
+        ItemSlotKind.BeltBag => character.Inventory.BeltBagSlots[slot.Index],
+        _ => null,
+    };
 
     private bool WriteSlot(Character character, SlotRef slot, ItemType? item)
     {
-        if (slot.Kind == ItemSlotKind.Main)
-            character.Inventory.MainSlots[slot.Index] = item;
-        else
-            _rackSlots[slot.Index] = item;
+        switch (slot.Kind)
+        {
+            case ItemSlotKind.Main:
+                character.Inventory.MainSlots[slot.Index] = item;
+                break;
+            case ItemSlotKind.Rack:
+                _rackSlots[slot.Index] = item;
+                break;
+            case ItemSlotKind.Equip:
+                character.Inventory.Equipped[(EquipSlot)slot.Index] = item;
+                break;
+            case ItemSlotKind.BeltBag:
+                character.Inventory.BeltBagSlots[slot.Index] = item;
+                break;
+        }
         return true;
     }
 }

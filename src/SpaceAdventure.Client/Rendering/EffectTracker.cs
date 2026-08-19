@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using SpaceAdventure.Shared.Model;
 using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Client.Rendering;
@@ -14,6 +15,7 @@ public sealed class EffectTracker
     private const float WeldEffectSeconds = 0.6f;
     private const float CutEffectSeconds = 0.3f;
     private const float RepairEffectSeconds = 0.5f;
+    private const float ExplosionEffectSeconds = 0.9f;
 
     private readonly List<TransientEffect> _effects = new();
 
@@ -64,6 +66,16 @@ public sealed class EffectTracker
                 if (device is not null)
                     _effects.Add(new TransientEffect(EffectKind.Repair, device.Position, RepairEffectSeconds));
             }
+        }
+
+        // An enemy hull that was in the field and now isn't, was destroyed - a retreating one
+        // keeps shooting cooldowns aside but stays listed and boardable (World.EnemyFleet.cs), so
+        // disappearing from the list only ever means the hull actually broke apart.
+        foreach (var before in previous.EnemyShips)
+        {
+            if (current.EnemyShips.Any(e => e.Id == before.Id))
+                continue;
+            _effects.Add(new TransientEffect(EffectKind.Explosion, new Vec2(before.X, before.Y), ExplosionEffectSeconds));
         }
     }
 }

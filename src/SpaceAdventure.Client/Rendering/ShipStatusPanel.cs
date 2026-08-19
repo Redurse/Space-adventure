@@ -28,13 +28,32 @@ public sealed class ShipStatusPanel
 
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
     {
-        spriteBatch.DrawString(_font, "Отсеки корабля", origin, Color.Yellow, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        DrawShieldBar(spriteBatch, snapshot.Shield, origin);
 
-        var top = (int)origin.Y + 24;
+        var compartmentsOrigin = origin + new Vector2(0, ShieldBarHeight + 10);
+        spriteBatch.DrawString(_font, "Отсеки корабля", compartmentsOrigin, Color.Yellow, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+
+        var top = (int)compartmentsOrigin.Y + 24;
         spriteBatch.Draw(_pixel, new Rectangle((int)origin.X, top, Width, snapshot.Rooms.Count * RowHeight + 6), new Color(18, 22, 28) * 0.9f);
 
         for (var i = 0; i < snapshot.Rooms.Count; i++)
             DrawRow(spriteBatch, snapshot, snapshot.Rooms[i], new Vector2(origin.X + 6, top + 4 + i * RowHeight));
+    }
+
+    // Ship-wide shield bar (game_design.md section 1) — absorbs enemy attacks before they land on
+    // compartments; only drains/regrows from power routed to the Shields system. Moved here from
+    // the old bottom-left combat corner - the pilot at the helm is exactly who needs to see it
+    // continuously (it's the one number that tells them whether to keep dodging or can afford to
+    // hold a line), and nobody else needs it cluttering their own screen.
+    private const float ShieldBarWidth = 220f;
+    private const float ShieldBarHeight = 14f;
+
+    private void DrawShieldBar(SpriteBatch spriteBatch, ShieldState shield, Vector2 origin)
+    {
+        spriteBatch.Draw(_pixel, new Rectangle((int)origin.X, (int)origin.Y, (int)ShieldBarWidth, (int)ShieldBarHeight), Color.DimGray);
+        var ratio = shield.MaxPoints > 0 ? MathHelper.Clamp(shield.Points / shield.MaxPoints, 0f, 1f) : 0f;
+        spriteBatch.Draw(_pixel, new Rectangle((int)origin.X, (int)origin.Y, (int)(ShieldBarWidth * ratio), (int)ShieldBarHeight), Color.SkyBlue);
+        spriteBatch.DrawString(_font, $"Щиты: {shield.Points:0}/{shield.MaxPoints:0}", origin + new Vector2(4, -1), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
     }
 
     private void DrawRow(SpriteBatch spriteBatch, WorldSnapshot snapshot, Room room, Vector2 rowOrigin)

@@ -233,10 +233,9 @@ internal static partial class TestRunner
 
         // RerollUntilRoleOffered may have flown the ship through a sector-alpha fight and back
         // (DockAgainForFreshRoster) to get a fresh board, which can leave Engine holding the whole
-        // reactor budget. Drain it back down here, before hiring - with no Engineer bot yet to
-        // contest the single shared power slider (PowerGrid.ApplyInput's "last call wins" input),
-        // this reduction actually sticks, leaving real headroom for the bot's Oxygen nudge to be
-        // measurable once it exists, regardless of how many rerolls it took this run.
+        // reactor budget. Drain it back down here, before hiring, so there's real headroom left for
+        // the bot's Oxygen nudge to be measurable once it exists, regardless of how many rerolls it
+        // took this run.
         world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: (int)PowerSystemId.Engine, PowerDirection: -1f));
         for (var i = 0; i < 5 * 30; i++)
             world.Step(RealtimeStep);

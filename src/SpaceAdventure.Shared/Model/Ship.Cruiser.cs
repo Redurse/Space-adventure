@@ -79,6 +79,7 @@ public sealed partial class Ship
 
         var reactorBlock = new ReactorBlock("reactor-block", "reactor", X: 9.5f, Y: 1f);
         var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 9.5f, Y: 3f);
+        var batteryBlock = new BatteryBlock("battery-block", "reactor", X: 9.5f, Y: 5f);
         var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 1.5f, Y: 1.5f);
         var helmConsole = new HelmConsole("helm-console", "cockpit", X: 3f, Y: 4f);
         var cardTable = new CardTable("card-table", "cockpit", X: 4f, Y: 1f);
@@ -112,7 +113,7 @@ public sealed partial class Ship
         };
 
         return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
+            reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
             cardTable, componentMounts: componentMounts);
     }
 }

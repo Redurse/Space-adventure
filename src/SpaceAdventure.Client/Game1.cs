@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Audio;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using SpaceAdventure.Client.Networking;
@@ -26,7 +27,6 @@ public partial class Game1 : Game
     private static readonly Vector2 WorldViewportOrigin = new(40, 40);
     private static readonly Vector2 WorldViewportSize = new(1120, 300);
     private static readonly Vector2 PowerPanelOrigin = new(40, 360);
-    private static readonly Vector2 CombatPanelOrigin = new(480, 360);
     private static readonly Vector2 VoyagePanelOrigin = new(250, 12);
     // The carried row is centred on the bottom edge and the equipment slots are pinned to the
     // bottom-right corner, so both are derived from the design resolution rather than fixed at
@@ -47,9 +47,28 @@ public partial class Game1 : Game
     private Vector2 InventoryRowOrigin(int slotCount) => new(
         (DesignWidth - InventoryPanel.RowWidth(slotCount)) / 2f,
         HudBottom - InventoryPanel.SlotSize);
+    // The equip row and the role/portrait box past its right edge are one unit, right-aligned to
+    // the screen edge together - Barotrauma's own bottom-right corner has the role portrait as
+    // just the last icon in the same row, not a separately-positioned element.
+    private const int RoleBoxSize = InventoryPanel.SlotSize;
     private Vector2 EquipSlotsOrigin => new(
-        DesignWidth - InventoryPanel.EquipRowWidth - HudEdgeMargin,
+        DesignWidth - InventoryPanel.EquipRowWidth - InventoryPanel.SlotSpacing - RoleBoxSize - HudEdgeMargin,
         HudBottom - InventoryPanel.SlotSize);
+    private Vector2 RoleBoxOrigin => new(
+        EquipSlotsOrigin.X + InventoryPanel.EquipRowWidth + InventoryPanel.SlotSpacing,
+        EquipSlotsOrigin.Y);
+    // Was centered in the middle of the HUD strip below the world viewport; moved into the
+    // bottom-left corner instead, out of the way of the world view and clear of the centered
+    // inventory row below it (different X ranges, so the two never overlap). 190 comfortably fits
+    // the panel's own tallest case: enemy line + both bars + health (+ incapacitated line) + two
+    // turret ammo/charge lines + a hint line.
+    private Vector2 CombatPanelOrigin => new(HudEdgeMargin, HudBottom - 190f);
+    // Centered directly above the role/portrait box specifically (Barotrauma's own corner has the
+    // health bar riding right above the portrait, not spanning the whole equip row) - meant to
+    // always be visible the same way the inventory row below it always is.
+    private Vector2 PlayerHealthPanelOrigin => new(
+        RoleBoxOrigin.X - (PlayerHealthPanel.BarWidth - RoleBoxSize) / 2f,
+        RoleBoxOrigin.Y - PlayerHealthPanel.BarHeight - 6f);
     private static readonly Vector2 GalaxyMapPanelOrigin = new(60, 64);
     private static readonly Vector2 StationPanelOrigin = new(60, 64);
     private static readonly Vector2 HelmPanelOrigin = new(120, 100);
@@ -110,9 +129,11 @@ public partial class Game1 : Game
     private ShipRenderer _shipRenderer = null!;
     private PowerPanel _powerPanel = null!;
     private CombatPanel _combatPanel = null!;
+    private PlayerHealthPanel _playerHealthPanel = null!;
     private VoyagePanel _voyagePanel = null!;
     private InventoryPanel _inventoryPanel = null!;
     private ReactorPanel _reactorPanel = null!;
+    private BatteryPanel _batteryPanel = null!;
     private SystemDevicePanel _systemDevicePanel = null!;
     private GalaxyMapPanel _galaxyMapPanel = null!;
     private GalacticMapPanel _galacticMapPanel = null!;
@@ -125,6 +146,7 @@ public partial class Game1 : Game
     private BoardingRenderer _boardingRenderer = null!;
     private VisibilityMask _visibility = null!;
     private RoomLighting _roomLighting = null!;
+    private ScenePost _scenePost = null!;
     private bool _roomLightingReady;
     private RackPanel _rackPanel = null!;
     private ConnectionsPanel _connectionsPanel = null!;
@@ -167,6 +189,10 @@ public partial class Game1 : Game
     private bool _prevInteractDown;
     private bool _prevFireDown;
     private ButtonState _prevLeftMouseButton = ButtonState.Released;
+    // Edge detection for the wire-lay "undo one step" click (World.Wiring.cs's HandleWireLayCancel) -
+    // separate from the map panels' own continuous "is it held" RMB-drag checks, which don't track
+    // an edge at all and would otherwise fire this once per frame the button stays down.
+    private ButtonState _prevRightMouseButton = ButtonState.Released;
     // Edge detection for the 1-9/0 inventory hotkeys (ReadInventoryHotkeySlot) - a whole state
     // rather than one bool per key, since there are 10 of them and they're read together.
     private KeyboardState _prevGameplayKeyboard;
@@ -193,6 +219,7 @@ public partial class Game1 : Game
     private bool _pendingDock; // and for the helm's "Стыковка" button
     private string? _pendingHireCandidateId; // and for the Recruiter's board
     private PinRef? _pendingPinInteract; // wire-laying (World.Wiring.cs), M19-M23
+    private Vec2? _pendingWireBendAt; // LMB click mid-lay that missed every pin - fixes a bend there instead
     private string? _pendingComponentMountInteractId; // install/uninstall/relay-operate a mount
     private string? _pendingPickupDroppedItemId; // click-to-pick-up (World.Mining.cs), any context
     private SlotRef? _pendingDropItemFrom; // drag ended over empty space (World.Storage.cs)
@@ -204,6 +231,11 @@ public partial class Game1 : Game
     private PlayingCard? _pendingPlayCard; // clicked a card in CardGamePanel - own hand or a defend/перевод play
     private bool _pendingCardGameTake; // CardGamePanel's "Взять" button
     private bool _pendingCardGameEndRound; // CardGamePanel's "Бито" button
+    // The reactor's 3 physical levers (ShipRenderer.GetReactorLeverRect) - edge-triggered like
+    // the rest of the _pending* fields above, cleared/sent once per click.
+    private bool _pendingToggleLights;
+    private bool _pendingToggleReactorEmergency;
+    private bool _pendingToggleDoorsLocked;
     // The galaxy map's own camera - purely a client view of server-authoritative positions, so it
     // lives here rather than in any snapshot. Zoom via scroll wheel, pan via right-drag; both only
     // read while the navigation console is actually open.
@@ -220,6 +252,13 @@ public partial class Game1 : Game
     private readonly EffectTracker _effectTracker = new();
     private readonly AtmosphereField _atmosphere = new();
     private WorldSnapshot? _previousSnapshot;
+    // The meme sound effect, whoever's axe just finished off a door - null if the content build
+    // couldn't produce it (Shaders.TryLoad's own reasoning: a missing/failed asset build is worth
+    // silently skipping the effect, not crashing the whole game over).
+    private SoundEffect? _doorBreakSound;
+    // How many overlapping copies PlayDoorBreakSoundIfAnyDoorJustBroke fires per door - the only
+    // way to push the meme louder than volume 1f's hard ceiling (see that method's own comment).
+    private const int DoorBreakSoundLayers = 3;
 
     // Every panel origin, viewport rect and hit-test box in this class is written in these fixed
     // "design" pixels. Rather than making all of that resolution-aware, the whole scene is drawn
@@ -306,9 +345,11 @@ public partial class Game1 : Game
             new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y));
         _powerPanel = new PowerPanel(GraphicsDevice, _font);
         _combatPanel = new CombatPanel(GraphicsDevice, _font);
+        _playerHealthPanel = new PlayerHealthPanel(GraphicsDevice, _font);
         _voyagePanel = new VoyagePanel(_font);
         _inventoryPanel = new InventoryPanel(GraphicsDevice, _font);
         _reactorPanel = new ReactorPanel(GraphicsDevice, _font);
+        _batteryPanel = new BatteryPanel(GraphicsDevice, _font);
         _systemDevicePanel = new SystemDevicePanel(GraphicsDevice, _font);
         _galaxyMapPanel = new GalaxyMapPanel(GraphicsDevice, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
         _galacticMapPanel = new GalacticMapPanel(GraphicsDevice, _font);
@@ -320,7 +361,12 @@ public partial class Game1 : Game
         _stationRenderer = new StationRenderer(_shipRenderer, GraphicsDevice, _font);
         _boardingRenderer = new BoardingRenderer(_shipRenderer, GraphicsDevice, _font);
         _visibility = new VisibilityMask(GraphicsDevice);
+        // Per-pixel lamp shader disabled on request - falls back to the BasicEffect vertex-colour
+        // path. Re-enable by passing Shaders.TryLoad(Content, "Shaders/Light") again.
         _roomLighting = new RoomLighting(GraphicsDevice);
+        // Null when the content build hasn't produced the effect - ScenePost then reports
+        // itself unavailable and Draw keeps its original straight-to-backbuffer path.
+        _scenePost = new ScenePost(GraphicsDevice, Shaders.TryLoad(Content, "Shaders/Post"));
         _rackPanel = new RackPanel(GraphicsDevice, _font);
         _connectionsPanel = new ConnectionsPanel(GraphicsDevice, _font);
         _suitLockerPanel = new SuitLockerPanel(GraphicsDevice, _font);
@@ -330,6 +376,12 @@ public partial class Game1 : Game
         _infoPanel = new InfoPanel(GraphicsDevice, _font);
         _shipEditorPanel = new ShipEditorPanel(GraphicsDevice, _font);
         _existingSave = SaveStore.Load();
+        try { _doorBreakSound = Content.Load<SoundEffect>("Sounds/DoorBreak"); }
+        catch { _doorBreakSound = null; } // same "missing content build shouldn't crash the game" reasoning as Shaders.TryLoad
+        // Both volume knobs XNA/MonoGame exposes maxed out - per-instance Volume (set where it's
+        // actually played) and this global multiplier, which nothing else in the game ever touches
+        // but is worth pinning explicitly rather than trusting the platform default stays 1.
+        SoundEffect.MasterVolume = 1f;
     }
 
     protected override void Update(GameTime gameTime)
@@ -543,8 +595,10 @@ public partial class Game1 : Game
         _pendingTankDetach = null;
 
         var pinInteract = _pendingPinInteract;
+        var wireBendAt = _pendingWireBendAt;
         var componentMountInteractId = _pendingComponentMountInteractId;
         _pendingPinInteract = null;
+        _pendingWireBendAt = null;
         _pendingComponentMountInteractId = null;
 
         var pickupDroppedItemId = _pendingPickupDroppedItemId;
@@ -573,27 +627,43 @@ public partial class Game1 : Game
         _pendingCardGameTake = false;
         _pendingCardGameEndRound = false;
 
-        // Right-click backs out of a pending wire-lay without walking back to its start pin -
-        // harmless to send every frame it's held, the server just clears an already-null anchor.
-        var wireLayCancelPressed = mouse.RightButton == ButtonState.Pressed && myCharacter?.LayingWireFromPin is not null;
+        var toggleLightsPressed = _pendingToggleLights;
+        var toggleReactorEmergencyPressed = _pendingToggleReactorEmergency;
+        var toggleDoorsLockedPressed = _pendingToggleDoorsLocked;
+        _pendingToggleLights = false;
+        _pendingToggleReactorEmergency = false;
+        _pendingToggleDoorsLocked = false;
+
+        // Right-click backs out one step of a pending wire-lay without walking back to its start pin
+        // - the last fixed bend if there is one, the whole anchor otherwise (World.Wiring.cs's
+        // HandleWireLayCancel). Edge-triggered now (unlike before this could pop multiple bends in
+        // the time it takes to release the button), separate from the map panels' own continuous
+        // RMB-drag checks.
+        var wireLayCancelPressed = mouse.RightButton == ButtonState.Pressed && _prevRightMouseButton == ButtonState.Released &&
+            myCharacter?.LayingWireFromPin is not null;
+        _prevRightMouseButton = mouse.RightButton;
 
         // Barotrauma's rule: the held tool works on the left button, aimed at the cursor. Held, not
         // clicked - the flame burns while the button is down (World.Cutting.cs) - and suppressed
         // while a drag is in flight so grabbing an item never lights the torch.
         var cutHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingCutter();
         var weldHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingWelder();
+        var axeSwingHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingAxe();
 
         _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, pushOffDirection.X, pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, lookDirection.X, lookDirection.Y,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
-            _client.LatestSnapshot?.ServerTimestampMs ?? 0, travelToPosition?.X, travelToPosition?.Y);
+            _client.LatestSnapshot?.ServerTimestampMs ?? 0, travelToPosition?.X, travelToPosition?.Y, wireBendAt?.X, wireBendAt?.Y,
+            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
+        UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
 
         _effectTracker.Step((float)gameTime.ElapsedGameTime.TotalSeconds);
         if (_client.LatestSnapshot is { } latestForEffects)
         {
             _effectTracker.Detect(_previousSnapshot, latestForEffects);
+            PlayDoorBreakSoundIfAnyDoorJustBroke(_previousSnapshot, latestForEffects);
             _previousSnapshot = latestForEffects;
         }
         _atmosphere.Step((float)gameTime.ElapsedGameTime.TotalSeconds, _client.LatestSnapshot);
@@ -617,6 +687,23 @@ public partial class Game1 : Game
     // Half scale = twice the reach. A gunner has to see a raider holding station 22 units out and
     // the shell crossing the gap to it; at the interior's own scale that all happens off-screen.
     private const float TurretViewZoom = 0.5f;
+
+    // Barotrauma-style cursor lookahead: the camera doesn't center strictly on the character while
+    // walking around - it eases partway toward wherever the mouse is pointing, so you see a bit
+    // more of what's ahead/around a corner without losing sight of yourself. Fraction of the
+    // distance to the cursor, clamped to a max offset so flinging the mouse to a screen edge
+    // doesn't pull the camera arbitrarily far away; smoothed over time so a sudden mouse jump pans
+    // there rather than snapping.
+    private const float CameraLookAheadFactor = 0.25f;
+    private const float CameraLookAheadMaxDistance = 3.5f; // ship-local units
+    private const float CameraLookAheadSmoothingPerSecond = 8f;
+    // Manning a turret exaggerates the same effect (bigger factor, further cap): the periscope
+    // view is already zoomed out (TurretViewZoom) to show more of the field, so the cursor panning
+    // it further toward whatever's at the edge of that field reads as looking where you're about
+    // to shoot, the way swinging a real periscope would.
+    private const float TurretLookAheadFactor = 0.5f;
+    private const float TurretLookAheadMaxDistance = 10f;
+    private Vec2 _cameraLookOffset = Vec2.Zero;
 
     // Applied to the whole scene batch, so one number moves the camera, the world and the hit
     // tests together instead of each renderer growing a scale parameter.
@@ -680,16 +767,18 @@ public partial class Game1 : Game
         return turret is null ? null : (turret, state);
     }
 
-    // Degrees to spin the whole scene batch by while manning a turret, so the gun's own outward
-    // facing (TurretMount.OutwardDegrees, ship-local) reads as screen-up instead of the view
-    // always staying upright regardless of which side of the hull the gun sits on. 0 everywhere
-    // else - the ship interior/field view is never rotated except behind a periscope.
+    // Degrees to spin the whole scene batch by while manning a turret, so the barrel's own live
+    // facing (TurretMount.FireDegrees(AimDegrees), ship-local - outward normal plus however far
+    // it's currently traversed) reads as screen-up. This is what makes the view a real gun-cam:
+    // swinging the turret pans the whole scene the way looking down a swiveling barrel would,
+    // rather than the view staying pinned to the mount's fixed outward side. 0 everywhere else -
+    // the ship interior/field view is never rotated except behind a periscope.
     private float TurretViewRotationDegrees(WorldSnapshot snapshot)
     {
         if (MannedTurret(snapshot) is not { } manned || _openBlock.Kind is BlockKind.Navigation || _infoPanelOpen)
             return 0f;
         var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
-        return -90f - mount.OutwardDegrees;
+        return -90f - mount.FireDegrees(manned.State.AimDegrees);
     }
 
     private (Vector2 Origin, Vec2 HullCenter, Vec2 Anchor) ComputeCamera(WorldSnapshot snapshot, CharacterState me)
@@ -699,7 +788,11 @@ public partial class Game1 : Game
         if (MannedTurret(snapshot) is { } manned)
         {
             var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
-            anchorLocal = mount.Position + TurretMount.FromDegrees(mount.OutwardDegrees) * PeriscopeViewLead;
+            // Along the live aim direction, not the mount's fixed outward normal - the camera
+            // sits out past the muzzle looking whichever way the barrel is actually pointed right
+            // now, the same "camera near the barrel" TurretViewRotationDegrees rotates the view to
+            // match.
+            anchorLocal = mount.Position + mount.FireDirection(manned.State.AimDegrees) * PeriscopeViewLead;
         }
         else
         {
@@ -707,11 +800,93 @@ public partial class Game1 : Game
                 ? ShipLocalFrame.ToLocal(new Vec2(me.X, me.Y), snapshot.ShipField, hullCenter)
                 : new Vec2(me.X, me.Y);
         }
+        // _cameraLookOffset (Barotrauma-style cursor pan) only ever shifts where the camera itself
+        // centers on screen - never the returned Anchor, which BuildVisibilityMask uses as the
+        // sight cone's true apex. Baking the pan into Anchor too would drag the cone off of the
+        // character's real position the moment the camera panned away from them.
+        var cameraAnchor = anchorLocal + _cameraLookOffset;
         // Divided by the zoom because the scene batch scales everything drawn at this origin: the
         // anchor has to land on the middle of the screen *after* that scaling, not before it.
         var screenCenter = (WorldViewportOrigin + WorldViewportSize / 2f) / SceneZoom(snapshot);
-        var origin = screenCenter - new Vector2(anchorLocal.X, anchorLocal.Y) * ShipRenderer.PixelsPerUnit;
+        var origin = screenCenter - new Vector2(cameraAnchor.X, cameraAnchor.Y) * ShipRenderer.PixelsPerUnit;
         return (origin, hullCenter, anchorLocal);
+    }
+
+    // "ТОПОР ГОШИ ДЛЯ ЛОМАНИЯ ДВЕРЕЙ" meme payoff - fires for every crew member's client the
+    // instant any door's own DoorState flips into Destroyed (World.Doors.cs's ChopDoor reaching 0
+    // HP), the same snapshot-diff detection EffectTracker already uses for welds/breaches/kills,
+    // just triggering a sound instead of a rendered effect. Whole-crew broadcast is deliberate -
+    // the shared DoorStates list means whoever's watching hears it too, not just whoever swung.
+    private void PlayDoorBreakSoundIfAnyDoorJustBroke(WorldSnapshot? previous, WorldSnapshot current)
+    {
+        if (previous is null || _doorBreakSound is null)
+            return;
+
+        foreach (var state in current.DoorStates)
+        {
+            var before = previous.DoorStates.FirstOrDefault(s => s.DoorId == state.DoorId);
+            if (before is { Destroyed: false } && state.Destroyed)
+            {
+                // Volume 1f is already the hard ceiling both XNA/MonoGame volume knobs allow (this
+                // instance's own Volume and the global SoundEffect.MasterVolume set in LoadContent) -
+                // software can't ask a mixer for more than "full scale". The one lever actually left
+                // is firing several overlapping instances of the same clip: their waveforms sum in
+                // the audio engine before the OS output stage, so 3 copies genuinely hit louder (and
+                // rougher/more distorted right at the ceiling) than one - not a fake number, real
+                // summed amplitude. AS LOUD AS POSSIBLE.
+                for (var i = 0; i < DoorBreakSoundLayers; i++)
+                    _doorBreakSound.Play(volume: 1f, pitch: 0f, pan: 0f);
+                return; // one meme per tick is plenty, even if several doors somehow broke at once
+            }
+        }
+    }
+
+    // Recomputes the target lookahead from this frame's fresh mouse/snapshot and eases the smoothed
+    // offset toward it - called once per Update (not from inside ComputeCamera itself, which runs
+    // several times a frame for hit-testing and would otherwise re-blend that many times over).
+    private void UpdateCameraLookOffset(WorldSnapshot? snapshot, float deltaSeconds)
+    {
+        var me = snapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
+        Vec2 target;
+        if (snapshot is null || me is null || me.IsAtHelm || me.OnStation || me.OnEnemyShip ||
+            _openBlock.Kind == BlockKind.Navigation || _infoPanelOpen)
+        {
+            target = Vec2.Zero; // eases back to centered rather than freezing wherever it was
+        }
+        else if (MannedTurret(snapshot) is { } manned)
+        {
+            var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
+            var baseAnchor = mount.Position + mount.FireDirection(manned.State.AimDegrees) * PeriscopeViewLead;
+            target = CursorLookAheadFrom(snapshot, baseAnchor, TurretLookAheadFactor, TurretLookAheadMaxDistance);
+        }
+        else
+        {
+            var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);
+            var baseAnchor = me.IsOutside
+                ? ShipLocalFrame.ToLocal(new Vec2(me.X, me.Y), snapshot.ShipField, hullCenter)
+                : new Vec2(me.X, me.Y);
+            target = CursorLookAheadFrom(snapshot, baseAnchor, CameraLookAheadFactor, CameraLookAheadMaxDistance);
+        }
+
+        var blend = MathHelper.Clamp(deltaSeconds * CameraLookAheadSmoothingPerSecond, 0f, 1f);
+        _cameraLookOffset += (target - _cameraLookOffset) * blend;
+    }
+
+    // Where the cursor sits relative to baseAnchor, converted out of screen space through that
+    // anchor's own (not-yet-offset) camera - so the same formula works whether baseAnchor is a
+    // walking character or a turret's barrel-lead point, each with its own zoom/scale already
+    // folded in via SceneZoom.
+    private Vec2 CursorLookAheadFrom(WorldSnapshot snapshot, Vec2 baseAnchor, float factor, float maxDistance)
+    {
+        var zoom = SceneZoom(snapshot);
+        var screenCenter = (WorldViewportOrigin + WorldViewportSize / 2f) / zoom;
+        var baseOrigin = screenCenter - new Vector2(baseAnchor.X, baseAnchor.Y) * ShipRenderer.PixelsPerUnit;
+        var mouseLocal = (new Vector2(_designMouse.X, _designMouse.Y) / zoom - baseOrigin) / ShipRenderer.PixelsPerUnit;
+
+        var toCursor = new Vec2(mouseLocal.X, mouseLocal.Y) - baseAnchor;
+        var lookAhead = toCursor * factor;
+        var length = lookAhead.Length();
+        return length > maxDistance ? lookAhead * (maxDistance / length) : lookAhead;
     }
 
     // The station never moves or rotates (Station.cs), so its own camera is simpler than the
@@ -811,7 +986,10 @@ public partial class Game1 : Game
             facing = ShipLocalFrame.ToLocalDirection(facing, snapshot.ShipField.RotationDegrees);
         var ambient = me.WearingSuit ? SuitAmbientRadius : 0f;
         var sightReady = _visibility.Build(walls, eye, new Vector2(facing.X, facing.Y), radius, halfAngle, ambient, origin, _renderScale);
-        _roomLightingReady = _roomLighting.Build(walls, lights, floor, origin, _renderScale);
+        // The reactor's light lever (World.cs) kills the room lighting overlay ship-wide - the
+        // sight-only fallback right below already exists for exactly this ("nothing built this
+        // frame"), so flipping the lever just means everything beyond the player's own lamp goes dark.
+        _roomLightingReady = snapshot.ReactorLevers.LightsOn && _roomLighting.Build(walls, lights, floor, origin, _renderScale);
         // Has to happen here, before the backbuffer is touched - see MergeSight's own comment.
         if (_roomLightingReady && sightReady)
             _roomLighting.MergeSight(_spriteBatch, _visibility);
@@ -918,7 +1096,14 @@ public partial class Game1 : Game
         var totalSeconds = (float)gameTime.TotalGameTime.TotalSeconds;
         var maskReady = _client.LatestSnapshot is { } maskSnapshot && BuildVisibilityMask(maskSnapshot, totalSeconds);
 
-        GraphicsDevice.Clear(Color.Black);
+        // The scene and its light mask go into ScenePost's off-screen target so a full-screen
+        // shader has a finished frame to sample; when the effect isn't loaded this is false and
+        // everything below draws at the backbuffer directly, the way it always did. Either way it
+        // has to happen here, before the backbuffer is touched - same render target discard rule
+        // the mask building above is subject to.
+        var postCapturing = _scenePost.Begin(Color.Black);
+        if (!postCapturing)
+            GraphicsDevice.Clear(Color.Black);
 
         // Manning a turret pulls the whole scene back to half scale (SceneZoom) so the gunner can
         // see as far as the gun shoots; everywhere else this is the identity.
@@ -995,10 +1180,64 @@ public partial class Game1 : Game
         // beyond lamp reach; the player's own lamp still works with the ship's power out), so this
         // is a single multiply with no render target switching. If room lighting didn't build for
         // some reason but sight did, sight still applies on its own rather than nothing at all.
-        if (_roomLightingReady)
-            _roomLighting.Composite(_spriteBatch);
-        else if (maskReady)
-            _visibility.Composite(_spriteBatch);
+        // When the post chain is running it multiplies the light mask in itself, in high dynamic
+        // range - see ScenePost. Doing it here as well would apply the light twice and, worse,
+        // would clamp it to 8 bits before the bright pass ever saw it. The blend below is only the
+        // fallback for when there is no post chain at all.
+        if (!postCapturing)
+        {
+            if (_roomLightingReady)
+                _roomLighting.Composite(_spriteBatch);
+            else if (maskReady)
+                _visibility.Composite(_spriteBatch);
+        }
+
+        // Puts the captured frame on the backbuffer through the post effect - the first thing all
+        // frame to touch it. No-op when Begin returned false. The HUD below is drawn after this
+        // point on purpose, so it stays out of the pass.
+        // Heat shimmer over escaping atmosphere. The steam AtmosphereParticles already spawns
+        // doubles as the distortion source, so nothing new has to know where the breaches are - and
+        // the ripple stops by itself the moment a breach is welded and the steam stops coming.
+        if (_shipInteriorOrigin is { } shimmerOrigin && _scenePost.BeginDistortion())
+        {
+            var blob = _scenePost.Blob;
+            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, transformMatrix: sceneTransform);
+            foreach (var particle in _atmosphere.Particles)
+            {
+                if (particle.Kind != AtmosphereKind.Steam)
+                    continue;
+
+                var centre = shimmerOrigin + new Vector2(particle.Position.X, particle.Position.Y) * ShipRenderer.PixelsPerUnit;
+                // Wider than the wisp ShipRenderer draws: air bends light well past the part of it
+                // you can actually see.
+                var radius = particle.Size * ShipRenderer.PixelsPerUnit * (1f + particle.Progress * 1.6f) * 3f;
+                _spriteBatch.Draw(blob, centre, null, Color.White * (1f - particle.Progress), 0f,
+                    new Vector2(blob.Width / 2f, blob.Height / 2f), radius * 2f / blob.Width, SpriteEffects.None, 0f);
+            }
+            _spriteBatch.End();
+            _scenePost.EndDistortion();
+        }
+
+        // True normals for the deck, stamped into their own target with the same transform the
+        // scene was drawn with. Opaque blending on purpose: the alpha channel is the flag saying
+        // this pixel has a real normal, and alpha blending would fade that flag out.
+        // True floor normals disabled on request - with nothing drawn into the normals target the
+        // composite falls back to estimating slope from luminance, exactly as before they existed.
+        if (false && _shipInteriorOrigin is { } normalsOrigin && _client.LatestSnapshot is { } normalsSnapshot
+            && _scenePost.BeginNormals())
+        {
+            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp, transformMatrix: sceneTransform);
+            _shipRenderer.DrawFloorNormals(_spriteBatch, normalsSnapshot, normalsOrigin);
+            _shipRenderer.DrawHullNormals(_spriteBatch, normalsSnapshot, normalsOrigin);
+            _spriteBatch.End();
+            _scenePost.EndNormals();
+        }
+
+        // Which mask the chain reads for "how lit is this pixel": the room lighting one when it
+        // built, since that already has the player sight folded into it; the plain sight mask when
+        // it did not; nothing at all when neither ran, which zeroes the light-driven terms.
+        _scenePost.SetLightMask(_roomLightingReady ? _roomLighting.Mask : maskReady ? _visibility.Mask : null);
+        _scenePost.Present(_spriteBatch, totalSeconds);
 
         _spriteBatch.Begin(transformMatrix: _renderScale);
         if (_client.LatestSnapshot is { } hudSnapshot)
@@ -1019,6 +1258,9 @@ public partial class Game1 : Game
                 case BlockKind.Reactor:
                     _reactorPanel.Draw(_spriteBatch, hudSnapshot.Reactor, PowerPanelOrigin);
                     break;
+                case BlockKind.Battery:
+                    _batteryPanel.Draw(_spriteBatch, hudSnapshot.Power, PowerPanelOrigin);
+                    break;
                 case BlockKind.System:
                     _systemDevicePanel.Draw(_spriteBatch, _openBlock.System, hudSnapshot.Power, hudSnapshot.Shield, hudSnapshot.SystemStates, PowerPanelOrigin);
                     break;
@@ -1035,6 +1277,7 @@ public partial class Game1 : Game
             }
 
             _combatPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, ComputeHint(hudSnapshot, _client.PlayerId), CombatPanelOrigin);
+            _playerHealthPanel.Draw(_spriteBatch, hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId), PlayerHealthPanelOrigin);
             _voyagePanel.Draw(_spriteBatch, hudSnapshot, VoyagePanelOrigin);
 
             // Drawn here, in the HUD batch, rather than inside ShipRenderer's own scene batch -
@@ -1075,6 +1318,42 @@ public partial class Game1 : Game
                         _systemRepairPanel.Draw(_spriteBatch, ComponentRenderer.SystemLabel(nearbyDamaged.System), holdingRepairTool,
                             repairState?.RepairProgress ?? 0f, repairState?.RepairTickPosition ?? 0f, cardOrigin);
                     }
+
+                    // Same card, same proximity radius, for a damaged Junction box instead of a
+                    // damaged SystemDevice - World.Interact.cs's F-key repair treats both the same way.
+                    var nearbyDamagedJunction = hudSnapshot.Components.FirstOrDefault(c =>
+                        c.Kind == ComponentKind.Junction && (c.Position - repairPosition).Length() < TurretInteractionRadius &&
+                        (hudSnapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == c.Id)?.Damaged ?? false));
+                    if (nearbyDamagedJunction is not null)
+                    {
+                        var holdingRepairTool = HeldItemTypes(repairMe.Inventory).Contains(ItemType.Wrench) ||
+                                                 HeldItemTypes(repairMe.Inventory).Contains(ItemType.Screwdriver);
+                        var repairState = hudSnapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == nearbyDamagedJunction.Id);
+                        var cardOrigin = wallToolOrigin + new Vector2(nearbyDamagedJunction.X, nearbyDamagedJunction.Y) * ShipRenderer.PixelsPerUnit
+                            + new Vector2(-SystemRepairPanel.PanelWidth / 2f, -SystemRepairPanel.PanelHeight - 30);
+                        _systemRepairPanel.Draw(_spriteBatch, "Распред. коробка", holdingRepairTool,
+                            repairState?.RepairProgress ?? 0f, repairState?.RepairTickPosition ?? 0f, cardOrigin);
+                    }
+
+                    // Same card again, for a destroyed door (World.Doors.cs) - jammed open by its
+                    // own hit points hitting zero, repaired the same wrench/screwdriver minigame way.
+                    Vec2? DoorPosition(string doorId) =>
+                        hudSnapshot.Doors.FirstOrDefault(d => d.Id == doorId) is { } door ? door.Position
+                        : hudSnapshot.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorId) is { } outer ? outer.Position
+                        : null;
+
+                    var nearbyDestroyedDoor = hudSnapshot.DoorStates.FirstOrDefault(s =>
+                        s.Destroyed && DoorPosition(s.DoorId) is { } doorPos && (doorPos - repairPosition).Length() < TurretInteractionRadius);
+                    if (nearbyDestroyedDoor is not null)
+                    {
+                        var holdingRepairTool = HeldItemTypes(repairMe.Inventory).Contains(ItemType.Wrench) ||
+                                                 HeldItemTypes(repairMe.Inventory).Contains(ItemType.Screwdriver);
+                        var doorPosition = DoorPosition(nearbyDestroyedDoor.DoorId)!.Value;
+                        var cardOrigin = wallToolOrigin + new Vector2(doorPosition.X, doorPosition.Y) * ShipRenderer.PixelsPerUnit
+                            + new Vector2(-SystemRepairPanel.PanelWidth / 2f, -SystemRepairPanel.PanelHeight - 30);
+                        _systemRepairPanel.Draw(_spriteBatch, "Дверь", holdingRepairTool,
+                            nearbyDestroyedDoor.RepairProgress, nearbyDestroyedDoor.RepairTickPosition, cardOrigin);
+                    }
                 }
             }
 
@@ -1097,7 +1376,15 @@ public partial class Game1 : Game
             var carriedSlotCount = myInventory?.MainSlots.Count ?? 0;
             var rowOrigin = InventoryRowOrigin(carriedSlotCount);
             var hoveredToolSlot = myInventory is not null ? HoveredToolSlotIndex(myInventory, rowOrigin) : null;
-            _inventoryPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, rowOrigin, EquipSlotsOrigin, hoveredToolSlot);
+            _inventoryPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, rowOrigin, EquipSlotsOrigin, hoveredToolSlot, IsBeltBagPopupShown(hudSnapshot));
+
+            // The role/portrait box past the equip row's right edge (Barotrauma's own corner) -
+            // just a glyph on a plate, the same DrawRoleGlyph CrewPanel already uses for every
+            // crew row, so a role reads as the same icon everywhere it appears.
+            var roleBoxRect = new Rectangle((int)RoleBoxOrigin.X, (int)RoleBoxOrigin.Y, RoleBoxSize, RoleBoxSize);
+            _spriteBatch.Draw(_pixel, roleBoxRect, new Color(40, 44, 52));
+            var myRole = hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Role;
+            HudIcons.DrawRoleGlyph(_spriteBatch, _pixel, new Vector2(roleBoxRect.Center.X, roleBoxRect.Center.Y), 0.9f, Color.White, myRole);
 
             // Drag-drop feedback (game_design.md section 13): green over a spot the dragged item can
             // actually land on right now, a brief red flash on the spot a rejected drop just bounced
@@ -1142,6 +1429,7 @@ public partial class Game1 : Game
         // _session stays null (see the field's own doc comment) until a ship is actually picked on
         // the select screen - closing the window before that would otherwise crash here.
         _session?.Dispose();
+        _scenePost?.Dispose();
         base.UnloadContent();
     }
 }

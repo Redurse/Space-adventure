@@ -6,6 +6,7 @@ public sealed partial class World
 {
     private const double TurretDamageChance = 0.35; // vs damaging a system or breaching a room
     private const double SystemDamageChance = 0.35; // rolled only if the turret roll misses
+    private const double DoorDamageChance = 0.2; // rolled only if the turret and system rolls both miss
 
     // The only randomness in the simulation, and it used to be seeded from the clock - which made
     // every fight, and therefore every test that flew through one, a different run: the suite
@@ -50,7 +51,17 @@ public sealed partial class World
             return;
         }
 
-        var candidates = Ship.WallBlocks.Where(b => !IsWallBlockBreached(b.Id) && !IsAtDoorPosition(b)).ToList();
+        // A door jammed open ("нельзя было закрыть") is the same kind of hit as a severed wire or a
+        // knocked-out turret - one shot, no partial damage, straight to needing the same F-key
+        // repair minigame (World.SystemRepair.cs).
+        var intactDoors = AllShipDoors().Where(d => !IsDoorDestroyed(d.Id)).ToList();
+        if (intactDoors.Count > 0 && _random.NextDouble() < DoorDamageChance)
+        {
+            DamageDoor(intactDoors[_random.Next(intactDoors.Count)].Id);
+            return;
+        }
+
+        var candidates = Ship.WallBlocks.Where(b => !IsWallBlockBreached(b.Id)).ToList();
         if (candidates.Count == 0)
             return; // every wall block already breached
 

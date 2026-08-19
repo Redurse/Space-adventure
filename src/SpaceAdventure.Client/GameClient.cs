@@ -73,8 +73,14 @@ public sealed class GameClient
         bool cardGameEndRoundPressed = false,
         long lastServerTimestampMs = 0,
         float? travelToX = null,
-        float? travelToY = null) =>
-        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, clearOwnRolePressed, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, travelToX, travelToY));
+        float? travelToY = null,
+        float? wireBendAtX = null,
+        float? wireBendAtY = null,
+        bool toggleLightsPressed = false,
+        bool toggleReactorEmergencyPressed = false,
+        bool toggleDoorsLockedPressed = false,
+        bool axeSwingHeld = false) =>
+        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, clearOwnRolePressed, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, travelToX, travelToY, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld));
 
     public void PollSnapshots()
     {

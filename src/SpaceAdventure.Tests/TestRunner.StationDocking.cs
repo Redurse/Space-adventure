@@ -204,6 +204,36 @@ internal static partial class TestRunner
         return sawPortAtSpeed;
     }
 
+    // Same button either way (World.StationDocking.cs's HandleDockButtonPressed) - pressing it
+    // while already docked casts off instead of trying (and failing) to dock all over again.
+    private static bool World_Docking_ButtonUndocksWhenPressedWhileAlreadyDocked()
+    {
+        var world = new World();
+        world.SpawnCharacter(1); // starts docked at the home station
+
+        if (world.Phase != VoyagePhase.Station)
+            return false; // setup problem, not the behavior under test
+
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        return world.Phase == VoyagePhase.Traveling && world.CreateSnapshot().Voyage.DockedPointId is null;
+    }
+
+    // Casting off through the dock button pulls anyone still ashore back aboard, exactly like
+    // casting off by picking a destination does (World_Station_Departing_PullsCrewBackAboard) -
+    // both routes share PullCrewOffStation now.
+    private static bool World_Docking_UndockButtonPullsCrewBackAboard()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        WalkOntoStation(world);
+        if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnStation)
+            return false;
+
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        return !me.OnStation && world.Ship.Rooms.Any(r => r.Contains(new Vec2(me.X, me.Y)));
+    }
+
     // The station's bulk is solid - the ship stops against it instead of flying through, and the
     // berth deliberately sits outside that radius so lining up never means shouldering the hull.
     private static bool World_Docking_StationHullBlocksTheShip()

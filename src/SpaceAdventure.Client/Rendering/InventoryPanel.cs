@@ -32,12 +32,38 @@ public sealed class InventoryPanel
     public static int RowWidth(int slotCount) => slotCount * (SlotSize + SlotSpacing) - SlotSpacing;
     public static int EquipRowWidth => RowWidth(EquipSlots.Length);
 
+    // Suit is shown here (and renders whatever's worn) but isn't a drag target - it's filled only
+    // through the suit-locker's own timed equip/unequip action (World.Storage.cs's
+    // IsSlotReachable excludes it from the generic move path on purpose). Clothing/Headwear stay
+    // in the row for the same reason Barotrauma's own has them, even though nothing in the game
+    // wears either yet - EquipSlotDefinitions has no item mapped to them, so they just always
+    // refuse a drop until a real garment exists.
     internal static readonly (EquipSlot Id, string Label)[] EquipSlots =
     {
-        (EquipSlot.Headset, "Н"),
+        (EquipSlot.BeltBag, "Сум"),
+        (EquipSlot.Suit, "С"),
         (EquipSlot.Clothing, "О"),
         (EquipSlot.Headwear, "Г"),
+        (EquipSlot.Headset, "Н"),
+        (EquipSlot.IdCard, "ID"),
     };
+
+    // 2 columns x 3 rows, opening upward above the worn BeltBag's own icon (game_design.md
+    // section 13) - the exact shape asked for, matching Barotrauma's own belt/tool-bag popup.
+    public const int BeltBagColumns = 2;
+    public const int BeltBagRows = 3;
+    private const int BeltBagPopupGap = 10;
+
+    public static Rectangle GetBeltBagSlotRect(int index, Rectangle bagIconRect)
+    {
+        var gridWidth = BeltBagColumns * (SlotSize + SlotSpacing) - SlotSpacing;
+        var gridHeight = BeltBagRows * (SlotSize + SlotSpacing) - SlotSpacing;
+        var gridLeft = bagIconRect.X + (bagIconRect.Width - gridWidth) / 2;
+        var gridTop = bagIconRect.Y - BeltBagPopupGap - gridHeight;
+        var col = index % BeltBagColumns;
+        var row = index / BeltBagColumns;
+        return new Rectangle(gridLeft + col * (SlotSize + SlotSpacing), gridTop + row * (SlotSize + SlotSpacing), SlotSize, SlotSize);
+    }
 
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
@@ -85,7 +111,10 @@ public sealed class InventoryPanel
     // HoveredToolSlotIndex) - a cutter or welding tool's socket stays hidden until the mouse is
     // over its slot (or the socket band that then appears above it), so the row doesn't show a
     // socket under every tool all the time.
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 rowOrigin, Vector2 equipOrigin, int? hoveredMainSlotIndex = null)
+    // showBeltBag: whether to reveal the worn bag's own 2x3 sub-inventory this frame (Game1's own
+    // hover/drag-source check) - hidden the rest of the time so it doesn't sit permanently open
+    // above the icon.
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 rowOrigin, Vector2 equipOrigin, int? hoveredMainSlotIndex = null, bool showBeltBag = false)
     {
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == playerId);
         if (me?.Inventory is not { } inventory)
@@ -99,6 +128,10 @@ public sealed class InventoryPanel
             DrawSlot(spriteBatch, _pixel, _font, rect, item, label);
             if (item is { } worn && TankSockets.HasSocket(worn))
                 DrawSocket(spriteBatch, GetSocketRect(rect, above: true), inventory.WornSuitTank);
+
+            if (id == EquipSlot.BeltBag && item == ItemType.BeltBag && showBeltBag)
+                for (var b = 0; b < inventory.BeltBagSlots.Count; b++)
+                    DrawSlot(spriteBatch, _pixel, _font, GetBeltBagSlotRect(b, rect), inventory.BeltBagSlots[b], string.Empty);
         }
 
         for (var i = 0; i < inventory.MainSlots.Count; i++)
@@ -280,8 +313,10 @@ public sealed class InventoryPanel
     {
         ItemType.AmmoCrate => Color.SaddleBrown,
         ItemType.Spacesuit => Color.CadetBlue,
-        ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle => Color.DarkRed,
+        ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle or ItemType.Axe => Color.DarkRed,
         ItemType.MedKit => Color.Crimson,
+        ItemType.BeltBag => Color.SaddleBrown,
+        ItemType.IdCard => Color.SteelBlue,
         _ => Color.DarkKhaki, // Wrench, Screwdriver, WeldingTool, Cutter
     };
 

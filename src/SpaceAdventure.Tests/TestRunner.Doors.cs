@@ -17,6 +17,95 @@ internal static partial class TestRunner
         return before && !after;
     }
 
+    // Doors have their own hit points now (game_design.md) - a destroyed one is forced open (its
+    // frame/motor can't hold a seal any more) and stops answering ToggleDoor entirely, the same
+    // "jammed" behavior a WallBlock-style one-shot combat hit produces everywhere else in the game.
+    private static bool World_Door_Destroyed_ForcesOpenAndBlocksClosing()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // starts open -> closed
+        var closedBeforeDamage = !world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor").IsOpen;
+
+        world.DamageDoor("door-cockpit-reactor");
+        var afterDamage = world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor");
+
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // try to close it again
+        var stillOpenAfterToggleAttempt = world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor").IsOpen;
+
+        return closedBeforeDamage && afterDamage.Destroyed && afterDamage.IsOpen && stillOpenAfterToggleAttempt;
+    }
+
+    // Repaired the same wrench/screwdriver-driven minigame a SystemDevice/Junction already uses
+    // (World.SystemRepair.cs) - once restored to full health, the door goes back to answering
+    // ToggleDoor normally.
+    private static bool World_Door_Repair_RestoresItAndAllowsClosingAgain()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.DamageDoor("door-cockpit-reactor");
+
+        var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot));
+        MoveCharacterTo(world, 1, 4.9f, 3f); // right at the door, cockpit side
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
+
+        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
+            world.Step(RealtimeStep);
+
+        var repaired = !world.IsDoorDestroyed("door-cockpit-reactor");
+
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // now closes normally again
+        var closedAfterRepair = !world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor").IsOpen;
+
+        return repaired && closedAfterRepair;
+    }
+
+    // "ТОПОР ГОШИ ДЛЯ ЛОМАНИЯ ДВЕРЕЙ" - AxeChopDamage is exactly half DoorMaxHp, so a door standing
+    // at full health takes two swings to break down, not one and not three.
+    private static bool World_Axe_ChopsClosedDoorInTwoHits()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // starts open -> closed
+
+        var axeSlot = TakeFromRack(world, ItemType.Axe);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: axeSlot));
+        MoveCharacterTo(world, 1, 5f, 3f); // right at the door
+
+        world.ApplyCommand(1, new ClientCommand(1, AxeSwingHeld: true));
+        world.Step(RealtimeStep);
+        var afterFirstHit = world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor");
+
+        // Keep "holding" the swing button past the cooldown, same as a client sending it every
+        // tick - the second hit only lands once World.Doors.cs's own swing cooldown clears.
+        for (var i = 0; i < 30; i++) // 1s, comfortably past the 0.6s swing cooldown
+        {
+            world.ApplyCommand(1, new ClientCommand(1, AxeSwingHeld: true));
+            world.Step(RealtimeStep);
+        }
+        var afterSecondHit = world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor");
+
+        return !afterFirstHit.Destroyed && afterFirstHit.Hp > 0
+            && afterSecondHit.Destroyed && afterSecondHit.IsOpen;
+    }
+
+    // Swinging with nothing - or the wrong tool - in hand does nothing to the door (TryChopDoor's
+    // own IsHolding(Axe) gate), the same way CutHeld/WeldHeld need the matching tool to do anything.
+    private static bool World_Axe_DoesNothingWithoutAxeInHand()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor"));
+        MoveCharacterTo(world, 1, 5f, 3f);
+
+        world.ApplyCommand(1, new ClientCommand(1, AxeSwingHeld: true));
+        world.Step(RealtimeStep);
+
+        var state = world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor");
+        return state.Hp >= World.DoorMaxHp;
+    }
+
     private static bool World_Door_Closed_BlocksMovementLikeWall()
     {
         var world = new World();

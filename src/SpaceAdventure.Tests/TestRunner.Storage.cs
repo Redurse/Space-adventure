@@ -102,14 +102,14 @@ internal static partial class TestRunner
         if (from < 0)
             return false;
 
-        // Slot 20 sits past the starter stock's own 18 slots (World.Storage.cs's
+        // Slot 23 sits past the starter stock's own 21 slots (World.Storage.cs's
         // InitializeRackSlots) so this is a stow onto an empty slot, not a swap with whatever
         // starter item happens to already live there.
         world.ApplyCommand(1, new ClientCommand(1,
             MoveItemFrom: new SlotRef(ItemSlotKind.Main, from),
-            MoveItemTo: new SlotRef(ItemSlotKind.Rack, 20)));
+            MoveItemTo: new SlotRef(ItemSlotKind.Rack, 23)));
 
-        return RackSlot(world, 20) == ItemType.Wrench && MainSlot(world, from) is null;
+        return RackSlot(world, 23) == ItemType.Wrench && MainSlot(world, from) is null;
     }
 
     // Dropping onto an occupied slot exchanges the two rather than overwriting - losing an item to
@@ -139,13 +139,13 @@ internal static partial class TestRunner
         var from = StandAtRackHolding(world, ItemType.Wrench);
         WalkAcrossShipTo(world, 3f, 3f); // off to the cockpit, far from the rack
 
-        // Slot 20 sits past the starter stock's own 18 slots (World.Storage.cs's
+        // Slot 23 sits past the starter stock's own 21 slots (World.Storage.cs's
         // InitializeRackSlots), so it's empty - "is null" only proves anything if it started that way.
         world.ApplyCommand(1, new ClientCommand(1,
             MoveItemFrom: new SlotRef(ItemSlotKind.Main, from),
-            MoveItemTo: new SlotRef(ItemSlotKind.Rack, 20)));
+            MoveItemTo: new SlotRef(ItemSlotKind.Rack, 23)));
 
-        return RackSlot(world, 20) is null && MainSlot(world, from) == ItemType.Wrench;
+        return RackSlot(world, 23) is null && MainSlot(world, from) == ItemType.Wrench;
     }
 
     // Rearranging your own row needs no rack at all - and anything that moves leaves your hands,
@@ -185,4 +185,82 @@ internal static partial class TestRunner
         return restored.CreateSnapshot().RackSlots[12] == ItemType.Wrench;
     }
 
+    // Barotrauma-style equip row (game_design.md section 13): a worn BeltBag opens its own small
+    // sub-inventory (Inventory.BeltBagSlots), addressable the same way as any other slot once worn.
+    private static bool World_Equip_BeltBag_HoldsItemsInItsOwnSubSlots()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        var bagSlot = StandAtRackHolding(world, ItemType.BeltBag);
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Main, bagSlot),
+            MoveItemTo: new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.BeltBag)));
+
+        var wrenchSlot = StandAtRackHolding(world, ItemType.Wrench);
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Main, wrenchSlot),
+            MoveItemTo: new SlotRef(ItemSlotKind.BeltBag, 0)));
+
+        var inventory = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!;
+        return inventory.Equipped[EquipSlot.BeltBag] == ItemType.BeltBag
+            && inventory.BeltBagSlots[0] == ItemType.Wrench
+            && MainSlot(world, wrenchSlot) is null;
+    }
+
+    // Unequipping a bag that's still carrying something would strand it nowhere - has to be
+    // emptied out first, the same way a rack move refuses to strand a plugged-in tank.
+    private static bool World_Equip_CannotUnequipNonEmptyBeltBag()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        var bagSlot = StandAtRackHolding(world, ItemType.BeltBag);
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Main, bagSlot),
+            MoveItemTo: new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.BeltBag)));
+
+        var wrenchSlot = StandAtRackHolding(world, ItemType.Wrench);
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Main, wrenchSlot),
+            MoveItemTo: new SlotRef(ItemSlotKind.BeltBag, 0)));
+
+        var freeSlot = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), null);
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.BeltBag),
+            MoveItemTo: new SlotRef(ItemSlotKind.Main, freeSlot)));
+
+        var inventory = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!;
+        return inventory.Equipped[EquipSlot.BeltBag] == ItemType.BeltBag; // still worn - move refused
+    }
+
+    // EquipSlotDefinitions.SlotFor gates every equip slot to the one item type it's actually
+    // defined for - a wrench doesn't belong in the ID card slot just because both are "worn".
+    private static bool World_Equip_WrongItemTypeIsRefused()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        var wrenchSlot = StandAtRackHolding(world, ItemType.Wrench);
+
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Main, wrenchSlot),
+            MoveItemTo: new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.IdCard)));
+
+        var inventory = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!;
+        return inventory.Equipped[EquipSlot.IdCard] is null && inventory.MainSlots[wrenchSlot] == ItemType.Wrench;
+    }
+
+    // The ID card slot is the mirror-image happy path of the refusal above - the one item it's
+    // actually defined for goes in cleanly.
+    private static bool World_Equip_IdCardEquipsIntoItsOwnSlot()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        var idCardSlot = StandAtRackHolding(world, ItemType.IdCard);
+
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Main, idCardSlot),
+            MoveItemTo: new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.IdCard)));
+
+        var inventory = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!;
+        return inventory.Equipped[EquipSlot.IdCard] == ItemType.IdCard && MainSlot(world, idCardSlot) is null;
+    }
 }

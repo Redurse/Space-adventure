@@ -10,6 +10,35 @@ public sealed partial class World
 {
     private const float TransitSlowdownRadius = 25f; // start easing off the throttle before overshoot
 
+    // How far the ship has to fly from whatever pulled it into a local encounter before that
+    // encounter lets go and Phase falls back to Traveling - the same "you can always just leave"
+    // rule for every location kind, game_design.md's own "в них можно летать" turned into an actual
+    // boundary instead of a one-way trip that only ends by winning/docking/picking a new course.
+    // Kept safely under the field's own cardinal half-extent (a 300x300 field's centre is only
+    // 150 units from any edge) - the exit radius used to be 160, bigger than that, which meant
+    // flying "clear" in most directions was only reachable by first hitting the field's own wall
+    // and getting clamped there, leaving the ship pinned to the system's edge the moment it
+    // dropped back into Traveling. 130 stays comfortably outside every default asteroid/ore
+    // deposit (~114 from centre at the farthest) while leaving real room to reach it in any
+    // direction without touching the boundary.
+    private const float AsteroidFieldExitRadius = 130f;
+    private const float StationApproachAbortDistance = 30f; // beyond StationApproachStartDistance(20) - called off the approach, not just drifted
+    // Measured from the sector's own marker, not from the (actively pursuing) enemy ships - a
+    // squadron's formation AI tracks the ship's own position closely (World.EnemyFleet.cs's
+    // SteerEnemy), so distance to them barely opens even during a real retreat; distance from the
+    // fixed point that started the fight is the same "flown clear of it" signal AsteroidField/
+    // StationApproach already use, and every battle starts within the marker's own small
+    // CaptureRadius(8) by construction, so reaching this takes a real, sustained retreat either way.
+    // Some sectors sit close enough to the field's own edge (sol's sector-beta, 42 units from the
+    // left wall) that the old 45 was unreachable in that one direction without hitting the wall
+    // first - 35 leaves every sector real room in every direction.
+    private const float BattleFleeDistance = 35f;
+    // However a location is left, the ship should land somewhere flyable, not pinned to the
+    // system's own outer boundary - NudgeAwayFromFieldEdge is the safety net underneath the three
+    // radii above, in case a future system's own layout ever puts a location's escape route that
+    // close to the wall again.
+    private const float FieldEdgeSafetyMargin = 12f;
+
     public GalaxyMap GalaxyMap { get; } = GalaxyMap.CreateStarter();
 
     // Which StarSystem the ship is currently in (World.StarSystems.cs) - changed only by warp;
@@ -46,9 +75,13 @@ public sealed partial class World
 
             case VoyagePhase.Battle:
                 // A fight is flown, not watched: the same helm physics the asteroid field uses,
-                // so the player can close, kite or put a rock between themselves and the guns.
+                // so the player can close, kite or put a rock between themselves and the guns -
+                // including flying clear of it entirely (EnemyMaxSpeed's own doc comment already
+                // promises "you can outrun them").
                 StepShipFieldPhysics(deltaSeconds);
                 ResolveEnemyLosses();
+                if (Phase == VoyagePhase.Battle && HasFledTheSector())
+                    FleeBattle();
                 break;
 
             case VoyagePhase.Station:
@@ -56,10 +89,21 @@ public sealed partial class World
 
             case VoyagePhase.AsteroidField:
                 StepShipFieldPhysics(deltaSeconds);
+                if ((AsteroidField.Center - _shipFieldPosition).Length() > AsteroidFieldExitRadius)
+                {
+                    NudgeAwayFromFieldEdge();
+                    Phase = VoyagePhase.Traveling; // flown clear of the belt - back in open space, free to pick a new course
+                }
                 break;
 
             case VoyagePhase.StationApproach:
                 StepStationApproachPhysics(deltaSeconds);
+                if ((DockBerthPosition - _shipFieldPosition).Length() > StationApproachAbortDistance)
+                {
+                    _travelTargetPointId = null; // called the approach off - nothing bound to head for any more
+                    NudgeAwayFromFieldEdge();
+                    Phase = VoyagePhase.Traveling;
+                }
                 break;
         }
     }
@@ -105,6 +149,8 @@ public sealed partial class World
         //   destination can still pass back within its CaptureRadius depending on geometry (the
         //   small disengage nudge in ResolveEnemyLosses only guarantees clearance along one line,
         //   not every possible new heading), which would otherwise restart the same fight instantly.
+        // (Warping away no longer has a discrete point to exclude here - World.StarSystems.cs's
+        // CanWarpNow just watches distance from the field's own centre every tick, no capture event.)
         var caught = GalaxyMap.GetSystem(_currentSystemId).Points
             .Where(p => p.Kind is not (GalaxyPointKind.AsteroidField or GalaxyPointKind.Station) || p.Id == _travelTargetPointId)
             .Where(p => p.Id != _recentlyDisengagedSectorId || p.Id == _travelTargetPointId)
@@ -149,16 +195,7 @@ public sealed partial class World
         // branch below clears the steering target the same way an explicit arrival always has.
         _travelTargetPosition = null;
 
-        if (target.Kind == GalaxyPointKind.WarpPoint)
-        {
-            // Parked, not drifting - same guarantee every other arrival gives, so residual
-            // momentum can't carry the ship back out of WarpCaptureRadius before anyone reacts.
-            _travelTargetPointId = null;
-            _shipVelocity = Vec2.Zero;
-            _shipThrust = Vec2.Zero;
-            _shipAutoStabilize = true;
-        }
-        else if (target.Kind == GalaxyPointKind.HostileSector)
+        if (target.Kind == GalaxyPointKind.HostileSector)
         {
             _travelTargetPointId = null;
             _battleFaction = OwnerOf(target.Id);
@@ -257,6 +294,42 @@ public sealed partial class World
         Phase = VoyagePhase.Traveling; // sector cleared - free to pick a new destination
     }
 
+    // True once the ship has actually flown clear of the sector that's fighting it, not merely
+    // clear of the ships themselves - their own formation AI keeps them tracking the ship's current
+    // position closely (SteerEnemy), so measuring against them barely moves even during a real
+    // retreat. The marker is a fixed point every battle starts within CaptureRadius(8) of, so this
+    // only fires after genuinely putting distance behind, regardless of how tightly the squadron
+    // itself manages to keep pace.
+    private bool HasFledTheSector() =>
+        _battleSectorPointId is { } sectorId &&
+        (GalaxyMap.GetPoint(sectorId).Position - _shipFieldPosition).Length() > BattleFleeDistance;
+
+    // Running rather than winning - the squadron is still out there, so no bounty progress, no
+    // standing hit for them, nothing recorded as destroyed. Same anti-recapture bookkeeping a won
+    // fight uses (_recentlyDisengagedSectorId) so the very next Traveling tick doesn't instantly
+    // catch the ship again if it happens to still be within the sector marker's own CaptureRadius -
+    // flying back in later legitimately restarts the same fight, exactly as it should.
+    private void FleeBattle()
+    {
+        _recentlyDisengagedSectorId = _battleSectorPointId;
+        _battleSectorPointId = null;
+        _battleFaction = null;
+        _projectiles.Clear();
+        NudgeAwayFromFieldEdge();
+        Phase = VoyagePhase.Traveling;
+    }
+
+    // Pulls the ship back off the system's own outer boundary if flying clear of a location left
+    // it sitting right on (or clamped against) the edge - none of AsteroidFieldExitRadius/
+    // StationApproachAbortDistance/BattleFleeDistance should require touching the wall to satisfy,
+    // but this is the safety net in case one ever does for some future system's layout.
+    private void NudgeAwayFromFieldEdge()
+    {
+        _shipFieldPosition = new Vec2(
+            Math.Clamp(_shipFieldPosition.X, FieldEdgeSafetyMargin, AsteroidField.Width - FieldEdgeSafetyMargin),
+            Math.Clamp(_shipFieldPosition.Y, FieldEdgeSafetyMargin, AsteroidField.Height - FieldEdgeSafetyMargin));
+    }
+
     // Entering the field (game_design.md Phase 3, M15) always drops the ship in the middle,
     // stopped and stable — arriving mid-drift into a field full of obstacles would be needlessly
     // punishing and isn't something the player chose.
@@ -288,6 +361,7 @@ public sealed partial class World
         PowerGrid.Reactor.Refuel();
         RefillOxygenTanks(); // a station resupplies air the same way it refuels and repairs
         InitializeWallBlocks(); // a station patches the hull back to full the same way
+        RestockAmmoStorages(); // and tops the ammo crates back up too
         foreach (var room in Ship.Rooms)
             _roomOxygen[room.Id] = FullOxygen;
         RegenerateRecruitRoster();
@@ -326,15 +400,7 @@ public sealed partial class World
             return; // no click this frame
         }
 
-        // Casting off takes the station's rooms out of the docked layout, so anyone still standing
-        // in them would be left walking around geometry that no longer connects to anything -
-        // they get pulled back through the connector into the airlock chamber instead.
-        foreach (var character in _characters.Values.Where(c => c.OnStation))
-        {
-            character.OnStation = false;
-            character.RoomId = Ship.AirlockOuterDoors.First().RoomId;
-            character.Position = Ship.GetRoom(character.RoomId).Center;
-        }
+        PullCrewOffStation();
 
         Phase = VoyagePhase.Traveling;
         _dockedPointId = null;

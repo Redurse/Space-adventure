@@ -15,11 +15,18 @@ public sealed record WorldSnapshot(
     IReadOnlyList<Turret> Turrets,
     IReadOnlyList<TurretState> TurretStates,
     IReadOnlyList<AmmoStorage> AmmoStorages,
+    IReadOnlyList<AmmoStorageState> AmmoStorageStates,
     IReadOnlyList<SuitLocker> SuitLockers,
     IReadOnlyList<ShipSystemDevice> SystemDevices,
     IReadOnlyList<ShipSystemState> SystemStates,
+    // A Junction box is now its own breakable/movable device (game_design.md - "щитки"), reusing
+    // ShipSystemState's exact shape: DeviceId is the Junction's own Component.Id ("junction-oxygen"
+    // etc.), System is the one power system it serves. Damaged means its own trunk wire (Distribution
+    // -> Junction) is cut - World.Wiring.cs's IsJunctionDamaged - not any downstream device's drop wire.
+    IReadOnlyList<ShipSystemState> JunctionStates,
     ReactorBlock ReactorBlock,
     PowerDistributionBlock DistributionBlock,
+    BatteryBlock BatteryBlock,
     NavigationConsole NavigationConsole,
     IReadOnlyList<GalaxyPoint> GalaxyPoints,
     HelmConsole HelmConsole,
@@ -89,10 +96,12 @@ public sealed record WorldSnapshot(
     // Who's currently on offer at the docked station's Recruiter, if it has one (World.Recruiting.cs,
     // game_design.md section 10) - empty away from a Recruiter or undocked.
     IReadOnlyList<BotCandidate> RecruitCandidates,
-    // The inter-system map (World.StarSystems.cs) - every known system's id/name (full graph, any
-    // is a valid warp target), which one the ship is in now, and whether it's parked at that
-    // system's own WarpPoint slowly enough to actually jump - the same "arms the button" pattern
-    // CanDock already uses for docking.
+    // The inter-system map (World.StarSystems.cs) - every known system's id/name/galactic position
+    // (a valid warp target is any system within GalaxyMap.WarpJumpRadius of the current one - a
+    // circle, not a hand-authored edge list, computed client-side straight from GalaxyX/Y), which
+    // one the ship is in now, and whether it's out past that system's own warp zone
+    // (GalaxyMap.WarpZoneRadius from the field's centre) slowly enough to actually jump - the same
+    // "arms the button" pattern CanDock already uses for docking.
     IReadOnlyList<StarSystemSummary> StarSystems,
     string CurrentSystemId,
     bool CanWarpNow,
@@ -109,9 +118,14 @@ public sealed record WorldSnapshot(
     // time, the same "unbound session" shape ActiveQuest above already uses.
     CardTable CardTable,
     CardGameState? CardGame,
-    // The limited, non-crossing warp graph itself (GalaxyMap.Corridors) - which pairs of systems
-    // above a jump is actually possible between, for GalacticMapPanel to draw as lines and to know
-    // which systems are even worth offering as a jump target from here. Appended at the end rather
-    // than next to StarSystems so it doesn't shift every positional argument after it at World.cs's
-    // CreateSnapshot call site.
-    IReadOnlyList<GalaxyCorridor> GalaxyCorridors);
+    // Ship.ForwardDegrees itself, not a ShipKind lookup (ShipCatalog.ForwardDegrees) - a custom
+    // hull built in the Ship Editor has no catalog entry to look up, so the renderer needs the
+    // real value straight off the live Ship (ShipRenderer.cs).
+    float ShipForwardDegrees,
+    // The reactor's 3 levers (World.cs) - appended at the end like every other field above, for
+    // the same reason (doesn't shift positional args at World.cs's CreateSnapshot call site).
+    ReactorLeverState ReactorLevers,
+    // The scripted intro campaign's narrative beats reached so far, oldest first (World.Campaign.cs) -
+    // plain flavor text over the existing quest/faction/combat systems, not a new mechanic of its
+    // own. Shown in InfoPanel's Missions tab alongside the active quest.
+    IReadOnlyList<string> StoryLog);

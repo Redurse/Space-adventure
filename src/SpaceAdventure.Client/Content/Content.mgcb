@@ -5,7 +5,7 @@
 /intermediateDir:obj/$(Platform)
 /platform:Windows
 /config:
-/profile:Reach
+/profile:HiDef
 /compress:False
 
 #-------------------------------- References --------------------------------#
@@ -19,4 +19,22 @@
 /processorParam:PremultiplyAlpha=True
 /processorParam:TextureFormat=Compressed
 /build:DebugFont.spritefont
+
+#begin Shaders/Post.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Shaders/Post.fx
+
+#begin Sounds/DoorBreak.mp3
+/importer:Mp3Importer
+/processor:SoundEffectProcessor
+/processorParam:Quality=Best
+/build:Sounds/DoorBreak.mp3
+
+#begin Shaders/Light.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Shaders/Light.fx
 

@@ -9,6 +9,7 @@ public static class ShipCatalog
         ShipKind.Scout => "Разведчик",
         ShipKind.Cruiser => "Крейсер",
         ShipKind.Corvette => "Корвет",
+        ShipKind.Custom => "Свой корабль",
         _ => "Фрегат",
     };
 
@@ -17,6 +18,7 @@ public static class ShipCatalog
         ShipKind.Scout => "Дёшево и слабо: 2 отсека, 1 орудие, только нож из личного оружия.",
         ShipKind.Cruiser => "Дорого и мощно: 7 отсеков, 3 орудия, второй склад боеприпасов.",
         ShipKind.Corvette => "Вертикальная компоновка: 6 отсеков, бортовой залп, 2 двигателя, 2 стыковочных порта.",
+        ShipKind.Custom => "Нарисован вами в редакторе корабля.",
         _ => "Сбалансированный старт: 5 отсеков, 2 орудия.",
     };
 

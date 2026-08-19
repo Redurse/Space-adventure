@@ -130,13 +130,30 @@ internal static partial class TestRunner
     private static bool PowerGrid_Allocation_CannotExceedReactorOutput()
     {
         var grid = new PowerGrid();
-        grid.ApplyInput(systemIndex: 0, direction: 1f);
+        grid.ApplyInput(playerId: 1, systemIndex: 0, direction: 1f);
         for (var i = 0; i < 5; i++)
             grid.Step(1.0); // enough seconds at the adjust rate to try to overshoot the cap
 
         var state = grid.CreateState();
         var total = state.Allocated.Values.Sum();
         return total <= state.ReactorOutput + 0.01f && total > 0f;
+    }
+
+    // Regression: two players adjusting different sliders in the same tick used to share one
+    // "last call wins" adjust slot (World.cs's ApplyCommand called PowerGrid.ApplyInput once per
+    // player, each overwriting the other) - in practice only whichever player happened to be
+    // processed last that tick ever actually moved a slider. Each player's own input now applies
+    // independently, on its own player-keyed slot.
+    private static bool PowerGrid_TwoPlayers_CanAdjustDifferentSlidersSimultaneously()
+    {
+        var grid = new PowerGrid();
+        grid.ApplyInput(playerId: 1, systemIndex: (int)PowerSystemId.Oxygen, direction: 1f);
+        grid.ApplyInput(playerId: 2, systemIndex: (int)PowerSystemId.Shields, direction: 1f);
+        for (var i = 0; i < 5; i++)
+            grid.Step(1.0);
+
+        var state = grid.CreateState();
+        return state.Allocated[PowerSystemId.Oxygen] > 0f && state.Allocated[PowerSystemId.Shields] > 0f;
     }
 
     private static bool PowerGrid_Battery_ChargesFromSurplus()
@@ -148,6 +165,34 @@ internal static partial class TestRunner
 
         var state = grid.CreateState();
         return state.BatteryCharge > 0f;
+    }
+
+    // Regression coverage for the battery block feature: once the battery is charged, a reactor
+    // output shortfall should draw from it before allocations get rescaled down, so a system that
+    // was already running at some level doesn't instantly dip the moment fuel runs out.
+    private static bool PowerGrid_Battery_DischargesToCoverReactorShortfall()
+    {
+        var grid = new PowerGrid();
+        grid.ApplyInput(playerId: 1, systemIndex: (int)PowerSystemId.Shields, direction: 1f);
+        for (var i = 0; i < 5; i++)
+            grid.Step(1.0); // build up an allocation, charging the battery from the surplus
+
+        grid.ApplyInput(playerId: 1, systemIndex: (int)PowerSystemId.Shields, direction: 0f); // let go of the slider
+
+        var beforeCharge = grid.CreateState().BatteryCharge;
+        var allocatedBefore = grid.CreateState().Allocated.Values.Sum();
+        if (beforeCharge <= 0f || allocatedBefore <= 0f)
+            return false;
+
+        // Starve the reactor's fuel directly (bypassing PowerGrid.Step) so its output collapses
+        // to zero without touching the still-held allocation.
+        for (var i = 0; i < 2000 && grid.Reactor.Fuel > 0; i++)
+            grid.Reactor.Step(1.0, totalAllocatedPower: grid.Reactor.MaxOutput);
+
+        grid.Step(1.0); // one grid tick with the reactor already dark
+
+        var state = grid.CreateState();
+        return state.BatteryCharge < beforeCharge && state.Allocated.Values.Sum() > 0.01f;
     }
 
     // Bang-bang controller: drives the character toward a target via small realtime steps

@@ -12,6 +12,10 @@ public static class TradeCatalog
         new TradeGood(ItemType.Screwdriver, BuyPrice: 20, SellPrice: 8),
         new TradeGood(ItemType.WeldingTool, BuyPrice: 50, SellPrice: 20),
         new TradeGood(ItemType.Cutter, BuyPrice: 30, SellPrice: 12),
+        // Replacement tanks for the two tools right above - bought fully charged
+        // (Inventory.TryAdd already fills any TankSockets.IsTank item to FullChargeOf on pickup).
+        new TradeGood(ItemType.WeldingTank, BuyPrice: 35, SellPrice: 14),
+        new TradeGood(ItemType.OxygenTank, BuyPrice: 35, SellPrice: 14),
         new TradeGood(ItemType.Spacesuit, BuyPrice: 150, SellPrice: 60),
         new TradeGood(ItemType.AmmoCrate, BuyPrice: 40, SellPrice: 15),
         new TradeGood(ItemType.FuelRod, BuyPrice: 60, SellPrice: 25),

@@ -23,30 +23,49 @@ public static class WireGraphFactory
         var wires = new List<Wire>();
         var systems = Enum.GetValues<PowerSystemId>();
 
+        // The room the distribution block itself sits in (the reactor room, on every hull) - each
+        // junction now takes a spot along its left/right walls instead of stacking in a row right
+        // next to the block, which read as one clump rather than separate physical boxes.
+        var room = ship.Rooms.First(r => r.Id == ship.DistributionBlock.RoomId);
+        var junctionIndex = 0;
+
         foreach (var system in systems)
         {
             var devices = ship.SystemDevices.Where(d => d.System == system).ToList();
             if (devices.Count == 0)
                 continue; // this hull has no device on this system at all - no junction, no wires
 
-            // Spread the junctions out along X rather than stacking every one on the same point -
-            // there's nothing physically at Distribution's side beyond the block itself, so this is
-            // the only place a position for them exists at all.
-            var junctionId = $"junction-{system}".ToLowerInvariant();
-            components.Add(new Component(junctionId, ComponentKind.Junction, ship.DistributionBlock.RoomId,
-                ship.DistributionBlock.X + 1f + Array.IndexOf(systems, system) * 0.6f, ship.DistributionBlock.Y));
+            // Alternate left/right wall, stepping down each side as more junctions land on it - a
+            // hull with up to 5 power systems puts at most 3 boxes down either wall.
+            var onLeftWall = junctionIndex % 2 == 0;
+            var slot = junctionIndex / 2;
+            var junctionX = onLeftWall ? room.Left + 1f : room.Right - 1f;
+            var junctionY = room.Top + 1.5f + slot * 1.6f;
+            junctionIndex++;
 
+            var junctionId = $"junction-{system}".ToLowerInvariant();
+            components.Add(new Component(junctionId, ComponentKind.Junction, ship.DistributionBlock.RoomId, junctionX, junctionY));
+
+            // Routed, not diagonal: across to the wall at the distribution block's own height,
+            // then one turn down/up the wall to the junction - the same "along the bulkhead, one
+            // corner" look a real conduit run would have, instead of a wire cutting straight
+            // across the compartment (Wire.Bends is purely cosmetic - never read for connectivity).
             wires.Add(new Wire($"trunk-{system}".ToLowerInvariant(),
                 new PinRef("distribution", ComponentDefinitions.DistributionOutPin(system).Id),
-                new PinRef(junctionId, ComponentDefinitions.JunctionInPin().Id)));
+                new PinRef(junctionId, ComponentDefinitions.JunctionInPin().Id),
+                new[] { new Vec2(junctionX, ship.DistributionBlock.Y) }));
 
             for (var i = 0; i < devices.Count; i++)
             {
                 var device = devices[i];
                 components.Add(new Component(device.Id, ComponentKind.Device, device.RoomId, device.X, device.Y));
+
+                // Same one-corner routing for the drop wire: straight along the junction's own
+                // wall to the device's height, then straight across to the device itself.
                 wires.Add(new Wire($"drop-{device.Id}",
                     new PinRef(junctionId, ComponentDefinitions.JunctionOutPin(i).Id),
-                    new PinRef(device.Id, "in")));
+                    new PinRef(device.Id, "in"),
+                    new[] { new Vec2(junctionX, device.Y) }));
             }
         }
 

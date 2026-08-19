@@ -70,6 +70,46 @@ public sealed partial class World
         EnterStation(_travelTargetPointId!);
     }
 
+    // Same button either way (the helm's "Стыковка"/"Отстыковаться" toggle) - docks when alongside
+    // the berth, undocks when already sitting docked, so there's no separate control to hunt for
+    // just to leave. A mashed press outside either state (mid-approach, mid-flight) does nothing,
+    // same as TryDockAtStation's own CanDockNow gate.
+    private void HandleDockButtonPressed()
+    {
+        if (Phase == VoyagePhase.Station)
+            Undock();
+        else
+            TryDockAtStation();
+    }
+
+    // Leaves the berth without picking a destination yet - the same "idling in open space" state
+    // StepTraveling's own early return already handles, just without a course chosen in the same
+    // breath the way casting off via TryStartTravel does. The ship stays sitting right where it
+    // was; nothing captures it back onto the station (World.Voyage.cs's StepTraveling excludes
+    // Station from the universal incidental-capture scan) until it's deliberately targeted again.
+    private void Undock()
+    {
+        PullCrewOffStation();
+        Phase = VoyagePhase.Traveling;
+        _dockedPointId = null;
+        _travelTargetPointId = null;
+        _travelTargetPosition = null;
+    }
+
+    // Casting off (either through this button or by picking a destination straight from the docked
+    // menu, World.Voyage.cs's TryStartTravel) takes the station's rooms out of the docked layout, so
+    // anyone still standing in them would be left walking around geometry that no longer connects
+    // to anything - they get pulled back through the connector into the airlock chamber instead.
+    private void PullCrewOffStation()
+    {
+        foreach (var character in _characters.Values.Where(c => c.OnStation))
+        {
+            character.OnStation = false;
+            character.RoomId = Ship.AirlockOuterDoors.First().RoomId;
+            character.Position = Ship.GetRoom(character.RoomId).Center;
+        }
+    }
+
     private void StepStationApproachPhysics(double deltaSeconds)
     {
         var candidatePosition = IntegrateShipFieldMotion(deltaSeconds)

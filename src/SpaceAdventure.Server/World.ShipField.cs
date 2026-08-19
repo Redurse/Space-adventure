@@ -237,8 +237,7 @@ public sealed partial class World
 
     private void BreachNearestWallBlock(Vec2 localContactPoint)
     {
-        var nearest = Ship.WallBlocks.Where(b => !IsAtDoorPosition(b))
-            .OrderBy(b => (b.Position - localContactPoint).Length()).FirstOrDefault();
+        var nearest = Ship.WallBlocks.OrderBy(b => (b.Position - localContactPoint).Length()).FirstOrDefault();
         if (nearest is not null)
             DamageWallBlock(nearest.Id, WallBlockMaxHp);
     }

@@ -11,11 +11,18 @@ namespace SpaceAdventure.Client.Rendering;
 // ellipse for the ring and orbit path, and a handful of animated stars for depth.
 public static class MenuPlanetScene
 {
+    // Lazily built against this pane's own bounds (fixed - DesignWidth/Height never change at
+    // runtime) the first time Draw runs. Replaces the old flat single-layer star loop with the
+    // same 3-depth-band parallax field + soft nebula patches the flight view uses - here with no
+    // drift fed in (there's no ship velocity on the menu), so it's pure depth and twinkle.
+    private static Starfield? _starfield;
+
     public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane, float totalSeconds)
     {
         DrawGradientBackground(spriteBatch, pixel, pane);
-        DrawNebula(spriteBatch, pixel, pane);
-        DrawStars(spriteBatch, pixel, pane, totalSeconds);
+        _starfield ??= new Starfield(pixel, pane, count: 220);
+        _starfield.Draw(spriteBatch, totalSeconds);
+        DrawDustMotes(spriteBatch, pixel, pane, totalSeconds);
 
         var planetCenter = new Vector2(pane.X + pane.Width * 0.6f, pane.Y + pane.Height * 0.56f);
         const float planetRadius = 116f;
@@ -29,7 +36,81 @@ public static class MenuPlanetScene
         DrawRingHalf(spriteBatch, pixel, planetCenter, ringRadiusX, ringRadiusY, ringTilt, front: false);
         DrawPlanet(spriteBatch, pixel, planetCenter, planetRadius, totalSeconds);
         DrawRingHalf(spriteBatch, pixel, planetCenter, ringRadiusX, ringRadiusY, ringTilt, front: true);
-        DrawOrbitingShip(spriteBatch, pixel, planetCenter, orbitRadiusX, orbitRadiusY, totalSeconds);
+        DrawOrbitingKatyusha(spriteBatch, pixel, planetCenter, orbitRadiusX, orbitRadiusY, totalSeconds);
+
+        DrawScanline(spriteBatch, pixel, pane, totalSeconds);
+        DrawVignette(spriteBatch, pixel, pane);
+    }
+
+    // Where the Katyusha truck actually is on screen right now - the same planetCenter/orbit
+    // constants and angle formula Draw/DrawOrbitingKatyusha use, exposed so Game1.Menu.cs can park
+    // a caption next to it without needing its own copy of that math (and without this class
+    // needing a SpriteFont just to draw one label itself).
+    public static Vector2 GetKatyushaScreenPosition(Rectangle pane, float totalSeconds)
+    {
+        var planetCenter = new Vector2(pane.X + pane.Width * 0.6f, pane.Y + pane.Height * 0.56f);
+        const float orbitRadiusX = 300f;
+        const float orbitRadiusY = 185f;
+        var angle = totalSeconds * 0.16f;
+        return planetCenter + new Vector2(MathF.Cos(angle) * orbitRadiusX, MathF.Sin(angle) * orbitRadiusY);
+    }
+
+    // Faint drifting specks well in front of the starfield - not stars (they move, and far too
+    // fast to be), just cabin-window dust catching whatever light is around. Loops via modulo the
+    // same way the starfield wraps, just per-mote instead of per-frame-offset.
+    private static void DrawDustMotes(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane, float totalSeconds)
+    {
+        const int count = 36;
+        for (var i = 0; i < count; i++)
+        {
+            var seedX = (i * 71 + (i * i * 13) % 53) % pane.Width;
+            var seedY = (i * 37 + (i * i * 5) % 61) % pane.Height;
+            var speed = 5f + (i % 5) * 2f;
+            var x = pane.X + Wrap(seedX + totalSeconds * speed, pane.Width);
+            var y = pane.Y + Wrap(seedY + totalSeconds * speed * 0.3f, pane.Height);
+            var alpha = 0.06f + 0.09f * MathF.Abs(MathF.Sin(i * 1.7f + totalSeconds * 0.4f));
+            spriteBatch.Draw(pixel, new Rectangle((int)x, (int)y, 1, 1), new Color(210, 230, 235) * alpha);
+        }
+    }
+
+    // A soft horizontal band sweeping slowly down the pane on a loop - a sensor/scan pass over the
+    // scene, cheap and very low-alpha so it reads as ambient tech dressing, not a strobe.
+    private static void DrawScanline(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane, float totalSeconds)
+    {
+        const float period = 7f;
+        const int bandHeight = 46;
+        var t = Wrap(totalSeconds, period) / period;
+        var centerY = pane.Y + t * pane.Height;
+        for (var i = 0; i < bandHeight; i++)
+        {
+            var y = (int)(centerY - bandHeight / 2f + i);
+            if (y < pane.Y || y >= pane.Bottom)
+                continue;
+            var alpha = 0.045f * (1f - MathF.Abs(i - bandHeight / 2f) / (bandHeight / 2f));
+            spriteBatch.Draw(pixel, new Rectangle(pane.X, y, pane.Width, 1), new Color(120, 220, 210) * alpha);
+        }
+    }
+
+    private static float Wrap(float value, float size) => (value % size + size) % size;
+
+    // A dark frame around the pane's own edges - cheap "cinematic letterboxing" feel that keeps
+    // the eye on the planet/ship instead of the flat corners, built from the same soft-glow rings
+    // as the nebula/atmosphere, just anchored outside each edge rather than centred on a point.
+    private static void DrawVignette(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane)
+    {
+        const int bands = 10;
+        for (var i = 0; i < bands; i++)
+        {
+            var alpha = 0.05f * (1f - (float)i / bands);
+            var inset = i * 3;
+            var rect = new Rectangle(pane.X + inset, pane.Y + inset, Math.Max(1, pane.Width - inset * 2), Math.Max(1, pane.Height - inset * 2));
+            // Only the outer 1px ring of this inset rect is drawn each pass (top/bottom/left/right
+            // strips) - a filled rect at every inset would just repaint the whole pane opaque black.
+            spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, rect.Width, 1), Color.Black * alpha);
+            spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Bottom - 1, rect.Width, 1), Color.Black * alpha);
+            spriteBatch.Draw(pixel, new Rectangle(rect.X, rect.Y, 1, rect.Height), Color.Black * alpha);
+            spriteBatch.Draw(pixel, new Rectangle(rect.Right - 1, rect.Y, 1, rect.Height), Color.Black * alpha);
+        }
     }
 
     private static void DrawGradientBackground(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane)
@@ -45,16 +126,8 @@ public static class MenuPlanetScene
         }
     }
 
-    // Two big, very soft colour blobs well behind everything else - just enough tint to keep the
-    // background from reading as flat black, without competing with the planet for attention.
-    private static void DrawNebula(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane)
-    {
-        DrawSoftGlow(spriteBatch, pixel, new Vector2(pane.X + pane.Width * 0.18f, pane.Y + pane.Height * 0.22f), 220f, new Color(80, 45, 120), 0.12f);
-        DrawSoftGlow(spriteBatch, pixel, new Vector2(pane.X + pane.Width * 0.88f, pane.Y + pane.Height * 0.12f), 170f, new Color(30, 95, 115), 0.12f);
-    }
-
-    // Concentric circles fading outward - the one "glow" primitive the nebula, the atmosphere halo
-    // and the engine flare below are all built from.
+    // Concentric circles fading outward - the one "glow" primitive the atmosphere halo and the
+    // engine flare below are both built from (the nebula patches are now Starfield's own).
     private static void DrawSoftGlow(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float radius, Color color, float peakAlpha)
     {
         const int rings = 6;
@@ -63,22 +136,6 @@ public static class MenuPlanetScene
             var r = radius * i / rings;
             var alpha = peakAlpha * (1f - (float)i / rings);
             HudIcons.FillCircle(spriteBatch, pixel, center, r, color * alpha);
-        }
-    }
-
-    private static void DrawStars(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane, float totalSeconds)
-    {
-        const int count = 90;
-        for (var i = 0; i < count; i++)
-        {
-            // Deterministic scatter (no Random instance so stars never jump between frames) - the
-            // same pseudo-random-from-the-index trick the wall breach's stars used.
-            var x = pane.X + (i * 53 + (i * i * 7) % 41) % pane.Width;
-            var y = (i * 97 + (i * i * 3) % 59) % pane.Height;
-            var big = i % 4 == 0;
-            var twinkle = 0.3f + 0.7f * MathF.Abs(MathF.Sin(totalSeconds * (0.5f + (i % 5) * 0.12f) + i));
-            var size = big ? 2 : 1;
-            spriteBatch.Draw(pixel, new Rectangle(x, y, size, size), Color.White * twinkle);
         }
     }
 
@@ -170,38 +227,91 @@ public static class MenuPlanetScene
         }
     }
 
-    private static void DrawOrbitingShip(SpriteBatch spriteBatch, Texture2D pixel, Vector2 planetCenter, float orbitRadiusX, float orbitRadiusY, float totalSeconds)
+    // A flatbed truck with an angled multi-tube rocket rack over the bed - the general silhouette
+    // of a historical rocket-artillery vehicle (a real-world vehicle category, not anyone's
+    // copyrighted character or logo), standing in for the ship as the scene's second focal point.
+    // Still nose-facing its direction of travel around the same orbit path as the original ship.
+    private static void DrawOrbitingKatyusha(SpriteBatch spriteBatch, Texture2D pixel, Vector2 planetCenter, float orbitRadiusX, float orbitRadiusY, float totalSeconds)
     {
         var angle = totalSeconds * 0.16f;
         var position = planetCenter + new Vector2(MathF.Cos(angle) * orbitRadiusX, MathF.Sin(angle) * orbitRadiusY);
-        // Tangent to the ellipse at this angle (the parametric position's own derivative) - what
-        // the ship's nose points along as it travels.
         var tangent = new Vector2(-MathF.Sin(angle) * orbitRadiusX, MathF.Cos(angle) * orbitRadiusY);
         if (tangent.LengthSquared() < 0.01f)
             tangent = Vector2.UnitX;
         tangent.Normalize();
         var rotation = MathF.Atan2(tangent.Y, tangent.X);
 
-        DrawSoftGlow(spriteBatch, pixel, position - tangent * 16f, 14f, new Color(255, 160, 80), 0.55f);
-        DrawShipSilhouette(spriteBatch, pixel, position, rotation);
+        DrawSoftGlow(spriteBatch, pixel, position, 14f, new Color(200, 210, 220), 0.22f);
+        DrawKatyushaSilhouette(spriteBatch, pixel, position, rotation);
     }
 
-    private static void DrawShipSilhouette(SpriteBatch spriteBatch, Texture2D pixel, Vector2 position, float rotation)
+    private static void DrawKatyushaSilhouette(SpriteBatch spriteBatch, Texture2D pixel, Vector2 position, float rotation)
     {
-        const float hullLength = 30f;
-        const float hullWidth = 9f;
-        var color = new Color(205, 213, 222);
-
-        spriteBatch.Draw(pixel, position, null, color, rotation, new Vector2(0.5f, 0.5f),
-            new Vector2(hullLength * 0.65f, hullWidth), SpriteEffects.None, 0f);
-
         var forward = new Vector2(MathF.Cos(rotation), MathF.Sin(rotation));
         var side = new Vector2(-forward.Y, forward.X);
-        var noseBase = position + forward * hullLength * 0.32f;
-        Primitives.FillTriangle(spriteBatch, pixel,
-            noseBase + forward * hullLength * 0.4f,
-            noseBase + side * hullWidth * 0.5f,
-            noseBase - side * hullWidth * 0.5f,
-            color);
+        var bodyColor = new Color(74, 90, 58);
+        var darkColor = new Color(30, 36, 28);
+        var wheelColor = new Color(18, 18, 16);
+
+        const float bodyLength = 40f;
+        const float bodyWidth = 13f;
+
+        // Chassis, then a boxy cab with a small windshield toward the front third - a 3-axle
+        // truck bed (the historical launcher's actual base), not a generic 2-axle pickup.
+        spriteBatch.Draw(pixel, position, null, bodyColor, rotation, new Vector2(0.5f, 0.5f),
+            new Vector2(bodyLength * 0.5f, bodyWidth * 0.8f), SpriteEffects.None, 0f);
+        var cabCenter = position + forward * bodyLength * 0.32f;
+        spriteBatch.Draw(pixel, cabCenter, null, darkColor, rotation, new Vector2(0.5f, 0.5f),
+            new Vector2(bodyLength * 0.12f, bodyWidth * 0.85f), SpriteEffects.None, 0f);
+        spriteBatch.Draw(pixel, cabCenter + forward * bodyLength * 0.05f, null, new Color(150, 185, 195) * 0.5f, rotation,
+            new Vector2(0.5f, 0.5f), new Vector2(1.2f, bodyWidth * 0.55f), SpriteEffects.None, 0f);
+
+        // Three axles - a lone front one, a close-set pair at the rear (the classic 6x6 layout).
+        foreach (var t in new[] { -0.36f, -0.08f, 0.34f })
+        {
+            HudIcons.FillCircle(spriteBatch, pixel, position + forward * bodyLength * t - side * bodyWidth * 0.6f, 3.3f, wheelColor);
+            HudIcons.FillCircle(spriteBatch, pixel, position + forward * bodyLength * t + side * bodyWidth * 0.6f, 3.3f, wheelColor);
+        }
+
+        // The launch frame itself: a braced arm lifting a rectangular rail rack at a shallow angle
+        // over the bed and out past the cab - parallel rails with rockets resting on some of them,
+        // the actual detail that makes this read as "Katyusha" rather than a flatbed truck.
+        var mount = position - forward * bodyLength * 0.02f;
+        var tiltAngle = rotation - MathF.PI / 2f - 0.42f;
+        var tiltDir = new Vector2(MathF.Cos(tiltAngle), MathF.Sin(tiltAngle));
+        var railPerp = new Vector2(-tiltDir.Y, tiltDir.X);
+
+        const float rackLength = 34f;
+        var rackFar = mount + tiltDir * rackLength;
+
+        // Two braces triangulating the rack against the chassis, so it reads as load-bearing
+        // rather than floating.
+        HudIcons.DrawLine(spriteBatch, pixel, position - forward * bodyLength * 0.20f, mount, darkColor, 2.2f);
+        HudIcons.DrawLine(spriteBatch, pixel, position + forward * bodyLength * 0.12f, mount + tiltDir * rackLength * 0.35f, darkColor, 1.8f);
+
+        // The rack's own frame outline.
+        HudIcons.DrawLine(spriteBatch, pixel, mount - railPerp * 5f, mount + railPerp * 5f, darkColor, 2f);
+        HudIcons.DrawLine(spriteBatch, pixel, rackFar - railPerp * 5f, rackFar + railPerp * 5f, darkColor, 2f);
+        HudIcons.DrawLine(spriteBatch, pixel, mount - railPerp * 5f, rackFar - railPerp * 5f, darkColor, 1.4f);
+        HudIcons.DrawLine(spriteBatch, pixel, mount + railPerp * 5f, rackFar + railPerp * 5f, darkColor, 1.4f);
+
+        const int rails = 6;
+        for (var i = 0; i < rails; i++)
+        {
+            var lateral = (i - (rails - 1) / 2f) * 1.9f;
+            var railStart = mount + railPerp * lateral;
+            var railEnd = railStart + tiltDir * rackLength;
+            HudIcons.DrawLine(spriteBatch, pixel, railStart, railEnd, new Color(150, 150, 145), 0.8f);
+
+            // Every other rail carries a loaded rocket, nose overhanging the rack's far end.
+            if (i % 2 != 0)
+                continue;
+            var rocketBase = railStart + tiltDir * rackLength * 0.55f;
+            var rocketTip = railStart + tiltDir * (rackLength * 0.55f + 11f);
+            HudIcons.DrawLine(spriteBatch, pixel, rocketBase, rocketTip, new Color(95, 100, 92), 2.2f);
+            Primitives.FillTriangle(spriteBatch, pixel, rocketTip,
+                rocketTip - tiltDir * 3f + railPerp * 1.4f, rocketTip - tiltDir * 3f - railPerp * 1.4f,
+                new Color(120, 60, 45));
+        }
     }
 }

@@ -40,7 +40,7 @@ public sealed class Character
     public float Health { get; set; } = MaxHealth;
     public const float BleedingThreshold = 50f;
     public bool IsBleeding => Health > 0 && Health < BleedingThreshold;
-    public bool WearingSuit => Inventory.Equipped[EquipSlot.Clothing] == ItemType.Spacesuit;
+    public bool WearingSuit => Inventory.Equipped[EquipSlot.Suit] == ItemType.Spacesuit;
 
     // Wearing a suit and being safe in one are two different things now: the suit is a shell, and
     // what keeps anyone alive inside it is the oxygen tank socketed into it (OxygenTankDefinitions).
@@ -60,6 +60,18 @@ public sealed class Character
     // Which pin a wire-lay is anchored at (World.Wiring.cs's HandlePinInteract) - null when not
     // laying. Walking to the second pin is just ordinary movement, no special mode.
     public PinRef? LayingWireFromPin { get; set; }
+
+    // A Junction box's Component.Id while this character carries it (World.Interact.cs), null
+    // otherwise. Walking to a new spot and pressing F again just clears this - the box's own
+    // position already tracks the carrier every tick (World.Wiring.cs's StepCarriedComponents), so
+    // wherever they stop is where it gets placed, no separate destination to record.
+    public string? CarryingComponentId { get; set; }
+
+    // Bend points fixed so far along an in-progress wire lay (World.Wiring.cs's HandleWireBend) -
+    // purely cosmetic routing for the eventual Wire.Bends, never read by anything connectivity-
+    // related. Cleared whenever the lay starts fresh, restarts at a new anchor, completes, or is
+    // cancelled outright (RemoveAt-ing the last one instead is HandleWireLayCancel's job).
+    public List<Vec2> LayingWireBends { get; } = new();
 
     // EVA state (game_design.md Phase 3, M17) - only meaningful while IsOutside. EvaLocalOffset's
     // meaning depends on EvaAttachedTo: relative to the ship's hull center in its own unrotated

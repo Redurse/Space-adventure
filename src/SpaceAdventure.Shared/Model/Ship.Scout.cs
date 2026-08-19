@@ -65,6 +65,7 @@ public sealed partial class Ship
 
         var reactorBlock = new ReactorBlock("reactor-block", "engine", X: 7f, Y: 1f);
         var distributionBlock = new PowerDistributionBlock("distribution-block", "engine", X: 7f, Y: 3f);
+        var batteryBlock = new BatteryBlock("battery-block", "engine", X: 8.7f, Y: 2.3f);
         var navigationConsole = new NavigationConsole("navigation-console", "bridge", X: 1f, Y: 1f);
         var helmConsole = new HelmConsole("helm-console", "bridge", X: 4f, Y: 3f);
         // Two crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).
@@ -91,7 +92,7 @@ public sealed partial class Ship
         };
 
         return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, navigationConsole, helmConsole, storageRacks, bridge.Center, bridge.Id,
+            reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, bridge.Center, bridge.Id,
             cardTable, componentMounts: componentMounts);
     }
 }

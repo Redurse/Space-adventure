@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SpaceAdventure.Tests", "src
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SpaceAdventure.Client", "src\SpaceAdventure.Client\SpaceAdventure.Client.csproj", "{13EDDE9A-099A-4414-9B5B-5E6CE7ABA5DB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SpaceAdventure.ShaderCheck", "src\SpaceAdventure.ShaderCheck\SpaceAdventure.ShaderCheck.csproj", "{F4F285A3-2D63-400F-9DE5-53E45ACC0097}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -71,6 +73,18 @@ Global
 		{13EDDE9A-099A-4414-9B5B-5E6CE7ABA5DB}.Release|x64.Build.0 = Release|Any CPU
 		{13EDDE9A-099A-4414-9B5B-5E6CE7ABA5DB}.Release|x86.ActiveCfg = Release|Any CPU
 		{13EDDE9A-099A-4414-9B5B-5E6CE7ABA5DB}.Release|x86.Build.0 = Release|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Debug|x64.Build.0 = Debug|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Debug|x86.Build.0 = Debug|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Release|x64.ActiveCfg = Release|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Release|x64.Build.0 = Release|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Release|x86.ActiveCfg = Release|Any CPU
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -80,5 +94,6 @@ Global
 		{024659E9-CE85-421D-BC31-49FB4F3D61C8} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{9E439B69-8EB9-4D6F-AB36-DC3145604FD3} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{13EDDE9A-099A-4414-9B5B-5E6CE7ABA5DB} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{F4F285A3-2D63-400F-9DE5-53E45ACC0097} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

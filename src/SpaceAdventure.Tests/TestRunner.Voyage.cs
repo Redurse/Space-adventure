@@ -35,6 +35,86 @@ internal static partial class TestRunner
         return world.Phase == VoyagePhase.Traveling;
     }
 
+    // Every location can be flown away from now, not just won/docked/reselected out of
+    // (World.Voyage.cs's per-phase exit radii) - flying clear of the asteroid field's own
+    // AsteroidFieldExitRadius from its centre drops the ship straight back into open space.
+    private static bool World_Voyage_FlyingClearOfTheAsteroidFieldReturnsToTraveling()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        EnterAsteroidFieldAndManHelm(world);
+        if (world.Phase != VoyagePhase.AsteroidField)
+            return false;
+
+        // Aim for the far corner of the field - comfortably past AsteroidFieldExitRadius from its
+        // centre, unlike every default asteroid/ore deposit (World.Voyage.cs's own reasoning for
+        // picking that radius).
+        var farCorner = world.AsteroidField.Center + new Vec2(1000f, 1000f);
+        for (var i = 0; i < 120 * 30 && world.Phase == VoyagePhase.AsteroidField; i++)
+        {
+            world.ApplyCommand(1, SteerToward(world, 1, farCorner));
+            world.Step(RealtimeStep);
+        }
+
+        return world.Phase == VoyagePhase.Traveling;
+    }
+
+    // Regression: the old exit radius (160) was bigger than the field's own cardinal half-extent
+    // (150 for a 300x300 field), so retreating in a straight cardinal direction - the ordinary way
+    // a player would actually fly away, not deliberately toward a far corner - could only reach it
+    // by first hitting the field's own wall, leaving the ship pinned to the system's edge instead
+    // of somewhere flyable once back in Traveling.
+    private static bool World_Voyage_FlyingClearOfTheAsteroidFieldDoesNotStrandTheShipAtTheEdge()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        EnterAsteroidFieldAndManHelm(world);
+        if (world.Phase != VoyagePhase.AsteroidField)
+            return false;
+
+        var farAlongX = world.AsteroidField.Center + new Vec2(1000f, 0f); // purely cardinal, the old worst case
+        for (var i = 0; i < 120 * 30 && world.Phase == VoyagePhase.AsteroidField; i++)
+        {
+            world.ApplyCommand(1, SteerToward(world, 1, farAlongX));
+            world.Step(RealtimeStep);
+        }
+
+        if (world.Phase != VoyagePhase.Traveling)
+            return false; // never actually escaped in this direction
+
+        var shipField = world.CreateSnapshot().ShipField;
+        return shipField.X > 5f && shipField.X < world.AsteroidField.Width - 5f;
+    }
+
+    // Same story for a docking approach that's been called off: flying away instead of alongside
+    // the berth is a valid way to leave, not just successfully docking.
+    private static bool World_Voyage_FlyingAwayFromTheBerthAbortsTheApproach()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "trade-station"));
+        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
+            world.Step(RealtimeStep);
+        if (world.Phase != VoyagePhase.StationApproach)
+            return false;
+
+        MoveCharacterTo(world, 1, 3f, 3f);
+        MoveCharacterTo(world, 1, 3f, 4f);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f));
+        for (var i = 0; i < 60; i++)
+            world.Step(RealtimeStep);
+
+        // Straight astern - the approach starts lined up bow-first on the berth
+        // (EnterStationApproach), so backing off the throttle moves directly away from it without
+        // needing to turn the ship around first.
+        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: -1f));
+        for (var i = 0; i < 60 * 30 && world.Phase == VoyagePhase.StationApproach; i++)
+            world.Step(RealtimeStep);
+
+        return world.Phase == VoyagePhase.Traveling;
+    }
+
     private static bool World_Voyage_StationRefuelsAndClearsBreaches()
     {
         var world = new World();

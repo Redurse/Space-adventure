@@ -87,6 +87,11 @@ public sealed class VisibilityMask : IDisposable
         BuildTriangles(walls, eye, start, radius, origin, full, flatBrightness);
     }
 
+    // The finished mask itself, for passes that need to know how lit a pixel is rather than just
+    // multiply by it: ScenePost reads it to decide what is allowed to glow and which way the light
+    // is coming from. Null until Build has run.
+    public Texture2D? Mask => _target;
+
     public void Composite(SpriteBatch spriteBatch)
     {
         if (_target is null)

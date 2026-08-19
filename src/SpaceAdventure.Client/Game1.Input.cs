@@ -192,8 +192,37 @@ public partial class Game1
     {
         ItemSlotKind.Main => !me.OnEnemyShip && !me.IsOutside,
         ItemSlotKind.Rack => _openBlock.Kind == BlockKind.Rack && !me.OnStation && !me.OnEnemyShip && !me.IsOutside,
+        // Suit is excluded here too, mirroring World.Storage.cs's own IsSlotReachable - it's
+        // filled only by the suit-locker's timed equip/unequip action, never a plain drag.
+        ItemSlotKind.Equip => (EquipSlot)slot.Index != EquipSlot.Suit && !me.OnEnemyShip && !me.IsOutside,
+        ItemSlotKind.BeltBag => me.Inventory?.Equipped.GetValueOrDefault(EquipSlot.BeltBag) == ItemType.BeltBag &&
+                                !me.OnEnemyShip && !me.IsOutside,
         _ => false,
     };
+
+    // Whether the worn bag's own popup should be visible/interactive this frame - hovering its
+    // icon, hovering the popup grid itself once it's open, or already mid-drag with an item that
+    // came out of it (so moving the mouse away to find a drop target doesn't hide it first).
+    private bool IsBeltBagPopupShown(WorldSnapshot snapshot)
+    {
+        if (_dragFrom is { Kind: ItemSlotKind.BeltBag })
+            return true;
+
+        var inventory = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory;
+        if (inventory is null || inventory.Equipped.GetValueOrDefault(EquipSlot.BeltBag) != ItemType.BeltBag)
+            return false;
+
+        var bagIndex = Array.FindIndex(InventoryPanel.EquipSlots, s => s.Id == EquipSlot.BeltBag);
+        var bagRect = InventoryPanel.GetSlotRect(bagIndex, EquipSlotsOrigin);
+        if (bagRect.Contains(_designMouse))
+            return true;
+
+        for (var i = 0; i < inventory.BeltBagSlots.Count; i++)
+            if (InventoryPanel.GetBeltBagSlotRect(i, bagRect).Contains(_designMouse))
+                return true;
+
+        return false;
+    }
 
     // Which row slot's tool socket the mouse is currently close enough to reveal - hovering either
     // the slot itself or the socket band that then appears above it (InventoryPanel.GetSocketRect
@@ -239,7 +268,7 @@ public partial class Game1
         }
 
         var targetItem = targetSlot < 0
-            ? (inventory.Equipped.TryGetValue(EquipSlot.Clothing, out var worn) ? worn : null)
+            ? (inventory.Equipped.TryGetValue(EquipSlot.Suit, out var worn) ? worn : null)
             : inventory.MainSlots[targetSlot];
         if (targetItem is not { } owner || TankSockets.AcceptedTank(owner) is not { } accepted)
             return;
@@ -262,6 +291,10 @@ public partial class Game1
     private bool HoldingWelder() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
         && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] == ItemType.WeldingTool);
+
+    private bool HoldingAxe() =>
+        _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
+        && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] == ItemType.Axe);
 
     private bool HoldingWireSpool() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
@@ -324,9 +357,27 @@ public partial class Game1
     {
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         if (me?.Inventory is { } inventory)
+        {
             for (var i = 0; i < inventory.MainSlots.Count; i++)
                 if (InventoryPanel.GetMainSlotRect(i, InventoryRowOrigin(inventory.MainSlots.Count)).Contains(_designMouse))
                     return new SlotRef(ItemSlotKind.Main, i);
+
+            // Checked before the equip icons themselves - the popup floats above the bag's own
+            // slot, so a click there has to land in the bag, not fall through to whatever equip
+            // slot happens to sit under it.
+            if (IsBeltBagPopupShown(snapshot))
+            {
+                var bagIndex = Array.FindIndex(InventoryPanel.EquipSlots, s => s.Id == EquipSlot.BeltBag);
+                var bagRect = InventoryPanel.GetSlotRect(bagIndex, EquipSlotsOrigin);
+                for (var i = 0; i < inventory.BeltBagSlots.Count; i++)
+                    if (InventoryPanel.GetBeltBagSlotRect(i, bagRect).Contains(_designMouse))
+                        return new SlotRef(ItemSlotKind.BeltBag, i);
+            }
+
+            for (var i = 0; i < InventoryPanel.EquipSlots.Length; i++)
+                if (InventoryPanel.GetSlotRect(i, EquipSlotsOrigin).Contains(_designMouse))
+                    return new SlotRef(ItemSlotKind.Equip, (int)InventoryPanel.EquipSlots[i].Id);
+        }
 
         if (_openBlock.Kind == BlockKind.Rack)
         {
@@ -345,12 +396,28 @@ public partial class Game1
             return slot.Index < snapshot.RackSlots.Count ? snapshot.RackSlots[slot.Index] : null;
 
         var inventory = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory;
-        return inventory is not null && slot.Index < inventory.MainSlots.Count ? inventory.MainSlots[slot.Index] : null;
+        if (inventory is null)
+            return null;
+
+        return slot.Kind switch
+        {
+            ItemSlotKind.Equip => inventory.Equipped.GetValueOrDefault((EquipSlot)slot.Index),
+            ItemSlotKind.BeltBag => slot.Index < inventory.BeltBagSlots.Count ? inventory.BeltBagSlots[slot.Index] : null,
+            _ => slot.Index < inventory.MainSlots.Count ? inventory.MainSlots[slot.Index] : null,
+        };
     }
 
-    private Rectangle GetSlotScreenRect(SlotRef slot, Vector2 rowOrigin) => slot.Kind == ItemSlotKind.Main
-        ? InventoryPanel.GetMainSlotRect(slot.Index, rowOrigin)
-        : RackPanel.GetSlotRect(slot.Index - CurrentOpenRackOffset(_client.LatestSnapshot!), PowerPanelOrigin);
+    private Rectangle GetSlotScreenRect(SlotRef slot, Vector2 rowOrigin)
+    {
+        if (slot.Kind == ItemSlotKind.Main)
+            return InventoryPanel.GetMainSlotRect(slot.Index, rowOrigin);
+        if (slot.Kind == ItemSlotKind.Rack)
+            return RackPanel.GetSlotRect(slot.Index - CurrentOpenRackOffset(_client.LatestSnapshot!), PowerPanelOrigin);
+
+        var equipIndex = Array.FindIndex(InventoryPanel.EquipSlots, s => (int)s.Id == (slot.Kind == ItemSlotKind.Equip ? slot.Index : (int)EquipSlot.BeltBag));
+        var equipRect = InventoryPanel.GetSlotRect(equipIndex, EquipSlotsOrigin);
+        return slot.Kind == ItemSlotKind.Equip ? equipRect : InventoryPanel.GetBeltBagSlotRect(slot.Index, equipRect);
+    }
 
     // A translucent fill plus a bright outline - visible over a slot's own contents without hiding
     // what's in it, unlike the opaque colours DrawSlot uses for the item itself.
@@ -562,9 +629,11 @@ public partial class Game1
         if (me.IsAtHelm && HelmPanel.GetStabilizeButtonRect(HelmPanelOrigin).Contains(_designMouse))
             return (-1, -1, null, null, -1, false, false, null, true, null);
 
-        // Only armed while the server says the ship is actually alongside the berth - clicking a
-        // dimmed "distance to port" readout does nothing.
-        if (me.IsAtHelm && snapshot.CanDock && HelmPanel.GetDockButtonRect(HelmPanelOrigin).Contains(_designMouse))
+        // Armed either while the server says the ship is actually alongside the berth (docks) or
+        // while already sitting docked (casts off instead, same button - World.StationDocking.cs's
+        // HandleDockButtonPressed). Clicking a dimmed "distance to port" readout does nothing.
+        if (me.IsAtHelm && (snapshot.CanDock || snapshot.Voyage.Phase == VoyagePhase.Station) &&
+            HelmPanel.GetDockButtonRect(HelmPanelOrigin).Contains(_designMouse))
         {
             _pendingDock = true;
             return (-1, -1, null, null, -1, false, false, null, false, null);
@@ -730,6 +799,25 @@ public partial class Game1
                 ? ClickTarget.None
                 : ClickTarget.ForConnections(componentId);
 
+        // The reactor's 3 physical levers - checked before the reactor's own "open the panel" click
+        // below so they don't get shadowed by it (same ordering convention as the fuel-rod slots
+        // while the panel is already open, just above).
+        if (NearEnough(snapshot.ReactorBlock.Position))
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                if (!ShipRenderer.GetReactorLeverRect(i, snapshot.ReactorBlock, origin).Contains(_designMouse))
+                    continue;
+                switch (i)
+                {
+                    case 0: _pendingToggleLights = true; break;
+                    case 1: _pendingToggleReactorEmergency = true; break;
+                    case 2: _pendingToggleDoorsLocked = true; break;
+                }
+                return (-1, -1, null, null, -1, false, false, null, false, null);
+            }
+        }
+
         if (NearEnough(snapshot.ReactorBlock.Position) &&
             ShipRenderer.GetBlockRect(snapshot.ReactorBlock.Position, ShipRenderer.BigBlockSize, origin).Contains(_designMouse))
         {
@@ -744,6 +832,13 @@ public partial class Game1
                 _openBlock = ToggleConnections(distribution.Id);
             else
                 _openBlock = _openBlock.Kind == BlockKind.Distribution ? ClickTarget.None : ClickTarget.Distribution;
+            return (-1, -1, null, null, -1, false, false, null, false, null);
+        }
+
+        if (NearEnough(snapshot.BatteryBlock.Position) &&
+            ShipRenderer.GetBlockRect(snapshot.BatteryBlock.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
+        {
+            _openBlock = _openBlock.Kind == BlockKind.Battery ? ClickTarget.None : ClickTarget.Battery;
             return (-1, -1, null, null, -1, false, false, null, false, null);
         }
 
@@ -903,26 +998,41 @@ public partial class Game1
         }
 
         // Doors toggle directly on click - no panel to open, just an immediate flip
-        // (game_design.md Phase 3, M16).
-        foreach (var door in snapshot.Doors)
+        // (game_design.md Phase 3, M16). Skipped entirely while the axe is in hand - LMB is the
+        // axe's swing button then (AxeSwingHeld below), not the door handle, so it never
+        // accidentally pops a door open instead of chopping it.
+        if (!HoldingAxe())
         {
-            if (NearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
-                return (-1, -1, null, null, -1, false, false, null, false, door.Id);
+            foreach (var door in snapshot.Doors)
+            {
+                if (NearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
+                    return (-1, -1, null, null, -1, false, false, null, false, door.Id);
+            }
+
+            foreach (var outerDoor in snapshot.AirlockOuterDoors)
+            {
+                if (NearEnough(outerDoor.Position) && ShipRenderer.GetDoorRect(outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, origin).Contains(_designMouse))
+                    return (-1, -1, null, null, -1, false, false, null, false, outerDoor.Id);
+            }
+
+            // Aboard a boarded hull the doors are the fight: they start closed, and opening one lets
+            // the breach through into the next compartment (World.EnemyAtmosphere.cs). Same click, same
+            // proximity rule - the character's own coordinates are that structure's while aboard it.
+            foreach (var door in snapshot.EnemyShipDoors)
+            {
+                if (NearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
+                    return (-1, -1, null, null, -1, false, false, null, false, door.Id);
+            }
         }
 
-        foreach (var outerDoor in snapshot.AirlockOuterDoors)
+        // A click mid-lay that missed every pin/mount/door/etc. above fixes a bend at that spot
+        // instead of doing nothing (World.Wiring.cs's HandleWireBend) - the inverse of
+        // ShipRenderer.GetBlockRect's own world->screen transform, so a bend lands exactly under
+        // the cursor the same way every hit-test above already lines up with what's drawn there.
+        if (me.LayingWireFromPin is not null)
         {
-            if (NearEnough(outerDoor.Position) && ShipRenderer.GetDoorRect(outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, origin).Contains(_designMouse))
-                return (-1, -1, null, null, -1, false, false, null, false, outerDoor.Id);
-        }
-
-        // Aboard a boarded hull the doors are the fight: they start closed, and opening one lets
-        // the breach through into the next compartment (World.EnemyAtmosphere.cs). Same click, same
-        // proximity rule - the character's own coordinates are that structure's while aboard it.
-        foreach (var door in snapshot.EnemyShipDoors)
-        {
-            if (NearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
-                return (-1, -1, null, null, -1, false, false, null, false, door.Id);
+            _pendingWireBendAt = new Vec2((_designMouse.X - origin.X) / ShipRenderer.PixelsPerUnit, (_designMouse.Y - origin.Y) / ShipRenderer.PixelsPerUnit);
+            return (-1, -1, null, null, -1, false, false, null, false, null);
         }
 
         _openBlock = ClickTarget.None;
@@ -980,6 +1090,7 @@ public partial class Game1
         {
             BlockKind.Reactor => snapshot.ReactorBlock.Position,
             BlockKind.Distribution => snapshot.DistributionBlock.Position,
+            BlockKind.Battery => snapshot.BatteryBlock.Position,
             BlockKind.Navigation => snapshot.NavigationConsole.Position,
             BlockKind.Rack => _openBlock.TargetComponentId is { } rackId
                 ? snapshot.StorageRacks.FirstOrDefault(r => r.Id == rackId)?.Position ?? myPosition
@@ -1026,7 +1137,8 @@ public partial class Game1
                 return $"[ЛКМ]/[ПКМ] отменить провод от {ComponentRenderer.PinLabel(snapshot, start)}";
             if (hovered is { } target)
                 return $"[ЛКМ] закончить провод: {ComponentRenderer.PinLabel(snapshot, start)} → {ComponentRenderer.PinLabel(snapshot, target)}";
-            return $"Ведём провод от {ComponentRenderer.PinLabel(snapshot, start)} — наведите на контакт  [ПКМ] отменить";
+            var undoHint = (me.LayingWireBends?.Count ?? 0) > 0 ? "[ПКМ] убрать последний изгиб" : "[ПКМ] отменить";
+            return $"Ведём провод от {ComponentRenderer.PinLabel(snapshot, start)} — [ЛКМ] зафиксировать изгиб, навести на контакт — закончить  {undoHint}";
         }
 
         if (HoldingWireSpool())
@@ -1171,9 +1283,14 @@ public partial class Game1
         if (me.CarryingAmmoCrate)
             return nearBallisticTurret ? "[F] зарядить орудие" : "Несёте ящик патронов к орудию";
 
-        var nearStorage = snapshot.AmmoStorages.Any(s => (s.Position - myPosition).Length() < TurretInteractionRadius);
-        if (nearStorage)
-            return "[F] взять ящик патронов";
+        var nearStorage = snapshot.AmmoStorages.FirstOrDefault(s => (s.Position - myPosition).Length() < TurretInteractionRadius);
+        if (nearStorage is not null)
+        {
+            var stock = snapshot.AmmoStorageStates.FirstOrDefault(s => s.StorageId == nearStorage.Id);
+            return stock is { Remaining: 0 }
+                ? "Склад патронов пуст — пополняется на станции"
+                : $"[F] взять ящик патронов ({stock?.Remaining ?? 0}/{stock?.Capacity ?? 0})";
+        }
 
         // Ship/station floor drops only (World.Storage.cs's drag-to-floor) - EVA's own dropped items
         // are handled above, in the me.IsOutside branch, against the asteroid-field position instead.
@@ -1210,6 +1327,21 @@ public partial class Game1
                 : "Нужен гаечный ключ или отвёртка в руке";
         }
 
+        if (me.CarryingComponentId is not null)
+            return "Несёте распределительную коробку  [F] поставить здесь";
+
+        var nearJunction = snapshot.Components.FirstOrDefault(c =>
+            c.Kind == ComponentKind.Junction && (c.Position - myPosition).Length() < TurretInteractionRadius);
+        if (nearJunction is not null)
+        {
+            var junctionDamaged = snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == nearJunction.Id)?.Damaged ?? false;
+            if (junctionDamaged)
+                return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
+                    ? "[F] почини распределительную коробку"
+                    : "Нужен гаечный ключ или отвёртка в руке";
+            return holding.Contains(ItemType.Wrench) ? "[F] взять распределительную коробку" : "Распределительная коробка";
+        }
+
         var nearLocker = snapshot.SuitLockers.FirstOrDefault(l => (l.Position - myPosition).Length() < TurretInteractionRadius);
         if (nearLocker is not null)
         {
@@ -1242,10 +1374,29 @@ public partial class Game1
         var nearDoor = snapshot.Doors.Any(d => (d.Position - myPosition).Length() < TurretInteractionRadius);
         var nearOuterDoor = snapshot.AirlockOuterDoors.Any(d => (d.Position - myPosition).Length() < TurretInteractionRadius);
 
+        // A destroyed door (World.Doors.cs) is jammed open and needs the same F-key minigame as a
+        // damaged SystemDevice/Junction, not the ordinary click-to-toggle everything below assumes.
+        var nearbyDestroyedDoorId =
+            snapshot.Doors.FirstOrDefault(d => (d.Position - myPosition).Length() < TurretInteractionRadius &&
+                (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == d.Id)?.Destroyed ?? false))?.Id
+            ?? snapshot.AirlockOuterDoors.FirstOrDefault(d => (d.Position - myPosition).Length() < TurretInteractionRadius &&
+                (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == d.Id)?.Destroyed ?? false))?.Id;
+        if (nearbyDestroyedDoorId is not null)
+        {
+            return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
+                ? "[F] почини дверь"
+                : "Дверь разрушена — нужен гаечный ключ или отвёртка";
+        }
+
         // The commonest way to be stuck aboard: suit on, socket empty. Said at the door, where the
         // player is standing when they find out nothing happens (World.Eva.cs gates on the tank).
         if (nearOuterDoor && me.WearingSuit && me.SuitTank is null)
             return "В скафандре нет баллона — наружу не выпустит";
+        // Axe in hand overrides the ordinary door click everywhere below - HandleMouseClick already
+        // skips the toggle click while holding it, so the hint has to match what LMB will actually do.
+        if (holding.Contains(ItemType.Axe) && (nearDoor || nearOuterDoor))
+            return "[ЛКМ] рубить дверь топором";
+
         // Aboard a boarded hull the same click matters more: those doors start closed, and opening
         // one lets the breach through into the compartment behind it (World.EnemyAtmosphere.cs).
         if (me.OnEnemyShip &&

@@ -6,7 +6,8 @@ namespace SpaceAdventure.Server;
 // The distribution block: continuous sliders whose sum is capped by the reactor's current
 // output (game_design.md section 1 — "сумма всех слайдеров ограничена текущей мощностью
 // реактора"). Surplus charges the battery; if reactor output drops (fuel out) below what's
-// currently allocated, existing allocations are scaled back down to fit.
+// currently allocated, the battery discharges to cover the gap first, and only whatever it
+// can't cover gets scaled back down.
 public sealed class PowerGrid
 {
     private const float AdjustRatePerSecond = 20f;
@@ -17,8 +18,13 @@ public sealed class PowerGrid
     public Battery Battery { get; }
 
     private readonly Dictionary<PowerSystemId, float> _allocated;
-    private int _adjustIndex = -1;
-    private float _adjustDirection;
+    // Per player, not a single shared "currently held" slot - two crew members adjusting sliders
+    // in the same tick used to stomp on each other (whichever player's command World.cs's
+    // ApplyCommand happened to process last silently overwrote the other's), which in practice
+    // meant only one specific player's input ever actually stuck. Each player's own held
+    // direction now applies independently every Step, so two people can run different sliders (or
+    // even the same one) at once.
+    private readonly Dictionary<int, (int Index, float Direction)> _adjustByPlayer = new();
 
     public PowerGrid()
     {
@@ -31,11 +37,8 @@ public sealed class PowerGrid
         _allocated = Systems.ToDictionary(s => s, _ => 0f);
     }
 
-    public void ApplyInput(int systemIndex, float direction)
-    {
-        _adjustIndex = systemIndex;
-        _adjustDirection = direction;
-    }
+    public void ApplyInput(int playerId, int systemIndex, float direction) =>
+        _adjustByPlayer[playerId] = (systemIndex, direction);
 
     // Raw slider allocation only — PowerGrid no longer knows about wire damage at all (M14 moved
     // that into World.Wiring.cs, since "is this system actually connected" now depends on the
@@ -46,29 +49,50 @@ public sealed class PowerGrid
 
     public void Step(double deltaSeconds)
     {
-        if (_adjustDirection != 0 && _adjustIndex >= 0 && _adjustIndex < Systems.Length)
+        // Every player's own held slider applies independently this tick - recomputing
+        // othersTotal/maxForThis fresh per player (rather than once up front) means an adjustment
+        // already applied earlier in this same loop is accounted for, so two players pushing the
+        // same system at once both actually add up instead of one clobbering the other's math.
+        foreach (var (index, direction) in _adjustByPlayer.Values)
         {
-            var system = Systems[_adjustIndex];
+            if (direction == 0 || index < 0 || index >= Systems.Length)
+                continue;
+
+            var system = Systems[index];
             var othersTotal = _allocated.Where(kv => kv.Key != system).Sum(kv => kv.Value);
             var maxForThis = Math.Max(0, Reactor.CurrentOutput - othersTotal);
-            var next = _allocated[system] + _adjustDirection * AdjustRatePerSecond * (float)deltaSeconds;
+            var next = _allocated[system] + direction * AdjustRatePerSecond * (float)deltaSeconds;
             _allocated[system] = Math.Clamp(next, 0, maxForThis);
         }
 
         Reactor.Step(deltaSeconds, _allocated.Values.Sum());
-        RescaleIfOverBudget();
 
-        var surplus = Math.Max(0, Reactor.CurrentOutput - _allocated.Values.Sum());
+        // If the reactor alone can't cover what's allocated (fuel ran low, a slider was pushed up
+        // faster than the reactor caught up), the battery covers the shortfall before anything gets
+        // rescaled down - the whole point of an emergency reserve is to smooth over exactly this,
+        // not just look pretty while sliders get clipped anyway.
+        var shortfall = Math.Max(0, _allocated.Values.Sum() - Reactor.CurrentOutput);
+        var suppliedPower = 0f;
+        if (shortfall > 0 && deltaSeconds > 0)
+        {
+            var suppliedEnergy = Battery.Discharge(shortfall * (float)deltaSeconds);
+            suppliedPower = suppliedEnergy / (float)deltaSeconds;
+        }
+
+        var availableOutput = Reactor.CurrentOutput + suppliedPower;
+        RescaleIfOverBudget(availableOutput);
+
+        var surplus = Math.Max(0, availableOutput - _allocated.Values.Sum());
         Battery.AddCharge(surplus * (float)deltaSeconds);
     }
 
-    private void RescaleIfOverBudget()
+    private void RescaleIfOverBudget(float availableOutput)
     {
         var total = _allocated.Values.Sum();
-        if (total <= Reactor.CurrentOutput || total <= 0)
+        if (total <= availableOutput || total <= 0)
             return;
 
-        var scale = Reactor.CurrentOutput / total;
+        var scale = availableOutput / total;
         foreach (var system in Systems)
             _allocated[system] *= scale;
     }

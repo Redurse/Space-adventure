@@ -11,4 +11,5 @@ public enum ShipKind
     Frigate, // the original M2 starter layout (Ship.CreateStarter) - kept as the default/mid tier
     Cruiser,
     Corvette, // laid out along its own axis instead of as a row of boxes (Ship.Corvette.cs)
+    Custom, // player-drawn in the Ship Editor (Ship.Custom.cs) - not sold at any Shipwright
 }

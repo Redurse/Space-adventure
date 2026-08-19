@@ -69,31 +69,30 @@ public sealed partial class World
     private readonly Dictionary<string, TurretRuntime> _turretRuntimes;
     private readonly Dictionary<string, float> _turretAimInput = new();
 
-    // A block sitting under a door's own rectangle - regular interior Door or the vacuum
-    // AirlockOuterDoor - is excluded from random breach selection (World.EnemyAi.cs,
-    // World.ShipField.cs's asteroid-collision hit): a hole opening exactly where a door already is
-    // would either double up with (or physically block) the door's own opening/closing, which no
-    // ship class's layout intends. Most hulls never generate a WallBlock there in the first place
-    // (doors sit on shared interior walls, hull blocks only on exterior ones), but a side compartment
-    // whose exterior wall also carries its own AirlockOuterDoor - e.g. the Corvette's shield bay and
-    // life-support flanks - does generate one at that exact spot, so the exclusion is checked rather
-    // than assumed.
-    private bool IsAtDoorPosition(WallBlock block) =>
-        Ship.AirlockOuterDoors.Any(d => d.RoomId == block.RoomId && d.Contains(block.Position)) ||
-        Ship.Doors.Any(d => d.Connects(block.RoomId) && d.Contains(block.Position));
-
     public ShipKind CurrentShipKind { get; private set; }
+
+    // The reactor's other two physical levers (its own EmergencyShutdown is the third, kept on
+    // Reactor itself since it's genuinely reactor state). Both default to the ship's normal
+    // operating state so a crew that never touches these levers sees no behavior change at all.
+    public bool LightsOn { get; private set; } = true;
+    public bool DoorsLocked { get; private set; } = false;
+
+    // Retained only so CreateSave() can round-trip a Custom hull - null whenever flying a fixed
+    // class. Set here and in ApplySave, the only two places CurrentShipKind can become Custom.
+    private CustomShipDefinition? _customShipDefinition;
 
     // ShipKind defaults to the original M2 layout (Frigate) so every pre-existing `new World()`
     // call (the entire test suite) keeps compiling and behaving exactly as before — ship
-    // selection (game_design.md section 9) is purely additive.
-    public World(ShipKind shipKind = ShipKind.Frigate)
+    // selection (game_design.md section 9) is purely additive. customShip is required exactly
+    // when shipKind is Custom (Ship Editor - Ship.Custom.cs); ignored otherwise.
+    public World(ShipKind shipKind = ShipKind.Frigate, CustomShipDefinition? customShip = null)
     {
         // Set before anything below touches AsteroidField (which resolves through it) - a fresh
         // crew always starts in whichever system the home station actually sits in.
         _currentSystemId = GalaxyMap.SystemOf(GalaxyMap.HomePointId).Id;
         CurrentShipKind = shipKind;
-        Ship = Ship.Create(shipKind);
+        _customShipDefinition = shipKind == ShipKind.Custom ? customShip : null;
+        Ship = shipKind == ShipKind.Custom ? Ship.FromCustomDefinition(customShip!) : Ship.Create(shipKind);
         _turretRuntimes = Ship.Turrets.ToDictionary(t => t.Id, t => new TurretRuntime(t));
         InitializeShipState();
         // Every station kind's doors, not just the one currently resolved - door state is one flat
@@ -164,7 +163,7 @@ public sealed partial class World
 
         _moveInput[playerId] = new Vec2(command.MoveX, command.MoveY);
         _characters[playerId].LookDirection = new Vec2(command.LookX, command.LookY);
-        PowerGrid.ApplyInput(command.PowerSystemIndex, command.PowerDirection);
+        PowerGrid.ApplyInput(playerId, command.PowerSystemIndex, command.PowerDirection);
 
         var character = _characters[playerId];
 
@@ -214,6 +213,20 @@ public sealed partial class World
         if (command.ToggleReactorSlotIndex >= 0)
             ToggleReactorSlot(character, command.ToggleReactorSlotIndex);
 
+        // The 3 reactor levers (game_design.md - drawn on the reactor block itself): a physical
+        // interaction, so proximity-checked like ToggleReactorSlot rather than trusted client-side
+        // like the panel clicks (DoorToggleId etc.) below.
+        if ((command.ToggleLightsPressed || command.ToggleReactorEmergencyPressed || command.ToggleDoorsLockedPressed) &&
+            (Ship.ReactorBlock.Position - character.Position).Length() < InteractionRadius)
+        {
+            if (command.ToggleLightsPressed)
+                LightsOn = !LightsOn;
+            if (command.ToggleReactorEmergencyPressed)
+                PowerGrid.Reactor.EmergencyShutdown = !PowerGrid.Reactor.EmergencyShutdown;
+            if (command.ToggleDoorsLockedPressed)
+                DoorsLocked = !DoorsLocked;
+        }
+
         if (command.TravelToPointId is not null || (command.TravelToX is not null && command.TravelToY is not null))
             TryStartTravel(command.TravelToPointId, command.TravelToX, command.TravelToY);
 
@@ -242,7 +255,7 @@ public sealed partial class World
             TryPurchaseShip(shipKindToBuy);
 
         if (command.DockPressed)
-            TryDockAtStation();
+            HandleDockButtonPressed();
 
         if (command.DoorToggleId is { } doorId)
             ToggleDoor(doorId);
@@ -254,7 +267,10 @@ public sealed partial class World
             HandlePinInteract(character, pinRef);
 
         if (command.WireLayCancelPressed)
-            character.LayingWireFromPin = null;
+            HandleWireLayCancel(character);
+
+        if (command.WireBendAtX is { } wireBendX && command.WireBendAtY is { } wireBendY)
+            HandleWireBend(character, new Vec2(wireBendX, wireBendY));
 
         if (command.ComponentOperateId is { } operateId)
             ToggleRelay(operateId);
@@ -286,6 +302,11 @@ public sealed partial class World
         if (command.FirePressed && !character.IsOutside && character.ManningTurretId is null && !character.IsAtHelm)
             TryFirePersonalWeapon(character);
 
+        // LMB, not Space - the axe swings like the cutter/welder held-tool convention above, not
+        // like a fired weapon (World.Doors.cs's TryChopDoor already gates on actually holding one).
+        if (command.AxeSwingHeld && !character.IsOutside && character.ManningTurretId is null && !character.IsAtHelm)
+            TryChopDoor(character);
+
         if (character.ManningTurretId is { } turretId)
         {
             _turretAimInput[turretId] = command.TurretAimDirection;
@@ -300,7 +321,9 @@ public sealed partial class World
         StepTurrets(deltaSeconds);
         StepCutting(deltaSeconds);
         StepWelding(deltaSeconds);
+        StepAxeCooldowns(deltaSeconds);
         StepSystemRepair(deltaSeconds);
+        StepCarriedComponents();
         StepPersonalShots(deltaSeconds);
         StepOxygenTanks(deltaSeconds);
         StepBoarding(deltaSeconds);
@@ -310,6 +333,7 @@ public sealed partial class World
         StepEnemyFleet(deltaSeconds);
         StepProjectiles(deltaSeconds);
         StepVoyage(deltaSeconds);
+        StepCampaign();
         StepAtmosphere(deltaSeconds);
         StepInjuries(deltaSeconds);
         // After everything else so a bot reacts to this tick's state (a fresh breach, a target that
@@ -336,6 +360,7 @@ public sealed partial class World
             t.Definition.Id, t.AimDegrees, t.MannedByPlayerId, t.CooldownRemaining,
             t.AmmoRemaining, t.Definition.MagazineCapacity, t.Charge, t.Definition.MaxCharge, t.Damaged)).ToArray(),
         Ship.AmmoStorages,
+        CreateAmmoStorageStates(),
         Ship.SuitLockers,
         Ship.SystemDevices,
         Ship.SystemDevices.Select(d =>
@@ -343,8 +368,10 @@ public sealed partial class World
             var (percent, tickPosition) = GetSystemRepairDisplay(d.Id);
             return new ShipSystemState(d.Id, d.System, !IsDeviceConnected(d.Id), percent, tickPosition);
         }).ToArray(),
+        CreateJunctionStates(),
         Ship.ReactorBlock,
         Ship.DistributionBlock,
+        Ship.BatteryBlock,
         Ship.NavigationConsole,
         CreateGalaxyPoints(),
         Ship.HelmConsole,
@@ -401,7 +428,8 @@ public sealed partial class World
                     new Dictionary<EquipSlot, ItemType?>(c.Inventory.Equipped),
                     c.Inventory.HeldSlotIndices.ToArray(),
                     c.Inventory.MainSlotTanks.ToArray(),
-                    c.Inventory.TankCharge(Inventory.WornSuitSlot)),
+                    c.Inventory.TankCharge(Inventory.WornSuitSlot),
+                    c.Inventory.BeltBagSlots.ToArray()),
                 c.IsBleeding, c.IsAtHelm, c.IsOutside, c.JetpackFuel, c.EvaAttachedTo != EvaAttachment.None, c.OnStation, c.OnEnemyShip,
                 c.Inventory.TankCharge(Inventory.WornSuitSlot),
                 c.Inventory.HeldSlotOf(ItemType.Cutter) is var cutterSlot && cutterSlot >= 0
@@ -416,7 +444,9 @@ public sealed partial class World
                 c.LayingWireFromPin,
                 c.Nickname,
                 c.PingMs,
-                GetWallToolTargetId(c));
+                GetWallToolTargetId(c),
+                c.CarryingComponentId,
+                c.LayingWireBends.ToArray());
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(Phase, ShipMapPosition, _dockedPointId, _travelTargetPointId, _travelTargetPosition),
@@ -444,5 +474,7 @@ public sealed partial class World
         CreateSuitLockerStates(),
         Ship.CardTable,
         CreateCardGameState(),
-        GalaxyMap.Corridors.Select(c => new GalaxyCorridor(c.A, c.B)).ToArray());
+        Ship.ForwardDegrees,
+        new ReactorLeverState(LightsOn, PowerGrid.Reactor.EmergencyShutdown, DoorsLocked),
+        StoryLog);
 }

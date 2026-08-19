@@ -21,11 +21,13 @@ public partial class Game1
 {
     private enum MenuScreen
     {
+        Eula,
         Nickname,
         Role,
         Main,
         ShipSelect,
         Join,
+        ShipEditor,
     }
 
     private static readonly ShipKind[] SelectableShipKinds = { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette };
@@ -34,10 +36,10 @@ public partial class Game1
     private const int RoleIconGap = 30;
     private const int RoleIconsY = 220;
 
-    // Shown first, every launch (not just the first one) - pre-filled from PlayerSettingsStore so
-    // returning players just confirm rather than retype, but the screen itself always appears
-    // rather than silently reusing whatever was saved.
-    private MenuScreen _menuScreen = MenuScreen.Nickname;
+    // Shown first, every launch (not just the first one) - the same "always ask, never skip"
+    // convention the nickname/role screens right after it already use, just for a joke user
+    // agreement instead of a real setting.
+    private MenuScreen _menuScreen = MenuScreen.Eula;
     private string _nickname = PlayerSettingsStore.LoadNickname() ?? "";
     // Same "always ask, pre-filled from last time" shape as the nickname above - purely a
     // self-identification label (Character.cs's own comment), so there's no wrong answer and no
@@ -57,6 +59,11 @@ public partial class Game1
     // exists, but sharing the field would work just as well; two small fields is clearer than one
     // shared field whose name would otherwise suggest it's gameplay-only.
     private ButtonState _prevMenuLeftMouseButton = ButtonState.Released;
+    // When the front screen was last (re-)entered (Main's own game-time, from DrawMenu) - drives
+    // the staggered fade/slide-in each section plays on arrival, and null means "already settled",
+    // so a screen that's been sitting open for a while never replays it.
+    private float? _mainMenuEnterTime;
+    private MenuScreen? _lastDrawnMenuScreen;
 
     // Registered once from Initialize: MonoGame's TextInput is the only way to read typed characters
     // with the keyboard layout applied, which an IP address entry (and a nickname, which has to
@@ -105,7 +112,9 @@ public partial class Game1
             return;
         }
 
-        if (_menuScreen == MenuScreen.Nickname)
+        if (_menuScreen == MenuScreen.Eula)
+            HandleEulaScreen(keyboard);
+        else if (_menuScreen == MenuScreen.Nickname)
             HandleNicknameScreen(keyboard);
         else if (_menuScreen == MenuScreen.Role)
             HandleRoleScreen(keyboard);
@@ -113,10 +122,27 @@ public partial class Game1
             HandleMainMenuClick();
         else if (_menuScreen == MenuScreen.ShipSelect)
             HandleShipSelect(keyboard);
+        else if (_menuScreen == MenuScreen.ShipEditor)
+            HandleShipEditorScreen(keyboard);
         else
             HandleJoinScreen(keyboard);
 
         _prevMenuKeyboard = keyboard;
+    }
+
+    // A joke gate before the real ones (nickname/role) - Enter or clicking the button both just
+    // move on to Nickname, same "not actually a real gate" spirit as the text itself. Escape here
+    // falls through to LeaveSubScreen's default (false), which Update then treats the same as
+    // Main's own Escape - straight to Exit() - since there's nowhere further back from the very
+    // first screen.
+    private void HandleEulaScreen(KeyboardState keyboard)
+    {
+        var mouse = Mouse.GetState();
+        var clicked = mouse.LeftButton == ButtonState.Pressed && _prevMenuLeftMouseButton == ButtonState.Released;
+        _prevMenuLeftMouseButton = mouse.LeftButton;
+
+        if (Pressed(keyboard, Keys.Enter) || (clicked && GetEulaAcceptButtonRect().Contains(_designMouse)))
+            _menuScreen = MenuScreen.Nickname;
     }
 
     // Enter confirms whatever's typed (blank falls back to "Игрок" rather than sending an empty
@@ -182,11 +208,74 @@ public partial class Game1
             _menuScreen = MenuScreen.Main;
             return true;
         }
+        if (_menuScreen == MenuScreen.ShipEditor)
+        {
+            _menuScreen = MenuScreen.Main;
+            return true;
+        }
         return false;
     }
 
+    // What a main-menu button actually does on click - Placeholder means nothing yet, drawn
+    // dimmed like Настройки already was, until the user asks for it to do something real.
+    private enum MainMenuAction
+    {
+        NewGame,
+        Continue,
+        Join,
+        ShipEditor,
+        ChangeNick,
+        SettingsPlaceholder,
+        Exit,
+        Placeholder,
+    }
+
+    // Same small glyph vocabulary the old grouped sections showed before each header - restored
+    // per-button here since the flat layout dropped them when the section headers went away.
+    private enum MainMenuIcon
+    {
+        Play, Ship, Flag, Signal, Plug, Wrench, Person, Bars, Medal, Exit,
+    }
+
+    // The user's own hand-laid-out front screen (built with the Menu Layout Rig tool and pasted
+    // back as coordinates) - a flat list of free-standing buttons rather than the old grouped
+    // icon+header sections, so this is the single source both the click handler and the drawing
+    // below iterate over instead of two separate hand-kept layouts.
+    private static readonly (string Label, Rectangle Rect, MainMenuAction Action, MainMenuIcon Icon)[] MainMenuButtons =
+    {
+        ("ПРОДОЛЖИТЬ", new Rectangle(144, 64, 160, 24), MainMenuAction.Continue, MainMenuIcon.Play),
+        ("НОВАЯ ИГРА", new Rectangle(144, 96, 160, 24), MainMenuAction.NewGame, MainMenuIcon.Ship),
+        ("ОБУЧЕНИЕ", new Rectangle(144, 32, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Flag),
+        ("СОЗДАТЬ СЕРВЕР", new Rectangle(88, 168, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Signal),
+        ("ПРИСОЕДИНИТЬСЯ", new Rectangle(88, 200, 160, 24), MainMenuAction.Join, MainMenuIcon.Plug),
+        ("РЕДАКТОР КОРАБЛЯ", new Rectangle(168, 316, 160, 24), MainMenuAction.ShipEditor, MainMenuIcon.Wrench),
+        ("СМЕНИТЬ НИК", new Rectangle(168, 348, 160, 24), MainMenuAction.ChangeNick, MainMenuIcon.Person),
+        ("НАСТРОЙКИ", new Rectangle(76, 420, 160, 24), MainMenuAction.SettingsPlaceholder, MainMenuIcon.Bars),
+        ("АВТОРЫ", new Rectangle(76, 456, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Medal),
+        ("ВЫХОД", new Rectangle(76, 488, 160, 24), MainMenuAction.Exit, MainMenuIcon.Exit),
+    };
+
+    // Continue only exists once there's actually a save to continue - same "not drawn/clickable
+    // at all without one" behaviour the old grouped layout had, just expressed as a skip here
+    // instead of a separate conditional draw call.
+    private bool IsMainMenuButtonVisible(MainMenuAction action) =>
+        action != MainMenuAction.Continue || _existingSave is not null;
+
+    private bool IsMainMenuButtonEnabled(MainMenuAction action) =>
+        action is not (MainMenuAction.SettingsPlaceholder or MainMenuAction.Placeholder);
+
+    private string ResolveMainMenuLabel(string staticLabel, MainMenuAction action) => action switch
+    {
+        MainMenuAction.Continue when _existingSave is { } save =>
+            $"ПРОДОЛЖИТЬ ({ShipCatalog.Name(save.ShipKind)}, {save.Credits} кред.)",
+        MainMenuAction.ChangeNick => $"СМЕНИТЬ НИК ({_nickname})",
+        MainMenuAction.SettingsPlaceholder => "НАСТРОЙКИ (скоро)",
+        _ => staticLabel,
+    };
+
     // The main menu's own click targets - mouse-driven (unlike the keyboard-shortcut screens either
-    // side of it), matching the reference layout's clickable list rather than "[1] Пункт" prompts.
+    // side of it). Iterates the same MainMenuButtons list DrawMainMenuScreen draws, so a click can
+    // never land on a rect the drawing doesn't actually show (or vice versa).
     private void HandleMainMenuClick()
     {
         var mouse = Mouse.GetState();
@@ -196,26 +285,34 @@ public partial class Game1
             return;
 
         var point = _designMouse;
-        if (GetMainMenuItemRect(0).Contains(point))
+        foreach (var (_, rect, action, _) in MainMenuButtons)
         {
-            _menuScreen = MenuScreen.ShipSelect;
-        }
-        else if (_existingSave is { } save && GetMainMenuItemRect(1).Contains(point))
-        {
-            StartHostedSession(save.ShipKind, save);
-        }
-        else if (GetMainMenuItemRect(2).Contains(point))
-        {
-            _menuScreen = MenuScreen.Join;
-            _joinError = null;
-        }
-        else if (GetMainMenuItemRect(4).Contains(point))
-        {
-            _menuScreen = MenuScreen.Nickname;
-        }
-        else if (GetMainMenuExitRect().Contains(point))
-        {
-            Exit();
+            if (!IsMainMenuButtonVisible(action) || !IsMainMenuButtonEnabled(action) || !rect.Contains(point))
+                continue;
+
+            switch (action)
+            {
+                case MainMenuAction.NewGame:
+                    _menuScreen = MenuScreen.ShipSelect;
+                    break;
+                case MainMenuAction.Continue when _existingSave is { } save:
+                    StartHostedSession(save.ShipKind, save);
+                    break;
+                case MainMenuAction.Join:
+                    _menuScreen = MenuScreen.Join;
+                    _joinError = null;
+                    break;
+                case MainMenuAction.ShipEditor:
+                    EnterShipEditor();
+                    break;
+                case MainMenuAction.ChangeNick:
+                    _menuScreen = MenuScreen.Nickname;
+                    break;
+                case MainMenuAction.Exit:
+                    Exit();
+                    break;
+            }
+            return;
         }
     }
 
@@ -302,9 +399,10 @@ public partial class Game1
 
     // The host is a player like any other - their own session is the same SoloSession solo mode
     // uses, with the listen socket as the only difference.
-    private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom)
+    private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom, CustomShipDefinition? customShip = null)
     {
-        var session = new SoloSession(shipKind, loadFrom, _openToNetwork ? SpaceAdventure.Shared.Networking.Wire.DefaultPort : null);
+        var session = new SoloSession(shipKind, loadFrom,
+            _openToNetwork ? SpaceAdventure.Shared.Networking.Wire.DefaultPort : null, customShip);
         _session = session;
         _client = new GameClient(session.Connection, session.PlayerId);
         _sessionStarted = true;
@@ -359,8 +457,16 @@ public partial class Game1
 
     private void DrawMenu(float totalSeconds)
     {
+        // Freshly arrived at Main this frame (from anywhere: role screen, ship-select's Escape,
+        // ReturnToMainMenu) - stamp the entrance time so DrawMainMenuScreen's stagger starts over.
+        if (_menuScreen == MenuScreen.Main && _lastDrawnMenuScreen != MenuScreen.Main)
+            _mainMenuEnterTime = totalSeconds;
+        _lastDrawnMenuScreen = _menuScreen;
+
         _spriteBatch.Begin(transformMatrix: _renderScale);
-        if (_menuScreen == MenuScreen.Nickname)
+        if (_menuScreen == MenuScreen.Eula)
+            DrawEulaScreen(totalSeconds);
+        else if (_menuScreen == MenuScreen.Nickname)
             DrawNicknameScreen();
         else if (_menuScreen == MenuScreen.Role)
             DrawRoleScreen();
@@ -368,71 +474,147 @@ public partial class Game1
             DrawMainMenuScreen(totalSeconds);
         else if (_menuScreen == MenuScreen.ShipSelect)
             DrawShipSelectScreen();
+        else if (_menuScreen == MenuScreen.ShipEditor)
+            DrawShipEditorScreen();
         else
             DrawJoinScreen();
         _spriteBatch.End();
     }
 
-    // Item indices, shared between the click handler above and the layout below, so a rect can
-    // never drift out of sync with the row it's supposed to catch.
-    private static Rectangle GetMainMenuItemRect(int index) => index switch
-    {
-        0 => new Rectangle(64, 60, 380, 20), // Новая игра
-        1 => new Rectangle(64, 84, 380, 20), // Продолжить (only drawn/clickable with a save)
-        2 => new Rectangle(64, 166, 380, 20), // Присоединиться
-        3 => new Rectangle(64, 246, 380, 20), // Настройки (inert placeholder)
-        4 => new Rectangle(64, 270, 380, 20), // Сменить ник
-        _ => Rectangle.Empty,
-    };
-
-    private static Rectangle GetMainMenuExitRect() => new(24, 500, 160, 24);
-
-    // A grouped, mouse-driven front screen (icon + colored header bar per section, sub-items
-    // listed under it, a bare flat list at the bottom) instead of the "[1] Пункт" keyboard prompts
-    // the screens either side of it still use - the layout the user asked to match, not a literal
-    // reproduction of another game's content (this project has no tutorial/mods/settings screen to
-    // point "Тренировка"/"Моды"/"Настройки" at, so only the sections with something real behind
-    // them are clickable; the rest are drawn dim, same placeholder convention already used for the
-    // "Управление" top-bar button before it got the ship editor).
+    // A free-standing, mouse-driven front screen - every button exactly where the user placed it
+    // with the Menu Layout Rig tool, not grouped under a header any more. Обучение/Создать
+    // сервер/Авторы are new slots the user added there with nothing behind them yet - drawn
+    // dimmed like Настройки already was, so they read as "not wired up yet" rather than broken.
     private void DrawMainMenuScreen(float totalSeconds)
     {
         DrawMainMenuBackdrop(totalSeconds);
+        DrawMainMenuPanelPlate(totalSeconds);
 
-        DrawMainMenuSection("КАМПАНИЯ", 24, HudIcons.DrawShipGlyph);
-        DrawMainMenuItem(0, "НОВАЯ ИГРА", enabled: true);
-        if (_existingSave is { } save)
-            DrawMainMenuItem(1, $"ПРОДОЛЖИТЬ ({ShipCatalog.Name(save.ShipKind)}, {save.Credits} кред.)", enabled: true);
-
-        DrawMainMenuSection("СЕТЕВАЯ ИГРА", 130, HudIcons.DrawSignalGlyph);
-        DrawMainMenuItem(2, "ПРИСОЕДИНИТЬСЯ", enabled: true);
-
-        DrawMainMenuSection("ПЕРСОНАЛИЗАЦИЯ", 210,
-            (sb, px, c, sc, col) => HudIcons.DrawRoleGlyph(sb, px, c, sc, col, CrewRole.Mechanic));
-        DrawMainMenuItem(3, "НАСТРОЙКИ (скоро)", enabled: false);
-        DrawMainMenuItem(4, $"СМЕНИТЬ НИК ({_nickname})", enabled: true);
-
-        var exitRect = GetMainMenuExitRect();
-        _spriteBatch.DrawString(_font, "ВЫХОД", new Vector2(exitRect.X, exitRect.Y), Color.LightGray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+        var sinceEnter = totalSeconds - (_mainMenuEnterTime ?? totalSeconds - 999f);
+        var visibleIndex = 0;
+        foreach (var (staticLabel, rect, action, icon) in MainMenuButtons)
+        {
+            if (!IsMainMenuButtonVisible(action))
+                continue;
+            var progress = MainMenuButtonProgress(sinceEnter, visibleIndex);
+            visibleIndex++;
+            DrawMainMenuButton(rect, ResolveMainMenuLabel(staticLabel, action), IsMainMenuButtonEnabled(action), progress, icon);
+        }
     }
 
-    private void DrawMainMenuSection(string label, int y, Action<SpriteBatch, Texture2D, Vector2, float, Color> drawIcon)
+    // Eased 0..1 arrival progress for the button at `index` in menu-arrival order, staggered so
+    // each one starts a beat after the last rather than everything popping in together.
+    private static float MainMenuButtonProgress(float sinceEnter, int index)
     {
-        var iconRect = new Rectangle(24, y, 28, 28);
-        _spriteBatch.Draw(_pixel, iconRect, new Color(30, 60, 55));
-        drawIcon(_spriteBatch, _pixel, new Vector2(iconRect.Center.X, iconRect.Center.Y), 0.85f, Color.White);
-
-        var headerRect = new Rectangle(64, y + 2, 380, 24);
-        _spriteBatch.Draw(_pixel, headerRect, new Color(210, 140, 50));
-        _spriteBatch.DrawString(_font, label, new Vector2(headerRect.X + 8, headerRect.Y + 4),
-            Color.Black, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        const float staggerSeconds = 0.06f;
+        const float durationSeconds = 0.3f;
+        var t = Math.Clamp((sinceEnter - index * staggerSeconds) / durationSeconds, 0f, 1f);
+        return t * t * (3f - 2f * t); // smoothstep
     }
 
-    private void DrawMainMenuItem(int index, string label, bool enabled)
+    // A small bordered plate per button rather than bare floating text - free-standing buttons
+    // with nothing grouping them need their own edge to read as a discrete clickable thing.
+    // `progress` drives both the fade-in and a slide-up on arrival, same convention every other
+    // menu animation in this file already uses.
+    private void DrawMainMenuButton(Rectangle rect, string label, bool enabled, float progress, MainMenuIcon icon)
     {
-        var rect = GetMainMenuItemRect(index);
-        var hovered = enabled && rect.Contains(_designMouse);
-        var color = !enabled ? Color.Gray : hovered ? Color.Gold : Color.LightGray;
-        _spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), color, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+        var slide = (int)((1f - progress) * 14f);
+        var drawRect = new Rectangle(rect.X, rect.Y + slide, rect.Width, rect.Height);
+        var hovered = enabled && drawRect.Contains(_designMouse);
+        var accent = !enabled ? new Color(90, 96, 96) : hovered ? Color.Gold : new Color(90, 220, 195);
+
+        _spriteBatch.Draw(_pixel, drawRect, new Color(14, 20, 20) * progress);
+        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, drawRect, accent * progress, 1);
+
+        var iconBoxSize = drawRect.Height - 8;
+        var iconBox = new Rectangle(drawRect.X + 4, drawRect.Y + (drawRect.Height - iconBoxSize) / 2, iconBoxSize, iconBoxSize);
+        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, iconBox, accent * (progress * 0.6f), 1);
+        DrawMainMenuButtonIcon(icon, iconBox, accent * progress);
+
+        var textColor = (!enabled ? Color.Gray : hovered ? Color.Gold : Color.LightGray) * progress;
+        var textSize = _font.MeasureString(label) * 0.5f;
+        var textX = iconBox.Right + 8;
+        var textPos = new Vector2(textX, drawRect.Center.Y - textSize.Y / 2f);
+        _spriteBatch.DrawString(_font, label, textPos, textColor, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+    }
+
+    // Same glyph vocabulary the old grouped sections used before each header (HudIcons' ship/
+    // signal/flag/medal/bars glyphs), plus a few quick vector icons for actions that never had
+    // one - all drawn with the same line/circle/triangle primitives, no image assets.
+    private void DrawMainMenuButtonIcon(MainMenuIcon icon, Rectangle box, Color color)
+    {
+        var center = new Vector2(box.Center.X, box.Center.Y);
+        var scale = box.Width / 20f;
+        switch (icon)
+        {
+            case MainMenuIcon.Play:
+                Primitives.FillTriangle(_spriteBatch, _pixel,
+                    center + new Vector2(6f * scale, 0),
+                    center + new Vector2(-4f * scale, -6f * scale),
+                    center + new Vector2(-4f * scale, 6f * scale),
+                    color);
+                break;
+            case MainMenuIcon.Ship:
+                HudIcons.DrawShipGlyph(_spriteBatch, _pixel, center, scale, color);
+                break;
+            case MainMenuIcon.Flag:
+                HudIcons.DrawFlagGlyph(_spriteBatch, _pixel, center, scale * 0.8f, color);
+                break;
+            case MainMenuIcon.Signal:
+                HudIcons.DrawSignalGlyph(_spriteBatch, _pixel, center, scale * 0.8f, color);
+                break;
+            case MainMenuIcon.Plug:
+                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-7f * scale, 0), center + new Vector2(2f * scale, 0), color, 1.8f * scale);
+                _spriteBatch.Draw(_pixel, new Rectangle((int)(center.X + 2f * scale), (int)(center.Y - 5f * scale), (int)(5f * scale), (int)(10f * scale)), color);
+                break;
+            case MainMenuIcon.Wrench:
+                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-6f * scale, 6f * scale), center + new Vector2(5f * scale, -5f * scale), color, 2.2f * scale);
+                HudIcons.DrawRingArc(_spriteBatch, _pixel, center + new Vector2(6f * scale, -6f * scale), 3.2f * scale, 0f, 360f, color, 8, 1.6f * scale);
+                break;
+            case MainMenuIcon.Person:
+                HudIcons.DrawPerson(_spriteBatch, _pixel, center + new Vector2(0, 7f * scale), scale * 0.85f, color);
+                break;
+            case MainMenuIcon.Bars:
+                HudIcons.DrawBarsGlyph(_spriteBatch, _pixel, center, scale * 0.7f, color);
+                break;
+            case MainMenuIcon.Medal:
+                HudIcons.DrawMedalGlyph(_spriteBatch, _pixel, center, scale * 0.8f, color);
+                break;
+            case MainMenuIcon.Exit:
+                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-6f * scale, -6f * scale), center + new Vector2(6f * scale, 6f * scale), color, 2f * scale);
+                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-6f * scale, 6f * scale), center + new Vector2(6f * scale, -6f * scale), color, 2f * scale);
+                break;
+        }
+    }
+
+    // The left panel's own material - the same armour-plate texture the hull itself uses
+    // reads as flat near-black with just a whisper of a blueprint grid, not a repeating armour-
+    // plate tile - a tiled hull texture at this scale read as "a bunch of plates" instead of a
+    // moody backdrop, so this is a flat fill plus thin grid lines instead. Also carries a thin
+    // animated status strip down the panel's right edge.
+    private void DrawMainMenuPanelPlate(float totalSeconds)
+    {
+        var panelRect = new Rectangle(0, 0, 480, DesignHeight);
+        _spriteBatch.Draw(_pixel, panelRect, new Color(7, 11, 12));
+
+        const int cell = 28;
+        var gridColor = new Color(90, 220, 195) * 0.05f;
+        for (var x = panelRect.X; x < panelRect.Right; x += cell)
+            _spriteBatch.Draw(_pixel, new Rectangle(x, panelRect.Y, 1, panelRect.Height), gridColor);
+        for (var y = panelRect.Y; y < panelRect.Bottom; y += cell)
+            _spriteBatch.Draw(_pixel, new Rectangle(panelRect.X, y, panelRect.Width, 1), gridColor);
+
+        // A soft glow low in the corner the sections actually sit in, fading to nothing toward the
+        // opposite edges - depth without a second competing pattern.
+        HudIcons.FillCircle(_spriteBatch, _pixel, new Vector2(panelRect.X + 40, panelRect.Y + 260), 260f, new Color(40, 70, 65) * 0.10f);
+
+        const int stripWidth = 3;
+        var stripRect = new Rectangle(panelRect.Right - stripWidth, 0, stripWidth, DesignHeight);
+        _spriteBatch.Draw(_pixel, stripRect, new Color(20, 26, 26));
+        var pulse = 0.5f + 0.5f * MathF.Sin(totalSeconds * 1.6f);
+        const int litHeight = 40;
+        var litY = (int)(pulse * (DesignHeight - litHeight));
+        _spriteBatch.Draw(_pixel, new Rectangle(stripRect.X, litY, stripWidth, litHeight), new Color(90, 220, 195) * 0.8f);
     }
 
     // Right-hand art pane - a planet on a slow orbit with the player's own ship circling it
@@ -443,10 +625,115 @@ public partial class Game1
         var pane = new Rectangle(480, 0, DesignWidth - 480, DesignHeight);
         MenuPlanetScene.Draw(_spriteBatch, _pixel, pane, totalSeconds);
 
-        var title = "SPACE ADVENTURE";
-        var titlePosition = new Vector2(pane.Right - 340, pane.Bottom - 60);
-        _spriteBatch.DrawString(_font, title, titlePosition + new Vector2(2, 2), Color.Black * 0.5f, 0f, Vector2.Zero, 1.1f, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, title, titlePosition, Color.White, 0f, Vector2.Zero, 1.1f, SpriteEffects.None, 0f);
+        // A little caption riding along next to the orbiting Katyusha truck - purely a joke aside,
+        // not a UI label anything reads, so it just follows MenuPlanetScene's own reported position
+        // for it every frame rather than being pinned to one spot.
+        var katyushaPosition = MenuPlanetScene.GetKatyushaScreenPosition(pane, totalSeconds);
+        var caption = "P. S. это Катюша";
+        var captionPosition = katyushaPosition + new Vector2(14, -6);
+        _spriteBatch.DrawString(_font, caption, captionPosition + new Vector2(1, 1), Color.Black * 0.6f, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, caption, captionPosition, Color.LightGoldenrodYellow, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        // A soft cyan glow behind the title (several oversized, near-transparent copies offset in
+        // a ring) plus a hard black drop shadow, then the crisp white face on top - the cheapest
+        // way to fake a bloomed title with nothing but flat text draws.
+        const string title = "ДУРАК ОНЛАЙН";
+        const float titleScale = 1.7f;
+        var titlePosition = new Vector2(pane.Right - 460, pane.Bottom - 92);
+        var glow = new Color(90, 220, 195);
+        foreach (var offset in new[] { new Vector2(-2, 0), new Vector2(2, 0), new Vector2(0, -2), new Vector2(0, 2), new Vector2(-1.5f, -1.5f), new Vector2(1.5f, 1.5f) })
+            _spriteBatch.DrawString(_font, title, titlePosition + offset, glow * 0.35f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, title, titlePosition + new Vector2(3, 3), Color.Black * 0.6f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, title, titlePosition, Color.White, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+
+        // A riveted rule under the title, same corner-rivet dressing every device housing already
+        // wears (ShipRenderer.DrawRivets) - ties the front screen to the game it opens into.
+        var ruleY = titlePosition.Y + 46;
+        var ruleRect = new Rectangle((int)titlePosition.X, (int)ruleY, pane.Right - (int)titlePosition.X - 20, 2);
+        _spriteBatch.Draw(_pixel, ruleRect, glow * 0.6f);
+        for (var x = ruleRect.X + 6; x < ruleRect.Right; x += 24)
+            HudIcons.FillCircle(_spriteBatch, _pixel, new Vector2(x, ruleY + 1), 1.4f, new Color(20, 24, 22));
+
+        const string tagline = "СВОЙ КОРАБЛЬ. СВОЙ ЭКИПАЖ. ГЛУБОКИЙ КОСМОС.";
+        _spriteBatch.DrawString(_font, tagline, new Vector2(titlePosition.X + 2, ruleY + 8), new Color(190, 220, 215), 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+    }
+
+    private static readonly string[] EulaLines =
+    {
+        "Подписав данное пользовательское соглашение вы соглашаеться стать тестировщиком игры.",
+        "Если у вас в течении игры случится припадок, инсульт, эпилепсия, гипоксемия, отказ органов.",
+        "Разработчик ответсвенности за это не несет.",
+        "Также по просьбе создателя данной игры играть в дурака, вы обязательно должно повиноваться",
+        "ему и идти играть в дурака, даже если это будет посреди боя с зараженными.",
+        "",
+        "Удачи в бета версии игры",
+    };
+
+    private static Rectangle GetEulaAcceptButtonRect() => new(DesignWidth / 2 - 130, 470, 260, 40);
+
+    // A joke user agreement, styled like every other warning-tape surface in this game (hazard
+    // stripes top and bottom, a flickering red title) rather than a plain text dump - the whole
+    // point of "АТТЕШН!!!" is that it reads as an actual klaxon, not a EULA nobody looks at.
+    private void DrawEulaScreen(float totalSeconds)
+    {
+        _spriteBatch.Draw(_pixel, new Rectangle(0, 0, DesignWidth, DesignHeight), new Color(10, 6, 6));
+
+        const int stripeHeight = 14;
+        DrawHazardCap(new Rectangle(0, 0, DesignWidth, stripeHeight), 1f);
+        DrawHazardCap(new Rectangle(0, DesignHeight - stripeHeight, DesignWidth, stripeHeight), 1f);
+
+        var flicker = 0.7f + 0.3f * MathF.Sin(totalSeconds * 9f);
+        const string title = "АТТЕШН!!!";
+        const float titleScale = 2.4f;
+        var titleSize = _font.MeasureString(title) * titleScale;
+        var titlePosition = new Vector2((DesignWidth - titleSize.X) / 2f, 34);
+        _spriteBatch.DrawString(_font, title, titlePosition + new Vector2(3, 3), Color.Black * 0.7f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, title, titlePosition, Color.OrangeRed * flicker, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+
+        const string subtitle = "ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ";
+        var subtitleSize = _font.MeasureString(subtitle) * 0.75f;
+        _spriteBatch.DrawString(_font, subtitle, new Vector2((DesignWidth - subtitleSize.X) / 2f, 96), Color.Gold, 0f, Vector2.Zero, 0.75f, SpriteEffects.None, 0f);
+
+        var panelRect = new Rectangle(90, 140, DesignWidth - 180, 300);
+        _spriteBatch.Draw(_pixel, panelRect, new Color(20, 16, 16) * 0.9f);
+        DrawEulaPanelOutline(panelRect, new Color(150, 40, 30));
+
+        for (var i = 0; i < EulaLines.Length; i++)
+            _spriteBatch.DrawString(_font, EulaLines[i], new Vector2(panelRect.X + 20, panelRect.Y + 20 + i * 26),
+                Color.LightGray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        var buttonRect = GetEulaAcceptButtonRect();
+        var hovered = buttonRect.Contains(_designMouse);
+        _spriteBatch.Draw(_pixel, buttonRect, (hovered ? new Color(120, 40, 20) : new Color(80, 26, 16)) * 0.95f);
+        DrawEulaPanelOutline(buttonRect, hovered ? Color.Gold : new Color(150, 40, 30));
+        const string accept = "[ПРИНИМАЮ]";
+        var acceptSize = _font.MeasureString(accept) * 0.75f;
+        _spriteBatch.DrawString(_font, accept, new Vector2(buttonRect.Center.X - acceptSize.X / 2f, buttonRect.Center.Y - acceptSize.Y / 2f),
+            hovered ? Color.White : Color.LightGray, 0f, Vector2.Zero, 0.75f, SpriteEffects.None, 0f);
+
+        _spriteBatch.DrawString(_font, "[Enter] принять условия", new Vector2(90, 522), Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+    }
+
+    private void DrawEulaPanelOutline(Rectangle rect, Color color)
+    {
+        const int thickness = 2;
+        _spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
+        _spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
+        _spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
+        _spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
+    }
+
+    private void DrawHazardCap(Rectangle rect, float alpha)
+    {
+        _spriteBatch.Draw(_pixel, rect, new Color(40, 34, 10) * alpha);
+        const int stripeWidth = 16;
+        for (var x = -rect.Height; x < rect.Width; x += stripeWidth * 2)
+        {
+            var p0 = new Vector2(rect.X + x, rect.Bottom);
+            var p1 = new Vector2(rect.X + x + rect.Height, rect.Y);
+            HudIcons.DrawLine(_spriteBatch, _pixel, p0, p1, Color.Black * (alpha * 0.85f), stripeWidth);
+            HudIcons.DrawLine(_spriteBatch, _pixel, p0 + new Vector2(stripeWidth, 0), p1 + new Vector2(stripeWidth, 0), new Color(210, 170, 20) * alpha, stripeWidth);
+        }
     }
 
     private void DrawNicknameScreen()

@@ -19,7 +19,15 @@ public sealed record SaveGame(
     Quest? ActiveQuest,
     // What's on the ship's storage rack, slot by slot (nulls preserved, since which shelf a thing
     // sits on is the player's own arrangement). Absent in version 1 files - restores as empty.
-    IReadOnlyList<ItemType?>? RackSlots = null)
+    IReadOnlyList<ItemType?>? RackSlots = null,
+    // The player's own hull layout (Ship Editor), present only when ShipKind is Custom - absent in
+    // pre-M?? files and whenever flying a fixed class, restoring as null either way.
+    CustomShipDefinition? CustomShip = null,
+    // How far the scripted intro campaign has gotten, and the narrative lines reached so far
+    // (World.Campaign.cs) - both absent in older files, restoring as NotStarted/empty, the same
+    // "additive, no version bump needed" pattern RackSlots/CustomShip above already established.
+    CampaignStage Campaign = CampaignStage.NotStarted,
+    IReadOnlyList<string>? StoryLog = null)
 {
     // Bumped whenever the shape changes incompatibly; SaveStore refuses anything it doesn't know,
     // so an old file fails to load cleanly instead of half-restoring into a broken run.
