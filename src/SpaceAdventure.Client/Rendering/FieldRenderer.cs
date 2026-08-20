@@ -98,8 +98,8 @@ public sealed class FieldRenderer
         // the sky (VoyagePhases.HasStationInField).
         if (snapshot.Voyage.Phase.HasStationInField())
         {
-            var stationScreen = WorldToScreen(snapshot.StationPosition);
-            var portScreen = WorldToScreen(snapshot.StationDockingPortPosition);
+            var stationScreen = WorldToScreen(snapshot.Station.Position);
+            var portScreen = WorldToScreen(snapshot.Station.DockingPortPosition);
             // Once docked the interior is drawn in full by StationRenderer, in these same
             // coordinates - the exterior would land exactly on top of it, so it's skipped rather
             // than double-drawn.
@@ -283,9 +283,9 @@ public sealed class FieldRenderer
         Func<Vec2, Vector2> worldToScreen, Vector2 screenCenter)
     {
         var rotation = -snapshot.ShipField.RotationDegrees * (MathF.PI / 180f);
-        foreach (var room in snapshot.StationRooms)
+        foreach (var room in snapshot.Station.Rooms)
         {
-            var center = room.Center + snapshot.StationWorldOffset;
+            var center = room.Center + snapshot.Station.WorldOffset;
             var size = new Vector2(room.Width, room.Height) * ShipRenderer.PixelsPerUnit;
             var screen = worldToScreen(center);
             spriteBatch.Draw(_pixel, screen, null, new Color(52, 60, 74), rotation, new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);

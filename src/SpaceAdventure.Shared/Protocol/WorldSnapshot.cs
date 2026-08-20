@@ -35,22 +35,14 @@ public sealed record WorldSnapshot(
     // "index / StorageRack.Capacity" is what maps a slot back to which physical shelf it's on.
     IReadOnlyList<StorageRack> StorageRacks,
     IReadOnlyList<ItemType?> RackSlots,
-    IReadOnlyList<StationNpc> StationNpcs,
-    IReadOnlyList<StationCrate> StationCrates,
-    IReadOnlyList<StationCrateState> StationCrateStates,
-    IReadOnlyList<StationGuardState> StationGuards,
-    IReadOnlyList<Room> StationRooms,
-    IReadOnlyList<Door> StationDoors,
-    AirlockOuterDoor StationShipConnector,
-    Vec2 StationPosition,
-    // StationRooms/Doors/Npcs/Crates are all in the *docked* frame - the ship's own interior
-    // coordinates - so a docked station needs no conversion to draw. Add this to get field/world
-    // coordinates instead, which is what the exterior view and the radar plot in.
-    Vec2 StationWorldOffset,
+    // The docked station's own rooms/doors/NPCs/crates/wall blocks (StationSnapshot.cs) - grouped
+    // together since StationRenderer/StationPanel/the radar blip are the only readers and always
+    // want the whole thing, never one field of it in isolation.
+    StationSnapshot Station,
     // The mouth of the berth, the hull position that mates with it, and whether the ship is
     // currently parked there well enough to dock (World.StationDocking.cs) - the last is what arms
-    // the helm's "Стыковка" button.
-    Vec2 StationDockingPortPosition,
+    // the helm's "Стыковка" button. Ship-side/approach-physics concerns (HelmPanel/FieldRenderer's
+    // exterior view), not station-interior content, so these stay out of StationSnapshot itself.
     Vec2 DockBerthPosition,
     bool CanDock,
     IReadOnlyList<Room> EnemyShipRooms,
@@ -129,12 +121,6 @@ public sealed record WorldSnapshot(
     // plain flavor text over the existing quest/faction/combat systems, not a new mechanic of its
     // own. Shown in InfoPanel's Missions tab alongside the active quest.
     IReadOnlyList<string> StoryLog,
-    // A station's own wall segments, purely for the welder/cutter's aim-HP-bar UI (World.WallBlocks.
-    // cs's FindAimedStationWallBlock) - always reported at full Hp, since a station is never actually
-    // breachable/repairable. Same shapes as WallBlocks/WallBlockStates above, just a second, station-
-    // scoped list rather than reusing the ship's own.
-    IReadOnlyList<WallBlock> StationWallBlocks,
-    IReadOnlyList<WallBlockState> StationWallBlockStates,
     // The "ОБУЧЕНИЕ" run's current instruction (World.Tutorial.cs), null outside it entirely - the
     // client just draws a persistent top banner whenever this is non-null.
     string? TutorialObjective);

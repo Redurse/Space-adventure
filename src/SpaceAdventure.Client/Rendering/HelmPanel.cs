@@ -175,15 +175,15 @@ public sealed class HelmPanel
             // The station is plotted as its real compartments, so what the radar shows is the same
             // shape the pilot will be walking around a minute later - and the berth's position on
             // it is obvious rather than something to be taken on trust from a lone dot.
-            foreach (var room in snapshot.StationRooms)
+            foreach (var room in snapshot.Station.Rooms)
             {
-                var roomCenter = center + ToRadar(room.Center + snapshot.StationWorldOffset, shipWorldPos, scale);
+                var roomCenter = center + ToRadar(room.Center + snapshot.Station.WorldOffset, shipWorldPos, scale);
                 var size = new Vector2(room.Width, room.Height) * scale;
                 if ((roomCenter - center).Length() > RadarRadiusPixels + size.Length())
                     continue;
                 spriteBatch.Draw(_pixel, roomCenter, null, Color.SteelBlue * 0.75f, 0f, new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);
             }
-            DrawTrackedBlip(spriteBatch, center, ToRadar(snapshot.StationPosition, shipWorldPos, scale), 6, Color.SteelBlue);
+            DrawTrackedBlip(spriteBatch, center, ToRadar(snapshot.Station.Position, shipWorldPos, scale), 6, Color.SteelBlue);
             DrawTrackedBlip(spriteBatch, center, ToRadar(snapshot.DockBerthPosition, shipWorldPos, scale), 7, Color.LimeGreen);
         }
         // Every hostile hull in the sector, not just the one being boarded - the captain flies the

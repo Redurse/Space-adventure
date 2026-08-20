@@ -135,8 +135,8 @@ internal static partial class TestRunner
         if (!me.OnStation)
             return false; // didn't make it onto the station
 
-        var room = world.CreateSnapshot().StationRooms.First(r => r.Contains(new Vec2(me.X, me.Y)));
-        var block = world.CreateSnapshot().StationWallBlocks.First(b => b.RoomId == room.Id);
+        var room = world.CreateSnapshot().Station.Rooms.First(r => r.Contains(new Vec2(me.X, me.Y)));
+        var block = world.CreateSnapshot().Station.WallBlocks.First(b => b.RoomId == room.Id);
 
         // Stand half a unit in from whichever edge this block sits on and aim straight at it - the
         // same "walk up to the known block, look the one way that hits it" shape every ship wall
@@ -161,7 +161,7 @@ internal static partial class TestRunner
         if (meNow.WallToolTargetBlockId != block.Id)
             return false; // should reveal exactly this station wall block
 
-        var state = snapshot.StationWallBlockStates.First(s => s.Id == block.Id);
+        var state = snapshot.Station.WallBlockStates.First(s => s.Id == block.Id);
         return state.Hp >= state.MaxHp; // untouched - stations are never actually breachable/repairable
     }
 

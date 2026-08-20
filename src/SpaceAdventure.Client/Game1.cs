@@ -1044,9 +1044,9 @@ public partial class Game1 : Game
             var docked = snapshot.Voyage.Phase == VoyagePhase.Station;
             if (docked)
             {
-                foreach (var door in snapshot.StationDoors)
+                foreach (var door in snapshot.Station.Doors)
                     gaps.Add(Occluders.ToGap(door));
-                rooms = snapshot.Rooms.Concat(snapshot.StationRooms).ToList();
+                rooms = snapshot.Rooms.Concat(snapshot.Station.Rooms).ToList();
             }
             walls = Occluders.Build(rooms, gaps);
             // Outside the hull the camera folds the player's world position back into the ship's
@@ -1060,7 +1060,7 @@ public partial class Game1 : Game
             // A docked station has its own external power - always lit regardless of what shape the
             // player's own ship's grid is in.
             if (docked)
-                AddStationLights(lights, snapshot.StationRooms);
+                AddStationLights(lights, snapshot.Station.Rooms);
             floor = mood.Floor;
         }
 
@@ -1413,9 +1413,9 @@ public partial class Game1 : Game
                     // never collides with a ship one, same "either list, whichever matches" shape as
                     // the door bar lookup just below.
                     var block = hudSnapshot.WallBlocks.FirstOrDefault(b => b.Id == targetId)
-                        ?? hudSnapshot.StationWallBlocks.FirstOrDefault(b => b.Id == targetId);
+                        ?? hudSnapshot.Station.WallBlocks.FirstOrDefault(b => b.Id == targetId);
                     var state = hudSnapshot.WallBlockStates.FirstOrDefault(s => s.Id == targetId)
-                        ?? hudSnapshot.StationWallBlockStates.FirstOrDefault(s => s.Id == targetId);
+                        ?? hudSnapshot.Station.WallBlockStates.FirstOrDefault(s => s.Id == targetId);
                     if (block is not null && state is not null)
                         _shipRenderer.DrawWallToolTargetBar(_spriteBatch, block, state, wallToolOrigin);
                 }

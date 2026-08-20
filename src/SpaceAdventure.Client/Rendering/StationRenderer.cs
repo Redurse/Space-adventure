@@ -41,38 +41,38 @@ public sealed partial class StationRenderer
 
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, string? talkingToNpcId, float totalSeconds = 0f)
     {
-        foreach (var room in snapshot.StationRooms)
+        foreach (var room in snapshot.Station.Rooms)
             _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin, StationAccent);
-        foreach (var room in snapshot.StationRooms)
+        foreach (var room in snapshot.Station.Rooms)
             _shipRenderer.DrawRoomWalls(spriteBatch, room, oxygen: 100f, origin, StationAccent);
 
-        foreach (var door in snapshot.StationDoors)
+        foreach (var door in snapshot.Station.Doors)
             _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen: true, origin);
 
         // Same physical door as the ship's own outer airlock - its open/closed state is whatever
         // that door's DoorState already says (World.StationDocking.cs gates both directions on it).
-        var connector = snapshot.StationShipConnector;
+        var connector = snapshot.Station.ShipConnector;
         var shipDoorOpen = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == snapshot.AirlockOuterDoors.First().Id)?.IsOpen ?? false;
         _shipRenderer.DrawDoor(spriteBatch, connector.Left, connector.Top, connector.Width, connector.Height, shipDoorOpen, origin, leadsToVacuum: true);
 
         // Unlooted crates only - a taken one leaves nothing behind (World.StationCrime.cs).
-        foreach (var crate in snapshot.StationCrates)
+        foreach (var crate in snapshot.Station.Crates)
         {
-            if (snapshot.StationCrateStates.FirstOrDefault(s => s.CrateId == crate.Id)?.Looted ?? false)
+            if (snapshot.Station.CrateStates.FirstOrDefault(s => s.CrateId == crate.Id)?.Looted ?? false)
                 continue;
             DrawCrate(spriteBatch, crate, origin);
         }
 
-        foreach (var npc in snapshot.StationNpcs)
+        foreach (var npc in snapshot.Station.Npcs)
         {
             // A guard shot dead stops being drawn - same convention as cleared enemy crew.
             if (npc.Kind == NpcKind.Security &&
-                !(snapshot.StationGuards.FirstOrDefault(g => g.NpcId == npc.Id)?.Alive ?? true))
+                !(snapshot.Station.Guards.FirstOrDefault(g => g.NpcId == npc.Id)?.Alive ?? true))
                 continue;
             DrawNpc(spriteBatch, npc, origin, npc.Id == talkingToNpcId);
         }
 
-        _shipRenderer.DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.StationRooms.Select(r => r.Id), origin, totalSeconds);
+        _shipRenderer.DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.Station.Rooms.Select(r => r.Id), origin, totalSeconds);
 
         foreach (var character in snapshot.Characters.Where(c => c.OnStation))
             _shipRenderer.DrawCharacter(spriteBatch, character, origin);

@@ -694,7 +694,7 @@ public partial class Game1
 
         if (_openBlock.Kind == BlockKind.Station)
         {
-            var talkingToKind = snapshot.StationNpcs.FirstOrDefault(n => n.Id == _talkingToNpcId)?.Kind;
+            var talkingToKind = snapshot.Station.Npcs.FirstOrDefault(n => n.Id == _talkingToNpcId)?.Kind;
 
             if (talkingToKind == NpcKind.Trader)
             {
@@ -780,7 +780,7 @@ public partial class Game1
         if (me.OnStation)
         {
             var stationOrigin = ComputeCamera(snapshot, me).Origin;
-            foreach (var npc in snapshot.StationNpcs)
+            foreach (var npc in snapshot.Station.Npcs)
             {
                 if (npc.Kind == NpcKind.Security)
                     continue; // there's nothing to discuss with the guard - only to avoid them
@@ -1110,7 +1110,7 @@ public partial class Game1
         // block below, so it can't share their myPosition-based distance check.
         if (_openBlock.Kind == BlockKind.Station)
         {
-            var talkingTo = snapshot.StationNpcs.FirstOrDefault(n => n.Id == _talkingToNpcId);
+            var talkingTo = snapshot.Station.Npcs.FirstOrDefault(n => n.Id == _talkingToNpcId);
             var stillNear = me.OnStation && talkingTo is not null &&
                 (talkingTo.Position - new Vec2(me.X, me.Y)).Length() < TurretInteractionRadius;
             if (!stillNear)
@@ -1268,21 +1268,21 @@ public partial class Game1
         {
             var stationPosition = new Vec2(me.X, me.Y);
 
-            if (snapshot.StationGuards.Any(g => g.Alive && g.Alerted))
+            if (snapshot.Station.Guards.Any(g => g.Alive && g.Alerted))
                 return "Охрана открыла огонь!  [Space] отстреливаться  [WASD] к шлюзу";
 
-            var nearCrate = snapshot.StationCrates.FirstOrDefault(c =>
-                !(snapshot.StationCrateStates.FirstOrDefault(s => s.CrateId == c.Id)?.Looted ?? false) &&
+            var nearCrate = snapshot.Station.Crates.FirstOrDefault(c =>
+                !(snapshot.Station.CrateStates.FirstOrDefault(s => s.CrateId == c.Id)?.Looted ?? false) &&
                 (c.Position - stationPosition).Length() < TurretInteractionRadius);
             if (nearCrate is not null)
                 return $"[E] украсть: {ItemDefinitions.DisplayName(nearCrate.Item)} (охрана не должна увидеть)";
 
-            var nearNpc = snapshot.StationNpcs.FirstOrDefault(n =>
+            var nearNpc = snapshot.Station.Npcs.FirstOrDefault(n =>
                 n.Kind != NpcKind.Security && (n.Position - stationPosition).Length() < TurretInteractionRadius);
             if (nearNpc is not null)
                 return $"[ЛКМ] поговорить: {nearNpc.Name}";
 
-            var nearGuard = snapshot.StationNpcs.Any(n =>
+            var nearGuard = snapshot.Station.Npcs.Any(n =>
                 n.Kind == NpcKind.Security && (n.Position - stationPosition).Length() < 4f);
             return nearGuard ? "Рядом охрана" : "На станции";
         }

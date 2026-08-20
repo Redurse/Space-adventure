@@ -106,7 +106,7 @@ internal static partial class TestRunner
         for (var i = 0; i < 30; i++)
             world.Step(RealtimeStep);
 
-        var guardAfterShot = world.CreateSnapshot().StationGuards.First(g => g.NpcId == guard.Id);
+        var guardAfterShot = world.CreateSnapshot().Station.Guards.First(g => g.NpcId == guard.Id);
         if (!world.IsStationAlerted || guardAfterShot.Health >= guardAfterShot.MaxHealth)
             return false;
 
@@ -130,7 +130,7 @@ internal static partial class TestRunner
             .First(p => p.Id == world.CreateSnapshot().Voyage.DockedPointId).Faction;
         var standingBefore = world.GetStanding(dockedFaction);
 
-        for (var i = 0; i < 60 * 30 && world.CreateSnapshot().StationGuards.First(g => g.NpcId == guard.Id).Alive; i++)
+        for (var i = 0; i < 60 * 30 && world.CreateSnapshot().Station.Guards.First(g => g.NpcId == guard.Id).Alive; i++)
         {
             world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
             world.Step(RealtimeStep);
@@ -138,7 +138,7 @@ internal static partial class TestRunner
                 return false; // lost the shootout - not what this test measures
         }
 
-        return !world.CreateSnapshot().StationGuards.First(g => g.NpcId == guard.Id).Alive
+        return !world.CreateSnapshot().Station.Guards.First(g => g.NpcId == guard.Id).Alive
             && world.GetStanding(dockedFaction) < standingBefore;
     }
 

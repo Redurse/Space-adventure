@@ -105,7 +105,7 @@ public sealed class StationPanel
         if (talkingToNpcId is null)
             return;
 
-        var talkingTo = snapshot.StationNpcs.FirstOrDefault(n => n.Id == talkingToNpcId);
+        var talkingTo = snapshot.Station.Npcs.FirstOrDefault(n => n.Id == talkingToNpcId);
         if (talkingTo is null)
             return;
 
