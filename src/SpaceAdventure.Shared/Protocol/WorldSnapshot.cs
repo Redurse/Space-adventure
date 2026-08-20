@@ -80,9 +80,10 @@ public sealed record WorldSnapshot(
     IReadOnlyList<WireState> WireStates,
     IReadOnlyList<ComponentMount> ComponentMounts,
     IReadOnlyList<ComponentMountState> ComponentMountStates,
-    IReadOnlyList<Asteroid> Asteroids,
-    IReadOnlyList<OreDeposit> OreDeposits,
-    IReadOnlyList<OreDepositState> OreDepositStates,
+    // The asteroid field's own rocks/ore veins (AsteroidFieldSnapshot.cs) - grouped the same way
+    // Station's fields are, since FieldRenderer/HelmPanel's radar/EffectTracker always want all
+    // three together.
+    AsteroidFieldSnapshot Field,
     IReadOnlyList<DroppedItem> DroppedItems,
     ShipFieldState ShipField,
     // Who's currently on offer at the docked station's Recruiter, if it has one (World.Recruiting.cs,

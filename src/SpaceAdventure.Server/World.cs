@@ -464,9 +464,7 @@ public sealed partial class World
         CreateWireStates(),
         Ship.ComponentMounts,
         CreateComponentMountStates(),
-        AsteroidField.Asteroids,
-        AsteroidField.OreDeposits,
-        CreateOreDepositStates(),
+        new AsteroidFieldSnapshot(AsteroidField.Asteroids, AsteroidField.OreDeposits, CreateOreDepositStates()),
         _droppedItems.ToArray(),
         new ShipFieldState(
             _shipFieldPosition.X, _shipFieldPosition.Y, _shipRotationDegrees,

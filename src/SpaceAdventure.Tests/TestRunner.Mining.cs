@@ -81,7 +81,7 @@ internal static partial class TestRunner
         for (var i = 0; i < maxTicks; i++)
         {
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            if ((world.CreateSnapshot().OreDepositStates.First(s => s.DepositId == depositId).Hp) <= 0f)
+            if ((world.CreateSnapshot().Field.OreDepositStates.First(s => s.DepositId == depositId).Hp) <= 0f)
                 return i;
 
             var aim = new Vec2(block.X - me.X, block.Y - me.Y).Normalized();
@@ -159,7 +159,7 @@ internal static partial class TestRunner
 
         var ticks = CutBlock(world, deposit.Id);
         var afterCut = world.CreateSnapshot();
-        if (ticks >= 20 * 30 || afterCut.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
+        if (ticks >= 20 * 30 || afterCut.Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
             return false;
         if (!afterCut.DroppedItems.Any(d => d.Item == ItemType.Mineral))
             return false;
@@ -182,7 +182,7 @@ internal static partial class TestRunner
 
         var ticks = CutBlock(world, deposit.Id);
         var afterCut = world.CreateSnapshot();
-        if (ticks >= 20 * 30 || afterCut.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
+        if (ticks >= 20 * 30 || afterCut.Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
             return false;
 
         var droppedId = afterCut.DroppedItems.First(d => d.Item == ItemType.Mineral).Id;
@@ -207,11 +207,11 @@ internal static partial class TestRunner
         var cutterSlot = Array.IndexOf(inventory.MainSlots.ToArray(), ItemType.Cutter);
         world.ApplyCommand(1, new ClientCommand(1, DetachTankSlot: cutterSlot));
 
-        var before = world.CreateSnapshot().OreDepositStates.First(s => s.DepositId == deposit.Id).Hp;
+        var before = world.CreateSnapshot().Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp;
         CutBlock(world, deposit.Id, maxTicks: 5 * 30);
         var after = world.CreateSnapshot();
 
-        return Math.Abs(after.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp - before) < 0.001f
+        return Math.Abs(after.Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp - before) < 0.001f
                && after.DroppedItems.Count == 0
                && after.Characters.Single(c => c.PlayerId == 1).CutterTank is null;
     }
@@ -233,7 +233,7 @@ internal static partial class TestRunner
         var dropsAfterExtra = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.Mineral);
 
         return dropsAfterFirst == 1 && dropsAfterExtra == 1
-               && world.CreateSnapshot().OreDepositStates.First(s => s.DepositId == deposit.Id).Hp <= 0f;
+               && world.CreateSnapshot().Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp <= 0f;
     }
 
     // Holding a welding tool is not enough: it needs a tank with something left in it, just like

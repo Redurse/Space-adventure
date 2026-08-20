@@ -150,7 +150,7 @@ public sealed class HelmPanel
         // Rocks are plotted as their real outline (AsteroidShape), the same polygon the hull will
         // collide with - a square blip says "something is there", an outline says whether the gap
         // the pilot is aiming for is actually a gap.
-        foreach (var asteroid in snapshot.Asteroids)
+        foreach (var asteroid in snapshot.Field.Asteroids)
         {
             var offset = new Vector2(asteroid.X, asteroid.Y) - shipWorldPos;
             if (offset.Length() * scale > RadarRadiusPixels)

@@ -28,7 +28,7 @@ internal static partial class TestRunner
         return first.AsSpan().SequenceEqual(second) &&
             restored.Characters.Count == snapshot.Characters.Count &&
             restored.Rooms.Count == snapshot.Rooms.Count &&
-            restored.Asteroids.Count == snapshot.Asteroids.Count &&
+            restored.Field.Asteroids.Count == snapshot.Field.Asteroids.Count &&
             restored.Characters[0].Inventory is not null &&
             restored.ShipUpgradeLevels.Count == snapshot.ShipUpgradeLevels.Count;
     }

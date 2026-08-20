@@ -44,14 +44,14 @@ public sealed class EffectTracker
             }
         }
 
-        foreach (var state in current.OreDepositStates)
+        foreach (var state in current.Field.OreDepositStates)
         {
-            var before = previous.OreDepositStates.FirstOrDefault(s => s.DepositId == state.DepositId);
+            var before = previous.Field.OreDepositStates.FirstOrDefault(s => s.DepositId == state.DepositId);
             // Only the moment a block finally comes apart, not every tick the flame is on it -
             // cutting is continuous now, and the flame itself is what shows the work in progress.
             if (before is not null && before.Hp > 0f && state.Hp <= 0f)
             {
-                var deposit = current.OreDeposits.FirstOrDefault(d => d.Id == state.DepositId);
+                var deposit = current.Field.OreDeposits.FirstOrDefault(d => d.Id == state.DepositId);
                 if (deposit is not null)
                     _effects.Add(new TransientEffect(EffectKind.Cut, deposit.Position, CutEffectSeconds));
             }

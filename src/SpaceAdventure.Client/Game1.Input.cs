@@ -1296,8 +1296,8 @@ public partial class Game1
             if (nearbyDropped is not null)
                 return $"[E]/[ЛКМ] подобрать: {ItemDefinitions.DisplayName(nearbyDropped.Item)}";
 
-            var nearbyDeposit = snapshot.OreDeposits.Any(d =>
-                (snapshot.OreDepositStates.FirstOrDefault(s => s.DepositId == d.Id)?.Hp ?? 0f) > 0f &&
+            var nearbyDeposit = snapshot.Field.OreDeposits.Any(d =>
+                (snapshot.Field.OreDepositStates.FirstOrDefault(s => s.DepositId == d.Id)?.Hp ?? 0f) > 0f &&
                 (d.Position - evaPosition).Length() < 3f);
             if (nearbyDeposit)
             {

@@ -52,12 +52,12 @@ public sealed class FieldRenderer
         // field opens, five spread over five frames is nothing, and the ones still waiting are
         // drawn flat in their correct outline meanwhile.
         _bakedAsteroidThisFrame = false;
-        foreach (var asteroid in snapshot.Asteroids)
+        foreach (var asteroid in snapshot.Field.Asteroids)
             DrawAsteroid(spriteBatch, asteroid, WorldToScreen(asteroid.Position), WorldToScreen);
 
-        foreach (var deposit in snapshot.OreDeposits)
+        foreach (var deposit in snapshot.Field.OreDeposits)
         {
-            var state = snapshot.OreDepositStates.FirstOrDefault(s => s.DepositId == deposit.Id);
+            var state = snapshot.Field.OreDepositStates.FirstOrDefault(s => s.DepositId == deposit.Id);
             if (state is not null && state.Hp > 0f)
                 DrawOreBlock(spriteBatch, deposit, state, WorldToScreen(deposit.Position), totalSeconds);
         }
