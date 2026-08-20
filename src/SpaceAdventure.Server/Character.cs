@@ -97,6 +97,15 @@ public sealed class Character
     // back rather than grabbing on (World.Eva.cs's TryAutoAttach); F toggles them while outside
     // and nothing's close enough to pick up instead (World.Mining.cs's HandleEvaInteract).
     public bool MagneticBootsOn { get; set; }
+    // A separate "just bounced off this one" immunity, deliberately not the same field as
+    // PushedOffFrom above: that one exists so a deliberate push-off isn't immediately undone by
+    // re-attaching, and should still block re-attaching even once boots are back on. This one
+    // only stops the *bounce* itself from re-triggering every single tick a boots-off character
+    // rests against the same surface (which would otherwise flip an outward jetpack burn straight
+    // back inward before it ever built up any real escape speed) - it must NOT also block a
+    // flick of the boots back on from grabbing on right where they're already touching.
+    public PushOffOrigin BouncedOffFrom { get; set; } = PushOffOrigin.None;
+    public string? BouncedOffAsteroidId { get; set; }
 
     public Character(int playerId, Vec2 position, string roomId)
     {

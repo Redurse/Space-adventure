@@ -21,7 +21,6 @@ public partial class Game1
 {
     private enum MenuScreen
     {
-        Eula,
         Nickname,
         Role,
         Main,
@@ -38,10 +37,7 @@ public partial class Game1
     private const int RoleIconGap = 30;
     private const int RoleIconsY = 220;
 
-    // Shown first, every launch (not just the first one) - the same "always ask, never skip"
-    // convention the nickname/role screens right after it already use, just for a joke user
-    // agreement instead of a real setting.
-    private MenuScreen _menuScreen = MenuScreen.Eula;
+    private MenuScreen _menuScreen = MenuScreen.Nickname;
     private float _screenChangedAt = -99f;
     private string _nickname = PlayerSettingsStore.LoadNickname() ?? "";
     // Same "always ask, pre-filled from last time" shape as the nickname above - purely a
@@ -115,9 +111,7 @@ public partial class Game1
             return;
         }
 
-        if (_menuScreen == MenuScreen.Eula)
-            HandleEulaScreen(keyboard);
-        else if (_menuScreen == MenuScreen.Nickname)
+        if (_menuScreen == MenuScreen.Nickname)
             HandleNicknameScreen(keyboard);
         else if (_menuScreen == MenuScreen.Role)
             HandleRoleScreen(keyboard);
@@ -135,21 +129,6 @@ public partial class Game1
             HandleJoinScreen(keyboard);
 
         _prevMenuKeyboard = keyboard;
-    }
-
-    // A joke gate before the real ones (nickname/role) - Enter or clicking the button both just
-    // move on to Nickname, same "not actually a real gate" spirit as the text itself. Escape here
-    // falls through to LeaveSubScreen's default (false), which Update then treats the same as
-    // Main's own Escape - straight to Exit() - since there's nowhere further back from the very
-    // first screen.
-    private void HandleEulaScreen(KeyboardState keyboard)
-    {
-        var mouse = Mouse.GetState();
-        var clicked = mouse.LeftButton == ButtonState.Pressed && _prevMenuLeftMouseButton == ButtonState.Released;
-        _prevMenuLeftMouseButton = mouse.LeftButton;
-
-        if (Pressed(keyboard, Keys.Enter) || (clicked && GetEulaAcceptButtonRect().Contains(_designMouse)))
-            _menuScreen = MenuScreen.Nickname;
     }
 
     // Enter confirms whatever's typed (blank falls back to "Игрок" rather than sending an empty
@@ -498,9 +477,7 @@ public partial class Game1
         _lastDrawnMenuScreen = _menuScreen;
 
         _spriteBatch.Begin(transformMatrix: _renderScale);
-        if (_menuScreen == MenuScreen.Eula)
-            DrawEulaScreen(totalSeconds);
-        else if (_menuScreen == MenuScreen.Nickname)
+        if (_menuScreen == MenuScreen.Nickname)
             DrawNicknameScreen();
         else if (_menuScreen == MenuScreen.Role)
             DrawRoleScreen();
@@ -695,19 +672,10 @@ public partial class Game1
         var pane = new Rectangle(480, 0, DesignWidth - 480, DesignHeight);
         MenuPlanetScene.Draw(_spriteBatch, _pixel, pane, totalSeconds);
 
-        // A little caption riding along next to the orbiting Katyusha truck - purely a joke aside,
-        // not a UI label anything reads, so it just follows MenuPlanetScene's own reported position
-        // for it every frame rather than being pinned to one spot.
-        var katyushaPosition = MenuPlanetScene.GetKatyushaScreenPosition(pane, totalSeconds);
-        var caption = "P. S. это Катюша";
-        var captionPosition = katyushaPosition + new Vector2(14, -6);
-        _spriteBatch.DrawString(_font, caption, captionPosition + new Vector2(1, 1), Color.Black * 0.6f, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, caption, captionPosition, Color.LightGoldenrodYellow, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-
         // A soft cyan glow behind the title (several oversized, near-transparent copies offset in
         // a ring) plus a hard black drop shadow, then the crisp white face on top - the cheapest
         // way to fake a bloomed title with nothing but flat text draws.
-        const string title = "ДУРАК ОНЛАЙН";
+        const string title = "SPACE ADVENTURE";
         const float titleScale = 1.7f;
         var titlePosition = new Vector2(pane.Right - 460, pane.Bottom - 92);
         var glow = new Color(90, 220, 195);
@@ -768,84 +736,6 @@ public partial class Game1
         _spriteBatch.Draw(_pixel, new Rectangle(pane.X, (int)y - 3, pane.Width, 14), new Color(8, 14, 18) * 0.55f);
         _spriteBatch.Draw(_pixel, new Rectangle(pane.X, (int)y - 4, pane.Width, 1), new Color(90, 220, 195) * 0.25f);
         _spriteBatch.DrawString(_font, line, new Vector2(x, y), new Color(120, 200, 185) * 0.75f, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
-    }
-
-    private static readonly string[] EulaLines =
-    {
-        "Подписав данное пользовательское соглашение вы соглашаеться стать тестировщиком игры.",
-        "Если у вас в течении игры случится припадок, инсульт, эпилепсия, гипоксемия, отказ органов.",
-        "Разработчик ответсвенности за это не несет.",
-        "Также по просьбе создателя данной игры играть в дурака, вы обязательно должно повиноваться",
-        "ему и идти играть в дурака, даже если это будет посреди боя с зараженными.",
-        "",
-        "Удачи в бета версии игры",
-    };
-
-    private static Rectangle GetEulaAcceptButtonRect() => new(DesignWidth / 2 - 130, 470, 260, 40);
-
-    // A joke user agreement, styled like every other warning-tape surface in this game (hazard
-    // stripes top and bottom, a flickering red title) rather than a plain text dump - the whole
-    // point of "АТТЕШН!!!" is that it reads as an actual klaxon, not a EULA nobody looks at.
-    private void DrawEulaScreen(float totalSeconds)
-    {
-        _spriteBatch.Draw(_pixel, new Rectangle(0, 0, DesignWidth, DesignHeight), new Color(10, 6, 6));
-
-        const int stripeHeight = 14;
-        DrawHazardCap(new Rectangle(0, 0, DesignWidth, stripeHeight), 1f);
-        DrawHazardCap(new Rectangle(0, DesignHeight - stripeHeight, DesignWidth, stripeHeight), 1f);
-
-        var flicker = 0.7f + 0.3f * MathF.Sin(totalSeconds * 9f);
-        const string title = "АТТЕШН!!!";
-        const float titleScale = 2.4f;
-        var titleSize = _font.MeasureString(title) * titleScale;
-        var titlePosition = new Vector2((DesignWidth - titleSize.X) / 2f, 34);
-        _spriteBatch.DrawString(_font, title, titlePosition + new Vector2(3, 3), Color.Black * 0.7f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, title, titlePosition, Color.OrangeRed * flicker, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
-
-        const string subtitle = "ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ";
-        var subtitleSize = _font.MeasureString(subtitle) * 0.75f;
-        _spriteBatch.DrawString(_font, subtitle, new Vector2((DesignWidth - subtitleSize.X) / 2f, 96), Color.Gold, 0f, Vector2.Zero, 0.75f, SpriteEffects.None, 0f);
-
-        var panelRect = new Rectangle(90, 140, DesignWidth - 180, 300);
-        _spriteBatch.Draw(_pixel, panelRect, new Color(20, 16, 16) * 0.9f);
-        DrawEulaPanelOutline(panelRect, new Color(150, 40, 30));
-
-        for (var i = 0; i < EulaLines.Length; i++)
-            _spriteBatch.DrawString(_font, EulaLines[i], new Vector2(panelRect.X + 20, panelRect.Y + 20 + i * 26),
-                Color.LightGray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-
-        var buttonRect = GetEulaAcceptButtonRect();
-        var hovered = buttonRect.Contains(_designMouse);
-        _spriteBatch.Draw(_pixel, buttonRect, (hovered ? new Color(120, 40, 20) : new Color(80, 26, 16)) * 0.95f);
-        DrawEulaPanelOutline(buttonRect, hovered ? Color.Gold : new Color(150, 40, 30));
-        const string accept = "[ПРИНИМАЮ]";
-        var acceptSize = _font.MeasureString(accept) * 0.75f;
-        _spriteBatch.DrawString(_font, accept, new Vector2(buttonRect.Center.X - acceptSize.X / 2f, buttonRect.Center.Y - acceptSize.Y / 2f),
-            hovered ? Color.White : Color.LightGray, 0f, Vector2.Zero, 0.75f, SpriteEffects.None, 0f);
-
-        _spriteBatch.DrawString(_font, "[Enter] принять условия", new Vector2(90, 522), Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-    }
-
-    private void DrawEulaPanelOutline(Rectangle rect, Color color)
-    {
-        const int thickness = 2;
-        _spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
-        _spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
-        _spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
-        _spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
-    }
-
-    private void DrawHazardCap(Rectangle rect, float alpha)
-    {
-        _spriteBatch.Draw(_pixel, rect, new Color(40, 34, 10) * alpha);
-        const int stripeWidth = 16;
-        for (var x = -rect.Height; x < rect.Width; x += stripeWidth * 2)
-        {
-            var p0 = new Vector2(rect.X + x, rect.Bottom);
-            var p1 = new Vector2(rect.X + x + rect.Height, rect.Y);
-            HudIcons.DrawLine(_spriteBatch, _pixel, p0, p1, Color.Black * (alpha * 0.85f), stripeWidth);
-            HudIcons.DrawLine(_spriteBatch, _pixel, p0 + new Vector2(stripeWidth, 0), p1 + new Vector2(stripeWidth, 0), new Color(210, 170, 20) * alpha, stripeWidth);
-        }
     }
 
     private void DrawNicknameScreen()

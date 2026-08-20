@@ -46,19 +46,6 @@ public static class MenuPlanetScene
         DrawVignette(spriteBatch, pixel, pane);
     }
 
-    // Where the Katyusha truck actually is on screen right now - the same planetCenter/orbit
-    // constants and angle formula Draw/DrawOrbitingKatyusha use, exposed so Game1.Menu.cs can park
-    // a caption next to it without needing its own copy of that math (and without this class
-    // needing a SpriteFont just to draw one label itself).
-    public static Vector2 GetKatyushaScreenPosition(Rectangle pane, float totalSeconds)
-    {
-        var planetCenter = new Vector2(pane.X + pane.Width * 0.6f, pane.Y + pane.Height * 0.56f);
-        const float orbitRadiusX = 300f;
-        const float orbitRadiusY = 185f;
-        var angle = totalSeconds * 0.16f;
-        return planetCenter + new Vector2(MathF.Cos(angle) * orbitRadiusX, MathF.Sin(angle) * orbitRadiusY);
-    }
-
     // Faint drifting specks well in front of the starfield - not stars (they move, and far too
     // fast to be), just cabin-window dust catching whatever light is around. Loops via modulo the
     // same way the starfield wraps, just per-mote instead of per-frame-offset.

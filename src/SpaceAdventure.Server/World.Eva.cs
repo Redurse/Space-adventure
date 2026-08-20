@@ -142,6 +142,13 @@ public sealed partial class World
         {
             character.EvaAttachedTo = EvaAttachment.None;
             character.EvaLocalOffset = _shipFieldPosition + RotateLocalToWorld(exitLocalOffset, _shipRotationDegrees);
+            // Standing right in the attach zone the instant they cross - without this, the very
+            // next tick's TryAutoAttach would treat that as fresh contact and bounce them (with
+            // zero velocity, so no visible effect, but still re-arming every following tick and
+            // cancelling out any jetpack thrust before it can ever build up). BouncedOffFrom, not
+            // PushedOffFrom - this must not block flicking the boots straight back on while still
+            // standing right there.
+            character.BouncedOffFrom = PushOffOrigin.Ship;
         }
         character.EvaVelocity = Vec2.Zero;
         return true;
@@ -373,11 +380,19 @@ public sealed partial class World
         // TryCrossIntoVacuum's conversion from an absolute ship-local point (a Door's position).
         var (hullCenter, _) = GetHullLocalBounds();
         var localToShip = RotateWorldToLocal(worldPos - _shipFieldPosition, _shipRotationDegrees);
-        if (character.PushedOffFrom != PushOffOrigin.Ship &&
-            HullSilhouette.DistanceOutside(Ship.Rooms, hullCenter + localToShip) <= ShipAttachZoneMargin)
+        if (HullSilhouette.DistanceOutside(Ship.Rooms, hullCenter + localToShip) <= ShipAttachZoneMargin)
         {
             if (!character.MagneticBootsOn)
             {
+                // BouncedOffFrom, not PushedOffFrom: this one only has to stop the bounce itself
+                // from re-triggering every tick a boots-off character rests against the same
+                // surface (which would otherwise flip an outward jetpack burn straight back
+                // inward before it ever built up real escape speed) - it must not also block
+                // flicking the boots back on and grabbing on right where they're already
+                // touching, which is what sharing PushedOffFrom's own immunity would do.
+                if (character.BouncedOffFrom == PushOffOrigin.Ship || character.PushedOffFrom == PushOffOrigin.Ship)
+                    return false;
+
                 // Left exactly at worldPos - the sample point along the travelled step where
                 // contact was actually detected - rather than snapped to the boot-clearance
                 // surface. Some position update is still needed (this sample can be short of the
@@ -387,8 +402,12 @@ public sealed partial class World
                 // sticking to the wall for an instant before flinging away from it.
                 character.EvaLocalOffset = worldPos;
                 character.EvaVelocity = character.EvaVelocity * -BounceSpeedFactor;
+                character.BouncedOffFrom = PushOffOrigin.Ship;
                 return true;
             }
+
+            if (character.PushedOffFrom == PushOffOrigin.Ship)
+                return false; // a deliberate push-off still isn't immediately undone once boots are back on
 
             character.EvaAttachedTo = EvaAttachment.Ship;
             // Grabbing on pulls you the last bit onto the plating, rather than leaving you frozen
@@ -396,30 +415,41 @@ public sealed partial class World
             character.EvaLocalOffset = SnapToHullSurface(localToShip);
             character.EvaVelocity = Vec2.Zero;
             character.PushedOffFrom = PushOffOrigin.None;
+            character.BouncedOffFrom = PushOffOrigin.None;
             return true;
         }
 
         foreach (var asteroid in AsteroidField.Asteroids)
         {
-            if (character.PushedOffFrom == PushOffOrigin.Asteroid && character.PushedOffAsteroidId == asteroid.Id)
-                continue;
             if (AsteroidShape.DistanceOutside(asteroid, worldPos) > AsteroidAttachZoneMargin)
                 continue;
 
             if (!character.MagneticBootsOn)
             {
-                // Same reasoning as the ship branch above: left at worldPos itself, not snapped
-                // any closer to the rock's surface than the flight already carried it.
+                if ((character.BouncedOffFrom == PushOffOrigin.Asteroid && character.BouncedOffAsteroidId == asteroid.Id) ||
+                    (character.PushedOffFrom == PushOffOrigin.Asteroid && character.PushedOffAsteroidId == asteroid.Id))
+                    continue;
+
+                // Same reasoning as the ship branch above, immunity included: left at worldPos
+                // itself, not snapped any closer to the rock's surface than the flight already
+                // carried it, and marked as just-bounced so the very next tick doesn't re-bounce
+                // the tiny velocity this one just left before it can build into an actual escape.
                 character.EvaLocalOffset = worldPos;
                 character.EvaVelocity = character.EvaVelocity * -BounceSpeedFactor;
+                character.BouncedOffFrom = PushOffOrigin.Asteroid;
+                character.BouncedOffAsteroidId = asteroid.Id;
                 return true;
             }
+
+            if (character.PushedOffFrom == PushOffOrigin.Asteroid && character.PushedOffAsteroidId == asteroid.Id)
+                continue;
 
             character.EvaAttachedTo = EvaAttachment.Asteroid;
             character.EvaAttachedAsteroidId = asteroid.Id;
             character.EvaLocalOffset = SnapToAsteroidSurface(asteroid, worldPos - asteroid.Position);
             character.EvaVelocity = Vec2.Zero;
             character.PushedOffFrom = PushOffOrigin.None;
+            character.BouncedOffFrom = PushOffOrigin.None;
             return true;
         }
 
@@ -427,28 +457,44 @@ public sealed partial class World
         return false;
     }
 
-    // The thing you just kicked off ignores you until you're properly clear of it, and then only
-    // that one thing. A blanket few-seconds-of-immunity instead - which is what this used to be -
-    // meant a jump passed straight through every rock and through your own ship for the whole
-    // window, which is exactly the "flies through everything" complaint.
+    // The thing you just kicked off (or bounced off) ignores you until you're properly clear of
+    // it, and then only that one thing. A blanket few-seconds-of-immunity instead - which is what
+    // this used to be - meant a jump passed straight through every rock and through your own ship
+    // for the whole window, which is exactly the "flies through everything" complaint. Clears
+    // PushedOffFrom and BouncedOffFrom independently (either, both, or neither can be set at once)
+    // against the exact same distance test, since "far enough clear of the thing" means the same
+    // distance regardless of which of the two reasons put it there.
     private void ClearPushOffOriginOnceClear(Character character, Vec2 worldPos, Vec2 hullCenter)
     {
-        switch (character.PushedOffFrom)
+        if (character.PushedOffFrom == PushOffOrigin.Ship || character.BouncedOffFrom == PushOffOrigin.Ship)
         {
-            case PushOffOrigin.Ship:
-                var localToShip = RotateWorldToLocal(worldPos - _shipFieldPosition, _shipRotationDegrees);
-                if (HullSilhouette.DistanceOutside(Ship.Rooms, hullCenter + localToShip) > ShipAttachZoneMargin + PushOffClearMargin)
+            var localToShip = RotateWorldToLocal(worldPos - _shipFieldPosition, _shipRotationDegrees);
+            if (HullSilhouette.DistanceOutside(Ship.Rooms, hullCenter + localToShip) > ShipAttachZoneMargin + PushOffClearMargin)
+            {
+                if (character.PushedOffFrom == PushOffOrigin.Ship)
                     character.PushedOffFrom = PushOffOrigin.None;
-                break;
+                if (character.BouncedOffFrom == PushOffOrigin.Ship)
+                    character.BouncedOffFrom = PushOffOrigin.None;
+            }
+        }
 
-            case PushOffOrigin.Asteroid:
-                var rock = AsteroidField.Asteroids.FirstOrDefault(a => a.Id == character.PushedOffAsteroidId);
-                if (rock is null || AsteroidShape.DistanceOutside(rock, worldPos) > AsteroidAttachZoneMargin + PushOffClearMargin)
+        if (character.PushedOffFrom == PushOffOrigin.Asteroid || character.BouncedOffFrom == PushOffOrigin.Asteroid)
+        {
+            var rockId = character.PushedOffFrom == PushOffOrigin.Asteroid ? character.PushedOffAsteroidId : character.BouncedOffAsteroidId;
+            var rock = AsteroidField.Asteroids.FirstOrDefault(a => a.Id == rockId);
+            if (rock is null || AsteroidShape.DistanceOutside(rock, worldPos) > AsteroidAttachZoneMargin + PushOffClearMargin)
+            {
+                if (character.PushedOffFrom == PushOffOrigin.Asteroid)
                 {
                     character.PushedOffFrom = PushOffOrigin.None;
                     character.PushedOffAsteroidId = null;
                 }
-                break;
+                if (character.BouncedOffFrom == PushOffOrigin.Asteroid)
+                {
+                    character.BouncedOffFrom = PushOffOrigin.None;
+                    character.BouncedOffAsteroidId = null;
+                }
+            }
         }
     }
 
