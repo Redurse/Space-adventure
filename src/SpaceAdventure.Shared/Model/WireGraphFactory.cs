@@ -29,43 +29,70 @@ public static class WireGraphFactory
         var room = ship.Rooms.First(r => r.Id == ship.DistributionBlock.RoomId);
         var junctionIndex = 0;
 
-        foreach (var system in systems)
+        Component PlaceJunction(string junctionId)
         {
-            var devices = ship.SystemDevices.Where(d => d.System == system).ToList();
-            if (devices.Count == 0)
-                continue; // this hull has no device on this system at all - no junction, no wires
-
-            // Alternate left/right wall, stepping down each side as more junctions land on it - a
-            // hull with up to 5 power systems puts at most 3 boxes down either wall.
             var onLeftWall = junctionIndex % 2 == 0;
             var slot = junctionIndex / 2;
             var junctionX = onLeftWall ? room.Left + 1f : room.Right - 1f;
             var junctionY = room.Top + 1.5f + slot * 1.6f;
             junctionIndex++;
 
-            var junctionId = $"junction-{system}".ToLowerInvariant();
-            components.Add(new Component(junctionId, ComponentKind.Junction, ship.DistributionBlock.RoomId, junctionX, junctionY));
+            var junction = new Component(junctionId, ComponentKind.Junction, ship.DistributionBlock.RoomId, junctionX, junctionY);
+            components.Add(junction);
+            return junction;
+        }
 
-            // Routed, not diagonal: across to the wall at the distribution block's own height,
-            // then one turn down/up the wall to the junction - the same "along the bulkhead, one
-            // corner" look a real conduit run would have, instead of a wire cutting straight
-            // across the compartment (Wire.Bends is purely cosmetic - never read for connectivity).
-            wires.Add(new Wire($"trunk-{system}".ToLowerInvariant(),
+        // Routed, not diagonal: across to the wall at the distribution block's own height, then one
+        // turn down/up the wall to the junction - the same "along the bulkhead, one corner" look a
+        // real conduit run would have, instead of a wire cutting straight across the compartment
+        // (Wire.Bends is purely cosmetic - never read for connectivity).
+        void ConnectTrunk(string wireId, PowerSystemId system, Component junction) =>
+            wires.Add(new Wire(wireId,
                 new PinRef("distribution", ComponentDefinitions.DistributionOutPin(system).Id),
-                new PinRef(junctionId, ComponentDefinitions.JunctionInPin().Id),
-                new[] { new Vec2(junctionX, ship.DistributionBlock.Y) }));
+                new PinRef(junction.Id, ComponentDefinitions.JunctionInPin().Id),
+                new[] { new Vec2(junction.X, ship.DistributionBlock.Y) }));
 
-            for (var i = 0; i < devices.Count; i++)
+        // Same one-corner routing for the drop wire: straight along the junction's own wall to the
+        // device's height, then straight across to the device itself.
+        void ConnectDevice(ShipSystemDevice device, Component junction, int outputIndex)
+        {
+            components.Add(new Component(device.Id, ComponentKind.Device, device.RoomId, device.X, device.Y));
+            wires.Add(new Wire($"drop-{device.Id}",
+                new PinRef(junction.Id, ComponentDefinitions.JunctionOutPin(outputIndex).Id),
+                new PinRef(device.Id, "in"),
+                new[] { new Vec2(junction.X, device.Y) }));
+        }
+
+        foreach (var system in systems)
+        {
+            var devices = ship.SystemDevices.Where(d => d.System == system).ToList();
+            if (devices.Count == 0)
+                continue; // this hull has no device on this system at all - no junction, no wires
+
+            if (devices.Count == 1)
             {
-                var device = devices[i];
-                components.Add(new Component(device.Id, ComponentKind.Device, device.RoomId, device.X, device.Y));
+                // A single generator has nothing to gain from a dedicated box of its own - same
+                // shared-junction shape as always, "junction-{system}" id and all (existing wiring
+                // tests depend on that exact id for the single-device systems).
+                var junctionId = $"junction-{system}".ToLowerInvariant();
+                var junction = PlaceJunction(junctionId);
+                ConnectTrunk($"trunk-{system}".ToLowerInvariant(), system, junction);
+                ConnectDevice(devices[0], junction, outputIndex: 0);
+                continue;
+            }
 
-                // Same one-corner routing for the drop wire: straight along the junction's own
-                // wall to the device's height, then straight across to the device itself.
-                wires.Add(new Wire($"drop-{device.Id}",
-                    new PinRef(junctionId, ComponentDefinitions.JunctionOutPin(i).Id),
-                    new PinRef(device.Id, "in"),
-                    new[] { new Vec2(junctionX, device.Y) }));
+            // Several identical devices on the same system (Engine/Shields on some hulls) each get
+            // their own junction box and their own trunk straight back to Distribution's one output
+            // pin for this system - so a hit that takes one out (its trunk or its drop) never
+            // touches its sibling, and repairing one never silently fixes the other the way sharing
+            // a single junction/trunk used to (game_design.md - each physical block is its own
+            // point of failure, not a shared one just because two blocks happen to do the same job).
+            foreach (var device in devices)
+            {
+                var junctionId = $"junction-{device.Id}".ToLowerInvariant();
+                var junction = PlaceJunction(junctionId);
+                ConnectTrunk($"trunk-{device.Id}".ToLowerInvariant(), system, junction);
+                ConnectDevice(device, junction, outputIndex: 0);
             }
         }
 

@@ -119,7 +119,7 @@ public sealed record ClientCommand(
     SlotRef? DropItemFrom = null,
     // Click-to-pick-up a DroppedItem (World.Mining.cs's TryPickupDroppedItem) - works in EVA, ship
     // interior, and station interior alike; server-checked for proximity and matching room/context,
-    // same trust level as PinInteractId. Additive alongside EVA's existing F-key pickup, not a
+    // same trust level as PinInteractId. Additive alongside EVA's existing E-key pickup, not a
     // replacement for it.
     string? PickupDroppedItemId = null,
     // Edge-triggered like the other two quest actions above - drops the active quest without

@@ -12,7 +12,7 @@ public static class ItemDefinitions
         ItemType.LaserRifle => 2,
         ItemType.Wrench => 1,
         ItemType.Screwdriver => 1,
-        ItemType.Cutter => 1,
+        ItemType.Cutter => 2,
         ItemType.Knife => 1,
         ItemType.Axe => 1,
         ItemType.FuelRod => 1,

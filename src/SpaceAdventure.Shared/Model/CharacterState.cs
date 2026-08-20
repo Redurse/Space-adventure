@@ -54,13 +54,17 @@ public sealed record CharacterState(
     // neither tool is lit or nothing is in reach (World.WallBlocks.cs's GetWallToolTargetId) - lets
     // every client, not just this one, show that block's own health bar while it's being worked.
     string? WallToolTargetBlockId = null,
-    // A Junction box being carried (World.Interact.cs's pickup/place at a Junction, wrench in hand) -
-    // its Component.Id while carried, null otherwise. The junction's own position already tracks this
-    // character every tick (World.Wiring.cs's StepCarriedComponents), so no separate offset/render
-    // path is needed - every client just sees the box already sitting wherever this one carries it.
-    string? CarryingComponentId = null,
     // Bend points fixed so far along an in-progress wire lay (World.Wiring.cs's HandleWireBend) -
     // null/empty when not laying or none fixed yet. Lets every client, not just this one, draw the
     // trailing wire as the same bent path the layer is actually shaping, not just a straight line
     // to wherever they currently stand.
-    IReadOnlyList<Vec2>? LayingWireBends = null);
+    IReadOnlyList<Vec2>? LayingWireBends = null,
+    // Which door this character's cutter is currently lit and aimed at, null when the cutter isn't
+    // lit or no door is in reach (World.Doors.cs's GetDoorToolTargetId) - same "quiet number, shown
+    // only while it's actually being worked" shape as WallToolTargetBlockId above, just for cutting
+    // a door open instead of cutting into the hull.
+    string? DoorToolTargetId = null,
+    // Off by default - whether touching the hull/a rock while outside actually grabs on
+    // (World.Eva.cs's TryAutoAttach) or just bounces the character back. F toggles it whenever
+    // there's nothing closer to pick up instead (World.Mining.cs's HandleEvaInteract).
+    bool MagneticBootsOn = false);

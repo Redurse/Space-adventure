@@ -6,7 +6,7 @@ namespace SpaceAdventure.Server;
 // Health drops below Character.BleedingThreshold, it keeps draining on its own regardless of
 // whether the original cause (e.g. a decompressed room) is still active - an injury that
 // lingers rather than one that stops the moment you walk away. The only treatment is a MedKit
-// held in hand, used via the same F key as everything else (World.Interact.cs); it's a one-shot
+// held in hand, used via the same E key as everything else (World.Interact.cs); it's a one-shot
 // consumable, not a bandage that can be reused. No named wound types (bleeding/burns/etc.) and no
 // death/respawn handling yet - both are bigger, separate decisions left for later.
 public sealed partial class World

@@ -17,6 +17,11 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f); // out onto the hull
+        // Boots off by default leaves a fresh crossing floating right at the door
+        // (World.Eva.cs's TryCrossIntoVacuum); this test is about magnetized walking, so switch
+        // them on and let the still-touching boots grab on before checking anything.
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         var rooms = world.Ship.Rooms;
         var hullCenter = new Vec2(
@@ -110,6 +115,11 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f);
+        // Boots off by default leaves a fresh crossing floating right at the door, not attached
+        // (World.Eva.cs's TryCrossIntoVacuum); this test is specifically about walking along the
+        // hull, so switch them on and let the still-touching boots grab on first.
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         // Along the hull, away from the door - and also pushing outward, straight at the door's own
         // rectangle from the outside. Neither counts as going back in.
@@ -140,6 +150,11 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f);
+        // Boots off by default leaves a fresh crossing floating right at the door, not attached
+        // (World.Eva.cs's TryCrossIntoVacuum) - this test is specifically about rigid attached
+        // movement, so switch them on and let the still-touching boots grab on first.
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         var beforeSnapshot = world.CreateSnapshot();
         var player1Before = beforeSnapshot.Characters.Single(c => c.PlayerId == 1);
@@ -176,6 +191,11 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f);
+        // Boots on, and one step to let the still-touching boots grab on: PushOffPressed is a
+        // no-op while not attached (World.Eva.cs's HandlePushOff), and this test needs a real push
+        // to check the free-floating velocity it leaves behind.
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: 1f, PushOffDirectionY: 0f));
         world.Step(RealtimeStep);
@@ -202,15 +222,19 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f);
+        // Boots on and one settling step, so the push-off below actually has something to push
+        // off from (World.Eva.cs's HandlePushOff is a no-op while not attached).
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
         // Push off along the same axis as the jetpack burn below (+Y) - clears the ship's attach
         // zone faster than pushing sideways would (the zone hugs the whole hull along X).
         world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: 0f, PushOffDirectionY: 1f));
         world.Step(RealtimeStep);
 
-        // Burn through all jetpack fuel holding a thrust direction - JetpackMaxFuel(100) /
-        // JetpackFuelPerSecond(10) = 10s - stopping as soon as it's actually empty rather than
+        // Burn through all jetpack fuel holding a thrust direction - JetpackMaxFuel(500) /
+        // JetpackFuelPerSecond(10) = 50s - stopping as soon as it's actually empty rather than
         // continuing to drift needlessly further on a loop sized for the worst case.
-        for (var i = 0; i < 15 * 30; i++)
+        for (var i = 0; i < 60 * 30; i++)
         {
             if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).JetpackFuel <= 0f)
                 break;
@@ -254,6 +278,14 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f);
+        // Boots on: off by default now, so crossing the airlock left this character floating
+        // right at the door rather than attached (World.Eva.cs's TryCrossIntoVacuum). One more
+        // step after switching them on lets the still-touching boots grab on immediately - this
+        // test is specifically about the reattach-on-contact mechanic once safely attached again,
+        // which is also what PushOffPressed itself requires (World.Eva.cs's HandlePushOff is a
+        // no-op while already unattached).
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: 1f, PushOffDirectionY: 0f));
         for (var i = 0; i < 30; i++) // drift away for 1s
@@ -286,7 +318,11 @@ internal static partial class TestRunner
         EquipSuit(world, 1);
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
-        WalkFixedDirection(world, 1, 1f, 0f); // exit, attached to the ship
+        WalkFixedDirection(world, 1, 1f, 0f); // exit, boots off by default so not attached yet
+        // This test is specifically about walking back in while attached, so switch boots on and
+        // let the still-touching boots grab on first (World.Eva.cs's TryCrossIntoVacuum).
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         var afterExit = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         if (!afterExit.IsOutside)
@@ -332,6 +368,11 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f);
+        // Boots on and one settling step: this test walks back in through the airlock later on,
+        // which only works while attached (World.Eva.cs's StepShipAttachedWalk) - boots off by
+        // default would otherwise leave it drifting free instead.
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsOutside)
             return false;

@@ -80,7 +80,7 @@ public sealed partial class World
             FinishSystemRepair(id);
     }
 
-    // The F-key attempt itself (World.Interact.cs) - starts the bar the first time (nothing to hit
+    // The E-key attempt itself (World.Interact.cs) - starts the bar the first time (nothing to hit
     // yet, so it's just a no-op start), and every press after that checks the sweep: landing it
     // inside the already-filled part is a hit, worth a bonus chunk of progress and a fresh sweep
     // from the start; landing outside it does nothing this time - no penalty, just no bonus.

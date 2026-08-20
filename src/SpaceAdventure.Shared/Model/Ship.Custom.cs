@@ -69,7 +69,7 @@ public sealed partial class Ship
                 if (!matches)
                     continue;
 
-                var span = MathF.Min(1.8f, overlap.OverlapLength);
+                var span = MathF.Min(Door.StandardSpanUnits, overlap.OverlapLength);
                 doors.Add(overlap.Vertical
                     ? new Door($"door-{index++}", overlap.RoomAId, overlap.RoomBId, overlap.At, overlap.OverlapCenter, 1.0f, span)
                     : new Door($"door-{index++}", overlap.RoomAId, overlap.RoomBId, overlap.OverlapCenter, overlap.At, span, 1.0f));
@@ -91,7 +91,7 @@ public sealed partial class Ship
         {
             var room = roomsById[airlockDef.RoomId];
             var (midX, midY) = ShipLayoutGeometry.SideMidpoint(room, airlockDef.Side);
-            var span = MathF.Min(1.8f, ShipLayoutGeometry.SideLength(room, airlockDef.Side));
+            var span = MathF.Min(Door.StandardSpanUnits, ShipLayoutGeometry.SideLength(room, airlockDef.Side));
             var vertical = airlockDef.Side is EdgeSide.Left or EdgeSide.Right;
             airlocks.Add(vertical
                 ? new AirlockOuterDoor($"airlock-{index++}", room.Id, midX, midY, 1.0f, span)

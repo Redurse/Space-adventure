@@ -28,10 +28,20 @@ public sealed class ReactorPanel
         return new Rectangle((int)slotOrigin.X, (int)slotOrigin.Y, SlotSize, SlotSize);
     }
 
-    public void Draw(SpriteBatch spriteBatch, ReactorState reactor, Vector2 origin)
+    public void Draw(SpriteBatch spriteBatch, ReactorState reactor, Vector2 origin, float totalSeconds)
     {
-        var header = $"Реактор: {reactor.CurrentOutput:0}/{reactor.MaxOutput:0}  Топливо: {reactor.Fuel:0}/{reactor.MaxFuel:0}";
-        spriteBatch.DrawString(_font, header, origin, Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+        // The housing is drawn around the content rather than the content being re-laid-out
+        // inside it: the slot rectangles are already published by GetSlotRect and the click
+        // handler uses the same numbers, so moving them would mean moving input too.
+        var bounds = DevicePanelChrome.StandardBounds(origin);
+        var phosphor = new Color(236, 176, 92);
+        DevicePanelChrome.Draw(spriteBatch, _font, bounds, "РЕАКТОР", "RX-04", phosphor, totalSeconds);
+
+        DevicePanelChrome.DrawReadout(spriteBatch, _font, origin + new Vector2(0, -6),
+            "ВЫХОД", $"{reactor.CurrentOutput:0}", $"/ {reactor.MaxOutput:0}", phosphor);
+        DevicePanelChrome.DrawReadout(spriteBatch, _font, origin + new Vector2(120, -6),
+            "ТОПЛИВО", $"{reactor.Fuel:0}", $"/ {reactor.MaxFuel:0}",
+            reactor.Fuel <= reactor.MaxFuel * 0.2f ? new Color(232, 108, 84) : phosphor);
 
         for (var i = 0; i < reactor.RodCharges.Count; i++)
         {

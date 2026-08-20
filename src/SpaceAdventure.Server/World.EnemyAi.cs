@@ -52,7 +52,7 @@ public sealed partial class World
         }
 
         // A door jammed open ("нельзя было закрыть") is the same kind of hit as a severed wire or a
-        // knocked-out turret - one shot, no partial damage, straight to needing the same F-key
+        // knocked-out turret - one shot, no partial damage, straight to needing the same E-key
         // repair minigame (World.SystemRepair.cs).
         var intactDoors = AllShipDoors().Where(d => !IsDoorDestroyed(d.Id)).ToList();
         if (intactDoors.Count > 0 && _random.NextDouble() < DoorDamageChance)

@@ -44,6 +44,7 @@ public sealed class ScenePost : IDisposable
     private RenderTarget2D? _wideB;
     private RenderTarget2D? _distortion;
     private RenderTarget2D? _normals;
+    private RenderTarget2D? _ownLight;
     private Texture2D? _lightMask;
     private Texture2D? _noLight;
     private Texture2D? _noNormals;
@@ -51,6 +52,7 @@ public sealed class ScenePost : IDisposable
     private bool _capturing;
     private bool _distortionDrawn;
     private bool _normalsDrawn;
+    private bool _ownLightDrawn;
 
     public ScenePost(GraphicsDevice device, Effect? effect)
     {
@@ -169,6 +171,25 @@ public sealed class ScenePost : IDisposable
 
     public void EndNormals() => _normalsDrawn = true;
 
+    // A light mask the caller paints itself, for screens that have no RoomLighting behind them -
+    // the menu, most obviously. Clears to `ambient`, which is the brightness everything not
+    // reached by a light ends up at, then the caller adds its own pools on top.
+    public bool BeginOwnLight(Color ambient)
+    {
+        if (_effect is null || _ownLight is null || !_capturing)
+            return false;
+
+        _device.SetRenderTarget(_ownLight);
+        _device.Clear(ambient);
+        return true;
+    }
+
+    public void EndOwnLight()
+    {
+        _ownLightDrawn = true;
+        _lightMask = _ownLight;
+    }
+
     // The light mask the chain reads to decide what glows and which way the light is coming from -
     // RoomLighting.Mask normally, the plain sight mask when room lighting did not build, null when
     // neither did. Null falls back to a black texture, which zeroes every term that reads it.
@@ -188,6 +209,7 @@ public sealed class ScenePost : IDisposable
         // has drawn into it again this frame.
         _distortionDrawn = false;
         _normalsDrawn = false;
+        _ownLightDrawn = false;
         return true;
     }
 
@@ -334,10 +356,14 @@ public sealed class ScenePost : IDisposable
         _wideB?.Dispose();
         _distortion?.Dispose();
         _normals?.Dispose();
+        _ownLight?.Dispose();
         _scene = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.Color, DepthFormat.None);
         // Same size as the frame so the caller can stamp into it with the scene transform unchanged.
         _distortion = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.Color, DepthFormat.None);
         _normals = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.Color, DepthFormat.None);
+        // Half precision like the room light mask, for the same reason: a lamp is allowed to be
+        // brighter than white.
+        _ownLight = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None);
         var bw = Math.Max(1, viewport.Width / BloomDivisor);
         var bh = Math.Max(1, viewport.Height / BloomDivisor);
         // PreserveContents on the one target that gets bound twice in a frame - the wide level is
@@ -362,6 +388,7 @@ public sealed class ScenePost : IDisposable
         _wideB?.Dispose();
         _distortion?.Dispose();
         _normals?.Dispose();
+        _ownLight?.Dispose();
         _noLight?.Dispose();
         _noNormals?.Dispose();
         _blob?.Dispose();

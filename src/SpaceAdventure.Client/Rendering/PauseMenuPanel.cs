@@ -43,8 +43,7 @@ public sealed class PauseMenuPanel
     public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
-        spriteBatch.Draw(_pixel, panelRect, PanelBackground * 0.97f);
-        DrawRectOutline(spriteBatch, panelRect, PanelBorder, BorderThickness);
+        PanelFrame.Draw(spriteBatch, _pixel, panelRect, PanelBackground, PanelBorder, 0.97f, BorderThickness);
 
         for (var i = 0; i < Labels.Length; i++)
         {

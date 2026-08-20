@@ -19,6 +19,24 @@ public static partial class ItemIcons
     // than dead flat in the slot.
     private const float ToolTilt = -0.58f;
 
+    // The screwdriver's own raster texture reads better at a full 45-degree diagonal than the
+    // shared ToolTilt every procedural tool uses - same "nose up-right" direction (negative angle),
+    // just more pronounced. Only used as the fallback for a null `rotation` (an inventory
+    // slot/dragged-item draw, no real facing to speak of) - an actual held/aimed rotation from
+    // ShipRenderer still takes priority, same as every other tool.
+    private const float ScrewdriverSlotTilt = -MathF.PI / 4f;
+
+    // The one raster texture asset in this otherwise fully-procedural icon set (Game1.cs's
+    // LoadContent sets this once, defensively - a missing/unbuilt .xnb just leaves this null and
+    // the Screwdriver case below falls back to the old procedural DrawScrewdriver). Baked at a
+    // fixed horizontal orientation (handle left, tip right) matching this file's own "along axis =
+    // local +X, then rotate by angle" convention, so the same rotation this file already applies to
+    // every other tool - the cosmetic ToolTilt in a slot, or a real aim rotation when held - works
+    // on it unchanged instead of fighting a second, baked-in angle.
+    private static Texture2D? _screwdriverTexture;
+
+    public static void SetScrewdriverTexture(Texture2D texture) => _screwdriverTexture = texture;
+
     public static bool HasIcon(ItemType type) => type is ItemType.Wrench or ItemType.Screwdriver
         or ItemType.WeldingTool or ItemType.Cutter or ItemType.OxygenTank or ItemType.WeldingTank
         or ItemType.AmmoCrate or ItemType.Spacesuit or ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle
@@ -44,7 +62,13 @@ public static partial class ItemIcons
 
         switch (type)
         {
-            case ItemType.Screwdriver: DrawScrewdriver(spriteBatch, pixel, rect, angle); break;
+            case ItemType.Screwdriver:
+                var screwdriverAngle = rotation ?? ScrewdriverSlotTilt;
+                if (_screwdriverTexture is { } screwdriverTexture)
+                    DrawTexturedTool(spriteBatch, screwdriverTexture, rect, screwdriverAngle);
+                else
+                    DrawScrewdriver(spriteBatch, pixel, rect, screwdriverAngle);
+                break;
             case ItemType.Wrench: DrawWrench(spriteBatch, pixel, rect, angle); break;
             // Tank/nozzle tinted the same colour each tool's own flame already is
             // (FieldRenderer.DrawWeldingFlame/DrawCuttingFlame) - the icon and the beam it fires
@@ -115,6 +139,21 @@ public static partial class ItemIcons
         var x = alongAxis * scale;
         var y = acrossAxis * scale;
         return origin + new Vector2(x * cos - y * sin, x * sin + y * cos);
+    }
+
+    // A raster texture drawn with the exact same origin/scale/rotation convention Point() gives
+    // every procedural tool - centred on rect, sized so its own longer side spans `scale` (matching
+    // how a procedural silhouette fills roughly a `scale`-sided square around `origin`), rotated by
+    // the same angle a Bar/Circle call would get. Texture-space origin (its own pixel centre, not a
+    // 0-1 fraction) is what SpriteBatch's scale-vector Draw overload expects, unlike Bar's 1x1
+    // `pixel` texture where (0.5,0.5) already means "centre".
+    private static void DrawTexturedTool(SpriteBatch spriteBatch, Texture2D texture, Rectangle rect, float baseAngle)
+    {
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        var textureOrigin = new Vector2(texture.Width / 2f, texture.Height / 2f);
+        var uniformScale = scale / MathF.Max(texture.Width, texture.Height);
+        spriteBatch.Draw(texture, origin, null, Color.White, baseAngle, textureOrigin, uniformScale, SpriteEffects.None, 0f);
     }
 
     // The whole gallery of tools is designed against a comfortably large canvas, but the actual

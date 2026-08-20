@@ -38,15 +38,10 @@ public sealed class ShipEditorPanel
         new((int)panelOrigin.X + 8, (int)panelOrigin.Y + HeaderHeight + 8 + index * RowHeight, ListWidth - 16, RowHeight - 2);
 
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, string? selectedComponentId,
-        ConnectionsPanel connectionsPanel, Vector2 panelOrigin)
+        ConnectionsPanel connectionsPanel, Vector2 panelOrigin, float totalSeconds)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
-        spriteBatch.Draw(_pixel, panelRect, PanelBackground * 0.95f);
-        DrawRectOutline(spriteBatch, panelRect, PanelBorder, BorderThickness);
-
-        var headerRect = new Rectangle(panelRect.X, panelRect.Y, panelRect.Width, HeaderHeight);
-        spriteBatch.Draw(_pixel, headerRect, new Color(30, 38, 33));
-        spriteBatch.Draw(_pixel, new Rectangle(headerRect.X, headerRect.Bottom - BorderThickness, headerRect.Width, BorderThickness), PanelBorder);
+        PanelFrame.DrawWithHeader(spriteBatch, _pixel, panelRect, HeaderHeight, PanelBackground, PanelBorder, thickness: BorderThickness);
         spriteBatch.DrawString(_font, "Редактор корабля", panelOrigin + new Vector2(16, 10), Color.White, 0f, Vector2.Zero, 0.85f, SpriteEffects.None, 0f);
 
         spriteBatch.Draw(_pixel, new Rectangle(panelRect.X + ListWidth, panelRect.Y + HeaderHeight, BorderThickness, panelRect.Height - HeaderHeight), PanelBorder);
@@ -65,7 +60,7 @@ public sealed class ShipEditorPanel
         var inspectorBottom = DrawInspector(spriteBatch, snapshot, selectedComponentId, new Vector2(rightX, panelRect.Y + HeaderHeight + 16));
         var wiringTop = (int)inspectorBottom + 14;
         var wiringBounds = new Rectangle(rightX, wiringTop, rightWidth, panelRect.Bottom - wiringTop - 10);
-        connectionsPanel.Draw(spriteBatch, snapshot, selectedComponentId, wiringBounds);
+        connectionsPanel.Draw(spriteBatch, snapshot, selectedComponentId, wiringBounds, totalSeconds);
     }
 
     private void DrawComponentList(SpriteBatch spriteBatch, WorldSnapshot snapshot, string? selectedComponentId, Vector2 panelOrigin)
@@ -109,13 +104,5 @@ public sealed class ShipEditorPanel
             y += 20;
         }
         return y;
-    }
-
-    private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)
-    {
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
     }
 }

@@ -16,6 +16,10 @@ public sealed partial class Station
     // other isn't part of this structure's own Doors list" shape as Ship.AirlockOuterDoors, just
     // crossing into a different physical structure instead of into vacuum.
     public AirlockOuterDoor ShipConnector { get; }
+    // Purely a target for the welder/cutter's aim-HP-bar UI (World.WallBlocks.cs's own comment on
+    // FindAimedStationWallBlock explains why) - a station itself is never actually breachable, so
+    // unlike Ship.WallBlocks this list never needs a mutable Hp dictionary behind it.
+    public IReadOnlyList<WallBlock> WallBlocks { get; }
     public IReadOnlyList<StationNpc> Npcs { get; }
     // Station property that can be stolen (game_design.md section 10, World.StationCrime.cs).
     public IReadOnlyList<StationCrate> Crates { get; }
@@ -54,6 +58,7 @@ public sealed partial class Station
         Rooms = rooms;
         Doors = doors;
         ShipConnector = shipConnector;
+        WallBlocks = BuildWallBlocks(rooms, doors, shipConnector);
         Npcs = npcs;
         Crates = crates;
         DockRoomId = dockRoomId;

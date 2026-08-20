@@ -47,13 +47,60 @@ public sealed partial class World
 
             // The torch lights anywhere and burns its tank while it does. Outside, the only thing
             // it has to bite on is ore (field space); indoors, aboard your own ship, it bites into
-            // the ship's own wall blocks instead (World.WallBlocks.cs) - a station or a boarded
-            // enemy hull have neither, so there's nothing for it to do there.
+            // a closed door or the ship's own wall blocks instead (CutIndoorAlongFlame below). It
+            // lights the same way standing in a station's own corridors, but neither a door nor a
+            // wall block there ever matches (AllShipDoors/Ship.WallBlocks are keyed to the ship's
+            // own ids, never a station's), so there's nothing there for it to actually cut into. A
+            // boarded enemy hull has none of those or ore, so there's nothing for it to do there
+            // either.
             if (character.IsOutside)
                 CutAlongFlame(character, deltaSeconds);
-            else if (!character.OnStation && !character.OnEnemyShip)
-                CutWallAlongFlame(character, deltaSeconds);
+            else if (!character.OnEnemyShip)
+                CutIndoorAlongFlame(character, deltaSeconds);
         }
+    }
+
+    // A door or a hull block, whichever the flame actually reaches first - sampled together
+    // (rather than checking every door along the whole ray before ever looking at a block) so a
+    // near block can't lose out to a farther door on the same aim line. Doors and wall blocks
+    // never overlap in the first place (Ship's own constructor drops any block landing on a
+    // door's footprint), so in practice this only ever matches one or the other per sample.
+    private readonly record struct AimedCutTarget(string? DoorId, string? WallBlockId);
+
+    private AimedCutTarget FindAimedCutTarget(Character character)
+    {
+        var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection.Normalized() : character.FacingDirection;
+        if (aim.Length() < 0.01f)
+            return default;
+
+        for (var i = 1; i <= WallCutSamples; i++)
+        {
+            var point = character.Position + aim * (WallCutReachUnits * i / WallCutSamples);
+
+            var door = AllShipDoors().FirstOrDefault(d => d.Connects(character.RoomId) && !IsDoorOpen(d.Id) &&
+                !IsDoorDestroyed(d.Id) && (d.Position - point).Length() <= WallCutPointRadius);
+            if (door.Id is not null)
+                return new AimedCutTarget(door.Id, null);
+
+            var block = Ship.WallBlocks.FirstOrDefault(b =>
+                b.RoomId == character.RoomId && (b.Position - point).Length() <= WallCutPointRadius);
+            if (block is not null)
+                return new AimedCutTarget(null, block.Id);
+        }
+        return default;
+    }
+
+    // A door cuts open the same gradual way a wall block does (ChopDoor - same call the axe makes,
+    // World.Doors.cs), just fed by the torch's own per-second rate instead of a hand swing's flat
+    // chunk. Forces it open at 0 Hp exactly like an axe finishing it off or combat damage wrecking
+    // it outright - a cut-through door doesn't stay sealed either.
+    private void CutIndoorAlongFlame(Character character, double deltaSeconds)
+    {
+        var target = FindAimedCutTarget(character);
+        if (target.DoorId is { } doorId)
+            ChopDoor(doorId, WallCutDamagePerSecond * (float)deltaSeconds);
+        else if (target.WallBlockId is { } blockId)
+            DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
     }
 
     private void CutAlongFlame(Character character, double deltaSeconds)

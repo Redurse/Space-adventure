@@ -61,12 +61,6 @@ public sealed class Character
     // laying. Walking to the second pin is just ordinary movement, no special mode.
     public PinRef? LayingWireFromPin { get; set; }
 
-    // A Junction box's Component.Id while this character carries it (World.Interact.cs), null
-    // otherwise. Walking to a new spot and pressing F again just clears this - the box's own
-    // position already tracks the carrier every tick (World.Wiring.cs's StepCarriedComponents), so
-    // wherever they stop is where it gets placed, no separate destination to record.
-    public string? CarryingComponentId { get; set; }
-
     // Bend points fixed so far along an in-progress wire lay (World.Wiring.cs's HandleWireBend) -
     // purely cosmetic routing for the eventual Wire.Bends, never read by anything connectivity-
     // related. Cleared whenever the lay starts fresh, restarts at a new anchor, completes, or is
@@ -89,12 +83,20 @@ public sealed class Character
     public string? EvaAttachedAsteroidId { get; set; }
     public Vec2 EvaLocalOffset { get; set; }
     public Vec2 EvaVelocity { get; set; }
-    public const float JetpackMaxFuel = 100f;
+    // How long this character has been in vacuum without a sealed suit. Zero whenever they are
+    // inside, or outside in a working suit - see World.Eva.cs's UnsuitedGraceSeconds.
+    public double UnsuitedVacuumSeconds { get; set; }
+
+    public const float JetpackMaxFuel = 500f; // 5x the original 100 - more room to correct a bad jump before drifting forever
     public float JetpackFuel { get; set; } = JetpackMaxFuel;
     // What was pushed away from, so that one body stops catching the drifter until they're clear
     // of it - and everything else still does (World.Eva.cs).
     public PushOffOrigin PushedOffFrom { get; set; } = PushOffOrigin.None;
     public string? PushedOffAsteroidId { get; set; }
+    // Off by default (game_design.md) - touching the hull/a rock with these off just bounces you
+    // back rather than grabbing on (World.Eva.cs's TryAutoAttach); F toggles them while outside
+    // and nothing's close enough to pick up instead (World.Mining.cs's HandleEvaInteract).
+    public bool MagneticBootsOn { get; set; }
 
     public Character(int playerId, Vec2 position, string roomId)
     {

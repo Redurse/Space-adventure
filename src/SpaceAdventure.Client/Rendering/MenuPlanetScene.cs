@@ -21,7 +21,10 @@ public static class MenuPlanetScene
     {
         DrawGradientBackground(spriteBatch, pixel, pane);
         _starfield ??= new Starfield(pixel, pane, count: 220);
-        _starfield.Draw(spriteBatch, totalSeconds);
+        // Every star already carries its own Parallax factor and wraps at the pane edge, so one
+        // drift vector is enough to separate the field into depths: the near stars slide, the far
+        // ones barely move, and the screen stops being a flat picture.
+        _starfield.Draw(spriteBatch, totalSeconds, new Vector2(totalSeconds * 7f, 0f));
         DrawDustMotes(spriteBatch, pixel, pane, totalSeconds);
 
         var planetCenter = new Vector2(pane.X + pane.Width * 0.6f, pane.Y + pane.Height * 0.56f);
@@ -38,6 +41,7 @@ public static class MenuPlanetScene
         DrawRingHalf(spriteBatch, pixel, planetCenter, ringRadiusX, ringRadiusY, ringTilt, front: true);
         DrawOrbitingKatyusha(spriteBatch, pixel, planetCenter, orbitRadiusX, orbitRadiusY, totalSeconds);
 
+        DrawPassingShip(spriteBatch, pixel, pane, totalSeconds);
         DrawScanline(spriteBatch, pixel, pane, totalSeconds);
         DrawVignette(spriteBatch, pixel, pane);
     }
@@ -75,6 +79,31 @@ public static class MenuPlanetScene
 
     // A soft horizontal band sweeping slowly down the pane on a loop - a sensor/scan pass over the
     // scene, cheap and very low-alpha so it reads as ambient tech dressing, not a strobe.
+    // A silhouette crossing far behind everything else, once every couple of minutes. It is not
+    // decoration so much as scale: nothing else on this screen tells you how big the planet is,
+    // and a ship that takes a hundred seconds to cross in front of it answers that instantly.
+    private static void DrawPassingShip(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane, float totalSeconds)
+    {
+        const float period = 128f;
+        var t = totalSeconds % period / period;
+        // Only actually on screen for the first third of the cycle; the rest is the long wait
+        // that makes it feel like a sighting rather than a loop.
+        if (t > 0.34f)
+            return;
+
+        var progress = t / 0.34f;
+        var x = pane.X - 90f + progress * (pane.Width + 180f);
+        var y = pane.Y + pane.Height * 0.24f + MathF.Sin(progress * 3.1f) * 8f;
+        var fade = MathHelper.Clamp(MathF.Min(progress, 1f - progress) * 6f, 0f, 1f) * 0.55f;
+        var hull = new Color(16, 20, 28) * fade;
+
+        spriteBatch.Draw(pixel, new Rectangle((int)x, (int)y, 54, 7), hull);
+        spriteBatch.Draw(pixel, new Rectangle((int)x + 10, (int)y - 4, 26, 4), hull);
+        spriteBatch.Draw(pixel, new Rectangle((int)x + 44, (int)y - 3, 8, 13), hull);
+        // One running light, the only part of it that is not a shadow.
+        spriteBatch.Draw(pixel, new Rectangle((int)x + 2, (int)y + 2, 2, 2), new Color(220, 120, 110) * fade * 1.8f);
+    }
+
     private static void DrawScanline(SpriteBatch spriteBatch, Texture2D pixel, Rectangle pane, float totalSeconds)
     {
         const float period = 7f;

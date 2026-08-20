@@ -110,6 +110,61 @@ internal static partial class TestRunner
         return !world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsOutside;
     }
 
+    // Same "reveals the target without touching it" contract as
+    // World_WeldHealthyWall_RevealsHpWithoutChangingIt, but for a station wall - a station has
+    // nothing of the player's own ship to actually weld (World.Welding.cs's own comment explains
+    // why), so unlike the ship's own walls this one must NEVER move off full health no matter how
+    // long the torch stays lit, not just "not yet damaged".
+    private static bool World_StationWall_WeldRevealsHpWithoutChangingIt()
+    {
+        var world = new World();
+        world.SpawnCharacter(1); // starts already docked at home-station
+
+        var weldingToolSlot = TakeFromRack(world, ItemType.WeldingTool);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: weldingToolSlot));
+        TakeTankFromRack(world, ItemType.WeldingTank);
+        AttachTankTo(world, Array.IndexOf(
+            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.WeldingTool),
+            ItemType.WeldingTank);
+
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
+        MoveCharacterTo(world, 1, 23f, 3f);
+        WalkFixedDirection(world, 1, 1f, 0f);
+
+        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (!me.OnStation)
+            return false; // didn't make it onto the station
+
+        var room = world.CreateSnapshot().StationRooms.First(r => r.Contains(new Vec2(me.X, me.Y)));
+        var block = world.CreateSnapshot().StationWallBlocks.First(b => b.RoomId == room.Id);
+
+        // Stand half a unit in from whichever edge this block sits on and aim straight at it - the
+        // same "walk up to the known block, look the one way that hits it" shape every ship wall
+        // test above uses, just derived from the room's own bounds instead of a hand-picked literal
+        // (a station's room coordinates shift with wherever the ship's own airlock door happens to
+        // be, unlike the ship's own fixed layout).
+        var (standX, standY, aimX, aimY) =
+            block.Y == room.Top ? (block.X, block.Y + 0.5f, 0f, -1f) :
+            block.Y == room.Bottom ? (block.X, block.Y - 0.5f, 0f, 1f) :
+            block.X == room.Left ? (block.X + 0.5f, block.Y, -1f, 0f) :
+            (block.X - 0.5f, block.Y, 1f, 0f);
+        MoveCharacterTo(world, 1, standX, standY);
+
+        for (var i = 0; i < 60; i++) // 2 seconds - long enough real damage/repair would show if it existed
+        {
+            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: aimX, LookY: aimY));
+            world.Step(RealtimeStep);
+        }
+
+        var snapshot = world.CreateSnapshot();
+        var meNow = snapshot.Characters.Single(c => c.PlayerId == 1);
+        if (meNow.WallToolTargetBlockId != block.Id)
+            return false; // should reveal exactly this station wall block
+
+        var state = snapshot.StationWallBlockStates.First(s => s.Id == block.Id);
+        return state.Hp >= state.MaxHp; // untouched - stations are never actually breachable/repairable
+    }
+
     // Two adjacent fully-broken blocks (the corridor's top wall tiles in exact 1-unit steps, so
     // 11.5 and 12.5 sit right next to each other) are wide enough to fit through - works exactly
     // like walking out an open airlock (World.Eva.cs's IsPassableBreach).

@@ -38,3 +38,110 @@
 /processorParam:DebugMode=Auto
 /build:Shaders/Light.fx
 
+#begin Textures/Screwdriver.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/processorParam:ColorKeyColor=255,0,255,255
+/processorParam:ColorKeyEnabled=False
+/processorParam:GenerateMipmaps=True
+/processorParam:PremultiplyAlpha=True
+/processorParam:ResizeToPowerOfTwo=False
+/processorParam:MakeSquare=False
+/processorParam:TextureFormat=Color
+/build:Textures/Screwdriver.png
+
+#begin Sounds/ui_click.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/ui_click.wav
+
+#begin Sounds/ui_deny.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/ui_deny.wav
+
+#begin Sounds/panel_open.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/panel_open.wav
+
+#begin Sounds/panel_close.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/panel_close.wav
+
+#begin Sounds/door_open.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/door_open.wav
+
+#begin Sounds/door_close.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/door_close.wav
+
+#begin Sounds/airlock_cycle.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/airlock_cycle.wav
+
+#begin Sounds/item_pickup.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/item_pickup.wav
+
+#begin Sounds/item_drop.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/item_drop.wav
+
+#begin Sounds/hull_breach.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/hull_breach.wav
+
+#begin Sounds/laser_shot.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/laser_shot.wav
+
+#begin Sounds/rifle_shot.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/rifle_shot.wav
+
+#begin Sounds/low_oxygen.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/low_oxygen.wav
+
+#begin Sounds/weld_loop.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/weld_loop.wav
+
+#begin Sounds/cutter_loop.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/cutter_loop.wav
+
+#begin Sounds/alarm_loop.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/alarm_loop.wav
+
+#begin Sounds/jetpack_loop.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/jetpack_loop.wav
+
+#begin Sounds/steam_vent.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/steam_vent.wav
+
+#begin Sounds/reactor_hum_loop.wav
+/importer:WavImporter
+/processor:SoundEffectProcessor
+/build:Sounds/reactor_hum_loop.wav
+

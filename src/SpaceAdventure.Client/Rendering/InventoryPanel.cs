@@ -352,8 +352,7 @@ public sealed class InventoryPanel
         var height = nameSize.Y + 16f + (description is not null ? descSize.Y + lineGap : 0f);
 
         var boxRect = new Rectangle((int)anchorAboveSlot.X, (int)(anchorAboveSlot.Y - height), (int)width, (int)height);
-        spriteBatch.Draw(_pixel, boxRect, new Color(15, 20, 17) * 0.95f);
-        DrawRectOutline(spriteBatch, _pixel, boxRect, new Color(90, 110, 95), 1);
+        PanelFrame.Draw(spriteBatch, _pixel, boxRect, thickness: 1);
 
         var textOrigin = new Vector2(boxRect.X + 10, boxRect.Y + 8);
         spriteBatch.DrawString(_font, name, textOrigin, Color.White, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);

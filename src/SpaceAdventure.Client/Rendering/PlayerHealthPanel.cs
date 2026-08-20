@@ -38,6 +38,17 @@ public sealed class PlayerHealthPanel
         spriteBatch.DrawString(_font, $"{me.Health:0}/100{suitStatus}{bleedingStatus}", origin + new Vector2(4, 1),
             Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
 
+        // Only means anything with a suit actually on - shown whether on or off (not just when
+        // active), since the whole point is telling at a glance which way it's currently set
+        // before touching the hull (World.Eva.cs's TryAutoAttach: grabs on when on, bounces when
+        // off). Placed above the bar so it never collides with the "НЕДЕЕСПОСОБЕН" line below it.
+        if (me.WearingSuit)
+        {
+            var bootsLabel = me.MagneticBootsOn ? "Магнитные ботинки: ВКЛ" : "Магнитные ботинки: выкл";
+            var bootsColor = me.MagneticBootsOn ? Color.LightGreen : Color.Gray;
+            spriteBatch.DrawString(_font, bootsLabel, origin + new Vector2(0, -16), bootsColor, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        }
+
         // At 0 there's no separate "dead" state (World.Injuries.cs) - the character just keeps
         // standing there, fully mobile, with welding/cutting silently refusing to light
         // (World.Welding.cs/World.Cutting.cs both gate on Health > 0). Without this line, that

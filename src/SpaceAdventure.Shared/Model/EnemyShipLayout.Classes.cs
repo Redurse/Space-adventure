@@ -29,8 +29,8 @@ public sealed partial class EnemyShipLayout
 
         var doors = new[]
         {
-            new Door("raider-door-breach-hold", "raider-breach", "raider-hold", 5, 3, 1.0f, 1.8f),
-            new Door("raider-door-hold-bridge", "raider-hold", "raider-bridge", 10, 3, 1.0f, 1.8f),
+            new Door("raider-door-breach-hold", "raider-breach", "raider-hold", 5, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("raider-door-hold-bridge", "raider-hold", "raider-bridge", 10, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         // Defenders spread one per room so boarding is a room-by-room fight rather than one brawl.
@@ -45,7 +45,7 @@ public sealed partial class EnemyShipLayout
         };
 
         return new EnemyShipLayout(EnemyShipClass.Raider, "Рейдер", rooms, doors,
-            new AirlockOuterDoor("raider-hatch", "raider-breach", 0, 3, 1.0f, 1.8f), crew, "raider-breach");
+            new AirlockOuterDoor("raider-hatch", "raider-breach", 0, 3, 1.0f, Door.StandardSpanUnits), crew, "raider-breach");
     }
 
     // A hauler: a long hold with a crew berth hung off it, four defenders but only one of them
@@ -63,9 +63,9 @@ public sealed partial class EnemyShipLayout
 
         var doors = new[]
         {
-            new Door("freighter-door-breach-hold", "freighter-breach", "freighter-hold", 4, 3, 1.0f, 1.8f),
-            new Door("freighter-door-hold-berth", "freighter-hold", "freighter-berth", 7.1f, 6, 1.8f, 1.0f),
-            new Door("freighter-door-hold-bridge", "freighter-hold", "freighter-bridge", 12, 3, 1.0f, 1.8f),
+            new Door("freighter-door-breach-hold", "freighter-breach", "freighter-hold", 4, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("freighter-door-hold-berth", "freighter-hold", "freighter-berth", 7.1f, 6, Door.StandardSpanUnits, 1.0f),
+            new Door("freighter-door-hold-bridge", "freighter-hold", "freighter-bridge", 12, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         var crew = new[]
@@ -77,7 +77,7 @@ public sealed partial class EnemyShipLayout
         };
 
         return new EnemyShipLayout(EnemyShipClass.Freighter, "Грузовик", rooms, doors,
-            new AirlockOuterDoor("freighter-hatch", "freighter-breach", 0, 3, 1.0f, 1.8f), crew, "freighter-breach");
+            new AirlockOuterDoor("freighter-hatch", "freighter-breach", 0, 3, 1.0f, Door.StandardSpanUnits), crew, "freighter-breach");
     }
 
     // A warship: a gun deck to cross under fire, an engine room off it, and a bridge at the far end.
@@ -96,9 +96,9 @@ public sealed partial class EnemyShipLayout
 
         var doors = new[]
         {
-            new Door("gunship-door-breach-gundeck", "gunship-breach", "gunship-gundeck", 4, 3, 1.0f, 1.8f),
-            new Door("gunship-door-gundeck-engine", "gunship-gundeck", "gunship-engine", 6.1f, 6, 1.8f, 1.0f),
-            new Door("gunship-door-gundeck-bridge", "gunship-gundeck", "gunship-bridge", 10, 3, 1.0f, 1.8f),
+            new Door("gunship-door-breach-gundeck", "gunship-breach", "gunship-gundeck", 4, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("gunship-door-gundeck-engine", "gunship-gundeck", "gunship-engine", 6.1f, 6, Door.StandardSpanUnits, 1.0f),
+            new Door("gunship-door-gundeck-bridge", "gunship-gundeck", "gunship-bridge", 10, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         var crew = new[]
@@ -111,6 +111,6 @@ public sealed partial class EnemyShipLayout
         };
 
         return new EnemyShipLayout(EnemyShipClass.Gunship, "Канонерка", rooms, doors,
-            new AirlockOuterDoor("gunship-hatch", "gunship-breach", 0, 3, 1.0f, 1.8f), crew, "gunship-breach");
+            new AirlockOuterDoor("gunship-hatch", "gunship-breach", 0, 3, 1.0f, Door.StandardSpanUnits), crew, "gunship-breach");
     }
 }

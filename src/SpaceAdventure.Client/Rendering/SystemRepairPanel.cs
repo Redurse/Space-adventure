@@ -78,7 +78,7 @@ public sealed class SystemRepairPanel
         var buttonRect = new Rectangle(panelRect.X + 12, barRect.Y - 4, barRect.X - 10 - (panelRect.X + 12), 30);
         spriteBatch.Draw(_pixel, buttonRect, holdingTool ? new Color(70, 110, 60) : new Color(60, 60, 60));
         DrawRectOutline(spriteBatch, buttonRect, Color.Black * 0.5f, 1);
-        var buttonLabel = holdingTool ? $"[F]\n{progressPercent:0}%" : "РЕМОНТ\nТРЕБУЕТСЯ...";
+        var buttonLabel = holdingTool ? $"[E]\n{progressPercent:0}%" : "РЕМОНТ\nТРЕБУЕТСЯ...";
         var lines = buttonLabel.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {

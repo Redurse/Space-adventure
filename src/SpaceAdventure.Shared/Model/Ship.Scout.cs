@@ -17,13 +17,13 @@ public sealed partial class Ship
 
         var doors = new[]
         {
-            new Door("door-bridge-engine", "bridge", "engine", 5, 3, 1.0f, 1.8f),
-            new Door("door-engine-airlock", "engine", "airlock-chamber", 11, 3, 1.0f, 1.8f),
+            new Door("door-bridge-engine", "bridge", "engine", 5, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-engine-airlock", "engine", "airlock-chamber", 11, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         var airlockOuterDoors = new[]
         {
-            new AirlockOuterDoor("door-airlock-vacuum", "airlock-chamber", 14, 3, 1.0f, 1.8f),
+            new AirlockOuterDoor("door-airlock-vacuum", "airlock-chamber", 14, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         // Single bow gun, and a weaker one than the Frigate's (game_design.md section 9 — cheap

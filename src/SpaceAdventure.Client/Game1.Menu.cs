@@ -28,6 +28,8 @@ public partial class Game1
         ShipSelect,
         Join,
         ShipEditor,
+        Credits,
+        Settings,
     }
 
     private static readonly ShipKind[] SelectableShipKinds = { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette };
@@ -40,6 +42,7 @@ public partial class Game1
     // convention the nickname/role screens right after it already use, just for a joke user
     // agreement instead of a real setting.
     private MenuScreen _menuScreen = MenuScreen.Eula;
+    private float _screenChangedAt = -99f;
     private string _nickname = PlayerSettingsStore.LoadNickname() ?? "";
     // Same "always ask, pre-filled from last time" shape as the nickname above - purely a
     // self-identification label (Character.cs's own comment), so there's no wrong answer and no
@@ -124,6 +127,10 @@ public partial class Game1
             HandleShipSelect(keyboard);
         else if (_menuScreen == MenuScreen.ShipEditor)
             HandleShipEditorScreen(keyboard);
+        else if (_menuScreen == MenuScreen.Credits)
+            HandleCreditsScreen(keyboard);
+        else if (_menuScreen == MenuScreen.Settings)
+            HandleSettingsScreen(keyboard);
         else
             HandleJoinScreen(keyboard);
 
@@ -213,6 +220,16 @@ public partial class Game1
             _menuScreen = MenuScreen.Main;
             return true;
         }
+        if (_menuScreen == MenuScreen.Credits)
+        {
+            ReturnFromCredits();
+            return true;
+        }
+        if (_menuScreen == MenuScreen.Settings)
+        {
+            _menuScreen = MenuScreen.Main; // Escape discards staged edits, same as "Отмена"
+            return true;
+        }
         return false;
     }
 
@@ -225,9 +242,11 @@ public partial class Game1
         Join,
         ShipEditor,
         ChangeNick,
-        SettingsPlaceholder,
+        Settings,
+        Credits,
         Exit,
         Placeholder,
+        Tutorial,
     }
 
     // Same small glyph vocabulary the old grouped sections showed before each header - restored
@@ -245,13 +264,13 @@ public partial class Game1
     {
         ("ПРОДОЛЖИТЬ", new Rectangle(144, 64, 160, 24), MainMenuAction.Continue, MainMenuIcon.Play),
         ("НОВАЯ ИГРА", new Rectangle(144, 96, 160, 24), MainMenuAction.NewGame, MainMenuIcon.Ship),
-        ("ОБУЧЕНИЕ", new Rectangle(144, 32, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Flag),
+        ("ОБУЧЕНИЕ", new Rectangle(144, 32, 160, 26), MainMenuAction.Tutorial, MainMenuIcon.Flag),
         ("СОЗДАТЬ СЕРВЕР", new Rectangle(88, 168, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Signal),
         ("ПРИСОЕДИНИТЬСЯ", new Rectangle(88, 200, 160, 24), MainMenuAction.Join, MainMenuIcon.Plug),
         ("РЕДАКТОР КОРАБЛЯ", new Rectangle(168, 316, 160, 24), MainMenuAction.ShipEditor, MainMenuIcon.Wrench),
         ("СМЕНИТЬ НИК", new Rectangle(168, 348, 160, 24), MainMenuAction.ChangeNick, MainMenuIcon.Person),
-        ("НАСТРОЙКИ", new Rectangle(76, 420, 160, 24), MainMenuAction.SettingsPlaceholder, MainMenuIcon.Bars),
-        ("АВТОРЫ", new Rectangle(76, 456, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Medal),
+        ("НАСТРОЙКИ", new Rectangle(76, 420, 160, 24), MainMenuAction.Settings, MainMenuIcon.Bars),
+        ("АВТОРЫ", new Rectangle(76, 456, 160, 26), MainMenuAction.Credits, MainMenuIcon.Medal),
         ("ВЫХОД", new Rectangle(76, 488, 160, 24), MainMenuAction.Exit, MainMenuIcon.Exit),
     };
 
@@ -262,14 +281,13 @@ public partial class Game1
         action != MainMenuAction.Continue || _existingSave is not null;
 
     private bool IsMainMenuButtonEnabled(MainMenuAction action) =>
-        action is not (MainMenuAction.SettingsPlaceholder or MainMenuAction.Placeholder);
+        action is not MainMenuAction.Placeholder;
 
     private string ResolveMainMenuLabel(string staticLabel, MainMenuAction action) => action switch
     {
         MainMenuAction.Continue when _existingSave is { } save =>
             $"ПРОДОЛЖИТЬ ({ShipCatalog.Name(save.ShipKind)}, {save.Credits} кред.)",
         MainMenuAction.ChangeNick => $"СМЕНИТЬ НИК ({_nickname})",
-        MainMenuAction.SettingsPlaceholder => "НАСТРОЙКИ (скоро)",
         _ => staticLabel,
     };
 
@@ -294,6 +312,18 @@ public partial class Game1
             {
                 case MainMenuAction.NewGame:
                     _menuScreen = MenuScreen.ShipSelect;
+                    break;
+                case MainMenuAction.Tutorial:
+                    // Always the starter Frigate, no ship-select step - the tutorial's own room ids
+                    // (World.Tutorial.cs) are hardcoded to that hull's layout.
+                    StartHostedSession(ShipKind.Frigate, loadFrom: null, isTutorial: true);
+                    break;
+                case MainMenuAction.Credits:
+                    _menuScreen = MenuScreen.Credits;
+                    _creditsStart = null;
+                    break;
+                case MainMenuAction.Settings:
+                    EnterSettingsScreen();
                     break;
                 case MainMenuAction.Continue when _existingSave is { } save:
                     StartHostedSession(save.ShipKind, save);
@@ -399,10 +429,10 @@ public partial class Game1
 
     // The host is a player like any other - their own session is the same SoloSession solo mode
     // uses, with the listen socket as the only difference.
-    private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom, CustomShipDefinition? customShip = null)
+    private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom, CustomShipDefinition? customShip = null, bool isTutorial = false)
     {
         var session = new SoloSession(shipKind, loadFrom,
-            _openToNetwork ? SpaceAdventure.Shared.Networking.Wire.DefaultPort : null, customShip);
+            _openToNetwork ? SpaceAdventure.Shared.Networking.Wire.DefaultPort : null, customShip, isTutorial);
         _session = session;
         _client = new GameClient(session.Connection, session.PlayerId);
         _sessionStarted = true;
@@ -461,6 +491,10 @@ public partial class Game1
         // ReturnToMainMenu) - stamp the entrance time so DrawMainMenuScreen's stagger starts over.
         if (_menuScreen == MenuScreen.Main && _lastDrawnMenuScreen != MenuScreen.Main)
             _mainMenuEnterTime = totalSeconds;
+        // Any screen change at all, not just arriving at Main - the wipe below covers every one of
+        // them, so a hard cut between sub-screens stops being the one rough edge left in the menu.
+        if (_lastDrawnMenuScreen != _menuScreen)
+            _screenChangedAt = totalSeconds;
         _lastDrawnMenuScreen = _menuScreen;
 
         _spriteBatch.Begin(transformMatrix: _renderScale);
@@ -476,8 +510,23 @@ public partial class Game1
             DrawShipSelectScreen();
         else if (_menuScreen == MenuScreen.ShipEditor)
             DrawShipEditorScreen();
+        else if (_menuScreen == MenuScreen.Credits)
+            DrawCreditsScreen(totalSeconds);
+        else if (_menuScreen == MenuScreen.Settings)
+            DrawSettingsScreen();
         else
             DrawJoinScreen();
+
+        // A short black wipe over whatever was just drawn. Cheaper than animating each screen out
+        // and in, and because it sits inside the post chain the grain and vignette ride over it too,
+        // so the transition belongs to the same picture rather than looking pasted on top.
+        var sinceChange = totalSeconds - _screenChangedAt;
+        const float wipeSeconds = 0.22f;
+        if (sinceChange < wipeSeconds)
+        {
+            var fade = 1f - sinceChange / wipeSeconds;
+            _spriteBatch.Draw(_pixel, new Rectangle(0, 0, DesignWidth, DesignHeight + (int)LetterboxBelowDesign), Color.Black * (fade * fade));
+        }
         _spriteBatch.End();
     }
 
@@ -498,7 +547,7 @@ public partial class Game1
                 continue;
             var progress = MainMenuButtonProgress(sinceEnter, visibleIndex);
             visibleIndex++;
-            DrawMainMenuButton(rect, ResolveMainMenuLabel(staticLabel, action), IsMainMenuButtonEnabled(action), progress, icon);
+            DrawMainMenuButton(rect, ResolveMainMenuLabel(staticLabel, action), IsMainMenuButtonEnabled(action), progress, icon, totalSeconds);
         }
     }
 
@@ -516,14 +565,35 @@ public partial class Game1
     // with nothing grouping them need their own edge to read as a discrete clickable thing.
     // `progress` drives both the fade-in and a slide-up on arrival, same convention every other
     // menu animation in this file already uses.
-    private void DrawMainMenuButton(Rectangle rect, string label, bool enabled, float progress, MainMenuIcon icon)
+    private void DrawMainMenuButton(Rectangle rect, string label, bool enabled, float progress, MainMenuIcon icon, float totalSeconds)
     {
         var slide = (int)((1f - progress) * 14f);
         var drawRect = new Rectangle(rect.X, rect.Y + slide, rect.Width, rect.Height);
         var hovered = enabled && drawRect.Contains(_designMouse);
+        // Held down over the button: the plate sinks a pixel and its face brightens, so a click
+        // has a physical answer instead of the label simply changing colour on release.
+        var held = hovered && Mouse.GetState().LeftButton == ButtonState.Pressed;
+        if (held)
+            drawRect = new Rectangle(drawRect.X + 1, drawRect.Y + 1, drawRect.Width, drawRect.Height);
         var accent = !enabled ? new Color(90, 96, 96) : hovered ? Color.Gold : new Color(90, 220, 195);
 
         _spriteBatch.Draw(_pixel, drawRect, new Color(14, 20, 20) * progress);
+        if (hovered)
+        {
+            // A band of light crossing the plate, left to right, on a loop. Drawn as a handful of
+            // one-pixel columns with a triangular falloff because there is no scissor rect here to
+            // clip a wide quad against, and a gradient texture for one effect is not worth it.
+            _spriteBatch.Draw(_pixel, drawRect, accent * (held ? 0.22f : 0.12f) * progress);
+            var sweep = drawRect.X + (totalSeconds * 0.85f % 1f) * drawRect.Width;
+            for (var i = -7; i <= 7; i++)
+            {
+                var x = (int)sweep + i;
+                if (x < drawRect.X || x >= drawRect.Right)
+                    continue;
+                var falloff = (1f - MathF.Abs(i) / 8f) * 0.20f;
+                _spriteBatch.Draw(_pixel, new Rectangle(x, drawRect.Y + 1, 1, drawRect.Height - 2), Color.White * falloff * progress);
+            }
+        }
         ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, drawRect, accent * progress, 1);
 
         var iconBoxSize = drawRect.Height - 8;
@@ -641,10 +711,23 @@ public partial class Game1
         const float titleScale = 1.7f;
         var titlePosition = new Vector2(pane.Right - 460, pane.Bottom - 92);
         var glow = new Color(90, 220, 195);
+        // Three sine waves whose periods do not divide into each other, so the sign never settles
+        // into a rhythm the eye can predict - that unevenness is the whole difference between a
+        // tube that is failing and a light that is simply pulsing.
+        var flicker = 0.86f
+            + MathF.Sin(totalSeconds * 2.3f) * 0.05f
+            + MathF.Sin(totalSeconds * 7.1f) * 0.03f
+            + MathF.Sin(totalSeconds * 17.7f) * 0.02f;
         foreach (var offset in new[] { new Vector2(-2, 0), new Vector2(2, 0), new Vector2(0, -2), new Vector2(0, 2), new Vector2(-1.5f, -1.5f), new Vector2(1.5f, 1.5f) })
-            _spriteBatch.DrawString(_font, title, titlePosition + offset, glow * 0.35f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+            _spriteBatch.DrawString(_font, title, titlePosition + offset, glow * (0.35f * flicker), 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
         _spriteBatch.DrawString(_font, title, titlePosition + new Vector2(3, 3), Color.Black * 0.6f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, title, titlePosition, Color.White, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        // Red and cyan faces a pixel either side of the white one: the sign's own colour fringing,
+        // and it breathes with the flicker so the two read as one failing tube rather than two
+        // separate effects.
+        var split = 1f + (1f - flicker) * 6f;
+        _spriteBatch.DrawString(_font, title, titlePosition - new Vector2(split, 0f), new Color(255, 90, 90) * 0.30f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, title, titlePosition + new Vector2(split, 0f), new Color(90, 220, 255) * 0.30f, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, title, titlePosition, Color.White * flicker, 0f, Vector2.Zero, titleScale, SpriteEffects.None, 0f);
 
         // A riveted rule under the title, same corner-rivet dressing every device housing already
         // wears (ShipRenderer.DrawRivets) - ties the front screen to the game it opens into.
@@ -654,8 +737,37 @@ public partial class Game1
         for (var x = ruleRect.X + 6; x < ruleRect.Right; x += 24)
             HudIcons.FillCircle(_spriteBatch, _pixel, new Vector2(x, ruleY + 1), 1.4f, new Color(20, 24, 22));
 
+        DrawTrafficTicker(pane, totalSeconds);
+
         const string tagline = "СВОЙ КОРАБЛЬ. СВОЙ ЭКИПАЖ. ГЛУБОКИЙ КОСМОС.";
         _spriteBatch.DrawString(_font, tagline, new Vector2(titlePosition.X + 2, ruleY + 8), new Color(190, 220, 215), 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+    }
+
+    // Docking chatter crawling along the bottom edge. Nothing here is interactive and none of it
+    // is real - it exists so the screen reads as a place with traffic in it rather than a poster.
+    private static readonly string[] TrafficLines =
+    {
+        "БОРТ 'КАТЮША' - ЗАПРОС НА СТЫКОВКУ ПРИНЯТ, ПРИЧАЛ 4",
+        "ГРУЗОВОЙ КОРИДОР 12 ЗАКРЫТ - РАБОТЫ НА ВНЕШНЕЙ ОБШИВКЕ",
+        "ВНИМАНИЕ: НЕОПОЗНАННЫЙ СИГНАЛ В СЕКТОРЕ 7, СОБЛЮДАЙТЕ ОСТОРОЖНОСТЬ",
+        "ТОПЛИВНЫЙ КОНВОЙ ПРИБЫВАЕТ ЧЕРЕЗ 6 ЧАСОВ",
+        "НАПОМИНАНИЕ: СКАФАНДР ПРОВЕРЯЕТСЯ ПЕРЕД КАЖДЫМ ВЫХОДОМ",
+        "МЕДОТСЕК: ПЛАНОВЫЙ ОСМОТР ЭКИПАЖА ПЕРЕНЕСЁН НА ЗАВТРА",
+    };
+
+    private void DrawTrafficTicker(Rectangle pane, float totalSeconds)
+    {
+        var line = TrafficLines[(int)(totalSeconds / 11f) % TrafficLines.Length];
+        var width = _font.MeasureString(line).X * 0.5f;
+        // Scrolls right to left across the whole pane and wraps with a gap, so there is never a
+        // moment where the strip is empty and the effect visibly stops.
+        var travel = (pane.Width + width + 120f);
+        var x = pane.Right - totalSeconds % (travel / 34f) * 34f;
+        var y = pane.Bottom - 16f;
+
+        _spriteBatch.Draw(_pixel, new Rectangle(pane.X, (int)y - 3, pane.Width, 14), new Color(8, 14, 18) * 0.55f);
+        _spriteBatch.Draw(_pixel, new Rectangle(pane.X, (int)y - 4, pane.Width, 1), new Color(90, 220, 195) * 0.25f);
+        _spriteBatch.DrawString(_font, line, new Vector2(x, y), new Color(120, 200, 185) * 0.75f, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
     private static readonly string[] EulaLines =

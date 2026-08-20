@@ -383,7 +383,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.CutWire("trunk-shields"); // takes out both shield devices (reactor room)
+        world.CutWire("trunk-system-shields"); // takes out just the first shield device (reactor room) - its sibling has its own dedicated trunk now
 
         WalkAcrossShipTo(world, 7.2f, 0.7f); // reactor room's shields device
 
@@ -411,7 +411,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.CutWire("trunk-shields");
+        world.CutWire("trunk-system-shields");
         WalkAcrossShipTo(world, 7.2f, 0.7f);
 
         var wrenchSlot = TakeFromRack(world, ItemType.Wrench);

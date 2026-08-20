@@ -25,7 +25,7 @@ public sealed class ShipRenderer
     // door's 1-unit (48px) span so a doorway still cuts cleanly through it, and narrower than twice
     // RoomLayout.CharacterRadius (33.6px) so a character stopped at the collision clearance never
     // still pokes out past the wall's outer face.
-    private const int WallThickness = 28;
+    internal const int WallThickness = 28;
     private const int RibSpacing = 26;
 
     private readonly Texture2D _pixel;
@@ -126,6 +126,16 @@ public sealed class ShipRenderer
         foreach (var room in snapshot.Rooms)
             DrawRoomWalls(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
 
+        // A frame over the metal plus a plain unpainted pane, only for the crew station that
+        // actually faces open space - deliberately left blank rather than filled with any painted
+        // backdrop, same trick DrawBreachedWallBlock already uses for a hull breach: FieldRenderer
+        // draws every asteroid/ship/EVA character at its own real position after this (Game1's own
+        // draw order), so whatever is actually out there - or nothing, just black - shows through
+        // exactly as it would through a real pane of glass, with no separate starfield of its own
+        // to keep in sync.
+        foreach (var pane in CockpitWindows.Panes(snapshot.Rooms))
+            DrawWindowPane(spriteBatch, pane, origin);
+
         // Drawn after room outlines so the opening visibly cuts through the shared wall.
         foreach (var door in snapshot.Doors)
         {
@@ -203,7 +213,7 @@ public sealed class ShipRenderer
         foreach (var turret in snapshot.Turrets)
         {
             var state = snapshot.TurretStates.FirstOrDefault(s => s.Id == turret.Id);
-            DrawTurret(spriteBatch, turret, state, snapshot.Rooms, snapshot.Turrets, origin);
+            DrawTurret(spriteBatch, turret, state, snapshot.Rooms, snapshot.Turrets, origin, totalSeconds);
         }
 
         foreach (var character in snapshot.Characters)
@@ -846,7 +856,7 @@ public sealed class ShipRenderer
     // barrel is what the shell actually leaves through. Drawing the aim line from the console used
     // to imply the ship shot out of its own furniture.
     private void DrawTurret(SpriteBatch spriteBatch, Turret turret, TurretState? state,
-        IReadOnlyList<Room> rooms, IReadOnlyList<Turret> allTurrets, Vector2 origin, bool showPeriscope = true)
+        IReadOnlyList<Room> rooms, IReadOnlyList<Turret> allTurrets, Vector2 origin, float totalSeconds, bool showPeriscope = true)
     {
         var center = origin + new Vector2(turret.PeriscopeX, turret.PeriscopeY) * PixelsPerUnit;
         var manned = state?.MannedByPlayerId is not null;
@@ -855,16 +865,7 @@ public sealed class ShipRenderer
         // The crew station is inside the ship, so it goes with the rest of the interior when the
         // hull is drawn closed up.
         if (showPeriscope)
-        {
-            const int markerSize = 10;
-            var markerColor = damaged ? Color.Red : manned ? Color.Gold : Color.Silver;
-            spriteBatch.Draw(_pixel,
-                new Rectangle((int)center.X - markerSize / 2, (int)center.Y - markerSize / 2, markerSize, markerSize),
-                markerColor);
-
-            if (damaged)
-                spriteBatch.DrawString(_font, "!", center + new Vector2(8, -18), Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
-        }
+            DrawPeriscopeStation(spriteBatch, center, manned, damaged, totalSeconds);
 
         if (state is null)
             return;
@@ -899,6 +900,93 @@ public sealed class ShipRenderer
         spriteBatch.DrawString(_font, readout, mountPx + new Vector2(-10, -30), Color.Gold, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
     }
 
+    // A real periscope station instead of a flat marker square: a bolted octagonal floor block,
+    // two handle grips a gunner would actually hold, cable stubs feeding into the deck, and a wide
+    // flat terminal on top whose "screen" is a glowing blue-cyan projector lens - the thing the
+    // gunner actually looks into - rather than a flat readout. Colour/glow carries the same idle/
+    // manned/damaged read the old marker did, just on a model that looks like real hardware.
+    private void DrawPeriscopeStation(SpriteBatch spriteBatch, Vector2 center, bool manned, bool damaged, float totalSeconds)
+    {
+        var baseColor = new Color(58, 64, 70);
+        var baseEdge = new Color(23, 26, 29);
+        var octagon = Octagon(center, 9f);
+        Primitives.FillPolygon(spriteBatch, _pixel, center, octagon, baseColor);
+        Primitives.StrokePolygon(spriteBatch, _pixel, octagon, baseEdge, 1.5f);
+        foreach (var vertex in octagon)
+            spriteBatch.Draw(_pixel, new Rectangle((int)vertex.X - 1, (int)vertex.Y - 1, 2, 2), baseEdge);
+
+        // Handle grips, one on each side - lit gold while manned, same as the barrel it steers.
+        foreach (var side in new[] { -1f, 1f })
+        {
+            var handleCenter = center + new Vector2(side * 13f, 0f);
+            var handleRect = new Rectangle((int)handleCenter.X - 4, (int)handleCenter.Y - 4, 8, 8);
+            spriteBatch.Draw(_pixel, handleRect, new Color(51, 56, 61));
+            DrawRectOutline(spriteBatch, handleRect, baseEdge, 1);
+            if (manned)
+                HudIcons.DrawRingArc(spriteBatch, _pixel, handleCenter, 5f, 0f, 360f, Color.Gold * 0.7f, 8, 1f);
+        }
+
+        // Cable stubs trailing off toward the deck it's bolted into.
+        HudIcons.DrawLine(spriteBatch, _pixel, center + new Vector2(-6f, 6f), center + new Vector2(-4f, 12f), baseEdge, 1.5f);
+        HudIcons.DrawLine(spriteBatch, _pixel, center + new Vector2(6f, 6f), center + new Vector2(4f, 12f), baseEdge, 1.5f);
+
+        // The wide flat terminal, offset slightly toward the "front".
+        var terminalCenter = center + new Vector2(0f, -1f);
+        var terminalRect = new Rectangle((int)terminalCenter.X - 12, (int)terminalCenter.Y - 9, 24, 16);
+        spriteBatch.Draw(_pixel, terminalRect, new Color(49, 54, 60));
+        DrawRectOutline(spriteBatch, terminalRect, baseEdge, 1);
+        DrawRivets(spriteBatch, terminalRect);
+        spriteBatch.Draw(_pixel, new Rectangle(terminalRect.X + 3, terminalRect.Bottom - 4, 6, 3), new Color(32, 36, 40));
+        spriteBatch.Draw(_pixel, new Rectangle(terminalRect.Right - 9, terminalRect.Bottom - 4, 6, 3), new Color(32, 36, 40));
+
+        var wellRect = new Rectangle(terminalRect.X + 3, terminalRect.Y + 2, terminalRect.Width - 6, terminalRect.Height - 7);
+        spriteBatch.Draw(_pixel, wellRect, new Color(10, 13, 16));
+        var glowCenter = new Vector2(wellRect.Center.X, wellRect.Center.Y);
+
+        Color outerGlow, midGlow, coreGlow;
+        if (damaged)
+        {
+            var pulse = 0.5f + 0.5f * MathF.Sin(totalSeconds * 6f);
+            outerGlow = new Color(90, 38, 30) * (0.3f + 0.2f * pulse);
+            midGlow = new Color(161, 56, 42) * (0.5f + 0.3f * pulse);
+            coreGlow = new Color(255, 138, 106) * (0.6f + 0.4f * pulse);
+            HudIcons.DrawLine(spriteBatch, _pixel, glowCenter + new Vector2(-4, -3), glowCenter + new Vector2(4, 3), baseEdge, 1f);
+            HudIcons.DrawLine(spriteBatch, _pixel, glowCenter + new Vector2(3, -3), glowCenter + new Vector2(-3, 2), baseEdge, 1f);
+            spriteBatch.DrawString(_font, "!", center + new Vector2(12, -20), Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+        }
+        else if (manned)
+        {
+            var pulse = 0.7f + 0.3f * MathF.Sin(totalSeconds * 3f);
+            outerGlow = new Color(30, 122, 144) * 0.5f;
+            midGlow = new Color(51, 182, 214) * 0.7f;
+            coreGlow = new Color(143, 236, 255) * pulse;
+            // A faint beam projecting "up" out of the lens - only shows while someone's actually
+            // looking through it.
+            Primitives.FillTriangle(spriteBatch, _pixel, glowCenter, glowCenter + new Vector2(-6, -14), glowCenter + new Vector2(6, -14), coreGlow * 0.18f);
+        }
+        else
+        {
+            outerGlow = new Color(30, 90, 102) * 0.35f;
+            midGlow = new Color(47, 164, 194) * 0.55f;
+            coreGlow = new Color(127, 224, 255) * 0.9f;
+        }
+
+        HudIcons.FillCircle(spriteBatch, _pixel, glowCenter, 4.5f, outerGlow);
+        HudIcons.FillCircle(spriteBatch, _pixel, glowCenter, 3f, midGlow);
+        HudIcons.FillCircle(spriteBatch, _pixel, glowCenter, 1.6f, coreGlow);
+    }
+
+    private static Vector2[] Octagon(Vector2 center, float radius)
+    {
+        var points = new Vector2[8];
+        for (var i = 0; i < 8; i++)
+        {
+            var angle = i * MathF.PI / 4f;
+            points[i] = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
+        }
+        return points;
+    }
+
     private void DrawAimArcEdge(SpriteBatch spriteBatch, Vector2 mountPx, float degrees)
     {
         var rotation = degrees * (MathF.PI / 180f);
@@ -906,34 +994,170 @@ public sealed class ShipRenderer
     }
 
     // Green: open and passable. Dark red: closed and airtight (game_design.md Phase 3, M16).
-    // leadsToVacuum darkens it further - an AirlockOuterDoor open to space rather than a room.
-    // Hazard tape frames anything airtight-relevant (SS13/Barotrauma convention), thicker on the
-    // ones leading to open vacuum since those are the ones that can actually kill you.
-    // internal: reused by StationRenderer, which draws the station's own Rooms/Doors/Characters
-    // through the exact same visual language instead of duplicating it.
-    // destroyed overrides everything else about its color - a door with its own hit points hit
-    // zero (World.Doors.cs) is jammed open regardless of leadsToVacuum, and a pulsing warning color
-    // reads as "broken" at a glance instead of looking like an ordinary open door.
+    // leadsToVacuum only changes the OPEN color (purple instead of green) and widens the hazard
+    // tape - a closed door reads the same "sealed" red no matter what's behind it; only an open
+    // one to vacuum is the state that can actually kill you. destroyed overrides everything else
+    // about its color - a door with its own hit points hit zero (World.Doors.cs, cut open or
+    // chopped through) is jammed open regardless of leadsToVacuum, and a pulsing warning color plus
+    // scorch marks read as "broken" at a glance instead of looking like an ordinary open door.
+    // A framed bezel with corner rivets (matching every other device housing's own treatment),
+    // hazard tape on a closed leaf, and a small flat access terminal mounted on the wall on each
+    // flank - the "press to open" control the crew would actually reach for - round this out from
+    // a flat colored rectangle into a proper airlock. internal: reused by StationRenderer, which
+    // draws the station's own Rooms/Doors/Characters through the exact same visual language
+    // instead of duplicating it.
     internal void DrawDoor(SpriteBatch spriteBatch, float left, float top, float width, float height, bool isOpen, Vector2 origin,
         bool leadsToVacuum = false, bool destroyed = false, float totalSeconds = 0f)
     {
         var rect = GetDoorRect(left, top, width, height, origin);
-        var color = destroyed
-            ? Color.OrangeRed * (0.6f + 0.4f * MathF.Sin(totalSeconds * 6f))
-            : isOpen ? (leadsToVacuum ? Color.MediumPurple : Color.SeaGreen) : Color.DarkRed;
-        spriteBatch.Draw(_pixel, rect, color);
-
-        var stripeThickness = leadsToVacuum ? 4 : 3;
         var horizontal = rect.Width >= rect.Height;
+
+        var indicator = destroyed
+            ? Color.OrangeRed * (0.6f + 0.4f * MathF.Sin(totalSeconds * 6f))
+            : isOpen
+                ? (leadsToVacuum ? new Color(190, 140, 255) : new Color(90, 230, 120))
+                : new Color(255, 90, 90);
+
+        DrawDoorFrame(spriteBatch, rect, destroyed);
+
+        if (destroyed)
+            DrawDestroyedDoorLeaf(spriteBatch, rect, horizontal);
+        else if (isOpen)
+            DrawOpenDoorLeaf(spriteBatch, rect, horizontal, leadsToVacuum);
+        else
+            DrawClosedDoorLeaf(spriteBatch, rect, horizontal, leadsToVacuum);
+
+        DrawDoorIndicator(spriteBatch, rect, indicator);
+        DrawDoorTerminals(spriteBatch, rect, horizontal, indicator);
+    }
+
+    private void DrawDoorFrame(SpriteBatch spriteBatch, Rectangle rect, bool destroyed)
+    {
+        const int margin = 5;
+        var bezel = new Rectangle(rect.X - margin, rect.Y - margin, rect.Width + margin * 2, rect.Height + margin * 2);
+        spriteBatch.Draw(_pixel, bezel, destroyed ? new Color(92, 80, 72) : new Color(92, 104, 116));
+        DrawRivets(spriteBatch, bezel);
+    }
+
+    private void DrawClosedDoorLeaf(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, bool leadsToVacuum)
+    {
+        spriteBatch.Draw(_pixel, rect, Color.DarkRed);
+        if (horizontal)
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Center.Y - 1, rect.Width, 2), new Color(58, 10, 10));
+        else
+            spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - 1, rect.Y, 2, rect.Height), new Color(58, 10, 10));
+
+        DrawDoorEdgeStripes(spriteBatch, rect, horizontal, leadsToVacuum ? 8 : 6);
+    }
+
+    private void DrawOpenDoorLeaf(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, bool leadsToVacuum)
+    {
+        var mid = leadsToVacuum ? new Color(70, 62, 96) : new Color(58, 64, 70);
+        var cap = leadsToVacuum ? new Color(96, 80, 150) : new Color(63, 90, 68);
+        spriteBatch.Draw(_pixel, rect, mid);
+        DrawDoorLeafCaps(spriteBatch, rect, horizontal, cap);
+    }
+
+    // Destroyed is always jammed open (World.Doors.cs), so it gets the same retracted-leaf caps as
+    // an ordinary open door, just worn-looking, plus scorch marks and a crack across the middle.
+    private void DrawDestroyedDoorLeaf(SpriteBatch spriteBatch, Rectangle rect, bool horizontal)
+    {
+        spriteBatch.Draw(_pixel, rect, new Color(58, 52, 48));
+        DrawDoorLeafCaps(spriteBatch, rect, horizontal, new Color(63, 90, 68) * 0.7f);
+
+        var scorch = new Color(36, 31, 28) * 0.85f;
+        var scorchSize = Math.Max(4, Math.Min(rect.Width, rect.Height) / 3);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, scorchSize, scorchSize), scorch);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - scorchSize, rect.Bottom - scorchSize, scorchSize, scorchSize), scorch);
+
+        var crack = new Color(26, 21, 18);
+        HudIcons.DrawLine(spriteBatch, _pixel, new Vector2(rect.X + rect.Width * 0.25f, rect.Y), new Vector2(rect.Center.X, rect.Center.Y), crack, 2f);
+        HudIcons.DrawLine(spriteBatch, _pixel, new Vector2(rect.Center.X, rect.Center.Y), new Vector2(rect.X + rect.Width * 0.3f, rect.Bottom), crack, 2f);
+    }
+
+    // The leaf's own two halves shown slid back into the frame - what actually tells "open" apart
+    // from "closed" now, instead of just a different flat color.
+    private void DrawDoorLeafCaps(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, Color capColor)
+    {
+        var capThickness = horizontal ? Math.Max(6, rect.Width / 4) : Math.Max(6, rect.Height / 4);
         if (horizontal)
         {
-            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, rect.Width, stripeThickness), horizontal: true);
-            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Bottom - stripeThickness, rect.Width, stripeThickness), horizontal: true);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, capThickness, rect.Height), capColor);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.Right - capThickness, rect.Y, capThickness, rect.Height), capColor);
         }
         else
         {
-            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, stripeThickness, rect.Height), horizontal: false);
-            DrawHazardStripes(spriteBatch, new Rectangle(rect.Right - stripeThickness, rect.Y, stripeThickness, rect.Height), horizontal: false);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, capThickness), capColor);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - capThickness, rect.Width, capThickness), capColor);
+        }
+    }
+
+    private void DrawDoorEdgeStripes(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, int thickness)
+    {
+        if (horizontal)
+        {
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, rect.Width, thickness), horizontal: true);
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), horizontal: true);
+        }
+        else
+        {
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Y, thickness, rect.Height), horizontal: false);
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), horizontal: false);
+        }
+    }
+
+    // A small backed light set into the leaf's own middle - the same state color the two side
+    // terminals show, just read from the door itself once you're already close to it.
+    private void DrawDoorIndicator(SpriteBatch spriteBatch, Rectangle rect, Color color)
+    {
+        const int size = 8;
+        var center = new Point(rect.Center.X, rect.Center.Y);
+        spriteBatch.Draw(_pixel, new Rectangle(center.X - size / 2 - 1, center.Y - size / 2 - 1, size + 2, size + 2), Color.Black * 0.6f);
+        spriteBatch.Draw(_pixel, new Rectangle(center.X - size / 2, center.Y - size / 2, size, size), color);
+    }
+
+    // The "press to open" control the crew would actually reach for, mounted on the wall on both
+    // flanks of the doorway rather than on the door itself (which slides or jams) - one on each
+    // side (never both on the same flank), a little below the door's own near end so it reads as
+    // reachable rather than floating in the wall. Its own light mirrors the leaf's indicator, so
+    // which way a door currently reads is obvious before getting close enough to see the leaf.
+    private void DrawDoorTerminals(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, Color indicatorColor)
+    {
+        const int thickness = 8;
+        const int length = 26;
+        const int frameMargin = 5;
+        const int gap = 2;
+        const int alongOffset = 4;
+
+        if (!horizontal)
+        {
+            var y = rect.Y + alongOffset;
+            DrawDoorTerminal(spriteBatch, new Rectangle(rect.X - frameMargin - gap - thickness, y, thickness, length), indicatorColor, vertical: true);
+            DrawDoorTerminal(spriteBatch, new Rectangle(rect.Right + frameMargin + gap, y, thickness, length), indicatorColor, vertical: true);
+        }
+        else
+        {
+            var x = rect.X + alongOffset;
+            DrawDoorTerminal(spriteBatch, new Rectangle(x, rect.Y - frameMargin - gap - thickness, length, thickness), indicatorColor, vertical: false);
+            DrawDoorTerminal(spriteBatch, new Rectangle(x, rect.Bottom + frameMargin + gap, length, thickness), indicatorColor, vertical: false);
+        }
+    }
+
+    private void DrawDoorTerminal(SpriteBatch spriteBatch, Rectangle rect, Color indicatorColor, bool vertical)
+    {
+        spriteBatch.Draw(_pixel, rect, new Color(49, 54, 60));
+        DrawRectOutline(spriteBatch, rect, Color.Black * 0.5f, 1);
+        if (vertical)
+        {
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X + 1, rect.Y + 2, rect.Width - 2, (int)(rect.Height * 0.4f)), new Color(16, 19, 24));
+            var lightHeight = Math.Max(2, (int)(rect.Height * 0.25f));
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X + 1, rect.Y + rect.Height / 2, rect.Width - 2, lightHeight), indicatorColor);
+        }
+        else
+        {
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X + 2, rect.Y + 1, (int)(rect.Width * 0.4f), rect.Height - 2), new Color(16, 19, 24));
+            var lightWidth = Math.Max(2, (int)(rect.Width * 0.25f));
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X + rect.Width / 2, rect.Y + 1, lightWidth, rect.Height - 2), indicatorColor);
         }
     }
 
@@ -1067,6 +1291,46 @@ public sealed class ShipRenderer
         DrawRivets(spriteBatch, rect);
     }
 
+    // A metal frame around a deliberately blank pane - see the comment at this method's call site
+    // in Draw() for why the inside is left plain rather than painted with any backdrop of its own.
+    private void DrawWindowPane(SpriteBatch spriteBatch, CockpitWindows.Pane worldPane, Vector2 origin)
+    {
+        var pane = new Rectangle(
+            (int)(origin.X + worldPane.Left * PixelsPerUnit), (int)(origin.Y + worldPane.Top * PixelsPerUnit),
+            (int)((worldPane.Right - worldPane.Left) * PixelsPerUnit), (int)((worldPane.Bottom - worldPane.Top) * PixelsPerUnit));
+        if (pane.Width <= 0 || pane.Height <= 0)
+            return;
+
+        var bezel = new Rectangle(pane.X - 2, pane.Y - 2, pane.Width + 4, pane.Height + 4);
+        TileTextures.DrawTiled(spriteBatch, _wallPlate, TileTextures.WallTileSize, bezel, new Color(96, 104, 116));
+        DrawRectOutline(spriteBatch, bezel, Color.Black * 0.45f, 1);
+        DrawRivets(spriteBatch, bezel);
+
+        // Plain black, matching GraphicsDevice.Clear - not a fake starfield of its own. Whatever
+        // FieldRenderer paints there next (a real asteroid/ship/EVA character, or nothing) is what
+        // actually shows.
+        spriteBatch.Draw(_pixel, pane, Color.Black);
+        // A faint blue glass tint - what tells "window" apart from "hole" when there's nothing out
+        // there to see; a real object drawn over it afterward reads normally, same as breach holes.
+        spriteBatch.Draw(_pixel, pane, new Color(80, 160, 210) * 0.08f);
+
+        var mullion = Color.Black * 0.55f;
+        const int panes = 4;
+        for (var i = 1; i < panes; i++)
+        {
+            if (worldPane.HorizontalBand)
+            {
+                var x = pane.X + pane.Width * i / panes;
+                spriteBatch.Draw(_pixel, new Rectangle(x, pane.Y, 2, pane.Height), mullion);
+            }
+            else
+            {
+                var y = pane.Y + pane.Height * i / panes;
+                spriteBatch.Draw(_pixel, new Rectangle(pane.X, y, pane.Width, 2), mullion);
+            }
+        }
+    }
+
     private static Rectangle GetRoomRect(Room room, Vector2 origin) => new(
         (int)(origin.X + room.X * PixelsPerUnit),
         (int)(origin.Y + room.Y * PixelsPerUnit),
@@ -1133,15 +1397,24 @@ public sealed class ShipRenderer
     // batch it used to live in gets multiplied by the sight-cone/room-lighting mask
     // (BuildVisibilityMask), which hid the bar the instant the block itself fell into a blind spot;
     // the HUD batch is drawn after that composite, same exemption InfoPanel/CrewPanel already get.
-    internal void DrawWallToolTargetBar(SpriteBatch spriteBatch, WallBlock block, WallBlockState state, Vector2 origin)
+    internal void DrawWallToolTargetBar(SpriteBatch spriteBatch, WallBlock block, WallBlockState state, Vector2 origin) =>
+        DrawToolTargetBar(spriteBatch, new Vector2(block.X, block.Y), state.Fraction, origin);
+
+    // Same bar, over a door being cut open (World.Cutting.cs's CutIndoorAlongFlame) instead of a
+    // hull block - worldPosition is whichever of Door/AirlockOuterDoor matched
+    // (character.DoorToolTargetId), since both share the same X/Y shape but not a common base type.
+    internal void DrawDoorToolTargetBar(SpriteBatch spriteBatch, Vector2 worldPosition, DoorState state, Vector2 origin) =>
+        DrawToolTargetBar(spriteBatch, worldPosition, state.Fraction, origin);
+
+    private void DrawToolTargetBar(SpriteBatch spriteBatch, Vector2 worldPosition, float fraction, Vector2 origin)
     {
         const int width = 32;
         const int height = 6;
-        var center = origin + new Vector2(block.X, block.Y) * PixelsPerUnit;
+        var center = origin + worldPosition * PixelsPerUnit;
         var bar = new Rectangle((int)center.X - width / 2, (int)center.Y - 22, width, height);
-        var fill = state.Fraction > 0.6f ? Color.LimeGreen : state.Fraction > 0.25f ? Color.Orange : Color.OrangeRed;
+        var fill = fraction > 0.6f ? Color.LimeGreen : fraction > 0.25f ? Color.Orange : Color.OrangeRed;
         spriteBatch.Draw(_pixel, bar, Color.Black * 0.7f);
-        spriteBatch.Draw(_pixel, new Rectangle(bar.X, bar.Y, (int)(bar.Width * state.Fraction), bar.Height), fill);
+        spriteBatch.Draw(_pixel, new Rectangle(bar.X, bar.Y, (int)(bar.Width * fraction), bar.Height), fill);
         DrawRectOutline(spriteBatch, bar, Color.LightGray * 0.7f, 1);
     }
 

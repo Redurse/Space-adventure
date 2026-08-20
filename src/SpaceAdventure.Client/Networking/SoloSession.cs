@@ -29,9 +29,11 @@ public sealed class SoloSession : IDisposable
     // game with the chosen hull. Either way the embedded server keeps autosaving to the standard
     // slot on every docking.
     public SoloSession(ShipKind shipKind = ShipKind.Frigate, SaveGame? loadFrom = null, int? listenPort = null,
-        CustomShipDefinition? customShip = null)
+        CustomShipDefinition? customShip = null, bool isTutorial = false)
     {
-        _server = new GameServer(shipKind, loadFrom, SaveStore.DefaultPath, customShip);
+        // A tutorial run never touches the real autosave slot - null disables persistence entirely,
+        // same as the test suite's own embedded servers.
+        _server = new GameServer(shipKind, loadFrom, isTutorial ? null : SaveStore.DefaultPath, customShip, isTutorial);
         PlayerId = _server.Connect(_transport);
         _serverThread = new Thread(() => _server.Run(_cts.Token))
         {

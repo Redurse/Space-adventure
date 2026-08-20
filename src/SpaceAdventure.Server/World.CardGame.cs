@@ -31,6 +31,11 @@ public sealed partial class World
     // The table never holds more undefended cards than this - 2 only ever happens right after the
     // one transfer this implementation permits per round.
     private const int MaxPendingAttacks = 2;
+    // Standard Дурак's own "no more than 6 attacking cards a round" rule, expressed as the real
+    // limit it enforces: attack + defense together never exceed this many cards laid out on the
+    // table at once. Checked where a new attack is thrown in (TryPlayCard) - PendingAttacks is
+    // always 0 there, so ResolvedPairs.Count * 2 is exactly how many cards are already down.
+    private const int MaxTableCards = 12;
 
     private CardGameSession? _cardGame;
 
@@ -171,7 +176,8 @@ public sealed partial class World
                     return;
             }
             var defenderHandSize = game.HandOf(game.DefenderId).Count;
-            if (game.ResolvedPairs.Count >= 6 || game.ResolvedPairs.Count >= defenderHandSize)
+            var cardsOnTable = game.ResolvedPairs.Count * 2; // PendingAttacks is always 0 here
+            if (cardsOnTable >= MaxTableCards || game.ResolvedPairs.Count >= defenderHandSize)
                 return;
 
             hand.Remove(card);

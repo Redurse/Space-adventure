@@ -80,7 +80,7 @@ public sealed partial class Station
             var roomId = $"{prefix}-{service.ToString().ToLowerInvariant()}";
             var slug = service.ToString().ToLowerInvariant();
             rooms.Add(new Room(roomId, roomName, left, top, RoomWidth, RoomHeight));
-            doors.Add(new Door($"{prefix}-door-{i}", rooms[i].Id, roomId, left, rowY, 1.0f, 1.8f));
+            doors.Add(new Door($"{prefix}-door-{i}", rooms[i].Id, roomId, left, rowY, 1.0f, Door.StandardSpanUnits));
             npcs.Add(new StationNpc($"{prefix}-npc-{slug}", npcName, service,
                 X: left + RoomWidth / 2, Y: rowY));
 
@@ -92,7 +92,7 @@ public sealed partial class Station
 
         // Left wall of the docking chamber - the same physical rectangle as the docked ship's outer
         // airlock door, which is what makes walking across it an ordinary doorway crossing.
-        var shipConnector = new AirlockOuterDoor($"{prefix}-connector", rooms[0].Id, originX, rowY, 1.0f, 1.8f);
+        var shipConnector = new AirlockOuterDoor($"{prefix}-connector", rooms[0].Id, originX, rowY, 1.0f, Door.StandardSpanUnits);
 
         return new Station(rooms, doors, shipConnector, npcs, crates, WorldCenter, rooms[0].Id);
     }

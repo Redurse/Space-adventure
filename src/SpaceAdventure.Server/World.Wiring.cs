@@ -45,20 +45,14 @@ public sealed partial class World
 
     // What the rest of the simulation should use instead of PowerGrid.GetAllocation directly - folds
     // in wiring connectivity. A system with more than one device (Shields/Engine) scales its
-    // effective power by the fraction of its devices actually connected (game_design.md section 1's
-    // "два уровня отказа": lose the whole system via the trunk, or just part of it via one drop).
+    // effective power by the fraction of its devices actually connected - each device now has its
+    // own dedicated junction+trunk (WireGraphFactory), so this is a plain per-device tally rather
+    // than a single shared "is the whole system's one trunk still up" gate.
     public float GetEffectivePower(PowerSystemId system)
     {
-        var junctionId = $"junction-{system}".ToLowerInvariant();
-        if (_components.All(c => c.Id != junctionId))
-            return 0f; // this hull has no device on this system at all
-
-        if (!IsPinPowered(new PinRef(junctionId, ComponentDefinitions.JunctionInPin().Id)))
-            return 0f;
-
         var devices = Ship.SystemDevices.Where(d => d.System == system).ToList();
         if (devices.Count == 0)
-            return 0f;
+            return 0f; // this hull has no device on this system at all
 
         var connected = devices.Count(d => IsPinPowered(new PinRef(d.Id, "in")));
         return PowerGrid.GetAllocation(system) * connected / devices.Count;
@@ -101,44 +95,21 @@ public sealed partial class World
     public bool IsJunctionDamaged(string junctionId) =>
         _wires.FirstOrDefault(w => w.ToPin.ComponentId == junctionId) is { } trunk && _wireDamaged[trunk.Id];
 
-    // Junction boxes now get their own client-visible repair state (World.Interact.cs's F-key
+    // Junction boxes now get their own client-visible repair state (World.Interact.cs's E-key
     // pickup/repair, World.SystemRepair.cs's minigame) - reusing ShipSystemState's exact shape rather
     // than inventing a parallel record, since "device id / system / damaged / repair progress" is
-    // exactly what a Junction needs too. System is recovered from the id WireGraphFactory gave it
-    // ("junction-oxygen" etc.) rather than stored separately, so there's only one source of truth.
+    // exactly what a Junction needs too. System is recovered from whichever device this junction's
+    // own drop wire actually feeds, rather than parsed from the id string - a single-device system's
+    // junction is still named "junction-oxygen" etc., but a multi-device one is now named after its
+    // own device ("junction-system-engine-2"), which a PowerSystemId.Parse could never round-trip.
     private IReadOnlyList<ShipSystemState> CreateJunctionStates() =>
         _components.Where(c => c.Kind == ComponentKind.Junction).Select(c =>
         {
-            var system = Enum.Parse<PowerSystemId>(c.Id["junction-".Length..], ignoreCase: true);
+            var deviceId = _wires.FirstOrDefault(w => w.FromPin.ComponentId == c.Id)?.ToPin.ComponentId;
+            var system = Ship.SystemDevices.FirstOrDefault(d => d.Id == deviceId)?.System ?? default;
             var (percent, tickPosition) = GetSystemRepairDisplay(c.Id);
             return new ShipSystemState(c.Id, system, IsJunctionDamaged(c.Id), percent, tickPosition);
         }).ToArray();
-
-    // Carrying a Junction (World.Interact.cs) just pins its position to whoever picked it up, every
-    // tick, until they place it back down - no separate destination/offset to track, and wiring is
-    // completely unaffected throughout (Wire endpoints reference a Component by id, never by
-    // position), so every device on that system keeps working exactly as before while its box is
-    // mid-move.
-    private void StepCarriedComponents()
-    {
-        foreach (var character in _characters.Values)
-        {
-            if (character.CarryingComponentId is not { } id)
-                continue;
-
-            var index = _components.FindIndex(c => c.Id == id);
-            if (index < 0)
-            {
-                character.CarryingComponentId = null; // it stopped existing under us (e.g. a hull swap) - nothing left to carry
-                continue;
-            }
-
-            _components[index] = _components[index] with
-            {
-                RoomId = character.RoomId, X = character.Position.X, Y = character.Position.Y,
-            };
-        }
-    }
 
     // Damages a specific wire (the enemy AI's system-damage roll, World.EnemyAi.cs, and tests use
     // this directly - the equivalent of the old CutWireLink). If the cut wire happened to be a
@@ -165,7 +136,7 @@ public sealed partial class World
     // until then, same reasoning as AddWire above.
     public void AddComponent(Component component) => _components.Add(component);
 
-    // In-person repair at a damaged device (World.Interact.cs's F-key proximity check, and
+    // In-person repair at a damaged device (World.Interact.cs's E-key proximity check, and
     // World.CrewAi.cs's Mechanic bot) - unchanged behavior from before: fixes the device's own drop
     // wire first, falling back to the shared trunk wire if the drop's fine but the trunk isn't.
     private void RepairDeviceWiring(string deviceId)
@@ -275,7 +246,7 @@ public sealed partial class World
         character.LayingWireBends.Clear();
     }
 
-    private const int MaxWireBends = 12; // generous headroom for a routed path, bounded against a spammed command
+    private const int MaxWireBends = 32; // generous headroom for a routed path, bounded against a spammed command
 
     // A LMB click mid-lay that missed every pin fixes a bend at that spot instead (World.cs's
     // WireBendAtX/Y) - purely cosmetic routing, never touches connectivity. Silently ignored unless

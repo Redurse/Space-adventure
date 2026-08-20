@@ -8,14 +8,14 @@ public sealed partial class World
     private const float InteractionRadius = 1.0f; // units, distance to a periscope/storage/locker to interact with it
     private const float SuitActionDurationSeconds = 2f;
 
-    // Single F key, priority-ordered: 0) ignored entirely while mid-equip/unequip (can't react
+    // Single E key, priority-ordered: 0) ignored entirely while mid-equip/unequip (can't react
     // instantly, game_design.md section 2), 1) stand up if manning, 2) use a held MedKit if hurt
     // (game_design.md section 4, M12 - anywhere, no proximity needed, since it's self-treatment
     // not a station), 3) reload a turret if carrying a crate, 4) pick up an ammo crate at storage,
     // 5) repair a damaged turret/system or man a free turret, 6) start putting on/taking off a suit
     // at a locker, 7) weld the nearest breached hull block in the current room. Hand tools/tanks/
     // weapons/consumables live in the storage racks now (World.Storage.cs's TryMoveItem, opened by
-    // clicking one), not a separate F-key pickup - see game_design.md section 13.
+    // clicking one), not a separate E-key pickup - see game_design.md section 13.
     private void HandleInteract(Character character)
     {
         if (character.SuitActionRemaining > 0)
@@ -45,16 +45,6 @@ public sealed partial class World
         if (character.IsAtHelm)
         {
             character.IsAtHelm = false; // the last commanded thrust is deliberately left as-is (game_design.md Phase 3, M15)
-            return;
-        }
-
-        // Hands are full - putting the box down takes priority over everything else F might
-        // otherwise do here, the same way a manned turret/helm short-circuits the whole chain above.
-        // Its position already tracks this character every tick (World.Wiring.cs's
-        // StepCarriedComponents), so placing it is just letting go - wherever they're standing now.
-        if (character.CarryingComponentId is not null)
-        {
-            character.CarryingComponentId = null;
             return;
         }
 
@@ -124,29 +114,20 @@ public sealed partial class World
             return;
         }
 
-        // Junction boxes ("щитки") are their own breakable, movable device now (game_design.md) -
-        // a damaged one repairs the same way a SystemDevice does (wrench/screwdriver drives the
-        // minigame above, at its own trunk wire this time - IsJunctionDamaged/RepairDeviceWiring both
-        // already handle a Junction's id correctly with no change of their own). An undamaged one is
-        // picked up by wrench instead - only the wrench, matching World.ComponentMounts.cs's own
-        // "wrench touches the hardware" convention (screwdriver stays reserved for ConnectionsPanel's
-        // read-only wiring view).
+        // Junction boxes ("щитки") are their own breakable device (game_design.md) - a damaged one
+        // repairs the same way a SystemDevice does (wrench/screwdriver drives the minigame above,
+        // at its own trunk wire this time - IsJunctionDamaged/RepairDeviceWiring both already
+        // handle a Junction's id correctly with no change of their own). An undamaged one has
+        // nothing left for F to do - it's a fixed fixture, not something the wrench relocates.
         var nearbyJunction = _components.FirstOrDefault(c =>
             c.Kind == ComponentKind.Junction &&
             c.RoomId == character.RoomId &&
             (c.Position - character.Position).Length() < InteractionRadius);
 
-        if (nearbyJunction is not null)
+        if (nearbyJunction is not null && IsJunctionDamaged(nearbyJunction.Id))
         {
-            if (IsJunctionDamaged(nearbyJunction.Id))
-            {
-                if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
-                    AttemptSystemRepair(nearbyJunction.Id);
-                return;
-            }
-
-            if (character.Inventory.IsHolding(ItemType.Wrench))
-                character.CarryingComponentId = nearbyJunction.Id;
+            if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
+                AttemptSystemRepair(nearbyJunction.Id);
             return;
         }
 

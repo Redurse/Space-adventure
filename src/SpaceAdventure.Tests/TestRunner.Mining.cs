@@ -34,6 +34,16 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f); // exit, attached to the ship
+
+        // Boots on: off by default now, so crossing the airlock at all left this character
+        // floating right at the door instead of attached (World.Eva.cs's TryCrossIntoVacuum). One
+        // more step after switching them on lets the still-touching boots grab on immediately
+        // (TryAutoAttach runs every tick a free-floating character is stepped, moving or not) -
+        // every existing "trip outside" test here is written against the old always-magnetized
+        // behavior, drifting back to a rock or the ship and expecting to grab on again rather
+        // than bounce off it.
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
     }
 
     private static void ExitShipAndFlyTo(World world, Vec2 targetWorldPos)
@@ -130,7 +140,9 @@ internal static partial class TestRunner
         if (afterAWhile.SuitTank >= started.SuitTank || afterAWhile.Health < 100f)
             return false; // must have been spent, and must not hurt while there's air left
 
-        for (var i = 0; i < 700 * 30; i++) // past the tank's whole endurance and then some
+        // 100 / SuitDrainPerSecond(0.055) ≈ 1818s of endurance now (4x the original ~7 minutes,
+        // OxygenTankDefinitions) - comfortably past that, and then some.
+        for (var i = 0; i < 2400 * 30; i++)
             world.Step(RealtimeStep);
         var starved = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
 
@@ -159,7 +171,7 @@ internal static partial class TestRunner
     }
 
     // Click-to-pick-up (World.Mining.cs's TryPickupDroppedItem) works in EVA too, alongside the
-    // existing F-key path exercised by the test above - additive, not a replacement.
+    // existing E-key path exercised by the test above - additive, not a replacement.
     private static bool World_Mining_ClickPickup_WorksSameAsInteractKey()
     {
         var world = new World();

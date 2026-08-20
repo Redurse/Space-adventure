@@ -39,10 +39,10 @@ public sealed partial class Ship
         // junction of the ship, which is why the breaker panels live there too.
         var doors = new[]
         {
-            new Door("door-cockpit-armory", "cockpit", "armory", 6.75f, 4, 1.8f, 1.0f),
-            new Door("door-armory-reactor", "armory", "reactor", 6.75f, 8, 1.8f, 1.0f),
-            new Door("door-reactor-shields", "reactor", "shields-bay", 4, 11, 1.0f, 1.8f),
-            new Door("door-reactor-lifesupport", "reactor", "life-support", 9.5f, 11, 1.0f, 1.8f),
+            new Door("door-cockpit-armory", "cockpit", "armory", 6.75f, 4, Door.StandardSpanUnits, 1.0f),
+            new Door("door-armory-reactor", "armory", "reactor", 6.75f, 8, Door.StandardSpanUnits, 1.0f),
+            new Door("door-reactor-shields", "reactor", "shields-bay", 4, 11, 1.0f, Door.StandardSpanUnits),
+            new Door("door-reactor-lifesupport", "reactor", "life-support", 9.5f, 11, 1.0f, Door.StandardSpanUnits),
         };
 
         // One port on each beam, on the outer wall of each side compartment (they're the only rooms
@@ -51,8 +51,8 @@ public sealed partial class Ship
         // some other compartment you'd have to cross the ship from.
         var airlockOuterDoors = new[]
         {
-            new AirlockOuterDoor("door-airlock-vacuum", "life-support", 13.5f, 9.5f, 1.0f, 1.8f),
-            new AirlockOuterDoor("door-airlock-port", "shields-bay", 0, 9.5f, 1.0f, 1.8f),
+            new AirlockOuterDoor("door-airlock-vacuum", "life-support", 13.5f, 9.5f, 1.0f, Door.StandardSpanUnits),
+            new AirlockOuterDoor("door-airlock-port", "shields-bay", 0, 9.5f, 1.0f, Door.StandardSpanUnits),
         };
 
         // Two guns on opposite walls of the gun deck, firing out through their own plating

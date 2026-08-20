@@ -4,7 +4,7 @@ using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Server;
 
-// Each locker holds exactly one physical suit now, instead of the old F-key toggle that let the
+// Each locker holds exactly one physical suit now, instead of the old E-key toggle that let the
 // whole crew re-equip from the same spot forever with nothing ever run out ("убери бесконечные
 // скафандры"). Taking one (World.Interact.cs) empties that locker until someone walks up wearing
 // a suit and puts it back - the same "pull it out, it's gone until returned" shape as the

@@ -149,11 +149,11 @@ public sealed partial class Ship
         // mid-height (y=3) — walking near the top/bottom of a room still hits a solid wall.
         var doors = new[]
         {
-            new Door("door-cockpit-reactor", "cockpit", "reactor", 5, 3, 1.0f, 1.8f),
-            new Door("door-reactor-corridor", "reactor", "corridor", 10, 3, 1.0f, 1.8f),
-            new Door("door-corridor-quarters", "corridor", "quarters", 13, 3, 1.0f, 1.8f),
-            new Door("door-quarters-engine", "quarters", "engine", 18, 3, 1.0f, 1.8f),
-            new Door("door-engine-airlock", "engine", "airlock-chamber", 23, 3, 1.0f, 1.8f),
+            new Door("door-cockpit-reactor", "cockpit", "reactor", 5, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-reactor-corridor", "reactor", "corridor", 10, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-corridor-quarters", "corridor", "quarters", 13, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-quarters-engine", "quarters", "engine", 18, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-engine-airlock", "engine", "airlock-chamber", 23, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         // The chamber's far wall - opens onto vacuum, not another room (game_design.md Phase 3,
@@ -161,7 +161,7 @@ public sealed partial class Ship
         // whole ship, same as leaving both real airlock doors open.
         var airlockOuterDoors = new[]
         {
-            new AirlockOuterDoor("door-airlock-vacuum", "airlock-chamber", 26, 3, 1.0f, 1.8f),
+            new AirlockOuterDoor("door-airlock-vacuum", "airlock-chamber", 26, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         // Two turrets (Phase1 MVP: "1-2 орудия"): bow ballistic in the cockpit, and the laser —

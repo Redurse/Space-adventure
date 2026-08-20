@@ -36,7 +36,7 @@ public sealed class ConnectionsPanel
         _pixel.SetData(new[] { Color.White });
     }
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, string componentId, Rectangle bounds)
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, string componentId, Rectangle bounds, float totalSeconds)
     {
         var component = snapshot.Components.FirstOrDefault(c => c.Id == componentId);
         if (component is null)
@@ -49,14 +49,12 @@ public sealed class ConnectionsPanel
         var height = Math.Max(bounds.Height, HeaderHeight + 16 + rows * RowHeight + 10);
         var rect = new Rectangle(bounds.X, bounds.Y, bounds.Width, height);
 
-        spriteBatch.Draw(_pixel, rect, PanelBackground * 0.95f);
-        DrawRectOutline(spriteBatch, rect, PanelBorder, BorderThickness);
-
-        var headerRect = new Rectangle(rect.X, rect.Y, rect.Width, HeaderHeight);
-        spriteBatch.Draw(_pixel, headerRect, new Color(30, 38, 33));
-        spriteBatch.Draw(_pixel, new Rectangle(headerRect.X, headerRect.Bottom - 1, headerRect.Width, 1), PanelBorder);
-        spriteBatch.DrawString(_font, $"Подключения: {ComponentRenderer.ComponentLabel(snapshot, componentId)}",
-            new Vector2(rect.X + 8, rect.Y + 4), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        // The housing is drawn here rather than at the top of the method: this panel sizes itself
+        // from its own row count, and the caller passes height 0 meaning "you work it out".
+        // Drawing the chrome before that was computed produced a housing of zero height.
+        DevicePanelChrome.Draw(spriteBatch, _font, rect,
+            ComponentRenderer.ComponentLabel(snapshot, componentId).ToUpperInvariant(), "CN-07",
+            new Color(148, 196, 236), totalSeconds);
 
         if (rows == 0)
         {
@@ -99,13 +97,5 @@ public sealed class ConnectionsPanel
             textPos.X -= size.X;
         }
         spriteBatch.DrawString(_font, text, textPos, color, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
-    }
-
-    private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)
-    {
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
     }
 }

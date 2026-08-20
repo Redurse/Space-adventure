@@ -4,8 +4,10 @@ using SpaceAdventure.Shared.Protocol;
 namespace SpaceAdventure.Server;
 
 // What's left of mining once the cutting itself moved to a held flame (World.Cutting.cs): picking
-// up what fell out of a block. [F] outside is now only ever "pick that up" - the ore is knocked
-// loose by the torch, not by pressing a key at a marker.
+// up what fell out of a block. [F] outside is "pick that up" whenever something's in reach - the
+// ore is knocked loose by the torch, not by pressing a key at a marker - and otherwise toggles the
+// suit's magnetic boots (World.Eva.cs's TryAutoAttach), so the same key both collects a drop right
+// underfoot and, everywhere else, switches whether touching the hull/a rock grabs on.
 public sealed partial class World
 {
     private const float PickupRadius = 1.5f;
@@ -21,14 +23,17 @@ public sealed partial class World
             .Where(d => (d.Position - worldPos).Length() < PickupRadius)
             .OrderBy(d => (d.Position - worldPos).Length())
             .FirstOrDefault();
-        if (nearbyDropped is null)
+        if (nearbyDropped is not null)
+        {
+            if (character.Inventory.TryAdd(nearbyDropped.Item))
+                _droppedItems.Remove(nearbyDropped);
             return;
+        }
 
-        if (character.Inventory.TryAdd(nearbyDropped.Item))
-            _droppedItems.Remove(nearbyDropped);
+        character.MagneticBootsOn = !character.MagneticBootsOn;
     }
 
-    // Click-to-pick-up, additive alongside HandleEvaInteract's F-key path above: works anywhere a
+    // Click-to-pick-up, additive alongside HandleEvaInteract's E-key path above: works anywhere a
     // DroppedItem can exist (EVA, ship interior, station interior - World.Storage.cs's TryDropItem
     // is what puts one on a ship/station floor in the first place). RoomId has to match first (null
     // for both sides means EVA) - ship-local and station-local coordinates can legitimately land on

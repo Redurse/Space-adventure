@@ -5,6 +5,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Audio;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using SpaceAdventure.Client.Audio;
 using SpaceAdventure.Client.Networking;
 using SpaceAdventure.Client.Rendering;
 using SpaceAdventure.Server; // SaveStore only - the client owns the save slot's lifetime (new game vs. continue)
@@ -26,7 +27,25 @@ public partial class Game1 : Game
     // FieldViewportOrigin/Size.
     private static readonly Vector2 WorldViewportOrigin = new(40, 40);
     private static readonly Vector2 WorldViewportSize = new(1120, 300);
-    private static readonly Vector2 PowerPanelOrigin = new(40, 360);
+    // Panels open in the middle of the screen. They used to be pinned to the bottom left, which
+    // put them under the player's own hands on a wide display and meant every terminal appeared
+    // somewhere the eye was not. Both the drawing and the click handling read these, so the
+    // housing and its hit boxes can never disagree.
+    private static Point DesignScreen => new(DesignWidth, DesignHeight);
+
+    // Keyed by which block is open so each terminal keeps its own dragged position (Game1.PanelDrag.cs).
+    private string CurrentPanelKey => _openBlock.Kind.ToString();
+    private Point CurrentPanelSize => _openBlock.Kind switch
+    {
+        BlockKind.Rack => RackPanel.PanelSize,
+        // The wiring panel is wider than the standard box and sizes its own height from the pin
+        // count, which is not known out here - the standard height is used as its grab/hit box, so
+        // an unusually tall one has a dead strip along its bottom.
+        BlockKind.Connections => new Point(ConnectionsPanel.Width, DevicePanelChrome.Standard.Y),
+        _ => DevicePanelChrome.Standard,
+    };
+    private Vector2 PowerPanelOrigin => PanelOrigin(CurrentPanelKey, DevicePanelChrome.Standard);
+    private Vector2 RackPanelOrigin => PanelOrigin(CurrentPanelKey, RackPanel.PanelSize);
     private static readonly Vector2 VoyagePanelOrigin = new(250, 12);
     // The carried row is centred on the bottom edge and the equipment slots are pinned to the
     // bottom-right corner, so both are derived from the design resolution rather than fixed at
@@ -148,6 +167,9 @@ public partial class Game1 : Game
     private RoomLighting _roomLighting = null!;
     private ScenePost _scenePost = null!;
     private bool _roomLightingReady;
+    // What ApplyGraphicsSettings last actually applied - the Settings screen (Game1.Settings.cs)
+    // reads this to seed its staged edits when opened, and to know what "Отмена" should revert to.
+    private GraphicsSettings _graphicsSettings;
     private RackPanel _rackPanel = null!;
     private ConnectionsPanel _connectionsPanel = null!;
     private SuitLockerPanel _suitLockerPanel = null!;
@@ -376,12 +398,61 @@ public partial class Game1 : Game
         _infoPanel = new InfoPanel(GraphicsDevice, _font);
         _shipEditorPanel = new ShipEditorPanel(GraphicsDevice, _font);
         _existingSave = SaveStore.Load();
+        _sounds = new GameSounds(Content);
         try { _doorBreakSound = Content.Load<SoundEffect>("Sounds/DoorBreak"); }
         catch { _doorBreakSound = null; } // same "missing content build shouldn't crash the game" reasoning as Shaders.TryLoad
-        // Both volume knobs XNA/MonoGame exposes maxed out - per-instance Volume (set where it's
-        // actually played) and this global multiplier, which nothing else in the game ever touches
-        // but is worth pinning explicitly rather than trusting the platform default stays 1.
-        SoundEffect.MasterVolume = 1f;
+        // The one raster texture asset in an otherwise fully-procedural game (ItemIcons.cs draws
+        // every other icon from flat primitives) - same defensive load as the sound above, so an
+        // unbuilt/missing .xnb falls back to the old procedural DrawScrewdriver instead of crashing.
+        try { ItemIcons.SetScrewdriverTexture(Content.Load<Texture2D>("Textures/Screwdriver")); }
+        catch { /* ItemIcons.Draw falls back to the procedural silhouette when this is null */ }
+        // Overrides the two volume-knob/window lines above with whatever the player last saved on
+        // the Settings screen (Game1.Settings.cs) - defaults (WindowMode.Borderless, VSync on,
+        // full volume, no particle cap change) exactly match the behavior above, so a machine that
+        // never opens Settings sees no change at all.
+        ApplyGraphicsSettings(PlayerSettingsStore.LoadGraphicsSettings());
+    }
+
+    // The single place every graphics/audio setting actually takes effect - called once at startup
+    // with whatever was last saved (or the defaults, matching the hardcoded setup this replaced),
+    // and again from the Settings screen's own "Применить" button with the staged values the
+    // player just picked. GraphicsSettings.ResolutionWidth/Height null means "use the desktop's
+    // current mode" for Fullscreen/Borderless, or this game's own design size for Windowed.
+    private void ApplyGraphicsSettings(GraphicsSettings settings)
+    {
+        _graphicsSettings = settings;
+        var display = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+        switch (settings.WindowMode)
+        {
+            case WindowMode.Fullscreen:
+                _graphics.HardwareModeSwitch = true;
+                _graphics.IsFullScreen = true;
+                _graphics.PreferredBackBufferWidth = settings.ResolutionWidth ?? display.Width;
+                _graphics.PreferredBackBufferHeight = settings.ResolutionHeight ?? display.Height;
+                break;
+            case WindowMode.Windowed:
+                _graphics.IsFullScreen = false;
+                _graphics.PreferredBackBufferWidth = settings.ResolutionWidth ?? DesignWidth * 2;
+                _graphics.PreferredBackBufferHeight = settings.ResolutionHeight ?? DesignHeight * 2;
+                break;
+            default: // Borderless - a desktop-sized window, no real mode switch (alt-tabs cleanly)
+                _graphics.HardwareModeSwitch = false;
+                _graphics.IsFullScreen = true;
+                _graphics.PreferredBackBufferWidth = display.Width;
+                _graphics.PreferredBackBufferHeight = display.Height;
+                break;
+        }
+        _graphics.SynchronizeWithVerticalRetrace = settings.VSync;
+        _graphics.ApplyChanges();
+        UpdateRenderScale();
+
+        SoundEffect.MasterVolume = Math.Clamp(settings.MasterVolume, 0f, 1f);
+        if (_scenePost is not null)
+        {
+            _scenePost.BloomStrength = settings.BloomStrength;
+            _scenePost.WideBloomStrength = settings.BloomStrength * 0.55f;
+        }
+        AtmosphereField.MaxParticles = Math.Max(0, settings.MaxParticles);
     }
 
     protected override void Update(GameTime gameTime)
@@ -395,11 +466,11 @@ public partial class Game1 : Game
         var escapePressed = escapeDown && !_prevEscapeDown;
         _prevEscapeDown = escapeDown;
 
-        // Before a session exists: leaves the game - except on the ship-select or join screens,
-        // where it's "never mind" and steps back one screen toward the main menu rather than
-        // quitting outright.
-        if (escapePressed && !_sessionStarted && !LeaveSubScreen())
-            Exit();
+        // Before a session exists Escape steps back one screen toward the main menu. On the main
+        // menu itself it now does nothing: quitting is what the ВЫХОД button is for, and a key that
+        // closes the whole game the moment it is pressed one screen too early is a trap.
+        if (escapePressed && !_sessionStarted)
+            LeaveSubScreen();
 
         // F11 toggles back to a window - edge-triggered, or holding the key would flip the mode
         // every single frame.
@@ -475,7 +546,7 @@ public partial class Game1 : Game
             }
         }
 
-        var interactDown = keyboard.IsKeyDown(Keys.F);
+        var interactDown = keyboard.IsKeyDown(Keys.E);
         var spaceDown = keyboard.IsKeyDown(Keys.Space);
         var interactPressed = (interactDown && !_prevInteractDown) || escapeSendsInteract;
         var spacePressed = spaceDown && !_prevFireDown;
@@ -531,7 +602,18 @@ public partial class Game1 : Game
         // Dragging gets first refusal on the button: a press that lands on an item slot starts a
         // drag instead of counting as a click, so releasing over the rack doesn't also read as
         // "clicked empty space, close the panel".
-        var (moveItemFrom, moveItemTo, dragTookTheClick) = UpdateItemDrag(mouse, gameTime.TotalGameTime.TotalSeconds);
+        // Panel dragging gets first refusal ahead of item dragging: grabbing the housing edge of the
+        // rack must not also pick up whatever slot is nearest the cursor.
+        UpdatePanelSounds(gameTime.TotalGameTime.TotalSeconds);
+        var panelDragTookIt = _openBlock.Kind != BlockKind.None && UpdatePanelDrag(mouse, CurrentPanelKey, CurrentPanelSize);
+        if (panelDragTookIt)
+        {
+            _prevLeftMouseButton = mouse.LeftButton;
+            _prevDragButton = mouse.LeftButton;
+        }
+        var (moveItemFrom, moveItemTo, dragTookTheClick) = panelDragTookIt
+            ? (null, null, true)
+            : UpdateItemDrag(mouse, gameTime.TotalGameTime.TotalSeconds);
         if (dragTookTheClick)
             _prevLeftMouseButton = mouse.LeftButton; // keep HandleMouseClick's own edge detection in step
         var (toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmStabilizePressed, doorToggleId) =
@@ -664,6 +746,7 @@ public partial class Game1 : Game
         {
             _effectTracker.Detect(_previousSnapshot, latestForEffects);
             PlayDoorBreakSoundIfAnyDoorJustBroke(_previousSnapshot, latestForEffects);
+            UpdateWorldSounds(_previousSnapshot, latestForEffects, gameTime.TotalGameTime.TotalSeconds);
             _previousSnapshot = latestForEffects;
         }
         _atmosphere.Step((float)gameTime.ElapsedGameTime.TotalSeconds, _client.LatestSnapshot);
@@ -950,6 +1033,10 @@ public partial class Game1 : Game
             foreach (var outerDoor in snapshot.AirlockOuterDoors)
                 if (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == outerDoor.Id)?.IsOpen ?? false)
                     gaps.Add(Occluders.ToGap(outerDoor));
+            // A cockpit window is glass, not plating - sight carries through it into open space
+            // exactly like an open door, even though (unlike a door) nothing can walk through it.
+            foreach (var pane in CockpitWindows.Panes(snapshot.Rooms))
+                gaps.Add(new SightGap(pane.Left, pane.Top, pane.Right, pane.Bottom));
 
             // While docked the station's compartments are part of the same layout, in the same
             // coordinates - its walls block the view exactly like the ship's own.
@@ -1084,8 +1171,21 @@ public partial class Game1 : Game
     {
         if (!_sessionStarted)
         {
-            GraphicsDevice.Clear(Color.Black);
-            DrawMenu((float)gameTime.TotalGameTime.TotalSeconds);
+            // The menu goes through the same post chain the world does. It used to return early,
+            // straight past ScenePost, which meant the bloom, grade, vignette, grain and dither
+            // built for the game simply did not exist on the first screen anybody ever sees.
+            var menuSeconds = (float)gameTime.TotalGameTime.TotalSeconds;
+            var menuPost = _scenePost.Begin(Color.Black);
+            if (!menuPost)
+                GraphicsDevice.Clear(Color.Black);
+            DrawMenu(menuSeconds);
+            if (menuPost)
+            {
+                DrawMenuLightMask(menuSeconds);
+                var savedLook = ApplyMenuPostLook();
+                _scenePost.Present(_spriteBatch, menuSeconds);
+                RestorePostLook(savedLook);
+            }
             base.Draw(gameTime);
             return;
         }
@@ -1253,23 +1353,27 @@ public partial class Game1 : Game
             switch (_openBlock.Kind)
             {
                 case BlockKind.Distribution:
-                    _powerPanel.Draw(_spriteBatch, hudSnapshot.Power, hudSnapshot.SystemStates, _selectedPowerSystem, PowerPanelOrigin);
+                    _powerPanel.Draw(_spriteBatch, hudSnapshot.Power, hudSnapshot.SystemStates, _selectedPowerSystem, PowerPanelOrigin, totalSeconds);
                     break;
                 case BlockKind.Reactor:
-                    _reactorPanel.Draw(_spriteBatch, hudSnapshot.Reactor, PowerPanelOrigin);
+                    _reactorPanel.Draw(_spriteBatch, hudSnapshot.Reactor, PowerPanelOrigin, totalSeconds);
                     break;
                 case BlockKind.Battery:
-                    _batteryPanel.Draw(_spriteBatch, hudSnapshot.Power, PowerPanelOrigin);
+                    _batteryPanel.Draw(_spriteBatch, hudSnapshot.Power, PowerPanelOrigin, totalSeconds);
                     break;
                 case BlockKind.System:
-                    _systemDevicePanel.Draw(_spriteBatch, _openBlock.System, hudSnapshot.Power, hudSnapshot.Shield, hudSnapshot.SystemStates, PowerPanelOrigin);
+                    _systemDevicePanel.Draw(_spriteBatch, _openBlock.System, hudSnapshot.Power, hudSnapshot.Shield, hudSnapshot.SystemStates, PowerPanelOrigin, totalSeconds);
                     break;
                 case BlockKind.Rack:
-                    _rackPanel.Draw(_spriteBatch, hudSnapshot, PowerPanelOrigin, CurrentOpenRackOffset(hudSnapshot));
+                    _rackPanel.Draw(_spriteBatch, hudSnapshot, RackPanelOrigin, CurrentOpenRackOffset(hudSnapshot), totalSeconds);
                     break;
                 case BlockKind.Connections when _openBlock.TargetComponentId is { } targetComponentId:
+                    // Height 0 asks the panel to size itself from its pin count; X is centred here
+                    // because the width is fixed and known, Y follows the standard housing so it
+                    // opens in the same place as every other terminal.
                     _connectionsPanel.Draw(_spriteBatch, hudSnapshot, targetComponentId,
-                        new Rectangle((int)PowerPanelOrigin.X, (int)PowerPanelOrigin.Y, ConnectionsPanel.Width, 0));
+                        new Rectangle((DesignWidth - ConnectionsPanel.Width) / 2,
+                            (int)PowerPanelOrigin.Y - DevicePanelChrome.OriginInsetY, ConnectionsPanel.Width, 0), totalSeconds);
                     break;
                 case BlockKind.SuitLocker when _openBlock.TargetComponentId is { } lockerId:
                     _suitLockerPanel.Draw(_spriteBatch, hudSnapshot, lockerId, _client.PlayerId, PowerPanelOrigin);
@@ -1279,6 +1383,19 @@ public partial class Game1 : Game
             _combatPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, ComputeHint(hudSnapshot, _client.PlayerId), CombatPanelOrigin);
             _playerHealthPanel.Draw(_spriteBatch, hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId), PlayerHealthPanelOrigin);
             _voyagePanel.Draw(_spriteBatch, hudSnapshot, VoyagePanelOrigin);
+
+            // The "ОБУЧЕНИЕ" run's own persistent banner (World.Tutorial.cs) - null on every other
+            // session, so this simply doesn't draw outside it. Centered at the very top, above
+            // everything else, since it's the one thing a fresh player is actually looking for.
+            if (hudSnapshot.TutorialObjective is { } tutorialObjective)
+            {
+                var textSize = _font.MeasureString(tutorialObjective) * 0.6f;
+                var bannerRect = new Rectangle((DesignWidth - (int)textSize.X - 24) / 2, 6, (int)textSize.X + 24, (int)textSize.Y + 10);
+                _spriteBatch.Draw(_pixel, bannerRect, Color.Black * 0.75f);
+                ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, bannerRect, Color.Gold, 1);
+                _spriteBatch.DrawString(_font, tutorialObjective, new Vector2(bannerRect.X + 12, bannerRect.Y + 5),
+                    Color.Gold, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            }
 
             // Drawn here, in the HUD batch, rather than inside ShipRenderer's own scene batch -
             // that batch gets multiplied by the sight-cone/room-lighting mask right after it ends,
@@ -1291,10 +1408,32 @@ public partial class Game1 : Game
                 {
                     if (character.WallToolTargetBlockId is not { } targetId)
                         continue;
-                    var block = hudSnapshot.WallBlocks.FirstOrDefault(b => b.Id == targetId);
-                    var state = hudSnapshot.WallBlockStates.FirstOrDefault(s => s.Id == targetId);
+                    // Station walls report their own target id the same way the ship's do (World.
+                    // WallBlocks.cs's FindAimedStationWallBlock) - checked second since a station id
+                    // never collides with a ship one, same "either list, whichever matches" shape as
+                    // the door bar lookup just below.
+                    var block = hudSnapshot.WallBlocks.FirstOrDefault(b => b.Id == targetId)
+                        ?? hudSnapshot.StationWallBlocks.FirstOrDefault(b => b.Id == targetId);
+                    var state = hudSnapshot.WallBlockStates.FirstOrDefault(s => s.Id == targetId)
+                        ?? hudSnapshot.StationWallBlockStates.FirstOrDefault(s => s.Id == targetId);
                     if (block is not null && state is not null)
                         _shipRenderer.DrawWallToolTargetBar(_spriteBatch, block, state, wallToolOrigin);
+                }
+
+                // Same bar, over a door the cutter is cutting through instead of a hull block -
+                // DoorToolTargetId can name either an interior Door or an AirlockOuterDoor (both
+                // share Id/X/Y but not a common base type), so both lists get checked.
+                foreach (var character in hudSnapshot.Characters)
+                {
+                    if (character.DoorToolTargetId is not { } doorTargetId)
+                        continue;
+                    var doorState = hudSnapshot.DoorStates.FirstOrDefault(s => s.DoorId == doorTargetId);
+                    if (doorState is null)
+                        continue;
+                    var doorPosition = hudSnapshot.Doors.FirstOrDefault(d => d.Id == doorTargetId)?.Position
+                        ?? hudSnapshot.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorTargetId)?.Position;
+                    if (doorPosition is { } position)
+                        _shipRenderer.DrawDoorToolTargetBar(_spriteBatch, new Vector2(position.X, position.Y), doorState, wallToolOrigin);
                 }
 
                 // Same HUD-batch exemption as the wall bar just above - shown while standing next
@@ -1320,7 +1459,7 @@ public partial class Game1 : Game
                     }
 
                     // Same card, same proximity radius, for a damaged Junction box instead of a
-                    // damaged SystemDevice - World.Interact.cs's F-key repair treats both the same way.
+                    // damaged SystemDevice - World.Interact.cs's E-key repair treats both the same way.
                     var nearbyDamagedJunction = hudSnapshot.Components.FirstOrDefault(c =>
                         c.Kind == ComponentKind.Junction && (c.Position - repairPosition).Length() < TurretInteractionRadius &&
                         (hudSnapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == c.Id)?.Damaged ?? false));
@@ -1371,7 +1510,7 @@ public partial class Game1 : Game
             // masked by sight/lighting regardless of camera state, with no need to mirror
             // InfoPanel's SceneZoom/TurretViewRotationDegrees/BuildVisibilityMask exemptions.
             if (_shipEditorOpen)
-                _shipEditorPanel.Draw(_spriteBatch, hudSnapshot, _shipEditorSelectedComponentId, _connectionsPanel, ShipEditorPanelOrigin);
+                _shipEditorPanel.Draw(_spriteBatch, hudSnapshot, _shipEditorSelectedComponentId, _connectionsPanel, ShipEditorPanelOrigin, totalSeconds);
             var myInventory = hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory;
             var carriedSlotCount = myInventory?.MainSlots.Count ?? 0;
             var rowOrigin = InventoryRowOrigin(carriedSlotCount);

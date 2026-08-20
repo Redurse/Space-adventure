@@ -61,10 +61,24 @@ public partial class Game1
         _editorDevices = loaded?.Devices.ToList() ?? new List<CustomDeviceDef>();
         _editorShipName = loaded?.Name ?? "Мой корабль";
         _editorForwardDegrees = loaded?.ForwardDegrees ?? 0f;
-        _editorRoomCounter = _editorRooms.Count + 1;
+        _editorRoomCounter = NextRoomCounter(_editorRooms);
         _editorRoomDragStart = null;
         _editorTool = EditorTool.Room;
         _menuScreen = MenuScreen.ShipEditor;
+    }
+
+    // Room.Count + 1 collides once a room in the middle has ever been deleted (e.g. rooms
+    // room-1..room-6, delete room-3, save+reload: Count is 5 but room-6 still exists, so the next
+    // new room would also claim "room-6" - CustomShipValidator's Rooms.ToDictionary(r => r.Id)
+    // then throws on the duplicate key). Deriving the next id from the highest surviving suffix
+    // instead of the room count is immune to gaps left by deletion.
+    private static int NextRoomCounter(List<CustomRoomDef> rooms)
+    {
+        var max = 0;
+        foreach (var room in rooms)
+            if (room.Id.StartsWith("room-") && int.TryParse(room.Id.AsSpan(5), out var n) && n > max)
+                max = n;
+        return max + 1;
     }
 
     private CustomShipDefinition BuildEditorDefinition() => new(

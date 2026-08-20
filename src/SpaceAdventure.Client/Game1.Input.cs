@@ -4,6 +4,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using SpaceAdventure.Client.Audio;
 using SpaceAdventure.Client.Networking;
 using SpaceAdventure.Client.Rendering;
 using SpaceAdventure.Server;
@@ -110,6 +111,7 @@ public partial class Game1
                 }
 
                 _dragFrom = slot;
+                _sounds?.Play(GameSounds.ItemPickup, nowSeconds, volume: 0.6f);
                 return (null, null, true);
             }
             return (null, null, false);
@@ -131,10 +133,16 @@ public partial class Game1
             var resolved = ResolveDropTarget(snapshot, from);
             if (resolved is not { } target)
             {
-                // Released over nothing - not a slot, not a socket: the item falls to the floor at
-                // the character's own feet instead of just snapping back (server re-checks
-                // reachability itself, same trust level as an ordinary slot-to-slot move).
+                // Released over nothing - not a slot, not a socket. Over open world that means the
+                // item falls to the floor at the character's own feet (the server re-checks
+                // reachability itself, same trust level as an ordinary slot-to-slot move). Over any
+                // part of the interface it means nothing at all: the item stays where it was, which
+                // is what a release that missed a slot by a few pixels almost always meant.
+                if (IsOverInterface(_designMouse))
+                    return (null, null, true);
+
                 _pendingDropItemFrom = from;
+                _sounds?.Play(GameSounds.ItemDrop, nowSeconds, volume: 0.7f);
                 return (null, null, true);
             }
 
@@ -383,7 +391,7 @@ public partial class Game1
         {
             var offset = CurrentOpenRackOffset(snapshot);
             for (var i = 0; i < StorageRack.Capacity; i++)
-                if (RackPanel.GetSlotRect(i, PowerPanelOrigin).Contains(_designMouse))
+                if (RackPanel.GetSlotRect(i, RackPanelOrigin).Contains(_designMouse))
                     return new SlotRef(ItemSlotKind.Rack, offset + i);
         }
 
@@ -412,7 +420,7 @@ public partial class Game1
         if (slot.Kind == ItemSlotKind.Main)
             return InventoryPanel.GetMainSlotRect(slot.Index, rowOrigin);
         if (slot.Kind == ItemSlotKind.Rack)
-            return RackPanel.GetSlotRect(slot.Index - CurrentOpenRackOffset(_client.LatestSnapshot!), PowerPanelOrigin);
+            return RackPanel.GetSlotRect(slot.Index - CurrentOpenRackOffset(_client.LatestSnapshot!), RackPanelOrigin);
 
         var equipIndex = Array.FindIndex(InventoryPanel.EquipSlots, s => (int)s.Id == (slot.Kind == ItemSlotKind.Equip ? slot.Index : (int)EquipSlot.BeltBag));
         var equipRect = InventoryPanel.GetSlotRect(equipIndex, EquipSlotsOrigin);
@@ -788,6 +796,15 @@ public partial class Game1
             return (-1, -1, null, null, -1, false, false, null, false, null);
         }
 
+        // Everything above this point is the open panel's own controls - slots, pins, buttons.
+        // Everything below is the world underneath it. Since panels open centred they now sit right
+        // on top of the ship interior, so a click inside one that hit none of its controls would
+        // otherwise fall through and toggle whatever block happens to be beneath it, closing the
+        // panel. It has to be swallowed here rather than at the end of the method: by then the world
+        // hit tests have already run and returned.
+        if (CurrentPanelHousing() is { } openPanelBounds && openPanelBounds.Contains(_designMouse))
+            return (-1, -1, null, null, -1, false, false, null, false, null);
+
         var myPosition = new Vec2(me.X, me.Y);
         bool NearEnough(Vec2 blockPosition) => (blockPosition - myPosition).Length() < TurretInteractionRadius;
         var origin = ComputeCamera(snapshot, me).Origin;
@@ -861,7 +878,7 @@ public partial class Game1
             return (-1, -1, null, null, -1, false, false, null, false, null);
         }
 
-        // Read-only card (SuitLockerPanel) - the actual take/put-back is still the F-key interact
+        // Read-only card (SuitLockerPanel) - the actual take/put-back is still the E-key interact
         // (World.Interact.cs, gated on this locker's own stock), this just shows what's in it.
         foreach (var locker in snapshot.SuitLockers)
         {
@@ -1003,15 +1020,28 @@ public partial class Game1
         // accidentally pops a door open instead of chopping it.
         if (!HoldingAxe())
         {
+            // Outside, CharacterState's own X/Y switch to AsteroidField world-space the instant
+            // IsOutside flips (World.cs's CreateSnapshot), but a Door/AirlockOuterDoor's own
+            // Position never does - it's always the ship's local, unrotated interior frame. Plain
+            // NearEnough (which just diffs raw X/Y) compared those two different frames and always
+            // came up short, so a suited character standing right next to an open airlock could
+            // never actually click it closed. Converting the proximity point into that same local
+            // frame - the same conversion World.WallBlocks.cs's FindAimedWallBlock does server-side
+            // for a cutter aimed from outside - is what makes the click land where it's drawn.
+            var doorClickPosition = me.IsOutside
+                ? ShipLocalFrame.ToLocal(myPosition, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms))
+                : myPosition;
+            bool DoorNearEnough(Vec2 doorPosition) => (doorPosition - doorClickPosition).Length() < TurretInteractionRadius;
+
             foreach (var door in snapshot.Doors)
             {
-                if (NearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
+                if (DoorNearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
                     return (-1, -1, null, null, -1, false, false, null, false, door.Id);
             }
 
             foreach (var outerDoor in snapshot.AirlockOuterDoors)
             {
-                if (NearEnough(outerDoor.Position) && ShipRenderer.GetDoorRect(outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, origin).Contains(_designMouse))
+                if (DoorNearEnough(outerDoor.Position) && ShipRenderer.GetDoorRect(outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, origin).Contains(_designMouse))
                     return (-1, -1, null, null, -1, false, false, null, false, outerDoor.Id);
             }
 
@@ -1034,6 +1064,12 @@ public partial class Game1
             _pendingWireBendAt = new Vec2((_designMouse.X - origin.X) / ShipRenderer.PixelsPerUnit, (_designMouse.Y - origin.Y) / ShipRenderer.PixelsPerUnit);
             return (-1, -1, null, null, -1, false, false, null, false, null);
         }
+
+        // A click that landed on the open panel but hit none of its controls still belongs to the
+        // panel - pressing bare housing metal is not "clicked away". Only a click genuinely outside
+        // it closes the thing, which is what everybody expects of a window.
+        if (CurrentPanelHousing() is { } openPanel && openPanel.Contains(_designMouse))
+            return (-1, -1, null, null, -1, false, false, null, false, null);
 
         _openBlock = ClickTarget.None;
         _talkingToNpcId = null;
@@ -1098,7 +1134,15 @@ public partial class Game1
             BlockKind.Connections => _openBlock.TargetComponentId is { } targetId
                 ? snapshot.Components.FirstOrDefault(c => c.Id == targetId)?.Position ?? myPosition
                 : myPosition,
-            BlockKind.System => snapshot.SystemDevices.First(d => d.System == _openBlock.System).Position,
+            // Whichever of this system's devices is actually nearest, not always the first one -
+            // a system with several identical devices (Engine/Shields) opens the exact same panel
+            // from any of them, so staying open must track whichever one the player is actually
+            // standing next to, not always device[0]'s position (which could be clear across the
+            // ship from the one they opened it at, instantly slamming the panel shut again).
+            BlockKind.System => snapshot.SystemDevices
+                .Where(d => d.System == _openBlock.System)
+                .OrderBy(d => (d.Position - myPosition).Length())
+                .First().Position,
             _ => myPosition,
         };
 
@@ -1197,10 +1241,10 @@ public partial class Game1
             return wiringHint;
 
         if (snapshot.TurretStates.FirstOrDefault(t => t.MannedByPlayerId == playerId) is { } manned)
-            return $"Наводка мышью ({manned.AimDegrees:0}°)  [Space] огонь  [F] встать";
+            return $"Наводка мышью ({manned.AimDegrees:0}°)  [Space] огонь  [E] встать";
 
         if (me.IsAtHelm)
-            return "[W] ход  [X] назад  [A/D] поворот  [S] стабилизация  [F] встать";
+            return "[W] ход  [X] назад  [A/D] поворот  [S] стабилизация  [E] встать";
 
         if (me.OnEnemyShip)
         {
@@ -1231,7 +1275,7 @@ public partial class Game1
                 !(snapshot.StationCrateStates.FirstOrDefault(s => s.CrateId == c.Id)?.Looted ?? false) &&
                 (c.Position - stationPosition).Length() < TurretInteractionRadius);
             if (nearCrate is not null)
-                return $"[F] украсть: {ItemDefinitions.DisplayName(nearCrate.Item)} (охрана не должна увидеть)";
+                return $"[E] украсть: {ItemDefinitions.DisplayName(nearCrate.Item)} (охрана не должна увидеть)";
 
             var nearNpc = snapshot.StationNpcs.FirstOrDefault(n =>
                 n.Kind != NpcKind.Security && (n.Position - stationPosition).Length() < TurretInteractionRadius);
@@ -1250,7 +1294,7 @@ public partial class Game1
 
             var nearbyDropped = snapshot.DroppedItems.FirstOrDefault(d => d.RoomId is null && (d.Position - evaPosition).Length() < TurretInteractionRadius);
             if (nearbyDropped is not null)
-                return $"[F]/[ЛКМ] подобрать: {ItemDefinitions.DisplayName(nearbyDropped.Item)}";
+                return $"[E]/[ЛКМ] подобрать: {ItemDefinitions.DisplayName(nearbyDropped.Item)}";
 
             var nearbyDeposit = snapshot.OreDeposits.Any(d =>
                 (snapshot.OreDepositStates.FirstOrDefault(s => s.DepositId == d.Id)?.Hp ?? 0f) > 0f &&
@@ -1273,7 +1317,7 @@ public partial class Game1
         }
 
         if (HeldItemTypes(me.Inventory).Contains(ItemType.MedKit) && me.Health < 100f)
-            return "[F] использовать аптечку";
+            return "[E] использовать аптечку";
 
         var myPosition = new Vec2(me.X, me.Y);
         var nearTurret = snapshot.Turrets.Any(t => (t.PeriscopePosition - myPosition).Length() < TurretInteractionRadius);
@@ -1281,7 +1325,7 @@ public partial class Game1
             t.WeaponType == TurretWeaponType.Ballistic && (t.PeriscopePosition - myPosition).Length() < TurretInteractionRadius);
 
         if (me.CarryingAmmoCrate)
-            return nearBallisticTurret ? "[F] зарядить орудие" : "Несёте ящик патронов к орудию";
+            return nearBallisticTurret ? "[E] зарядить орудие" : "Несёте ящик патронов к орудию";
 
         var nearStorage = snapshot.AmmoStorages.FirstOrDefault(s => (s.Position - myPosition).Length() < TurretInteractionRadius);
         if (nearStorage is not null)
@@ -1289,7 +1333,7 @@ public partial class Game1
             var stock = snapshot.AmmoStorageStates.FirstOrDefault(s => s.StorageId == nearStorage.Id);
             return stock is { Remaining: 0 }
                 ? "Склад патронов пуст — пополняется на станции"
-                : $"[F] взять ящик патронов ({stock?.Remaining ?? 0}/{stock?.Capacity ?? 0})";
+                : $"[E] взять ящик патронов ({stock?.Remaining ?? 0}/{stock?.Capacity ?? 0})";
         }
 
         // Ship/station floor drops only (World.Storage.cs's drag-to-floor) - EVA's own dropped items
@@ -1306,16 +1350,16 @@ public partial class Game1
         if (nearDamagedTurret)
         {
             return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                ? "[F] почини турель"
+                ? "[E] почини турель"
                 : "Нужен гаечный ключ или отвёртка в руке";
         }
 
         if (nearTurret)
-            return "[F] сесть за орудие";
+            return "[E] сесть за орудие";
 
         var nearHelm = (snapshot.HelmConsole.Position - myPosition).Length() < TurretInteractionRadius;
         if (nearHelm)
-            return "[F] встать за штурвал";
+            return "[E] встать за штурвал";
 
         var nearDamagedSystem = snapshot.SystemDevices.FirstOrDefault(d =>
             (d.Position - myPosition).Length() < TurretInteractionRadius &&
@@ -1323,12 +1367,9 @@ public partial class Game1
         if (nearDamagedSystem is not null)
         {
             return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                ? "[F] почини систему"
+                ? "[E] почини систему"
                 : "Нужен гаечный ключ или отвёртка в руке";
         }
-
-        if (me.CarryingComponentId is not null)
-            return "Несёте распределительную коробку  [F] поставить здесь";
 
         var nearJunction = snapshot.Components.FirstOrDefault(c =>
             c.Kind == ComponentKind.Junction && (c.Position - myPosition).Length() < TurretInteractionRadius);
@@ -1337,9 +1378,8 @@ public partial class Game1
             var junctionDamaged = snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == nearJunction.Id)?.Damaged ?? false;
             if (junctionDamaged)
                 return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                    ? "[F] почини распределительную коробку"
+                    ? "[E] почини распределительную коробку"
                     : "Нужен гаечный ключ или отвёртка в руке";
-            return holding.Contains(ItemType.Wrench) ? "[F] взять распределительную коробку" : "Распределительная коробка";
         }
 
         var nearLocker = snapshot.SuitLockers.FirstOrDefault(l => (l.Position - myPosition).Length() < TurretInteractionRadius);
@@ -1349,8 +1389,8 @@ public partial class Game1
             // whether F will actually do anything here, not just whether a locker is nearby.
             var hasSuit = snapshot.SuitLockerStates.FirstOrDefault(s => s.LockerId == nearLocker.Id)?.HasSuit ?? false;
             if (me.WearingSuit)
-                return hasSuit ? "Шкаф занят" : "[F] снять скафандр";
-            return hasSuit ? "[F] надеть скафандр" : "Шкаф пуст";
+                return hasSuit ? "Шкаф занят" : "[E] снять скафандр";
+            return hasSuit ? "[E] надеть скафандр" : "Шкаф пуст";
         }
 
         var myRoom = snapshot.Rooms.FirstOrDefault(r => r.Contains(myPosition));
@@ -1374,7 +1414,7 @@ public partial class Game1
         var nearDoor = snapshot.Doors.Any(d => (d.Position - myPosition).Length() < TurretInteractionRadius);
         var nearOuterDoor = snapshot.AirlockOuterDoors.Any(d => (d.Position - myPosition).Length() < TurretInteractionRadius);
 
-        // A destroyed door (World.Doors.cs) is jammed open and needs the same F-key minigame as a
+        // A destroyed door (World.Doors.cs) is jammed open and needs the same E-key minigame as a
         // damaged SystemDevice/Junction, not the ordinary click-to-toggle everything below assumes.
         var nearbyDestroyedDoorId =
             snapshot.Doors.FirstOrDefault(d => (d.Position - myPosition).Length() < TurretInteractionRadius &&
@@ -1384,7 +1424,7 @@ public partial class Game1
         if (nearbyDestroyedDoorId is not null)
         {
             return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                ? "[F] почини дверь"
+                ? "[E] почини дверь"
                 : "Дверь разрушена — нужен гаечный ключ или отвёртка";
         }
 

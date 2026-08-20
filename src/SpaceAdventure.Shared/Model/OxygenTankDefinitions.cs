@@ -10,11 +10,9 @@ public static class OxygenTankDefinitions
 {
     public const float FullCharge = 100f;
 
-    // Around seven minutes of vacuum on one tank. Long enough to cover a mining run out and back,
-    // or a fight fought in a ship with its rooms open to space - a tank that runs out during an
-    // ordinary battle would make the suit a liability rather than equipment - and short enough that
-    // a spare is worth carrying on a long trip outside.
-    public const float SuitDrainPerSecond = 0.22f;
+    // Around half an hour of vacuum on one tank (a quarter of the original ~7-minute rate) -
+    // long enough that a suit's own air stops being the thing that ends an EVA trip.
+    public const float SuitDrainPerSecond = 0.055f;
 
     // Cutting is the expensive use: about half a minute of continuous flame per tank, so working a
     // vein dry costs most of a tank and a careless burn costs the trip home.

@@ -239,7 +239,11 @@ internal static partial class TestRunner
         world.ApplyCommand(playerId, new ClientCommand(playerId, MoveX: 0, MoveY: 0));
     }
 
-    private static bool World_Eva_ExitRequiresSuit()
+    // Unsuited exit is allowed now, and the rule that replaced the old flat ban is a timer: you get
+    // out, you get a few seconds, and then vacuum kills you. Both halves are asserted here, because
+    // either one alone would pass for the wrong reason - "allowed" alone would pass if the timer
+    // never fired, and "fatal" alone would pass if the exit had been blocked all along.
+    private static bool World_Eva_ExitUnsuited_AllowedButFatalAfterGrace()
     {
         var world = new World();
         world.SpawnCharacter(1);
@@ -247,10 +251,19 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum")); // open it
 
         MoveCharacterTo(world, 1, 23f, 3f); // corridor -> ... -> engine -> airlock-chamber
-        WalkFixedDirection(world, 1, 1f, 0f); // try to walk straight through the open outer door, unsuited
+        WalkFixedDirection(world, 1, 1f, 0f); // walk straight through the open outer door, unsuited
 
-        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        return !me.IsOutside;
+        var afterExit = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (!afterExit.IsOutside)
+            return false; // stepping out unsuited has to be possible at all
+
+        // Four seconds against a three second grace: past the limit without being so far past that
+        // the test would still pass if the limit were quietly doubled.
+        for (var i = 0; i < 240; i++)
+            world.Step(RealtimeStep);
+
+        var afterGrace = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        return afterGrace.Health <= 0f;
     }
 
     private static bool World_Eva_ExitSuited_SetsIsOutsideAndAttachesToShip()
@@ -263,6 +276,11 @@ internal static partial class TestRunner
 
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f); // walk through the open outer door, suited this time
+        // Boots off by default now, so a fresh crossing floats right at the door instead of
+        // attaching (World.Eva.cs's TryCrossIntoVacuum) - switch them on and let the
+        // still-touching boots grab on, which is the "AttachesToShip" this test is named for.
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         return me.IsOutside && me.IsEvaAttached;

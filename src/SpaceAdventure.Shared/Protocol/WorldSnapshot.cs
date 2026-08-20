@@ -128,4 +128,13 @@ public sealed record WorldSnapshot(
     // The scripted intro campaign's narrative beats reached so far, oldest first (World.Campaign.cs) -
     // plain flavor text over the existing quest/faction/combat systems, not a new mechanic of its
     // own. Shown in InfoPanel's Missions tab alongside the active quest.
-    IReadOnlyList<string> StoryLog);
+    IReadOnlyList<string> StoryLog,
+    // A station's own wall segments, purely for the welder/cutter's aim-HP-bar UI (World.WallBlocks.
+    // cs's FindAimedStationWallBlock) - always reported at full Hp, since a station is never actually
+    // breachable/repairable. Same shapes as WallBlocks/WallBlockStates above, just a second, station-
+    // scoped list rather than reusing the ship's own.
+    IReadOnlyList<WallBlock> StationWallBlocks,
+    IReadOnlyList<WallBlockState> StationWallBlockStates,
+    // The "ОБУЧЕНИЕ" run's current instruction (World.Tutorial.cs), null outside it entirely - the
+    // client just draws a persistent top banner whenever this is non-null.
+    string? TutorialObjective);

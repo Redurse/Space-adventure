@@ -8,7 +8,7 @@ namespace SpaceAdventure.Client.Rendering;
 // The card a suit locker shows when clicked (BlockKind.SuitLocker, Game1.Input.cs) - title, a
 // bordered icon box, and a status bar underneath, matching the reference screenshot's "underwater
 // gear locker" popup. Read-only, same as ConnectionsPanel/SystemDevicePanel: the actual take/put
-// action is still the F-key interact (World.Interact.cs, now gated on this locker's own stock) -
+// action is still the E-key interact (World.Interact.cs, now gated on this locker's own stock) -
 // this just shows what's in it and what F will do, it doesn't perform the swap itself.
 public sealed class SuitLockerPanel
 {
@@ -37,8 +37,7 @@ public sealed class SuitLockerPanel
         var wearingSuit = me?.WearingSuit ?? false;
 
         var panelRect = new Rectangle((int)origin.X, (int)origin.Y, PanelWidth, PanelHeight);
-        spriteBatch.Draw(_pixel, panelRect, PanelBackground * 0.95f);
-        DrawRectOutline(spriteBatch, panelRect, PanelBorder, BorderThickness);
+        PanelFrame.Draw(spriteBatch, _pixel, panelRect, PanelBackground, PanelBorder, thickness: BorderThickness);
 
         var titleSize = _font.MeasureString("ШКАФ ДЛЯ") * 0.55f;
         spriteBatch.DrawString(_font, "ШКАФ ДЛЯ", new Vector2(panelRect.Center.X - titleSize.X / 2f, panelRect.Y + 12),
@@ -67,9 +66,9 @@ public sealed class SuitLockerPanel
 
         var hint = (wearingSuit, hasSuit) switch
         {
-            (false, true) => ("[F] надеть скафандр", Color.Gold),
+            (false, true) => ("[E] надеть скафандр", Color.Gold),
             (false, false) => ("Шкаф пуст", Color.Gray),
-            (true, false) => ("[F] снять скафандр сюда", Color.LightGreen),
+            (true, false) => ("[E] снять скафандр сюда", Color.LightGreen),
             (true, true) => ("Скафандр уже надет", Color.Gray),
         };
         var hintSize = _font.MeasureString(hint.Item1) * 0.5f;

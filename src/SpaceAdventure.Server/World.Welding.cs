@@ -23,12 +23,15 @@ public sealed partial class World
 
     // Mirrors StepWelding's own gate exactly, so the client-rendered flame (World.cs's Welding
     // flag) never shows lit while nothing is actually being welded underneath it - it used to skip
-    // the Health/OnStation/OnEnemyShip checks StepWelding applies, so the torch could read as
-    // active in situations where the server had already stopped doing anything with it.
+    // the Health/OnEnemyShip checks StepWelding applies, so the torch could read as active in
+    // situations where the server had already stopped doing anything with it. Lights at a station
+    // too, same as the cutter (World.Cutting.cs) - there's just nothing of the player's own ship
+    // there for it to reach (FindAimedWallBlock only ever matches Ship.WallBlocks, keyed by the
+    // ship's own room ids, never a station's), so it's never actually able to touch station walls.
     public bool IsWelding(int playerId) =>
         _weldInput.GetValueOrDefault(playerId) &&
         _characters.TryGetValue(playerId, out var character) &&
-        character.Health > 0 && !character.OnEnemyShip && !character.OnStation &&
+        character.Health > 0 && !character.OnEnemyShip &&
         CanWeld(character);
 
     // Holding a welding tool is not enough: it needs a tank with something left in it, same as the
@@ -54,9 +57,11 @@ public sealed partial class World
 
             // The torch lights anywhere the tool is held and lit, exactly like the cutter - a hull
             // breach can be welded from either side of the plating it's in, on a spacewalk patching
-            // it from outside same as from the corridor it opened onto. Only a boarded enemy hull or
-            // a station has no breach of your own ship to reach at all.
-            if (character.OnEnemyShip || character.OnStation)
+            // it from outside same as from the corridor it opened onto, or even standing in a
+            // station's own corridors (FindAimedWallBlock just never finds anything of the player's
+            // ship to aim at from there). Only a boarded enemy hull has no breach of your own ship
+            // to reach at all.
+            if (character.OnEnemyShip)
                 continue;
 
             WeldAlongFlame(character, deltaSeconds);

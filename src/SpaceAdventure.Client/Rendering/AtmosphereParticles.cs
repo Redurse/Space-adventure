@@ -50,7 +50,10 @@ public sealed class AtmosphereField
     private const float SparkInterval = 0.35f;
     private const float EmberInterval = 0.18f;
     private const float ReactorCriticalFuelFraction = 0.15f;
-    private const int MaxParticles = 400; // a runaway emitter (many breaches at once) still can't blow the frame budget
+    // A runaway emitter (many breaches at once) still can't blow the frame budget - mutable (not
+    // const) so the Settings screen's own "Максимальное количество частиц" slider (Game1.Settings.cs)
+    // can lower it on a slower machine, same knob Barotrauma's own graphics tab exposes.
+    public static int MaxParticles = 400;
 
     private readonly List<AtmosphereParticle> _particles = new();
     private readonly Dictionary<string, float> _cooldowns = new();

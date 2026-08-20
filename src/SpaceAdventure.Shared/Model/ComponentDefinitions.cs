@@ -41,9 +41,10 @@ public static class ComponentDefinitions
     // "out-oxygen", "out-engine", etc.
     public static Pin DistributionOutPin(PowerSystemId system) => new($"out-{system}".ToLowerInvariant(), PinKind.PowerOut);
 
-    // A junction has exactly one PowerIn (from Distribution) and one PowerOut per device on its
-    // system - "out-0", "out-1", ... - so a system with two generators fans out to two drops from
-    // the same box, matching today's shared-junction behavior.
+    // A junction has exactly one PowerIn (from Distribution) and exactly one PowerOut, always - a
+    // system with several identical devices (Engine/Shields on some hulls) gets one junction PER
+    // device instead of one shared box fanning out to all of them (WireGraphFactory), so each
+    // device's own junction only ever needs its single "out-0" pin.
     public static Pin JunctionInPin() => new("in", PinKind.PowerIn);
     public static Pin JunctionOutPin(int deviceIndex) => new($"out-{deviceIndex}", PinKind.PowerOut);
 

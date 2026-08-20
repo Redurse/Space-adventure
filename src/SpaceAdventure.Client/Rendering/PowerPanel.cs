@@ -35,12 +35,19 @@ public sealed class PowerPanel
         _font = font;
     }
 
-    public void Draw(SpriteBatch spriteBatch, PowerState power, IReadOnlyList<ShipSystemState> systemStates, int selectedIndex, Vector2 origin)
+    public void Draw(SpriteBatch spriteBatch, PowerState power, IReadOnlyList<ShipSystemState> systemStates, int selectedIndex, Vector2 origin, float totalSeconds)
     {
-        var header = $"Реактор: {power.ReactorOutput:0}/{power.ReactorMaxOutput:0}  " +
-                      $"Топливо: {power.ReactorFuel:0}/{power.ReactorMaxFuel:0}  " +
-                      $"Батарея: {power.BatteryCharge:0}/{power.BatteryCapacity:0}";
-        spriteBatch.DrawString(_font, header, origin, Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+        var bounds = DevicePanelChrome.StandardBounds(origin);
+        var phosphor = new Color(122, 208, 236);
+        DevicePanelChrome.Draw(spriteBatch, _font, bounds, "РАСПРЕДЕЛЕНИЕ ПИТАНИЯ", "PW-01", phosphor, totalSeconds);
+
+        DevicePanelChrome.DrawReadout(spriteBatch, _font, origin + new Vector2(0, -6),
+            "РЕАКТОР", $"{power.ReactorOutput:0}", $"/ {power.ReactorMaxOutput:0}", phosphor);
+        DevicePanelChrome.DrawReadout(spriteBatch, _font, origin + new Vector2(118, -6),
+            "ТОПЛИВО", $"{power.ReactorFuel:0}", "", phosphor);
+        DevicePanelChrome.DrawReadout(spriteBatch, _font, origin + new Vector2(210, -6),
+            "БАТАРЕЯ", $"{power.BatteryCharge:0}", $"/ {power.BatteryCapacity:0}",
+            power.BatteryCharge <= power.BatteryCapacity * 0.15f ? new Color(232, 108, 84) : phosphor);
 
         for (var i = 0; i < SystemLabels.Length; i++)
         {

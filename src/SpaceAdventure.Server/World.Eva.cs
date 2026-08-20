@@ -35,6 +35,10 @@ public sealed partial class World
     private const float BreachCrossingRadius = 0.6f;
     private const float JetpackAccelerationPerSecond = 1f; // gentle correction thrust, not a main engine
     private const float JetpackFuelPerSecond = 10f;
+
+    // Seconds a character survives in vacuum with no sealed suit. Deliberately generous enough
+    // to turn round and step back through the door you came out of, and no more.
+    private const double UnsuitedGraceSeconds = 3.0;
     // A push-off starts right at the edge of the very zone that re-attaches a drifting character,
     // so without something to hold it off the boots would grab again on the next tick and the push
     // would be a no-op. What holds them off is the identity of the thing pushed away from, not a
@@ -71,11 +75,25 @@ public sealed partial class World
         // Outside means anywhere the ship is actually out in the field, physically: an asteroid
         // field, a battle, approaching or transiting between points of interest (M31-M33's real,
         // physically-simulated flight) all put the ship's own hull right there to walk out onto.
-        // Only docked at a station is different - the airlock leads onto the station's own
-        // walkway there (Movement.cs's OnStation crossing), not into vacuum, so that's the one
-        // phase this stays blocked for.
-        if (!character.SuitSealed || Phase == VoyagePhase.Station)
-            return false;
+        //
+        // Docked at a station used to be blocked outright, on the grounds that the airlock leads
+        // onto the station's walkway rather than into vacuum. That is true of exactly one door:
+        // GetDockedLayout mates Ship.AirlockOuterDoors.First() to the station's dock room, and
+        // that mated pair is one physical rectangle. Every other port on the hull is still a hole
+        // in the hull with space on the far side of it - a Corvette carries one per beam - and so
+        // is a breach. Blocking the whole phase therefore blocked the wrong thing: not "you cannot
+        // get out while docked" but "this particular door goes to the walkway".
+        // Going out unsuited is allowed, and survivable for exactly UnsuitedGraceSeconds - long
+        // enough to grab something just outside the door and get back in, not long enough to go
+        // anywhere. It used to be blocked outright on the grounds that it would be instant death
+        // for no gameplay benefit; a few seconds of grace is what turns it from a death into a
+        // decision. StepUnsuitedExposure below runs the clock and kills at the end of it.
+
+        // The connector, and only while it actually is one. Null underway, so nothing is excluded
+        // there and a single-port ship keeps its only way out.
+        var connectorId = Phase == VoyagePhase.Station && Ship.AirlockOuterDoors.Count > 0
+            ? Ship.AirlockOuterDoors[0].Id
+            : null;
 
         var room = Ship.Rooms.FirstOrDefault(r => r.Id == character.RoomId);
         if (room is null)
@@ -86,7 +104,7 @@ public sealed partial class World
         // keying this to a room name meant a crew on such a ship could never get outside at all.
         var next = character.Position + moveDelta;
         var outerDoor = Ship.AirlockOuterDoors.FirstOrDefault(d =>
-            d.RoomId == character.RoomId && IsDoorOpen(d.Id) && d.Contains(next));
+            d.RoomId == character.RoomId && d.Id != connectorId && IsDoorOpen(d.Id) && d.Contains(next));
         // No open door here - maybe there's a hole instead. A single broken block is still a
         // pinhole (nothing to see through so much as around); only a breach wide enough to
         // actually fit through (two broken blocks side by side) works as a way out.
@@ -99,7 +117,6 @@ public sealed partial class World
 
         var (hullCenter, _) = GetHullLocalBounds();
         character.IsOutside = true;
-        character.EvaAttachedTo = EvaAttachment.Ship;
         // Straight onto the plating beside the door, boots down - no nudge out into open space.
         // Standing back in the door's own rectangle is harmless now that going back inside also
         // requires actually walking *toward* the hull (StepShipAttachedWalk).
@@ -111,7 +128,21 @@ public sealed partial class World
         // walked at, which read exactly like a teleport. The door/block's wall is fixed hull
         // layout, never a guess.
         var crossingAt = outerDoor?.Position ?? breachBlock!.Position;
-        character.EvaLocalOffset = ExitPositionAt(room, crossingAt, next, HullWalkClearance) - hullCenter;
+        var exitLocalOffset = ExitPositionAt(room, crossingAt, next, HullWalkClearance) - hullCenter;
+        // Boots off means boots off the instant you step through, same as everywhere else
+        // (TryAutoAttach) - walking out doesn't grab you onto the hull for free; EvaLocalOffset's
+        // meaning flips from a hull-local offset to an absolute world position the moment there's
+        // nothing actually holding you to it (Character.cs's own doc comment on the field).
+        if (character.MagneticBootsOn)
+        {
+            character.EvaAttachedTo = EvaAttachment.Ship;
+            character.EvaLocalOffset = exitLocalOffset;
+        }
+        else
+        {
+            character.EvaAttachedTo = EvaAttachment.None;
+            character.EvaLocalOffset = _shipFieldPosition + RotateLocalToWorld(exitLocalOffset, _shipRotationDegrees);
+        }
         character.EvaVelocity = Vec2.Zero;
         return true;
     }
@@ -225,8 +256,26 @@ public sealed partial class World
     // moveInputDirection is Vec2.Zero when the player isn't holding a direction this tick - free
     // floating characters still need to be stepped every tick regardless (drifting on momentum),
     // unlike attached movement which is a no-op with no input.
+    // Vacuum exposure with no sealed suit. Counted rather than applied as damage per second so
+    // the limit is a time the player can actually learn - "three seconds" - instead of a rate
+    // they have to infer from a health bar. Any working suit stops the clock and resets it: the
+    // grace is per trip outside, not a budget spent across a shift.
+    private void StepUnsuitedExposure(Character character, double deltaSeconds)
+    {
+        if (!character.IsOutside || character.SuitSealed)
+        {
+            character.UnsuitedVacuumSeconds = 0;
+            return;
+        }
+
+        character.UnsuitedVacuumSeconds += deltaSeconds;
+        if (character.UnsuitedVacuumSeconds >= UnsuitedGraceSeconds)
+            character.Health = 0;
+    }
+
     private void StepEvaCharacter(Character character, Vec2 moveInputDirection, double deltaSeconds)
     {
+        StepUnsuitedExposure(character, deltaSeconds);
         if (character.EvaAttachedTo == EvaAttachment.None)
         {
             StepFreeFloating(character, moveInputDirection, deltaSeconds);
@@ -261,7 +310,11 @@ public sealed partial class World
 
     private void StepFreeFloating(Character character, Vec2 moveInputDirection, double deltaSeconds)
     {
-        if (moveInputDirection != Vec2.Zero && character.JetpackFuel > 0)
+        // The thrusters are part of the suit, so without one there is nothing to fire: an unsuited
+        // character who pushes off is a body with momentum and no way to change it. That is the
+        // whole risk of stepping out unsuited - not the timer on its own, but the timer plus not
+        // being able to correct a bad push.
+        if (moveInputDirection != Vec2.Zero && character.JetpackFuel > 0 && character.SuitSealed)
         {
             character.EvaVelocity += moveInputDirection * JetpackAccelerationPerSecond * (float)deltaSeconds;
             character.JetpackFuel = Math.Max(0, character.JetpackFuel - JetpackFuelPerSecond * (float)deltaSeconds);
@@ -270,6 +323,22 @@ public sealed partial class World
         var from = character.EvaLocalOffset;
         var worldPos = (from + character.EvaVelocity * (float)deltaSeconds)
             .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+
+        // The station is solid too, not just something World.StationDocking.cs collides the
+        // ship's own hull against - a suited character drifting into it hits a wall instead of
+        // sailing straight through its rooms. Only meaningful during the same phase
+        // HullTouchesStation itself checks: Station.Position/WorldOffset is "the docking-approach
+        // field space" (Station.cs's own comment), not whatever AsteroidField the ship is actually
+        // sitting in the rest of the time - checking it unconditionally would collide against
+        // stale coordinates from a completely unrelated field. Same frame conversion
+        // HullTouchesStation uses: ContainsPoint expects the station's own docked frame, so the
+        // world point loses its WorldOffset first.
+        if (Phase == VoyagePhase.StationApproach && Station.ContainsPoint(worldPos - Station.WorldOffset))
+        {
+            character.EvaVelocity = Vec2.Zero;
+            return;
+        }
+
         character.EvaLocalOffset = worldPos;
 
         // Checked along the whole step, not just where it ended: a jump used to sail clean through
@@ -293,6 +362,10 @@ public sealed partial class World
         }
     }
 
+    // Bounced speed is half of whatever the character was actually flying at, reflected straight
+    // back rather than off the surface normal - "отскочил обратно", not a billiard-ball carom.
+    private const float BounceSpeedFactor = 0.5f;
+
     private bool TryAutoAttach(Character character, Vec2 worldPos)
     {
         // Already hull-center-relative, matching EvaLocalOffset's own convention for Ship
@@ -303,6 +376,20 @@ public sealed partial class World
         if (character.PushedOffFrom != PushOffOrigin.Ship &&
             HullSilhouette.DistanceOutside(Ship.Rooms, hullCenter + localToShip) <= ShipAttachZoneMargin)
         {
+            if (!character.MagneticBootsOn)
+            {
+                // Left exactly at worldPos - the sample point along the travelled step where
+                // contact was actually detected - rather than snapped to the boot-clearance
+                // surface. Some position update is still needed (this sample can be short of the
+                // step's own endpoint, which is what stops a fast jump from tunnelling through),
+                // but snapping any closer than the flight itself reached is what grabbing on does;
+                // bouncing off must never pull the character in on its own, or it reads as
+                // sticking to the wall for an instant before flinging away from it.
+                character.EvaLocalOffset = worldPos;
+                character.EvaVelocity = character.EvaVelocity * -BounceSpeedFactor;
+                return true;
+            }
+
             character.EvaAttachedTo = EvaAttachment.Ship;
             // Grabbing on pulls you the last bit onto the plating, rather than leaving you frozen
             // wherever in the capture zone the boots happened to catch.
@@ -318,6 +405,15 @@ public sealed partial class World
                 continue;
             if (AsteroidShape.DistanceOutside(asteroid, worldPos) > AsteroidAttachZoneMargin)
                 continue;
+
+            if (!character.MagneticBootsOn)
+            {
+                // Same reasoning as the ship branch above: left at worldPos itself, not snapped
+                // any closer to the rock's surface than the flight already carried it.
+                character.EvaLocalOffset = worldPos;
+                character.EvaVelocity = character.EvaVelocity * -BounceSpeedFactor;
+                return true;
+            }
 
             character.EvaAttachedTo = EvaAttachment.Asteroid;
             character.EvaAttachedAsteroidId = asteroid.Id;

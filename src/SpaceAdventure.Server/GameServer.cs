@@ -22,15 +22,18 @@ public sealed class GameServer
     private readonly string? _savePath;
 
     // savePath null disables persistence entirely - which is what the whole test suite wants, and
-    // keeps a headless server from scribbling over a player's save file. customShip carries a
-    // Ship Editor layout when shipKind is Custom; loadFrom's own CustomShip covers the "continue a
-    // custom-hull run" case when the caller didn't already pass one explicitly.
+    // keeps a headless server from scribbling over a player's save file (also how the tutorial run
+    // avoids ever touching the real campaign's autosave). customShip carries a Ship Editor layout
+    // when shipKind is Custom; loadFrom's own CustomShip covers the "continue a custom-hull run"
+    // case when the caller didn't already pass one explicitly.
     public GameServer(ShipKind shipKind = ShipKind.Frigate, SaveGame? loadFrom = null, string? savePath = null,
-        CustomShipDefinition? customShip = null)
+        CustomShipDefinition? customShip = null, bool isTutorial = false)
     {
         _world = new World(shipKind, customShip ?? loadFrom?.CustomShip);
         _savePath = savePath;
-        if (loadFrom is not null)
+        if (isTutorial)
+            _world.StartTutorial();
+        else if (loadFrom is not null)
             _world.ApplySave(loadFrom);
         else
             _world.StartCampaign();

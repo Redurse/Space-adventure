@@ -14,7 +14,7 @@ namespace SpaceAdventure.Server;
 // Each of the player's own ship's doors also has its own hit points now (game_design.md) - the
 // same "quiet number, invisible until it matters" shape WallBlock's own Hp already has
 // (World.WallBlocks.cs). A destroyed door is jammed open rather than merely non-functional: its
-// frame/motor can no longer hold a seal, so ToggleDoor simply stops answering it until the F-key
+// frame/motor can no longer hold a seal, so ToggleDoor simply stops answering it until the E-key
 // repair minigame (World.SystemRepair.cs, same one a SystemDevice/Junction already uses) restores
 // it to full health. Station and enemy-ship doors are never entered into _doorHp at all, so
 // DoorHp's own default fallback quietly keeps them permanently undamageable.
@@ -113,4 +113,15 @@ public sealed partial class World
             var (percent, tickPosition) = GetSystemRepairDisplay(kv.Key);
             return new DoorState(kv.Key, kv.Value, DoorHp(kv.Key), DoorMaxHp, percent, tickPosition);
         }).ToArray();
+
+    // What the client shows a health bar over while the cutter is lit and actually aimed at a
+    // door - same "quiet number, shown only while it's being worked" shape as GetWallToolTargetId
+    // (World.WallBlocks.cs). Goes through the exact same FindAimedCutTarget (World.Cutting.cs) the
+    // cutting action itself uses, so the bar can never show while a different block is what's
+    // actually about to take the damage. Welding never targets a door (World.SystemRepair.cs's
+    // E-key minigame is how a destroyed one gets fixed), so there's no welding branch here.
+    private string? GetDoorToolTargetId(Character character) =>
+        character.OnEnemyShip || character.IsOutside || !IsCutting(character.PlayerId)
+            ? null
+            : FindAimedCutTarget(character).DoorId;
 }

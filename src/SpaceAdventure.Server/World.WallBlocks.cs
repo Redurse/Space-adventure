@@ -53,6 +53,13 @@ public sealed partial class World
     private IReadOnlyList<WallBlockState> CreateWallBlockStates() =>
         Ship.WallBlocks.Select(b => new WallBlockState(b.Id, WallBlockHp(b.Id), WallBlockMaxHp)).ToArray();
 
+    // A station is never actually breachable (FindAimedStationWallBlock below is used only for the
+    // target-id the client shows a bar over, never by StepWelding/StepCutting/DamageWallBlock/
+    // RepairWallBlock) - so unlike _wallBlockHp there's no dictionary to look up, every block is
+    // simply always reported at full health.
+    private IReadOnlyList<WallBlockState> CreateStationWallBlockStates() =>
+        Station.WallBlocks.Select(b => new WallBlockState(b.Id, WallBlockMaxHp, WallBlockMaxHp)).ToArray();
+
     // Shared by the welder and the indoor cutter (both burn a short aimed flame against the ship's
     // own wall blocks, just to opposite effect) and by the snapshot query that tells the client
     // which block to show the health bar over - one sampling routine so all three can never
@@ -83,26 +90,44 @@ public sealed partial class World
         return null;
     }
 
-    private void CutWallAlongFlame(Character character, double deltaSeconds)
+    // A station has nothing of the player's own ship to actually weld/cut (World.Welding.cs/World.
+    // Cutting.cs's own comments explain why the torch still lights there but never does anything) -
+    // this exists purely so the target-HP-bar UI still shows *something* while aimed at a station
+    // wall, instead of silently showing nothing while the ship's equivalent bar would be lit. Never
+    // called from StepWelding/StepCutting/DamageWallBlock/RepairWallBlock - a station's own walls
+    // stay permanently un-mutatable regardless of what this reports.
+    private WallBlock? FindAimedStationWallBlock(Character character, float reachUnits, int samples, float pointRadius)
     {
-        var block = FindAimedWallBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
-        if (block is null)
-            return;
-        DamageWallBlock(block.Id, WallCutDamagePerSecond * (float)deltaSeconds);
+        var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection.Normalized() : character.FacingDirection;
+        if (aim.Length() < 0.01f)
+            return null;
+
+        for (var i = 1; i <= samples; i++)
+        {
+            var point = character.Position + aim * (reachUnits * i / samples);
+            var block = Station.WallBlocks.FirstOrDefault(b => b.RoomId == character.RoomId && (b.Position - point).Length() <= pointRadius);
+            if (block is not null)
+                return block;
+        }
+        return null;
     }
 
     // What the client shows a health bar over - only while a tool is actually lit and pointed at
-    // something, the same contexts WeldAlongFlame/CutWallAlongFlame themselves act in. A wall's Hp
-    // is otherwise invisible on purpose (game_design.md's "quiet number" convention, same as an
-    // untouched ore deposit's).
+    // something, the same contexts WeldAlongFlame/CutIndoorAlongFlame (World.Cutting.cs) themselves
+    // act in. A wall's Hp is otherwise invisible on purpose (game_design.md's "quiet number"
+    // convention, same as an untouched ore deposit's). The cutting branch goes through
+    // FindAimedCutTarget rather than calling FindAimedWallBlock directly, so this can never show a
+    // block's bar while the flame is actually about to cut a door instead (or the other way round).
     private string? GetWallToolTargetId(Character character)
     {
-        if (character.OnEnemyShip || character.OnStation)
+        if (character.OnEnemyShip)
             return null;
         if (IsWelding(character.PlayerId))
-            return FindAimedWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius)?.Id;
+            return FindAimedWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius)?.Id
+                ?? (character.OnStation ? FindAimedStationWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius)?.Id : null);
         if (IsCutting(character.PlayerId) && !character.IsOutside)
-            return FindAimedWallBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius)?.Id;
+            return FindAimedCutTarget(character).WallBlockId
+                ?? (character.OnStation ? FindAimedStationWallBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius)?.Id : null);
         return null;
     }
 }

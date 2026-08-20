@@ -46,6 +46,31 @@ internal static partial class TestRunner
         return fullPower > 0f && Math.Abs(halfPower - fullPower / 2f) < 0.01f;
     }
 
+    // The actual bug this independence exists to fix: two identical devices on the same system used
+    // to share one junction/trunk, so damaging either one damaged both, and repairing either one
+    // repaired both. Each device now gets its own dedicated junction+trunk (WireGraphFactory), so
+    // cutting/repairing one must never touch its sibling.
+    private static bool World_Wiring_RepairingOneMultiDeviceUnit_DoesNotRepairItsSibling()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        world.CutWire("trunk-system-engine");
+        world.CutWire("trunk-system-engine-2");
+        if (world.IsDeviceConnected("system-engine") || world.IsDeviceConnected("system-engine-2"))
+            return false; // both should start out damaged
+
+        var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot));
+        WalkAcrossShipTo(world, 7.2f, 4.3f); // reactor room's first engine device (Ship.cs)
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
+
+        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
+            world.Step(RealtimeStep);
+
+        return world.IsDeviceConnected("system-engine") && !world.IsDeviceConnected("system-engine-2");
+    }
+
     // Physical wire-laying (World.Wiring.cs's HandlePinInteract, M20) - the real player-facing
     // counterpart to the World.AddWire test hook the tests above use directly: walk to one pin
     // holding a WireSpool, then to a second.
@@ -75,13 +100,15 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 6f, 1.5f); // junction-oxygen's own spot on the left wall
     }
 
-    // junction-engine: PowerSystemId.Engine is index 1, so it's the second junction placed -
-    // right wall (room.Right - 1 = 9), same first slot as junction-oxygen (room.Top + 1.5 = 1.5).
+    // junction-system-engine: Engine has two devices on this hull, so it gets one junction per
+    // device (WireGraphFactory) instead of one shared box - this is the first of the two, placed
+    // right after junction-oxygen, so it lands on the right wall (room.Right - 1 = 9), same first
+    // slot as junction-oxygen (room.Top + 1.5 = 1.5).
     private static void MoveToEngineJunction(World world)
     {
         MoveCharacterTo(world, 1, 19f, 3f);
         MoveCharacterTo(world, 1, 7f, 3f); // reactor room
-        MoveCharacterTo(world, 1, 9f, 1.5f); // junction-engine's own spot on the right wall
+        MoveCharacterTo(world, 1, 9f, 1.5f); // junction-system-engine's own spot on the right wall
     }
 
     private static bool HasWireSpool(World world) =>
@@ -112,7 +139,7 @@ internal static partial class TestRunner
         var wiresBefore = world.Wires.Count;
         // Both are inputs - a junction's "in" can never legally pair with another input.
         var oxygenIn = new PinRef("junction-oxygen", "in");
-        var engineIn = new PinRef("junction-engine", "in");
+        var engineIn = new PinRef("junction-system-engine", "in");
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenIn));
         MoveToEngineJunction(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: engineIn));
@@ -265,43 +292,6 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
 
         return damagedRightAfterCut && stillDamagedWithoutTool && !world.IsJunctionDamaged("junction-oxygen");
-    }
-
-    // Moving a Junction box (World.Interact.cs's wrench-driven pickup/place, World.Wiring.cs's
-    // StepCarriedComponents) - picking it up starts tracking the carrier's own position every tick;
-    // placing it (F again) just stops tracking wherever they've stopped. Wiring survives the whole
-    // move untouched since a Wire endpoint references its Component by id, never by position - the
-    // system the box serves stays powered throughout the move.
-    private static bool World_Junction_CarryAndPlace_MovesItWithCharacterAndKeepsWiringIntact()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-
-        var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
-        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: wrenchSlot));
-        MoveToOxygenJunction(world);
-
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // pick up junction-oxygen
-        var carryingRightAfterPickup =
-            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).CarryingComponentId == "junction-oxygen";
-        var poweredWhileCarried = world.IsDeviceConnected("system-oxygen");
-
-        MoveCharacterTo(world, 1, 13f, 3f); // still the reactor room, a different spot within it
-        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        var junctionFollowedCharacter =
-            (world.Components.First(c => c.Id == "junction-oxygen").Position - new Vec2(me.X, me.Y)).Length() < 0.01f;
-
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // place it here
-        var carryingClearedAfterPlace =
-            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).CarryingComponentId is null;
-        var placedPosition = world.Components.First(c => c.Id == "junction-oxygen").Position;
-
-        MoveCharacterTo(world, 1, 9f, 3f); // walk away from it
-        var junctionStayedPutAfterPlacing =
-            (world.Components.First(c => c.Id == "junction-oxygen").Position - placedPosition).Length() < 0.01f;
-
-        return carryingRightAfterPickup && poweredWhileCarried && junctionFollowedCharacter &&
-            carryingClearedAfterPlace && junctionStayedPutAfterPlacing;
     }
 
     // Logic components (World.ComponentLogic.cs, M21) - test-seeded directly via World.AddComponent/

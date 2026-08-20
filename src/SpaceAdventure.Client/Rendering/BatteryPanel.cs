@@ -23,16 +23,21 @@ public sealed class BatteryPanel
         _font = font;
     }
 
-    public void Draw(SpriteBatch spriteBatch, PowerState power, Vector2 origin)
+    public void Draw(SpriteBatch spriteBatch, PowerState power, Vector2 origin, float totalSeconds)
     {
-        var header = $"Батарея: {power.BatteryCharge:0}/{power.BatteryCapacity:0}";
-        spriteBatch.DrawString(_font, header, origin, Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+        var bounds = DevicePanelChrome.StandardBounds(origin);
+        var fraction = power.BatteryCapacity > 0 ? MathHelper.Clamp(power.BatteryCharge / power.BatteryCapacity, 0f, 1f) : 0f;
+        // The housing itself warns before the readout has to: a battery running flat turns the
+        // whole unit amber, which is visible from across the compartment.
+        var phosphor = fraction > 0.2f ? new Color(126, 226, 156) : new Color(236, 168, 92);
+        DevicePanelChrome.Draw(spriteBatch, _font, bounds, "АККУМУЛЯТОР", "BT-02", phosphor, totalSeconds);
+        DevicePanelChrome.DrawReadout(spriteBatch, _font, origin + new Vector2(0, -6),
+            "ЗАРЯД", $"{power.BatteryCharge:0}", $"/ {power.BatteryCapacity:0}", phosphor);
 
         var barOrigin = origin + new Vector2(0, 24);
         var barRect = new Rectangle((int)barOrigin.X, (int)barOrigin.Y, BarWidth, BarHeight);
         spriteBatch.Draw(_pixel, barRect, Color.DimGray * 0.5f);
 
-        var fraction = power.BatteryCapacity > 0 ? MathHelper.Clamp(power.BatteryCharge / power.BatteryCapacity, 0f, 1f) : 0f;
         var filledWidth = (int)(BarWidth * fraction);
         if (filledWidth > 0)
         {

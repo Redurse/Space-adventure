@@ -21,17 +21,17 @@ public sealed partial class Ship
 
         var doors = new[]
         {
-            new Door("door-cockpit-reactor", "cockpit", "reactor", 5, 3, 1.0f, 1.8f),
-            new Door("door-reactor-corridor", "reactor", "corridor", 10, 3, 1.0f, 1.8f),
-            new Door("door-corridor-quarters", "corridor", "quarters", 13, 3, 1.0f, 1.8f),
-            new Door("door-quarters-hold", "quarters", "hold", 18, 3, 1.0f, 1.8f),
-            new Door("door-hold-engine", "hold", "engine", 23, 3, 1.0f, 1.8f),
-            new Door("door-engine-airlock", "engine", "airlock-chamber", 28, 3, 1.0f, 1.8f),
+            new Door("door-cockpit-reactor", "cockpit", "reactor", 5, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-reactor-corridor", "reactor", "corridor", 10, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-corridor-quarters", "corridor", "quarters", 13, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-quarters-hold", "quarters", "hold", 18, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-hold-engine", "hold", "engine", 23, 3, 1.0f, Door.StandardSpanUnits),
+            new Door("door-engine-airlock", "engine", "airlock-chamber", 28, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         var airlockOuterDoors = new[]
         {
-            new AirlockOuterDoor("door-airlock-vacuum", "airlock-chamber", 31, 3, 1.0f, 1.8f),
+            new AirlockOuterDoor("door-airlock-vacuum", "airlock-chamber", 31, 3, 1.0f, Door.StandardSpanUnits),
         };
 
         // Three guns total (bow, laser, stern) vs. the Frigate's two — the "больше... орудий" top

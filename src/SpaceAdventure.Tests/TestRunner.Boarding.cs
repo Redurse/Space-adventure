@@ -20,7 +20,11 @@ internal static partial class TestRunner
         EquipSuit(world, 1);
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
-        WalkFixedDirection(world, 1, 1f, 0f); // exit into vacuum, attached to the hull
+        WalkFixedDirection(world, 1, 1f, 0f); // exit into vacuum, boots off by default so not attached yet
+        // Boots on and one settling step, so the push-off below actually has something to push
+        // off from (World.Eva.cs's HandlePushOff is a no-op while not attached).
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
 
         var target = world.CreateSnapshot().EnemyShipPosition;
         var exitPos = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);

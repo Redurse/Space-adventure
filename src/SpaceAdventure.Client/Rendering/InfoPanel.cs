@@ -59,13 +59,7 @@ public sealed class InfoPanel
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, InfoTab activeTab, Vector2 panelOrigin)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
-        spriteBatch.Draw(_pixel, panelRect, new Color(20, 26, 22) * 0.95f);
-        DrawRectOutline(spriteBatch, panelRect, new Color(90, 110, 95), BorderThickness);
-
-        // Header bar, set off from the body by its own fill and a rule under it.
-        var headerRect = new Rectangle(panelRect.X, panelRect.Y, panelRect.Width, HeaderHeight);
-        spriteBatch.Draw(_pixel, headerRect, new Color(30, 38, 33));
-        spriteBatch.Draw(_pixel, new Rectangle(headerRect.X, headerRect.Bottom - BorderThickness, headerRect.Width, BorderThickness), new Color(90, 110, 95));
+        PanelFrame.DrawWithHeader(spriteBatch, _pixel, panelRect, HeaderHeight);
         spriteBatch.DrawString(_font, "Информация", panelOrigin + new Vector2(16, 10), Color.White, 0f, Vector2.Zero, 0.85f, SpriteEffects.None, 0f);
 
         // Tab column separated from the content area by its own rule, same idea as the header's.
@@ -99,14 +93,6 @@ public sealed class InfoPanel
                 spriteBatch.DrawString(_font, "Скоро.", content, Color.Gray, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
                 break;
         }
-    }
-
-    private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness)
-    {
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Bottom - thickness, rect.Width, thickness), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, thickness, rect.Height), color);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, rect.Y, thickness, rect.Height), color);
     }
 
     private static void DrawTabGlyph(SpriteBatch spriteBatch, Texture2D pixel, InfoTab tab, Vector2 center, Color color)

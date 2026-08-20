@@ -38,15 +38,20 @@ public sealed class SystemDevicePanel
         _font = font;
     }
 
-    public void Draw(SpriteBatch spriteBatch, PowerSystemId system, PowerState power, ShieldState shield, IReadOnlyList<ShipSystemState> systemStates, Vector2 origin)
+    public void Draw(SpriteBatch spriteBatch, PowerSystemId system, PowerState power, ShieldState shield, IReadOnlyList<ShipSystemState> systemStates, Vector2 origin, float totalSeconds)
     {
         var label = Labels.First(l => l.Id == system).Label;
         var allocated = power.Allocated.TryGetValue(system, out var value) ? value : 0f;
         var damaged = systemStates.Any(s => s.System == system && s.Damaged);
         var totalAllocated = power.Allocated.Values.Sum();
 
-        spriteBatch.Draw(_pixel, new Rectangle((int)origin.X - 10, (int)origin.Y - 10, 320, 150), new Color(18, 24, 20) * 0.92f);
-        spriteBatch.DrawString(_font, $"Щиток: {label}", origin, Color.White, 0f, Vector2.Zero, 0.75f, SpriteEffects.None, 0f);
+        // Was a flat dark rectangle; now the same housing every other terminal wears, and it
+        // carries the fault state - a damaged system turns its own panel red rather than only
+        // saying so in a line of text.
+        var phosphor = damaged ? new Color(236, 108, 92) : new Color(126, 214, 168);
+        DevicePanelChrome.Draw(spriteBatch, _font,
+            DevicePanelChrome.StandardBounds(origin),
+            label.ToUpperInvariant(), "SY-" + ((int)system + 10), phosphor, totalSeconds);
 
         DrawStatusLights(spriteBatch, origin + new Vector2(0, 30), allocated, damaged, totalAllocated);
 

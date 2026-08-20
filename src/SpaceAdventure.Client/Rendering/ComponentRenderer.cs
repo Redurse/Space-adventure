@@ -30,10 +30,10 @@ public static class ComponentRenderer
 
     // Junction boxes never had a visual before now (WireNode's old abstract schematic position
     // didn't correspond to anything physical) - a small panel, one per system this hull actually
-    // has a device for, positioned by WireGraphFactory right next to Distribution (or wherever a
-    // player has since carried it to - World.Wiring.cs's StepCarriedComponents). Now its own
-    // breakable device (JunctionStates, reusing ShipSystemState's shape), so it reddens the same way
-    // a damaged SystemDevice's own panel would, instead of always looking intact.
+    // has a device for, positioned by WireGraphFactory right next to Distribution and fixed there
+    // (no longer wrench-relocatable). Now its own breakable device (JunctionStates, reusing
+    // ShipSystemState's shape), so it reddens the same way a damaged SystemDevice's own panel
+    // would, instead of always looking intact.
     private static void DrawJunctions(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, WorldSnapshot snapshot, Vector2 origin)
     {
         foreach (var junction in snapshot.Components.Where(c => c.Kind == ComponentKind.Junction))
@@ -88,12 +88,11 @@ public static class ComponentRenderer
             yield break;
         }
 
-        // Junction: one input, one output per device on its system - id encodes which system.
-        var system = Enum.GetValues<PowerSystemId>().FirstOrDefault(s => component.Id == $"junction-{s}".ToLowerInvariant());
+        // Junction: exactly one input and one output, always - a system with several identical
+        // devices (Engine/Shields) now gets one junction PER device (WireGraphFactory) instead of
+        // one shared box fanning out to all of them, so there's never more than a single drop here.
         yield return ("in", PinKind.PowerIn, 0, 1);
-        var deviceCount = snapshot.SystemDevices.Count(d => d.System == system);
-        for (var i = 0; i < deviceCount; i++)
-            yield return ($"out-{i}", PinKind.PowerOut, i, deviceCount);
+        yield return ("out-0", PinKind.PowerOut, 0, 1);
     }
 
     // Empty gnездо - a thin outline, nothing installed yet; occupied - the same beveled panel every

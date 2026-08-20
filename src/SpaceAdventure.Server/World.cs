@@ -166,6 +166,7 @@ public sealed partial class World
         PowerGrid.ApplyInput(playerId, command.PowerSystemIndex, command.PowerDirection);
 
         var character = _characters[playerId];
+        ObserveTutorialInput(character, command);
 
         // Sent every tick once the client knows it - ignore an empty/missing one rather than
         // overwrite an already-known name with nothing (e.g. a stray command that raced ahead of
@@ -323,7 +324,6 @@ public sealed partial class World
         StepWelding(deltaSeconds);
         StepAxeCooldowns(deltaSeconds);
         StepSystemRepair(deltaSeconds);
-        StepCarriedComponents();
         StepPersonalShots(deltaSeconds);
         StepOxygenTanks(deltaSeconds);
         StepBoarding(deltaSeconds);
@@ -334,6 +334,7 @@ public sealed partial class World
         StepProjectiles(deltaSeconds);
         StepVoyage(deltaSeconds);
         StepCampaign();
+        StepTutorial();
         StepAtmosphere(deltaSeconds);
         StepInjuries(deltaSeconds);
         // After everything else so a bot reacts to this tick's state (a fresh breach, a target that
@@ -445,8 +446,9 @@ public sealed partial class World
                 c.Nickname,
                 c.PingMs,
                 GetWallToolTargetId(c),
-                c.CarryingComponentId,
-                c.LayingWireBends.ToArray());
+                c.LayingWireBends.ToArray(),
+                GetDoorToolTargetId(c),
+                c.MagneticBootsOn);
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(Phase, ShipMapPosition, _dockedPointId, _travelTargetPointId, _travelTargetPosition),
@@ -476,5 +478,8 @@ public sealed partial class World
         CreateCardGameState(),
         Ship.ForwardDegrees,
         new ReactorLeverState(LightsOn, PowerGrid.Reactor.EmergencyShutdown, DoorsLocked),
-        StoryLog);
+        StoryLog,
+        Station.WallBlocks,
+        CreateStationWallBlockStates(),
+        GetTutorialObjective());
 }

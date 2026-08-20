@@ -10,7 +10,16 @@ namespace SpaceAdventure.Client;
 // of which ship or save is active (mirrors SaveStore.cs's own file, in the same folder, but this
 // one never gets deleted when a save does). Same swallow-failures philosophy: a machine that can't
 // write this file just re-asks each launch instead of crashing on it.
-public sealed record PlayerSettings(string? Nickname = null, CrewRole? Role = null);
+public sealed record PlayerSettings(string? Nickname = null, CrewRole? Role = null,
+    int? ResolutionWidth = null, int? ResolutionHeight = null, WindowMode? WindowMode = null,
+    bool? VSync = null, float? MasterVolume = null, float? BloomStrength = null, int? MaxParticles = null);
+
+public enum WindowMode
+{
+    Fullscreen,
+    Borderless,
+    Windowed,
+}
 
 public static class PlayerSettingsStore
 {
@@ -71,4 +80,33 @@ public static class PlayerSettingsStore
 
     public static void SaveRole(CrewRole? role, string? path = null) =>
         Save(Load(path) with { Role = role }, path);
+
+    // Graphics/audio settings are read together, as one record, since the Settings screen commits
+    // them together on "Применить" - unlike Nickname/Role above, there's no separate screen that
+    // saves just one of these fields on its own.
+    public static GraphicsSettings LoadGraphicsSettings(string? path = null)
+    {
+        var settings = Load(path);
+        return new GraphicsSettings(
+            settings.ResolutionWidth, settings.ResolutionHeight, settings.WindowMode ?? Client.WindowMode.Borderless,
+            settings.VSync ?? true, settings.MasterVolume ?? 1f, settings.BloomStrength ?? 1f, settings.MaxParticles ?? Rendering.AtmosphereField.MaxParticles);
+    }
+
+    public static void SaveGraphicsSettings(GraphicsSettings graphics, string? path = null) =>
+        Save(Load(path) with
+        {
+            ResolutionWidth = graphics.ResolutionWidth,
+            ResolutionHeight = graphics.ResolutionHeight,
+            WindowMode = graphics.WindowMode,
+            VSync = graphics.VSync,
+            MasterVolume = graphics.MasterVolume,
+            BloomStrength = graphics.BloomStrength,
+            MaxParticles = graphics.MaxParticles,
+        }, path);
 }
+
+// ResolutionWidth/Height null means "use the desktop's own current resolution" - the same default
+// Game1.Initialize already forces today, kept as the fallback so a machine that never opens the
+// Settings screen sees no behavior change at all.
+public readonly record struct GraphicsSettings(int? ResolutionWidth, int? ResolutionHeight, WindowMode WindowMode,
+    bool VSync, float MasterVolume, float BloomStrength, int MaxParticles);
