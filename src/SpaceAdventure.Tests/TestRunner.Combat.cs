@@ -14,11 +14,11 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
 
         var atArrival = world.CreateSnapshot();
-        if (atArrival.EnemyShips.Count != 2 || atArrival.EnemyShips.Count(e => e.IsBoardable) != 1)
+        if (atArrival.EnemyShip.Ships.Count != 2 || atArrival.EnemyShip.Ships.Count(e => e.IsBoardable) != 1)
             return false;
 
         float Distance(WorldSnapshot s) =>
-            new Vec2(s.EnemyShips[0].X - s.ShipField.X, s.EnemyShips[0].Y - s.ShipField.Y).Length();
+            new Vec2(s.EnemyShip.Ships[0].X - s.ShipField.X, s.EnemyShip.Ships[0].Y - s.ShipField.Y).Length();
 
         var openingRange = Distance(atArrival);
         StepFor(world, 20 * 30);
@@ -48,7 +48,7 @@ internal static partial class TestRunner
 
         var snapshot = world.CreateSnapshot();
         var hullHalfLength = (world.Ship.Rooms.Max(r => r.Right) - world.Ship.Rooms.Min(r => r.Left)) / 2f;
-        return snapshot.EnemyShips.All(e =>
+        return snapshot.EnemyShip.Ships.All(e =>
             new Vec2(e.X - snapshot.ShipField.X, e.Y - snapshot.ShipField.Y).Length() >= hullHalfLength);
     }
 
@@ -58,7 +58,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         EnterBattle(world);
 
-        var enemy = world.CreateSnapshot().EnemyShips.Single();
+        var enemy = world.CreateSnapshot().EnemyShip.Ships.Single();
         var asteroid = world.AsteroidField.Asteroids[0];
         var shipPosition = world.CreateSnapshot().ShipField;
 

@@ -71,9 +71,9 @@ public sealed class EffectTracker
         // An enemy hull that was in the field and now isn't, was destroyed - a retreating one
         // keeps shooting cooldowns aside but stays listed and boardable (World.EnemyFleet.cs), so
         // disappearing from the list only ever means the hull actually broke apart.
-        foreach (var before in previous.EnemyShips)
+        foreach (var before in previous.EnemyShip.Ships)
         {
-            if (current.EnemyShips.Any(e => e.Id == before.Id))
+            if (current.EnemyShip.Ships.Any(e => e.Id == before.Id))
                 continue;
             _effects.Add(new TransientEffect(EffectKind.Explosion, new Vec2(before.X, before.Y), ExplosionEffectSeconds));
         }

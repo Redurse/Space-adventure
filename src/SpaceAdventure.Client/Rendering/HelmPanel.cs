@@ -189,7 +189,7 @@ public sealed class HelmPanel
         // Every hostile hull in the sector, not just the one being boarded - the captain flies the
         // ship by this display, and a raider that isn't on it is a raider they can't avoid. Clamped
         // to the rim like the station, so a contact off the edge of the plot still gives a bearing.
-        foreach (var enemy in snapshot.EnemyShips)
+        foreach (var enemy in snapshot.EnemyShip.Ships)
             DrawTrackedBlip(spriteBatch, center, ToRadar(new Vec2(enemy.X, enemy.Y), shipWorldPos, scale), 8,
                 enemy.IsRetreating ? Color.Goldenrod : Color.OrangeRed);
 

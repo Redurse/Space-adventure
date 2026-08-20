@@ -26,7 +26,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
         world.Step(RealtimeStep);
 
-        var target = world.CreateSnapshot().EnemyShipPosition;
+        var target = world.CreateSnapshot().EnemyShip.Position;
         var exitPos = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var pushDirection = new Vec2(target.X - exitPos.X, target.Y - exitPos.Y).Normalized();
         world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: pushDirection.X, PushOffDirectionY: pushDirection.Y));
@@ -40,7 +40,7 @@ internal static partial class TestRunner
             var me = snapshot.Characters.Single(c => c.PlayerId == 1);
             if (me.OnEnemyShip)
                 break;
-            var current = snapshot.EnemyShipPosition;
+            var current = snapshot.EnemyShip.Position;
             var dir = new Vec2(current.X - me.X, current.Y - me.Y).Normalized();
             world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
             world.Step(RealtimeStep);
@@ -68,7 +68,7 @@ internal static partial class TestRunner
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip)
             return false;
 
-        var defender = world.CreateSnapshot().EnemyCrew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
+        var defender = world.CreateSnapshot().EnemyShip.Crew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
         var healthBefore = defender.Health;
 
         // Walk right up to the defender in the boarding room, then swing.
@@ -86,7 +86,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
         world.Step(RealtimeStep);
 
-        var after = world.CreateSnapshot().EnemyCrew.First(c => c.Id == defender.Id);
+        var after = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defender.Id);
         return after.Health < healthBefore;
     }
 
@@ -101,7 +101,7 @@ internal static partial class TestRunner
         var knifeSlot = Array.IndexOf(inventory.MainSlots.ToArray(), ItemType.Knife);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: knifeSlot)); // un-hold
 
-        var defender = world.CreateSnapshot().EnemyCrew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
+        var defender = world.CreateSnapshot().EnemyShip.Crew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
         for (var i = 0; i < 5 * 30; i++)
         {
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
@@ -113,11 +113,11 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
         }
 
-        var healthBefore = world.CreateSnapshot().EnemyCrew.First(c => c.Id == defender.Id).Health;
+        var healthBefore = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defender.Id).Health;
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
         world.Step(RealtimeStep);
 
-        return world.CreateSnapshot().EnemyCrew.First(c => c.Id == defender.Id).Health == healthBefore;
+        return world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defender.Id).Health == healthBefore;
     }
 
     // Clearing every defender captures the ship outright - an alternative win condition to
@@ -133,14 +133,14 @@ internal static partial class TestRunner
 
         // Work through the ship room by room, walking toward the nearest living defender and
         // firing whenever one is in range.
-        for (var i = 0; i < 120 * 30 && world.CreateSnapshot().EnemyCrew.Any(c => c.Alive); i++)
+        for (var i = 0; i < 120 * 30 && world.CreateSnapshot().EnemyShip.Crew.Any(c => c.Alive); i++)
         {
             var snapshot = world.CreateSnapshot();
             var me = snapshot.Characters.Single(c => c.PlayerId == 1);
             if (me.Health <= 0)
                 return false; // died boarding - not what this test is checking
 
-            var target = snapshot.EnemyCrew.Where(c => c.Alive)
+            var target = snapshot.EnemyShip.Crew.Where(c => c.Alive)
                 .OrderBy(c => (new Vec2(c.X, c.Y) - new Vec2(me.X, me.Y)).Length())
                 .First();
             var toTarget = new Vec2(target.X - me.X, target.Y - me.Y);
@@ -159,7 +159,7 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
         }
 
-        return world.CreateSnapshot().EnemyCrew.All(c => !c.Alive) && world.CreateSnapshot().Enemy.Hp <= 0;
+        return world.CreateSnapshot().EnemyShip.Crew.All(c => !c.Alive) && world.CreateSnapshot().Enemy.Hp <= 0;
     }
 
     // Every hull class is a distinct structure, and nothing about it may collide with another's:
@@ -198,7 +198,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         EngageSector(world, "sector-beta");
-        var first = world.CreateSnapshot().EnemyShipClassName;
+        var first = world.CreateSnapshot().EnemyShip.ClassName;
 
         var again = new World();
         again.SpawnCharacter(1);
@@ -210,8 +210,8 @@ internal static partial class TestRunner
 
         // Same sector, same hull. (The two sectors are allowed to match - what matters is that the
         // answer is a property of the sector, which the repeat run is what proves.)
-        return first == again.CreateSnapshot().EnemyShipClassName
-               && EnemyShipLayout.All.Any(l => l.Name == elsewhere.CreateSnapshot().EnemyShipClassName);
+        return first == again.CreateSnapshot().EnemyShip.ClassName
+               && EnemyShipLayout.All.Any(l => l.Name == elsewhere.CreateSnapshot().EnemyShip.ClassName);
     }
 
     // Air as a weapon (World.EnemyAtmosphere.cs): a boarded hull is buttoned up, so its compartments
@@ -226,7 +226,7 @@ internal static partial class TestRunner
         var layout = world.EnemyShipLayout;
         var deepRoom = layout.Rooms.Last(r => r.Id != layout.BoardingRoomId);
         float Oxygen(string roomId) =>
-            world.CreateSnapshot().EnemyRoomOxygen.First(o => o.RoomId == roomId).Oxygen;
+            world.CreateSnapshot().EnemyShip.RoomOxygen.First(o => o.RoomId == roomId).Oxygen;
 
         // Sealed: the breach vents its own compartment and nothing else, however long it stands.
         for (var i = 0; i < 10 * 30; i++)
@@ -239,7 +239,7 @@ internal static partial class TestRunner
         for (var i = 0; i < 40 * 30; i++)
             world.Step(RealtimeStep);
 
-        bool Alive(string crewId) => world.CreateSnapshot().EnemyCrew.First(c => c.Id == crewId).Alive;
+        bool Alive(string crewId) => world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == crewId).Alive;
         var unsuitedGone = layout.CrewSpawns.Where(s => !s.Suited).All(s => !Alive(s.Id));
         var suitedHolding = layout.CrewSpawns.Where(s => s.Suited).All(s => Alive(s.Id));
 
@@ -275,7 +275,7 @@ internal static partial class TestRunner
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip)
             return false;
 
-        var defender = world.CreateSnapshot().EnemyCrew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
+        var defender = world.CreateSnapshot().EnemyShip.Crew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
         for (var i = 0; i < 5 * 30; i++)
         {
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);

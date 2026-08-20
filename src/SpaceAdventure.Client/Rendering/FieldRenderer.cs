@@ -117,11 +117,11 @@ public sealed class FieldRenderer
         // is called out by name; the rest are marked as raiders, so it's obvious which one to fly
         // at with a suit on.
         var rotation = -snapshot.ShipField.RotationDegrees * (MathF.PI / 180f);
-        foreach (var enemy in snapshot.EnemyShips)
+        foreach (var enemy in snapshot.EnemyShip.Ships)
         {
             var enemyScreen = WorldToScreen(new Vec2(enemy.X, enemy.Y));
             DrawEnemyShipExterior(spriteBatch, enemyScreen, enemy,
-                enemy.IsBoardable ? snapshot.EnemyCrew.Count(c => c.Alive) : -1,
+                enemy.IsBoardable ? snapshot.EnemyShip.Crew.Count(c => c.Alive) : -1,
                 rotation + (enemy.RotationDegrees * MathF.PI / 180f), totalSeconds);
             DrawOffScreenMarker(spriteBatch, enemyScreen, viewportOrigin, viewportSize,
                 enemy.IsBoardable ? "Враг" : "Рейдер", Color.OrangeRed);

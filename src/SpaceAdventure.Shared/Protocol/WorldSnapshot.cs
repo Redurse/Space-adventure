@@ -45,19 +45,10 @@ public sealed record WorldSnapshot(
     // exterior view), not station-interior content, so these stay out of StationSnapshot itself.
     Vec2 DockBerthPosition,
     bool CanDock,
-    IReadOnlyList<Room> EnemyShipRooms,
-    IReadOnlyList<Door> EnemyShipDoors,
-    AirlockOuterDoor EnemyShipBoardingHatch,
-    // Which hull class is in front of the guns right now, and the air left in each of its
-    // compartments - the boarding party fights by both (World.EnemyAtmosphere.cs).
-    string EnemyShipClassName,
-    IReadOnlyList<RoomOxygenState> EnemyRoomOxygen,
-    // The boardable enemy's position. EnemyShips is the whole squadron out there right now, each
-    // with its own place in the field (World.EnemyFleet.cs).
-    Vec2 EnemyShipPosition,
-    IReadOnlyList<EnemyShipFieldState> EnemyShips,
+    // The boardable enemy hull's own interior/crew/position (EnemyShipSnapshot.cs) - grouped the
+    // same way Station/AsteroidField are; BoardingRenderer always wants the whole thing together.
+    EnemyShipSnapshot EnemyShip,
     IReadOnlyList<ProjectileState> Projectiles,
-    IReadOnlyList<EnemyCrewState> EnemyCrew,
     // Bullets and bolts from personal weapons, in flight (World.PersonalShots.cs).
     IReadOnlyList<PersonalShotState> PersonalShots,
     IReadOnlyList<FactionStandingState> FactionStandings,

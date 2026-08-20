@@ -32,33 +32,33 @@ public sealed class BoardingRenderer
         // Real air, drawn through the same red tint the player's own compartments use: which rooms
         // are already vented is the boarding party's main tactical readout (World.EnemyAtmosphere.cs).
         float Oxygen(string roomId) =>
-            snapshot.EnemyRoomOxygen.FirstOrDefault(o => o.RoomId == roomId)?.Oxygen ?? 100f;
+            snapshot.EnemyShip.RoomOxygen.FirstOrDefault(o => o.RoomId == roomId)?.Oxygen ?? 100f;
 
-        foreach (var room in snapshot.EnemyShipRooms)
+        foreach (var room in snapshot.EnemyShip.Rooms)
             _shipRenderer.DrawRoomFloor(spriteBatch, room, Oxygen(room.Id), origin);
-        foreach (var room in snapshot.EnemyShipRooms)
+        foreach (var room in snapshot.EnemyShip.Rooms)
             _shipRenderer.DrawRoomWalls(spriteBatch, room, Oxygen(room.Id), origin);
 
         // Doors start closed aboard a hull that has just been boarded, and opening one is how the
         // vacuum gets to the next compartment - so their real state has to show.
-        foreach (var door in snapshot.EnemyShipDoors)
+        foreach (var door in snapshot.EnemyShip.Doors)
         {
             var isOpen = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? false;
             _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen, origin);
         }
 
-        var hatch = snapshot.EnemyShipBoardingHatch;
+        var hatch = snapshot.EnemyShip.BoardingHatch;
         _shipRenderer.DrawDoor(spriteBatch, hatch.Left, hatch.Top, hatch.Width, hatch.Height, isOpen: true, origin, leadsToVacuum: true);
 
         // Which hull this is: the classes differ in how many defenders hold them and whether those
         // defenders can be suffocated, so naming it is naming the plan of attack.
-        var firstRoom = snapshot.EnemyShipRooms.FirstOrDefault();
+        var firstRoom = snapshot.EnemyShip.Rooms.FirstOrDefault();
         if (firstRoom is not null)
-            spriteBatch.DrawString(_font, snapshot.EnemyShipClassName,
+            spriteBatch.DrawString(_font, snapshot.EnemyShip.ClassName,
                 origin + new Vector2(firstRoom.X * ShipRenderer.PixelsPerUnit, firstRoom.Y * ShipRenderer.PixelsPerUnit - 34),
                 Color.OrangeRed, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
 
-        foreach (var crew in snapshot.EnemyCrew.Where(c => c.Alive))
+        foreach (var crew in snapshot.EnemyShip.Crew.Where(c => c.Alive))
             DrawCrew(spriteBatch, crew, origin);
 
         foreach (var character in snapshot.Characters.Where(c => c.OnEnemyShip))

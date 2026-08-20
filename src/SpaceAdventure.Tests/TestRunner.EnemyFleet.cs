@@ -66,7 +66,7 @@ internal static partial class TestRunner
         var afterFirst = world.CreateSnapshot();
         if (world.Phase != VoyagePhase.Battle || afterFirst.Enemy.RemainingShips != 1)
             return false;
-        if (afterFirst.Enemy.Hp < afterFirst.Enemy.MaxHp || afterFirst.EnemyCrew.Any(c => !c.Alive))
+        if (afterFirst.Enemy.Hp < afterFirst.Enemy.MaxHp || afterFirst.EnemyShip.Crew.Any(c => !c.Alive))
             return false;
 
         DestroyCurrentEnemyShip(world);

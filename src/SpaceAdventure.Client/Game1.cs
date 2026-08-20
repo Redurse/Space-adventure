@@ -1014,15 +1014,15 @@ public partial class Game1 : Game
 
         if (me.OnEnemyShip)
         {
-            foreach (var door in snapshot.EnemyShipDoors)
+            foreach (var door in snapshot.EnemyShip.Doors)
                 gaps.Add(Occluders.ToGap(door));
-            gaps.Add(Occluders.ToGap(snapshot.EnemyShipBoardingHatch));
-            walls = Occluders.Build(snapshot.EnemyShipRooms, gaps);
+            gaps.Add(Occluders.ToGap(snapshot.EnemyShip.BoardingHatch));
+            walls = Occluders.Build(snapshot.EnemyShip.Rooms, gaps);
             origin = ComputeStationCamera(me);
             eye = new Vector2(me.X, me.Y);
             // A boarded ship is a hostile hull running on its own damaged grid, not the player's -
             // dim, reddish, and flickering rather than tied to the player's own power state.
-            lights = BuildEnemyShipLights(snapshot.EnemyShipRooms, totalSeconds);
+            lights = BuildEnemyShipLights(snapshot.EnemyShip.Rooms, totalSeconds);
             floor = EnemyShipFloor;
         }
         else

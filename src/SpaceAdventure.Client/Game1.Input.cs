@@ -1048,7 +1048,7 @@ public partial class Game1
             // Aboard a boarded hull the doors are the fight: they start closed, and opening one lets
             // the breach through into the next compartment (World.EnemyAtmosphere.cs). Same click, same
             // proximity rule - the character's own coordinates are that structure's while aboard it.
-            foreach (var door in snapshot.EnemyShipDoors)
+            foreach (var door in snapshot.EnemyShip.Doors)
             {
                 if (NearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
                     return (-1, -1, null, null, -1, false, false, null, false, door.Id);
@@ -1255,10 +1255,10 @@ public partial class Game1
 
             // CharacterState carries no RoomId, so the hint derives the room the same way the
             // interior hint already does for breaches - by which room rect contains the position.
-            var boardingRoom = snapshot.EnemyShipRooms.FirstOrDefault(r => r.Contains(boardingPosition));
-            var inRange = snapshot.EnemyCrew.Any(c => c.Alive && c.RoomId == boardingRoom?.Id &&
+            var boardingRoom = snapshot.EnemyShip.Rooms.FirstOrDefault(r => r.Contains(boardingPosition));
+            var inRange = snapshot.EnemyShip.Crew.Any(c => c.Alive && c.RoomId == boardingRoom?.Id &&
                 (new Vec2(c.X, c.Y) - boardingPosition).Length() <= WeaponDefinitions.Range(weapon));
-            var remaining = snapshot.EnemyCrew.Count(c => c.Alive);
+            var remaining = snapshot.EnemyShip.Crew.Count(c => c.Alive);
             return inRange
                 ? $"[Space] огонь ({ItemDefinitions.DisplayName(weapon)})  Осталось врагов: {remaining}"
                 : $"Абордаж. Осталось врагов: {remaining}";
@@ -1440,7 +1440,7 @@ public partial class Game1
         // Aboard a boarded hull the same click matters more: those doors start closed, and opening
         // one lets the breach through into the compartment behind it (World.EnemyAtmosphere.cs).
         if (me.OnEnemyShip &&
-            snapshot.EnemyShipDoors.Any(d => (d.Position - myPosition).Length() < TurretInteractionRadius))
+            snapshot.EnemyShip.Doors.Any(d => (d.Position - myPosition).Length() < TurretInteractionRadius))
             return "[ЛКМ] открыть дверь (стравит воздух)";
         if (nearDoor || nearOuterDoor)
             return "[ЛКМ] открыть/закрыть дверь";

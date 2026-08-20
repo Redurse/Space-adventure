@@ -250,7 +250,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-delta"));
         for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
-        var baselineSize = world.CreateSnapshot().EnemyShips.Count;
+        var baselineSize = world.CreateSnapshot().EnemyShip.Ships.Count;
 
         GrindStandingHostile(world, "sector-delta", FactionId.Consortium);
         if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.HostileThreshold)
@@ -260,7 +260,7 @@ internal static partial class TestRunner
         for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
-        return world.CreateSnapshot().EnemyShips.Count == baselineSize + 1;
+        return world.CreateSnapshot().EnemyShip.Ships.Count == baselineSize + 1;
     }
 
     // Deep enough hostility closes the territory entirely (World.StationDocking.cs's CanDockNow) -
