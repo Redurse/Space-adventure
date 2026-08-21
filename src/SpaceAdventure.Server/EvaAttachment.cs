@@ -7,6 +7,7 @@ public enum EvaAttachment
     None,   // free-floating, drifting on EvaVelocity (jetpack/momentum)
     Ship,
     Asteroid,
+    Station,
 }
 
 // Which body a drifter just kicked off from, so its boots don't immediately grab them back while
@@ -16,4 +17,5 @@ public enum PushOffOrigin
     None,
     Ship,
     Asteroid,
+    Station,
 }

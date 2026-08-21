@@ -172,6 +172,7 @@ internal static partial class TestRunner
         ("World_Mining_CutBlock_DropsOnceAndIsGone", World_Mining_CutBlock_DropsOnceAndIsGone),
         ("World_Welding_WithoutTank_WeldsNothing", World_Welding_WithoutTank_WeldsNothing),
         ("World_WallCutter_DamagesGraduallyBeforeBreaching", World_WallCutter_DamagesGraduallyBeforeBreaching),
+        ("World_Cut_BreachesOwnHullFromOutside", World_Cut_BreachesOwnHullFromOutside),
         ("World_WeldHealthyWall_RevealsHpWithoutChangingIt", World_WeldHealthyWall_RevealsHpWithoutChangingIt),
         ("World_StationWall_WeldRevealsHpWithoutChangingIt", World_StationWall_WeldRevealsHpWithoutChangingIt),
         ("World_Eva_SingleBrokenBlock_IsNotPassable", World_Eva_SingleBrokenBlock_IsNotPassable),
@@ -305,6 +306,8 @@ internal static partial class TestRunner
         ("World_Equip_CannotUnequipNonEmptyBeltBag", World_Equip_CannotUnequipNonEmptyBeltBag),
         ("World_Equip_WrongItemTypeIsRefused", World_Equip_WrongItemTypeIsRefused),
         ("World_Equip_IdCardEquipsIntoItsOwnSlot", World_Equip_IdCardEquipsIntoItsOwnSlot),
+        ("World_Eva_MagneticBoots_AttachToStationHull", World_Eva_MagneticBoots_AttachToStationHull),
+        ("World_Eva_BootsOff_BouncesOffStationHull", World_Eva_BootsOff_BouncesOffStationHull),
     };
 
     public static int Run()

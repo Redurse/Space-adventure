@@ -19,6 +19,9 @@ public sealed partial class World
     // the whole step is sampled (TryAutoAttachAlong), not just its endpoint.
     private const float ShipAttachZoneMargin = 0.5f;
     private const float AsteroidAttachZoneMargin = 0.5f;
+    // Same margin as the ship's own hull - a station's plating is no less solid, and boots that
+    // grab a ship's own outer wall on contact should grab any other station's for the same reason.
+    private const float StationAttachZoneMargin = 0.5f;
     // Half the character's own width, so a magnetized suit's boots touch the hull rather than
     // hovering off it: magnetized movement is constrained to the *surface*, not to a thick shell
     // around it (which used to let you wander a couple of metres off the plating, and even across
@@ -52,6 +55,10 @@ public sealed partial class World
     {
         EvaAttachment.Ship => _shipFieldPosition + RotateLocalToWorld(character.EvaLocalOffset, _shipRotationDegrees),
         EvaAttachment.Asteroid => AsteroidField.Asteroids.First(a => a.Id == character.EvaAttachedAsteroidId).Position + character.EvaLocalOffset,
+        // The station never rotates (WorldOffset is a pure translation, unlike the ship's own
+        // _shipFieldPosition/_shipRotationDegrees pair), so its own local offset needs no rotation
+        // step back out to world space.
+        EvaAttachment.Station => Station.WorldOffset + character.EvaLocalOffset,
         _ => character.EvaLocalOffset, // None: this field just holds the world position directly
     };
 
@@ -260,6 +267,12 @@ public sealed partial class World
     private static Vec2 SnapToAsteroidSurface(Asteroid asteroid, Vec2 localOffset) =>
         AsteroidShape.SurfacePoint(asteroid, asteroid.Position + localOffset, HullWalkClearance) - asteroid.Position;
 
+    // Same rule again on the station's own hull - HullSilhouette works against any room list, not
+    // just the ship's, so this is the exact same call SnapToHullSurface makes, just against
+    // Station.Rooms and with no hullCenter/rotation step either side of it (see GetEvaWorldPosition).
+    private Vec2 SnapToStationSurface(Vec2 localOffset) =>
+        HullSilhouette.SnapToSurface(Station.Rooms, localOffset, HullWalkClearance);
+
     // moveInputDirection is Vec2.Zero when the player isn't holding a direction this tick - free
     // floating characters still need to be stepped every tick regardless (drifting on momentum),
     // unlike attached movement which is a no-op with no input.
@@ -300,6 +313,16 @@ public sealed partial class World
             return;
         }
 
+        if (character.EvaAttachedTo == EvaAttachment.Station)
+        {
+            // The station never rotates, so unlike StepShipAttachedWalk this needs no local/world
+            // conversion either side of the snap - and it never has a return-to-somewhere-else
+            // crossing to check for, since there is no equivalent of walking back aboard your own
+            // ship: getting off the station's hull is always a deliberate push-off (HandlePushOff).
+            character.EvaLocalOffset = SnapToStationSurface(character.EvaLocalOffset + delta);
+            return;
+        }
+
         // Asteroid: no rotation, so the world-space input direction applies directly.
         var asteroid = AsteroidField.Asteroids.First(a => a.Id == character.EvaAttachedAsteroidId);
         var candidate = SnapToAsteroidSurface(asteroid, character.EvaLocalOffset + delta);
@@ -331,28 +354,29 @@ public sealed partial class World
         var worldPos = (from + character.EvaVelocity * (float)deltaSeconds)
             .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
 
-        // The station is solid too, not just something World.StationDocking.cs collides the
-        // ship's own hull against - a suited character drifting into it hits a wall instead of
-        // sailing straight through its rooms. Only meaningful during the same phase
-        // HullTouchesStation itself checks: Station.Position/WorldOffset is "the docking-approach
-        // field space" (Station.cs's own comment), not whatever AsteroidField the ship is actually
-        // sitting in the rest of the time - checking it unconditionally would collide against
-        // stale coordinates from a completely unrelated field. Same frame conversion
-        // HullTouchesStation uses: ContainsPoint expects the station's own docked frame, so the
-        // world point loses its WorldOffset first.
-        if (Phase == VoyagePhase.StationApproach && Station.ContainsPoint(worldPos - Station.WorldOffset))
-        {
-            character.EvaVelocity = Vec2.Zero;
-            return;
-        }
-
         character.EvaLocalOffset = worldPos;
 
         // Checked along the whole step, not just where it ended: a jump used to sail clean through
         // a rock whenever the tick happened to straddle it, and the drifter came out the far side
         // untouched. Sampling the segment means the boots catch whatever the flight actually
-        // crossed, not whatever it happened to land on.
+        // crossed, not whatever it happened to land on - this is what makes the station's own
+        // plating (TryAutoAttach's own Station branch) grab magnetic boots on contact and bounce
+        // a boots-off drifter straight back off it, the same as the ship's hull already does.
         TryAutoAttachAlong(character, from, worldPos);
+
+        // Defensive only: the sampling above should always catch the crossing first (it's fine
+        // enough - 0.25 units a sample - that a single tick blowing straight through the whole
+        // attach margin between two samples shouldn't happen at any speed this game reaches), but
+        // if it somehow still does, this is what stops a drifter dead inside the station's own
+        // rooms instead of leaving it lodged there. Same phase guard as the station branch above:
+        // Station.Position/WorldOffset is "the docking-approach field space" (Station.cs's own
+        // comment), not whatever field the ship is actually in the rest of the time.
+        if (character.EvaAttachedTo == EvaAttachment.None && Phase == VoyagePhase.StationApproach &&
+            Station.ContainsPoint(character.EvaLocalOffset - Station.WorldOffset))
+        {
+            character.EvaLocalOffset = from;
+            character.EvaVelocity = Vec2.Zero;
+        }
     }
 
     // Touching the hull or a rock while drifting free re-magnetizes automatically ("зацепиться"
@@ -419,6 +443,40 @@ public sealed partial class World
             return true;
         }
 
+        // The station's hull, exactly the same shape of check as the ship's own just above -
+        // only meaningful during the same phase StepFreeFloating's own station check already
+        // guards on: Station.Position/WorldOffset is "the docking-approach field space" (that
+        // check's own comment), not whatever field the player is actually in the rest of the
+        // time, so testing it unconditionally would attach to (or bounce off) stale coordinates
+        // from a completely unrelated field.
+        if (Phase == VoyagePhase.StationApproach)
+        {
+            var localToStation = worldPos - Station.WorldOffset;
+            if (HullSilhouette.DistanceOutside(Station.Rooms, localToStation) <= StationAttachZoneMargin)
+            {
+                if (!character.MagneticBootsOn)
+                {
+                    if (character.BouncedOffFrom == PushOffOrigin.Station || character.PushedOffFrom == PushOffOrigin.Station)
+                        return false;
+
+                    character.EvaLocalOffset = worldPos;
+                    character.EvaVelocity = character.EvaVelocity * -BounceSpeedFactor;
+                    character.BouncedOffFrom = PushOffOrigin.Station;
+                    return true;
+                }
+
+                if (character.PushedOffFrom == PushOffOrigin.Station)
+                    return false;
+
+                character.EvaAttachedTo = EvaAttachment.Station;
+                character.EvaLocalOffset = SnapToStationSurface(localToStation);
+                character.EvaVelocity = Vec2.Zero;
+                character.PushedOffFrom = PushOffOrigin.None;
+                character.BouncedOffFrom = PushOffOrigin.None;
+                return true;
+            }
+        }
+
         foreach (var asteroid in AsteroidField.Asteroids)
         {
             if (AsteroidShape.DistanceOutside(asteroid, worldPos) > AsteroidAttachZoneMargin)
@@ -478,6 +536,18 @@ public sealed partial class World
             }
         }
 
+        if (character.PushedOffFrom == PushOffOrigin.Station || character.BouncedOffFrom == PushOffOrigin.Station)
+        {
+            var localToStation = worldPos - Station.WorldOffset;
+            if (HullSilhouette.DistanceOutside(Station.Rooms, localToStation) > StationAttachZoneMargin + PushOffClearMargin)
+            {
+                if (character.PushedOffFrom == PushOffOrigin.Station)
+                    character.PushedOffFrom = PushOffOrigin.None;
+                if (character.BouncedOffFrom == PushOffOrigin.Station)
+                    character.BouncedOffFrom = PushOffOrigin.None;
+            }
+        }
+
         if (character.PushedOffFrom == PushOffOrigin.Asteroid || character.BouncedOffFrom == PushOffOrigin.Asteroid)
         {
             var rockId = character.PushedOffFrom == PushOffOrigin.Asteroid ? character.PushedOffAsteroidId : character.BouncedOffAsteroidId;
@@ -504,7 +574,12 @@ public sealed partial class World
             return;
 
         var worldPos = GetEvaWorldPosition(character);
-        character.PushedOffFrom = character.EvaAttachedTo == EvaAttachment.Ship ? PushOffOrigin.Ship : PushOffOrigin.Asteroid;
+        character.PushedOffFrom = character.EvaAttachedTo switch
+        {
+            EvaAttachment.Ship => PushOffOrigin.Ship,
+            EvaAttachment.Station => PushOffOrigin.Station,
+            _ => PushOffOrigin.Asteroid,
+        };
         character.PushedOffAsteroidId = character.EvaAttachedAsteroidId;
         character.EvaAttachedTo = EvaAttachment.None;
         character.EvaAttachedAsteroidId = null;

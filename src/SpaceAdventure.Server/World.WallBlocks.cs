@@ -125,9 +125,18 @@ public sealed partial class World
         if (IsWelding(character.PlayerId))
             return FindAimedWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius)?.Id
                 ?? (character.OnStation ? FindAimedStationWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius)?.Id : null);
-        if (IsCutting(character.PlayerId) && !character.IsOutside)
+        if (IsCutting(character.PlayerId))
+        {
+            // Outside, CutAlongFlame (World.Cutting.cs) only ever reaches the hull once nothing
+            // along the flame is ore - same priority order here, so the bar never shows a hull
+            // block while the flame is actually about to bite into a vein instead.
+            if (character.IsOutside)
+                return FindAimedOreDeposit(character) is null
+                    ? FindAimedWallBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius)?.Id
+                    : null;
             return FindAimedCutTarget(character).WallBlockId
                 ?? (character.OnStation ? FindAimedStationWallBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius)?.Id : null);
+        }
         return null;
     }
 }

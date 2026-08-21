@@ -45,14 +45,15 @@ public sealed partial class World
 
             character.Inventory.DrainTank(slot, OxygenTankDefinitions.CutterDrainPerSecond * (float)deltaSeconds);
 
-            // The torch lights anywhere and burns its tank while it does. Outside, the only thing
-            // it has to bite on is ore (field space); indoors, aboard your own ship, it bites into
-            // a closed door or the ship's own wall blocks instead (CutIndoorAlongFlame below). It
-            // lights the same way standing in a station's own corridors, but neither a door nor a
-            // wall block there ever matches (AllShipDoors/Ship.WallBlocks are keyed to the ship's
-            // own ids, never a station's), so there's nothing there for it to actually cut into. A
-            // boarded enemy hull has none of those or ore, so there's nothing for it to do there
-            // either.
+            // The torch lights anywhere and burns its tank while it does. Outside, it bites into
+            // ore first and the player's own hull second if nothing's out there to mine
+            // (CutAlongFlame - breaching it from the outside in, same as WeldAlongFlame already
+            // patches it from either side); indoors, aboard your own ship, it bites into a closed
+            // door or the ship's own wall blocks instead (CutIndoorAlongFlame below). It lights the
+            // same way standing in a station's own corridors, but neither a door nor a wall block
+            // there ever matches (AllShipDoors/Ship.WallBlocks are keyed to the ship's own ids,
+            // never a station's), so there's nothing there for it to actually cut into. A boarded
+            // enemy hull has none of those or ore, so there's nothing for it to do there either.
             if (character.IsOutside)
                 CutAlongFlame(character, deltaSeconds);
             else if (!character.OnEnemyShip)
@@ -103,12 +104,15 @@ public sealed partial class World
             DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
     }
 
-    private void CutAlongFlame(Character character, double deltaSeconds)
+    // Shared by CutAlongFlame and the snapshot query that tells the client which target to show a
+    // health bar over (World.WallBlocks.cs's GetWallToolTargetId) - one sampling routine so the two
+    // can never disagree about what the flame is actually about to bite into out here.
+    private OreDeposit? FindAimedOreDeposit(Character character)
     {
         var origin = GetEvaWorldPosition(character);
         var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection.Normalized() : character.FacingDirection;
         if (aim.Length() < 0.01f)
-            return;
+            return null;
 
         // Sampled along the flame rather than tested at its tip: a block half a metre wide sitting
         // beside the character would otherwise be missed by a flame pointed past it.
@@ -117,15 +121,33 @@ public sealed partial class World
             var point = origin + aim * (CutterReachUnits * i / CutterSamples);
             var block = AsteroidField.OreDeposits.FirstOrDefault(d =>
                 _oreDepositHp.GetValueOrDefault(d.Id) > 0f && d.DistanceFrom(point) <= 0f);
-            if (block is null)
-                continue;
+            if (block is not null)
+                return block;
+        }
+        return null;
+    }
 
+    private void CutAlongFlame(Character character, double deltaSeconds)
+    {
+        var block = FindAimedOreDeposit(character);
+        if (block is not null)
+        {
             var hp = _oreDepositHp[block.Id] - CutterDamagePerSecond * (float)deltaSeconds;
             _oreDepositHp[block.Id] = Math.Max(0f, hp);
             if (hp <= 0f)
                 _droppedItems.Add(new DroppedItem($"drop-{_nextDroppedItemId++}", ItemType.Mineral, block.X, block.Y));
-            return; // one block at a time: the flame cuts what it is pointed at
+            return; // one target at a time: the flame cuts what it is pointed at
         }
+
+        // Nothing to mine along the flame - try the player's own hull instead, the same way the
+        // welder already patches it from outside (World.Welding.cs's WeldAlongFlame): same reach/
+        // rate as cutting it open from indoors (WallCutReachUnits/WallCutDamagePerSecond,
+        // World.WallBlocks.cs). FindAimedWallBlock already knows how to test an EVA aim against the
+        // hull's real position out here (it rotates each block's local position out to world
+        // space), so this reuses it rather than re-deriving the same geometry a second time.
+        var hullBlock = FindAimedWallBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
+        if (hullBlock is not null)
+            DamageWallBlock(hullBlock.Id, WallCutDamagePerSecond * (float)deltaSeconds);
     }
 
     private IReadOnlyList<OreDepositState> CreateOreDepositStates() =>

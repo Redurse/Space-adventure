@@ -60,6 +60,71 @@ internal static partial class TestRunner
         return ticksToBreak < 4 * 30 && RoomHasBreach(world.CreateSnapshot(), "corridor");
     }
 
+    // The cutter used to only ever bite into ore once outside (CutAlongFlame) - it now falls back
+    // to the player's own hull out there too, breaching it from the outside in exactly like it
+    // already breaches it from the inside out, and the same way the welder already patches a
+    // breach from either side (World.Welding.cs's WeldAlongFlame).
+    private static bool World_Cut_BreachesOwnHullFromOutside()
+    {
+        var world = new World();
+        world.SpawnCharacter(1); // corridor
+        EnterAsteroidFieldStationary(world);
+        ExitShipIntoVacuum(world); // boots on, standing right on the plating beside the airlock
+
+        // A block on the airlock chamber's own *right* wall (X=26, the same wall the door itself
+        // sits in, at Y=3) but well clear of the door's own span - reached by walking there
+        // magnetized (StepShipAttachedWalk) along that one face, not by pushing off and flying
+        // (ExitShipAndFlyTo): a deliberate push-off marks the character immune to re-grabbing the
+        // *ship* specifically (TryAutoAttach's PushedOffFrom == PushOffOrigin.Ship check) until it
+        // clears the ship's own attach zone by a full extra margin (PushOffClearMargin) first -
+        // which a target this close to the same hull never would. Staying on the same face matters
+        // too: a straight line from the door to a point on a *different* face of a convex room
+        // cuts through the room's own interior corner, which StepShipAttachedWalk reads as
+        // stepping back inward and, next to a still-open door, walks the character straight back
+        // through it - picking a target on the same wall keeps every step of the walk genuinely
+        // tangential, the same way a player rounding a corner would hug the hull face by face
+        // rather than cut the corner.
+        var block = world.Ship.WallBlocks.First(b => b.RoomId == "airlock-chamber" && b.Position.X == 26f && MathF.Abs(b.Position.Y - 3f) > 1.5f);
+        var hullCenterLocal = new Vec2(
+            (world.Ship.Rooms.Min(r => r.Left) + world.Ship.Rooms.Max(r => r.Right)) / 2f,
+            (world.Ship.Rooms.Min(r => r.Top) + world.Ship.Rooms.Max(r => r.Bottom)) / 2f);
+
+        for (var i = 0; i < 20 * 30; i++) // comfortably past the few seconds a short walk around one corner takes
+        {
+            var shipField = world.CreateSnapshot().ShipField;
+            var blockFieldTarget = new Vec2(
+                shipField.X + (block.Position.X - hullCenterLocal.X),
+                shipField.Y + (block.Position.Y - hullCenterLocal.Y));
+            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+            var toTarget = new Vec2(blockFieldTarget.X - me.X, blockFieldTarget.Y - me.Y);
+            // Magnetized walking keeps the character HullWalkClearance (0.35) off the raw hull
+            // surface the block's own Position sits on, so "at the target" never reaches 0 - only
+            // ever as close as that same clearance allows.
+            if (toTarget.Length() <= 0.5f)
+                break;
+            var dir = toTarget.Normalized();
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+            world.Step(RealtimeStep);
+        }
+
+        var afterWalk = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (!afterWalk.IsOutside || !afterWalk.IsEvaAttached)
+            return false; // let go of the hull somewhere along the way
+
+        var finalShipField = world.CreateSnapshot().ShipField;
+        var finalTarget = new Vec2(
+            finalShipField.X + (block.Position.X - hullCenterLocal.X),
+            finalShipField.Y + (block.Position.Y - hullCenterLocal.Y));
+        var aim = new Vec2(finalTarget.X - afterWalk.X, finalTarget.Y - afterWalk.Y).Normalized();
+        for (var i = 0; i < 4 * 30; i++) // comfortably past the ~3s a full block takes
+        {
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: aim.X, LookY: aim.Y));
+            world.Step(RealtimeStep);
+        }
+
+        return world.CreateSnapshot().WallBlockStates.First(s => s.Id == block.Id).Breached;
+    }
+
     // Aiming a lit welder at a wall that's already at full health used to be impossible to
     // distinguish from aiming at nothing at all - now it reveals the block (WallToolTargetBlockId,
     // what the client's health bar keys off) without changing anything about it.
