@@ -401,6 +401,7 @@ public partial class Game1 : Game
         _shipEditorPanel = new ShipEditorPanel(GraphicsDevice, _font);
         _existingSave = SaveStore.Load();
         _sounds = new GameSounds(Content);
+        _music = new GameMusic(Content);
         try { _doorBreakSound = Content.Load<SoundEffect>("Sounds/DoorBreak"); }
         catch { _doorBreakSound = null; } // same "missing content build shouldn't crash the game" reasoning as Shaders.TryLoad
         // The one raster texture asset in an otherwise fully-procedural game (ItemIcons.cs draws
@@ -462,6 +463,7 @@ public partial class Game1 : Game
         UpdateRenderScale();
 
         SoundEffect.MasterVolume = Math.Clamp(settings.MasterVolume, 0f, 1f);
+        _music?.SetMasterVolume(settings.MasterVolume);
         if (_scenePost is not null)
         {
             _scenePost.BloomStrength = settings.BloomStrength;
@@ -495,6 +497,8 @@ public partial class Game1 : Game
         _prevFullscreenToggleDown = fullscreenToggleDown;
 
         _designMouse = ToDesignSpace(Mouse.GetState().Position);
+
+        UpdateGameMusic(gameTime.TotalGameTime.TotalSeconds);
 
         if (!_sessionStarted)
         {
@@ -1199,6 +1203,7 @@ public partial class Game1 : Game
             if (menuPost)
             {
                 DrawMenuLightMask(menuSeconds);
+                DrawMenuDistortion(menuSeconds);
                 var savedLook = ApplyMenuPostLook();
                 _scenePost.Present(_spriteBatch, menuSeconds);
                 RestorePostLook(savedLook);

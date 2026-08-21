@@ -48,8 +48,10 @@ public partial class Game1
     private void DrawMenuScene(float totalSeconds)
     {
         var pane = MenuArtPane;
+        DrawMenuStars(pane, totalSeconds);
         DrawMenuPlanet(pane, totalSeconds);
         DrawMenuEnginePlume(pane, totalSeconds);
+        DrawMenuSunGlare(pane, totalSeconds);
     }
 
     private void DrawMenuPlanet(Rectangle pane, float totalSeconds)
@@ -83,6 +85,7 @@ public partial class Game1
         _planetEffect.Parameters["Rotation"]?.SetValue(totalSeconds / PlanetRotationSeconds);
         _planetEffect.Parameters["SurfaceTexture"]?.SetValue(_planetSurface);
         _planetEffect.Parameters["CityBrightness"]?.SetValue(1f);
+        _planetEffect.Parameters["Time"]?.SetValue(totalSeconds);
 
         _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp,
             effect: _planetEffect, transformMatrix: _renderScale);
@@ -114,6 +117,62 @@ public partial class Game1
     // plume takes over the same space rather than sitting on top of a stump.
     private const float PlumeLength = 0.1534f;
 
+    private Vector2 NozzleMouth(Rectangle pane, int nozzle) =>
+        new(pane.X + pane.Width * NozzleMouths[nozzle].X, pane.Y + pane.Height * NozzleMouths[nozzle].Y);
+
+    // Three unrelated frequencies per nozzle, offset per engine: a plume that pulses on one clean sine
+    // reads as a blinking light rather than as combustion, and three engines flickering in step read
+    // as one. Shared, so the ripple below breathes with the exhaust instead of against it.
+    private static float PlumeFlicker(int nozzle, float totalSeconds)
+    {
+        var phase = nozzle * 2.17f;
+        return 1f
+            + MathF.Sin(totalSeconds * 11.3f + phase) * 0.11f
+            + MathF.Sin(totalSeconds * 27.7f + phase * 1.7f) * 0.09f
+            + MathF.Sin(totalSeconds * 41.1f + phase * 0.6f) * 0.05f;
+    }
+
+    // Heat shimmer, stamped into the post chain's distortion mask so the stars behind the exhaust
+    // bend. Glow can be painted by anything; refraction behind it is the part that says there is hot
+    // gas there rather than a bright shape laid over the picture.
+    //
+    // Called from Draw between the menu and Present, because BeginDistortion switches render target
+    // and every switch has to happen before the backbuffer is touched.
+    internal void DrawMenuDistortion(float totalSeconds)
+    {
+        if (_menuScreen != MenuScreen.Main || _menuBackdrop is null || !_scenePost.BeginDistortion())
+            return;
+
+        var pane = MenuArtPane;
+        var soft = _scenePost.Blob;
+        var softOrigin = new Vector2(soft.Width * 0.5f, soft.Height * 0.5f);
+
+        _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, SamplerState.LinearClamp,
+            transformMatrix: _renderScale);
+        for (var i = 0; i < NozzleMouths.Length; i++)
+        {
+            var mouth = NozzleMouth(pane, i);
+            var flicker = PlumeFlicker(i, totalSeconds);
+            var radius = NozzleRadii[i];
+            var length = pane.Width * PlumeLength * flicker;
+
+            // Wider and longer than the visible cone: air bends light well past the part of it that
+            // is bright enough to see. Same reasoning as the steam in the ship interior.
+            const int steps = 12;
+            for (var s = 0; s < steps; s++)
+            {
+                var t = s / (float)steps;
+                var pos = mouth + ExhaustAxis * (length * 1.35f * t);
+                var w = radius * (1.1f + 3.4f * t);
+                _spriteBatch.Draw(soft, pos, null,
+                    Color.White * (MathF.Pow(1f - t, 1.5f) * 0.55f * flicker), 0f, softOrigin,
+                    new Vector2(w * 2f / soft.Width, w * 2f / soft.Height), SpriteEffects.None, 0f);
+            }
+        }
+        _spriteBatch.End();
+        _scenePost.EndDistortion();
+    }
+
     // The engines. The hull is part of the backdrop image, but the plume is not: a painted one would
     // be frozen, and a frozen exhaust is worse than none - it reads as a ship that has stalled. The
     // backdrop is baked with its nozzles empty (orbit2.BAKE_PLUME) precisely so this is the only
@@ -138,18 +197,8 @@ public partial class Game1
             transformMatrix: _renderScale);
         for (var i = 0; i < NozzleMouths.Length; i++)
         {
-            var mouth = new Vector2(pane.X + pane.Width * NozzleMouths[i].X,
-                pane.Y + pane.Height * NozzleMouths[i].Y);
-
-            // Three unrelated frequencies per nozzle, offset per engine: a plume that pulses on one
-            // clean sine reads as a blinking light rather than as combustion, and three engines
-            // flickering in step read as one.
-            var phase = i * 2.17f;
-            var flicker = 1f
-                + MathF.Sin(totalSeconds * 11.3f + phase) * 0.11f
-                + MathF.Sin(totalSeconds * 27.7f + phase * 1.7f) * 0.09f
-                + MathF.Sin(totalSeconds * 41.1f + phase * 0.6f) * 0.05f;
-
+            var mouth = NozzleMouth(pane, i);
+            var flicker = PlumeFlicker(i, totalSeconds);
             var radius = NozzleRadii[i];
             var length = pane.Width * PlumeLength * flicker;
 

@@ -35,6 +35,10 @@ float3 SunColour = float3(1.0, 0.86, 0.66);
 // How bright the cities on the night side burn.
 float CityBrightness = 1.0;
 
+// Seconds. Only the storms use it: everything else on this planet is a function of Rotation, which
+// grows without bound and would make a poor clock for something that has to flash and stop.
+float Time = 0.0;
+
 // The disc's radius as a fraction of the quad's half size. Less than 1 on purpose: the atmosphere
 // reaches past the surface, and a quad sized exactly to the disc clips that halo into four corner
 // wedges instead of a ring. The caller pads the quad by the same factor.
@@ -52,12 +56,24 @@ sampler2D SurfaceSampler : register(s0) = sampler_state
     MagFilter = Point;
 };
 
+// Cheap hash of a storm cell. Not good noise - it does not have to be, it only has to give each cell
+// its own unrelated phase so no two cells flash together.
+float CellHash(float2 cell)
+{
+    return frac(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+}
+
 struct VertexShaderOutput
 {
     float4 Position : SV_POSITION;
     float4 Color : COLOR0;
     float2 TextureCoordinates : TEXCOORD0;
 };
+
+float Luminance(float3 c)
+{
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
 
 float4 MainPS(VertexShaderOutput input) : COLOR
 {
@@ -121,6 +137,24 @@ float4 MainPS(VertexShaderOutput input) : COLOR
     // capitals get a halo of glow the way they do from orbit, and every town below them stays a hard
     // pixel. Push this up and the bloom spreads over the lot, back into the smear this replaced.
     lit += lampColour * lamp * night * CityBrightness * 1.5;
+
+    // Storms. A lightning flash under cloud is the one thing that makes a dark side read as weather
+    // rather than as a texture, and it costs a hash and a sawtooth.
+    //
+    // Where they are allowed: bright ground, because that is cloud, and away from the poles, because
+    // the ice caps are bright too and read as cloud to any test this cheap - and thunderstorms are a
+    // tropical business anyway, so the gate that excludes the caps is the physical answer as well.
+    float2 cell = floor(float2(lon, lat) * float2(140.0, 70.0));
+    float stormSeed = CellHash(cell);
+    float cloudy = saturate((Luminance(surface.rgb) - 0.58) * 4.0);
+    float tropics = saturate((0.66 - abs(n.y)) * 3.0);
+
+    // One flash per cell every few seconds, each cell on its own phase and its own rate. The
+    // envelope is deliberately lopsided: lightning arrives instantly and decays, and a symmetrical
+    // pulse reads as a lamp being switched.
+    float beat = frac(Time * (0.18 + stormSeed * 0.26) + stormSeed * 7.31);
+    float strike = pow(saturate(1.0 - beat * 22.0), 2.2);
+    lit += float3(0.62, 0.72, 1.0) * strike * cloudy * tropics * night * 1.15;
 
     // Airglow: the upper atmosphere emits faintly in its own right, oxygen green, and towards the limb
     // the line of sight runs through far more of it. It is what stops the night limb being a hard

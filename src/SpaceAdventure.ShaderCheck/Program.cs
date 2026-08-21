@@ -306,16 +306,21 @@ internal sealed class Checks : Game
 
         // Distortion. Striped, because a shift can only be seen against an edge - a flat fill would
         // ripple just as hard and look identical.
-        Check("distortion ripples the picture where the mask is stamped", () =>
+        // This used to vary DistortionStrength between the two frames and stamp the mask in both,
+        // which cannot fail when the mask itself never reaches the shader: the strength alone changes
+        // the result as long as *something* non-zero is in that sampler. It passed for years while
+        // the shimmer did nothing in the game. Now the strength is fixed and the mask is bound in
+        // both frames - only its contents differ - so what is under test is the mask arriving.
+        Check("the distortion mask itself reaches the composite", () =>
         {
             var vp = GraphicsDevice.Viewport;
             using var white = new Texture2D(GraphicsDevice, 1, 1);
             white.SetData(new[] { Color.White });
 
-            Color[] Frame(float strength)
+            Color[] Frame(bool stamp)
             {
                 post.NoPost();
-                post.DistortionStrength = strength;
+                post.DistortionStrength = 3f;
                 post.Begin(Color.Black);
                 batch.Begin();
                 for (var x = 0; x < vp.Width; x += 8)
@@ -323,9 +328,14 @@ internal sealed class Checks : Game
                 batch.End();
                 if (post.BeginDistortion())
                 {
-                    batch.Begin(SpriteSortMode.Deferred, BlendState.Additive);
-                    batch.Draw(post.Blob, new Rectangle(0, 0, vp.Width, vp.Height), Color.White);
-                    batch.End();
+                    if (stamp)
+                    {
+                        batch.Begin(SpriteSortMode.Deferred, BlendState.Additive);
+                        batch.Draw(post.Blob, new Rectangle(0, 0, vp.Width, vp.Height), Color.White);
+                        batch.End();
+                    }
+                    // Marked as drawn either way, so both frames carry the same strength and the same
+                    // bound target and differ only in what was painted into it.
                     post.EndDistortion();
                 }
                 post.Present(batch, 0f);
@@ -334,21 +344,43 @@ internal sealed class Checks : Game
                 return data;
             }
 
-            var still = Frame(0f);
-            var rippled = Frame(3f);
+            var blank = Frame(false);
+            var stamped = Frame(true);
             var moved = 0;
-            for (var i = 0; i < still.Length; i++)
+            for (var i = 0; i < blank.Length; i++)
             {
-                if (still[i] != rippled[i])
+                if (blank[i] != stamped[i])
                     moved++;
             }
-            return moved > 200 ? null : "expected the stripes to shift, only " + moved + " pixels changed";
+            return moved > 200 ? null : "the stripes did not shift: only " + moved + " pixels changed";
         });
 
-        // The property every tiled surface in the game rests on. Asserted on the noise itself and
-        // not on finished pixels: in the floor plate the noise is a few percent of a brightness the
-        // tread ridge dominates, and an earlier pixel-diff version of this check passed happily with
-        // wrapping switched off. A guard that cannot fail is not a guard.
+        // Music belongs here for the same reason the shaders do: it needs a real window and a real
+        // media stack, which the headless suite in SpaceAdventure.Tests cannot have. The failure this
+        // catches is the quiet one - the content build dropping the tracks, which GameMusic swallows
+        // by design so a missing file never costs the game.
+        Check("every music track loads and the player starts one", () =>
+        {
+            var music = new SpaceAdventure.Client.Audio.GameMusic(Content);
+            Console.WriteLine("     tracks loaded: " + music.TrackCount);
+            if (music.TrackCount != 7)
+                return "expected 7 tracks, loaded " + music.TrackCount;
+
+            music.SetMasterVolume(0f);          // verify without making noise
+            music.Update(0.0);                  // arms, schedules the first track
+            music.Update(10_000.0);             // well past any gap - must start something
+            var started = Microsoft.Xna.Framework.Media.MediaPlayer.State;
+            Console.WriteLine("     media state after the first start: " + started);
+            music.Stop();
+            var stopped = Microsoft.Xna.Framework.Media.MediaPlayer.State;
+            Console.WriteLine("     media state after Stop: " + stopped);
+            if (started != Microsoft.Xna.Framework.Media.MediaState.Playing)
+                return "the player did not start a track: state was " + started;
+            if (stopped == Microsoft.Xna.Framework.Media.MediaState.Playing)
+                return "Stop left a track playing";
+            return null;
+        });
+
         Check("the noise lattice wraps, so tiled surfaces have no seam",
             () => TileTextures.NoiseWrapsCleanly() ? null : "Noise does not close on itself - every tiled surface will show a seam");
 

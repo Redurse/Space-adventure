@@ -46,9 +46,17 @@ public partial class Game1
     // The menu is lit and graded brighter than the ship interior on purpose: the interior is a dark
     // place you survive in, the front screen is a poster. Saved and restored around Present rather
     // than changed permanently, so none of it leaks into the game itself.
-    private (float Exposure, float TonemapWhite, float Vignette, float Grade) ApplyMenuPostLook()
+    private (float Exposure, float TonemapWhite, float Vignette, float Grade, float Aberration) ApplyMenuPostLook()
     {
-        var saved = (_scenePost.Exposure, _scenePost.TonemapWhite, _scenePost.Vignette, _scenePost.GradeStrength);
+        var saved = (_scenePost.Exposure, _scenePost.TonemapWhite, _scenePost.Vignette,
+            _scenePost.GradeStrength, _scenePost.Aberration);
+        // Aberration grows with distance from the centre of the frame, and the planet sits hard
+        // against the right edge - the worst place for it. On features one or two pixels across, which
+        // is exactly what the city lights are, splitting the channels does not read as a lens: it
+        // reads as broken pixels, red and green confetti scattered over the night side. Turned most
+        // of the way down here, which leaves it doing its job on the long edges that are big enough
+        // to carry it.
+        _scenePost.Aberration = 0.10f;
         _scenePost.Exposure = 1.75f;
         // A high white point barely compresses anything, so the extra exposure above stays as
         // brightness instead of being folded straight back down by the curve.
@@ -58,8 +66,10 @@ public partial class Game1
         return saved;
     }
 
-    private void RestorePostLook((float Exposure, float TonemapWhite, float Vignette, float Grade) saved)
+    private void RestorePostLook(
+        (float Exposure, float TonemapWhite, float Vignette, float Grade, float Aberration) saved)
     {
+        _scenePost.Aberration = saved.Aberration;
         _scenePost.Exposure = saved.Exposure;
         _scenePost.TonemapWhite = saved.TonemapWhite;
         _scenePost.Vignette = saved.Vignette;

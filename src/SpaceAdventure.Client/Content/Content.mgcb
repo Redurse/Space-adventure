@@ -162,3 +162,45 @@
 /processorParam:DebugMode=Auto
 /build:Shaders/Planet.fx
 
+
+#begin Music/space_ambience_1.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/space_ambience_1.mp3
+
+#begin Music/space_ambience_2.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/space_ambience_2.mp3
+
+#begin Music/space_ambience_3.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/space_ambience_3.mp3
+
+#begin Music/space_ambience_4.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/space_ambience_4.mp3
+
+#begin Music/space_ambience_5.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/space_ambience_5.mp3
+
+#begin Music/fantasy_space.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/fantasy_space.mp3
+
+#begin Music/deep_space.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/deep_space.mp3
