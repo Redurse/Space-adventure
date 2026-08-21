@@ -95,17 +95,15 @@ internal static partial class TestRunner
     // EnterStation calls RegenerateRecruitRoster) when a test needs a *different* set of names.
     // DestroyCurrentEnemyShip (ApplyDamage straight to the hull, the same shortcut World_Squadron's
     // own tests use) stands in for actually winning the fight, since what these tests need out of
-    // the round trip is a fresh board, not the fight itself. Arriving at a station only drops the
-    // ship into StationApproach now (manual docking, World.StationDocking.cs) - DockAtStation (used
-    // throughout this file already) is what actually flies it in and calls EnterStation for real;
-    // without it the ship just sits outside forever and the roster never rerolls at all.
+    // the round trip is a fresh board, not the fight itself. Docking is still a deliberate manual
+    // approach and button press (World.StationDocking.cs) - DockAtStation (used throughout this
+    // file already) is what actually flies it in and calls EnterStation for real; without it the
+    // ship just sits outside forever and the roster never rerolls at all.
     private static void DockAgainForFreshRoster(World world)
     {
         EngageSector(world, "sector-alpha");
         DestroyCurrentEnemyShip(world);
-        var homeId = world.GalaxyMap.HomePointId;
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: homeId));
-        DockAtStation(world);
+        DockAtStation(world, world.GalaxyMap.HomePointId);
     }
 
     // Everything below this point is about what a hired bot *does*, not about the economy - so it
@@ -206,15 +204,15 @@ internal static partial class TestRunner
 
     // Wounding a character for real means decompressing a room over hundreds of ticks (the
     // technique the existing bleeding-threshold tests use) - out of proportion for checking one
-    // bot's heal loop. This instead checks the narrower, still-real contract: a Medic bot never
-    // pushes a healthy crew above MaxHealth or otherwise disturbs it.
-    private static bool World_Recruiting_MedicBotLeavesHealthyCrewAlone()
+    // bot's heal loop. This instead checks the narrower, still-real contract: a Scientist bot
+    // never pushes a healthy crew above MaxHealth or otherwise disturbs it.
+    private static bool World_Recruiting_ScientistBotLeavesHealthyCrewAlone()
     {
         var world = new World();
         world.SpawnCharacter(1);
         FundGenerously(world);
-        var medicCandidate = RerollUntilRoleOffered(world, CrewRole.Medic);
-        world.ApplyCommand(1, new ClientCommand(1, HireCandidateId: medicCandidate.Id));
+        var scientistCandidate = RerollUntilRoleOffered(world, CrewRole.Scientist);
+        world.ApplyCommand(1, new ClientCommand(1, HireCandidateId: scientistCandidate.Id));
 
         for (var i = 0; i < 3 * 30; i++)
             world.Step(RealtimeStep);

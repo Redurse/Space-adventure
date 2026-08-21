@@ -190,12 +190,19 @@ internal static partial class TestRunner
         return engineOxygen < 90f;
     }
 
-    // Shared EVA test setup (game_design.md Phase 3, M17).
+    // Shared EVA test setup (game_design.md Phase 3, M17). There's no separate
+    // VoyagePhase.AsteroidField to fly into any more (M39) - the field is simply wherever the ship
+    // already is once it's undocked - but every EVA/mining target below (ore deposits, asteroid
+    // positions) is calibrated relative to the field's own asteroid-dense marker, not wherever the
+    // ship happens to undock, so this still has to actually fly there and stop, the same
+    // guaranteed-stationary arrival the old autopilot gave for free. The old autopilot never
+    // needed a human at the helm either, so the pilot stands back up once stopped - every caller
+    // below expects to walk character 1 off to the airlock/suit locker right after this.
     private static void EnterAsteroidFieldStationary(World world)
     {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
-            world.Step(RealtimeStep);
+        FlyNearAndStop(world, world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position, 1);
+        if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsAtHelm)
+            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
     }
 
     // Suiting up now means suit *and* bottle: an empty suit is a shell that the airlock won't let

@@ -98,16 +98,14 @@ public sealed partial class GalaxyMapPanel
         foreach (var point in snapshot.GalaxyPoints)
         {
             var rect = GetPointRect(point, mapOrigin, zoom);
-            var isTarget = point.Id == snapshot.Voyage.TravelTargetPointId;
             var isDocked = point.Id == snapshot.Voyage.DockedPointId;
-            var color = isTarget ? Color.Gold
-                : point.Kind == GalaxyPointKind.Station ? Color.SteelBlue
+            var color = point.Kind == GalaxyPointKind.Station ? Color.SteelBlue
                 : point.Kind == GalaxyPointKind.AsteroidField ? Color.SaddleBrown
                 : Color.OrangeRed;
 
-            // The radius that actually catches the ship on arrival (World.Voyage.cs's universal
-            // incidental-capture scan) - drawn faint and behind the glyph so it reads as "the
-            // point's own reach" rather than another clickable marker.
+            // The radius that actually catches the ship by proximity (World.Voyage.cs's
+            // TryEngageHostileSector/UpdateNearestStation) - drawn faint and behind the glyph so it
+            // reads as "the point's own reach" rather than another clickable marker.
             var captureRadiusPixels = point.CaptureRadius * PixelsPerUnit * zoom;
             HudIcons.DrawRingArc(spriteBatch, _pixel, new Vector2(rect.Center.X, rect.Center.Y), captureRadiusPixels, 0f, 360f, color * 0.35f, 24, 1.5f);
 
@@ -128,15 +126,6 @@ public sealed partial class GalaxyMapPanel
 
         var shipCenter = mapOrigin + new Vector2(snapshot.Voyage.ShipMapPosition.X, snapshot.Voyage.ShipMapPosition.Y) * PixelsPerUnit * zoom;
         spriteBatch.Draw(_pixel, new Rectangle((int)shipCenter.X - 4, (int)shipCenter.Y - 4, 8, 8), Color.White);
-
-        // A free-form destination (game_design.md - click anywhere, not just a point of interest)
-        // has no marker of its own to highlight gold, so it gets a small crosshair instead.
-        if (snapshot.Voyage.TravelTargetPointId is null && snapshot.Voyage.TravelTargetPosition is { } freeTarget)
-        {
-            var targetScreen = mapOrigin + new Vector2(freeTarget.X, freeTarget.Y) * PixelsPerUnit * zoom;
-            spriteBatch.Draw(_pixel, new Rectangle((int)targetScreen.X - 6, (int)targetScreen.Y - 1, 12, 2), Color.Gold);
-            spriteBatch.Draw(_pixel, new Rectangle((int)targetScreen.X - 1, (int)targetScreen.Y - 6, 2, 12), Color.Gold);
-        }
 
         DrawFactionStandings(spriteBatch, snapshot.FactionStandings, panelOrigin + new Vector2(700, 0));
     }

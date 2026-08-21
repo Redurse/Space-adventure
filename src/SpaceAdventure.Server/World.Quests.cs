@@ -22,7 +22,7 @@ public sealed partial class World
     // we're not docked, the station has no Administrator, or its faction has been angered.
     private void TryAcceptQuest(QuestKind? preferred = null)
     {
-        if (Phase != VoyagePhase.Station || ActiveQuest is not null || _dockedPointId is not { } dockedId)
+        if (!IsDocked || ActiveQuest is not null || _dockedPointId is not { } dockedId)
             return;
 
         if (Station.Npcs.All(n => n.Kind != NpcKind.Administrator))
@@ -76,7 +76,7 @@ public sealed partial class World
 
     private void TryTurnInQuest(Character character)
     {
-        if (Phase != VoyagePhase.Station || ActiveQuest is not { } quest)
+        if (!IsDocked || ActiveQuest is not { } quest)
             return;
 
         switch (quest.Kind)

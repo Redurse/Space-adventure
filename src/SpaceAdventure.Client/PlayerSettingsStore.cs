@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using SpaceAdventure.Shared.Model;
+using SpaceAdventure.Shared;
 
 namespace SpaceAdventure.Client;
 
@@ -26,10 +27,7 @@ public static class PlayerSettingsStore
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static string DefaultPath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SpaceAdventure",
-            "player-settings.json");
+        Path.Combine(GameDataPath.Root, "player-settings.json");
 
     // Read-modify-write, not a fresh record each time - Nickname and Role are saved at two
     // different screens (SaveNickname on Enter, SaveRole on picking one), and each has to leave

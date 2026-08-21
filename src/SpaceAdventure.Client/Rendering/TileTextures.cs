@@ -32,6 +32,20 @@ public static class TileTextures
 
     public static Texture2D CreateHullPlate(GraphicsDevice device) => Build(device, HullTileSize, HullPixel);
 
+    /// <summary>The hull's plates - several of them, because one repeated across a whole ship is what
+    /// made the armour read as a texture instead of as plating. See HullPlateVariants.</summary>
+    public static Texture2D[] CreateHullPlates(GraphicsDevice device)
+    {
+        var plates = new Texture2D[HullPlateVariants.Count];
+        for (var v = 0; v < plates.Length; v++)
+        {
+            var variant = v;
+            plates[v] = Build(device, HullTileSize,
+                (x, y) => HullPixel(x, y) + HullPlateVariants.Extra(x, y, HullTileSize, variant));
+        }
+        return plates;
+    }
+
     // The face of a machine rather than a floor: a fine, mostly horizontal tooth, no tread and no
     // rivets (ShipRenderer.DrawPanel puts its own at the corners of each panel, not per tile).
     public static Texture2D CreateDevicePlate(GraphicsDevice device) => Build(device, DeviceTileSize, DevicePixel);
@@ -123,6 +137,30 @@ public static class TileTextures
 
     // Tiles `texture` across `rect` in `tileSize` cells, tinted uniformly - the same colour the
     // caller's old flat fill used. Edge cells are clipped to `rect` rather than overflowing past it.
+    /// <summary>Tiles a set of plates instead of one, picking which goes where from the square's
+    /// position in ship space - `cellOrigin` is what makes that position stable, since `rect` moves
+    /// with the camera and indexing off it would make the pattern crawl across the hull as you
+    /// scroll. Each plate also gets its own slight tone, which on its own does more to break the
+    /// repeat than the extra tiles do.</summary>
+    public static void DrawTiled(SpriteBatch spriteBatch, Texture2D[] plates, int tileSize, Rectangle rect,
+        Color tint, Point cellOrigin)
+    {
+        for (var y = rect.Y; y < rect.Bottom; y += tileSize)
+        {
+            var h = Math.Min(tileSize, rect.Bottom - y);
+            for (var x = rect.X; x < rect.Right; x += tileSize)
+            {
+                var w = Math.Min(tileSize, rect.Right - x);
+                var cellX = (int)MathF.Floor((x - cellOrigin.X) / (float)tileSize);
+                var cellY = (int)MathF.Floor((y - cellOrigin.Y) / (float)tileSize);
+                var plate = plates[HullPlateVariants.VariantAt(cellX, cellY) % plates.Length];
+                var tone = HullPlateVariants.ToneAt(cellX, cellY);
+                var shaded = new Color((int)(tint.R * tone), (int)(tint.G * tone), (int)(tint.B * tone), tint.A);
+                spriteBatch.Draw(plate, new Rectangle(x, y, w, h), new Rectangle(0, 0, w, h), shaded);
+            }
+        }
+    }
+
     public static void DrawTiled(SpriteBatch spriteBatch, Texture2D texture, int tileSize, Rectangle rect, Color tint)
     {
         for (var y = rect.Y; y < rect.Bottom; y += tileSize)

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SpaceAdventure.Shared.Model;
+using SpaceAdventure.Shared;
 
 namespace SpaceAdventure.Server;
 
@@ -20,10 +21,7 @@ public static class SaveStore
     };
 
     public static string DefaultPath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SpaceAdventure",
-            "save.json");
+        Path.Combine(GameDataPath.Root, "save.json");
 
     public static bool Exists(string? path = null) => File.Exists(path ?? DefaultPath);
 

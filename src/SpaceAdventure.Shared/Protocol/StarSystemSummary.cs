@@ -1,3 +1,5 @@
+using SpaceAdventure.Shared.Model;
+
 namespace SpaceAdventure.Shared.Protocol;
 
 // One entry in the inter-system map (World.StarSystems.cs) - just enough to draw a node and warp
@@ -9,4 +11,8 @@ namespace SpaceAdventure.Shared.Protocol;
 // this system's own fixed node position on the GALACTIC map (StarSystem.GalaxyX/Y) - a completely
 // separate coordinate space from Width/Height, used only by GalacticMapPanel to draw the system as
 // a node and its corridors as lines that never cross.
-public sealed record StarSystemSummary(string Id, string Name, float Width, float Height, float GalaxyX, float GalaxyY);
+public sealed record StarSystemSummary(string Id, string Name, float Width, float Height, float GalaxyX, float GalaxyY,
+    // Who runs this system, if anyone (StarSystem.cs) - a controlled system reads calmer at a
+    // glance on the galactic map than a contested one, same fact GalaxyMap.cs's own generation
+    // already uses to decide how rough a procedural system turns out.
+    FactionId? ControllingFaction = null);

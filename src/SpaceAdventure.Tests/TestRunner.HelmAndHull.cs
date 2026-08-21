@@ -7,133 +7,66 @@ internal static partial class TestRunner
 {
     // Gets the ship out of dock and into open space. Needed by anything about venting to vacuum:
     // while docked, the outer airlock opens onto the station's pressurized dock chamber instead
-    // (World.Atmosphere.cs), so the same door does nothing there.
+    // (World.Atmosphere.cs), so the same door does nothing there. There's no separate "asteroid
+    // field" state to travel into any more (M39) - the field is simply wherever the ship already
+    // is once it's undocked, so casting off is the whole job.
     private static void CastOffIntoSpace(World world)
     {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
-            world.Step(RealtimeStep);
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock
+        world.Step(RealtimeStep);
     }
 
-    // Shared setup for the M15 helm tests: fly to the asteroid field, ramp Engine power up, then
-    // walk the character to the helm console and man it.
-    private static void EnterAsteroidFieldAndManHelm(World world)
+    // Shared setup for the M15 helm tests: undock, ramp Engine power up, fly out to the field's
+    // own asteroid-dense marker and brake to a stop there, then man the helm. There is no
+    // VoyagePhase.AsteroidField to fly into any more (M39) - the field (asteroids and all) is
+    // simply wherever the ship already is once it's not docked or fighting - but flying there
+    // manually needs a hand on the helm, and several callers below (asteroid-collision tests, EVA
+    // targets calibrated relative to this marker) still need the ship to actually arrive near it,
+    // stationary, the same guarantee the old autopilot's arrival gave for free.
+    private static void EnterAsteroidFieldAndManHelm(World world, int playerId = 1)
     {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
-            world.Step(RealtimeStep);
-
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
-        for (var i = 0; i < 60; i++)
-            world.Step(RealtimeStep);
-
-        MoveCharacterTo(world, 1, 3f, 3f); // corridor -> reactor -> cockpit, at the doors' shared height
-        MoveCharacterTo(world, 1, 3f, 4f); // helm console
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it
+        // FlyNearAndStop already undocks, ramps the Engine and mans the helm before flying - it
+        // only brakes at the end, so the pilot is still sitting at the console right after this.
+        FlyNearAndStop(world, world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position, playerId);
     }
 
-    // Shared setup for tests that need the ship actually docked at a station: arriving now only
-    // drops the ship into VoyagePhase.StationApproach (World.StationDocking.cs, manual docking) -
-    // fly it the rest of the way in ourselves, same helm pattern as EnterAsteroidFieldAndManHelm.
-    // EnterStationApproach always places the ship directly in line with the station (facing +X),
-    // so a straight HelmThrustX:1 is all that's needed to reach the docking capture zone.
-    private static void DockAtStation(World world)
+    // Shared setup for tests that need the ship actually docked at a station - almost every caller
+    // is using "docked at X" purely as scaffolding for something unrelated (a faction/quest/trade
+    // mechanic), not testing the approach itself, so this places the ship directly rather than
+    // flying it there for real (World.DebugPlaceShip - test-only, see its own doc comment). The
+    // dedicated docking-mechanic tests (this file's own Helm tests, TestRunner.StationDocking.cs's
+    // ApproachBerth) fly for real and don't call this.
+    private static void DockAtStation(World world, string stationPointId, int playerId = 1)
     {
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
-            world.Step(RealtimeStep);
-
-        // Three attempts, because the recovery below is best-effort: a badly shot-up ship can need
-        // the engine repaired *and* the power grid re-balanced before it will move at all, and a
-        // single pass occasionally leaves it still dead in space just short of the dock.
-        // ...and the second engine block can be the damaged one, and the wiring can be cut on top of
-        // that, so a run of bad luck needs more than three passes to walk off. The seeded roll
-        // sequence (World.EnemyAi.cs) makes such a run reproducible rather than occasional, which is
-        // exactly why the recovery has to be able to grind through it.
-        for (var attempt = 0; attempt < 8 && world.Phase == VoyagePhase.StationApproach; attempt++)
-            TryDockingRun(world);
-    }
-
-    private static void TryDockingRun(World world)
-    {
-        // A caller that just fought its way out of a battle (FireBowTurretUntilEnemyDefeated)
-        // leaves the character manning the bow turret - can't walk anywhere until standing up.
-        if (world.CreateSnapshot().TurretStates.Any(t => t.MannedByPlayerId == 1))
-            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
-
-        // Random combat (World.EnemyAi.cs) can happen to damage the Engine system device itself,
-        // not just breach a wall block (game_design.md's "known pitfall" about random attack
-        // targets, see continue.md) - if so the ship simply can't move at all here no matter how
-        // much power is allocated (IsDeviceConnected gates GetEffectivePower). Repair it first.
-        // Every engine block, not just the first: each class carries two of them (WireNetwork's
-        // system-engine/system-engine-2), and a run where the second is the damaged one left the
-        // ship dead in space with this recovery reporting success.
-        foreach (var engineDevice in world.Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine))
+        if (world.IsDocked)
         {
-            if (!world.CreateSnapshot().SystemStates.First(s => s.DeviceId == engineDevice.Id).Damaged)
-                continue;
-
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var holdingTool = me.Inventory!.HeldMainSlotIndices
-                .Select(i => me.Inventory.MainSlots[i])
-                .Any(t => t is ItemType.Wrench or ItemType.Screwdriver);
-            if (!holdingTool)
-            {
-                var slot = TakeFromRack(world, ItemType.Wrench);
-                world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: slot));
-            }
-
-            MoveCharacterTo(world, 1, engineDevice.Position.X, 3f);
-            MoveCharacterTo(world, 1, engineDevice.Position.X, engineDevice.Position.Y);
-            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // repair
-        }
-
-        // A caller may have already boosted some other system to the reactor's full output
-        // (e.g. World_Voyage_StationRefuelsAndClearsBreaches keeps Oxygen maxed) - that leaves
-        // zero headroom for Engine (PowerGrid.Step's maxForThis is capped by othersTotal), so
-        // free it back up first or Engine would never actually ramp above 0.
-        foreach (var systemIndex in new[] { 0, 2, 3, 4 })
-        {
-            world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: systemIndex, PowerDirection: -1f));
-            for (var i = 0; i < 90; i++)
-                world.Step(RealtimeStep);
-        }
-
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
-        for (var i = 0; i < 60; i++)
-            world.Step(RealtimeStep);
-
-        MoveCharacterTo(world, 1, 3f, 3f);
-        MoveCharacterTo(world, 1, 3f, 4f); // helm console
-        if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsAtHelm)
-            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it
-        // Docking is a deliberate press now, not an automatic capture (World.StationDocking.cs),
-        // so the approach has to actually be flown: a plain bang-bang controller that thrusts
-        // toward the berth whenever the ship is going too slowly to close the gap and brakes
-        // whenever it's going too fast to mate. Just "full thrust then stabilize" deadlocks -
-        // braking from full speed stops the ship short of the berth and it sits there forever.
-        for (var i = 0; i < 60 * 30 && world.Phase == VoyagePhase.StationApproach; i++)
-        {
-            if (world.CanDockNow)
-            {
-                world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
-                world.Step(RealtimeStep);
-                continue;
-            }
-
-            var shipField = world.CreateSnapshot().ShipField;
-            var toPort = world.DockBerthPosition - new Vec2(shipField.X, shipField.Y); // the berth, not the airlock rectangle
-            var speed = new Vec2(shipField.VelocityX, shipField.VelocityY).Length();
-
-            if (speed > 1.5f)
-                world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
-            else
-                world.ApplyCommand(1, SteerToward(world, 1, world.DockBerthPosition));
-
+            world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
             world.Step(RealtimeStep);
         }
 
-        if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsAtHelm)
-            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // stand up from the helm
+        var target = world.GalaxyMap.GetPoint(stationPointId).Position;
+        world.DebugPlaceShip(target);
+        world.Step(RealtimeStep); // World.Voyage.cs's UpdateNearestStation now recognizes this point as nearest
+        ResolveStationDefenseIfAny(world, playerId);
+        world.DebugPlaceShip(world.DockBerthPosition); // re-snap onto THIS station's own hull-centre offset
+        world.Step(RealtimeStep);
+        ResolveStationDefenseIfAny(world, playerId);
+
+        world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
+        world.Step(RealtimeStep);
+    }
+
+    // A station whose owner has fallen to hostile standing meets an approach with its own
+    // defensive squadron instead of a clean approach (World.Voyage.cs's UpdateNearestStation,
+    // M37's "won't stand down for you any more, but still not the deeper WarThreshold lockout") -
+    // win it the same way any other incidental battle gets cleared before the dock actually lands.
+    private static void ResolveStationDefenseIfAny(World world, int playerId)
+    {
+        if (!world.IsInBattle)
+            return;
+        FireBowTurretUntilEnemyDefeated(world, playerId);
+        for (var i = 0; i < 30 && world.IsInBattle; i++)
+            world.Step(RealtimeStep);
     }
 
     // The helm's whole control model: A/D swing the bow without moving the ship, W drives it along
@@ -241,13 +174,10 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "asteroid-field-epsilon"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.AsteroidField; i++)
-            world.Step(RealtimeStep);
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock - no engine power at all
+        world.Step(RealtimeStep);
 
-        MoveCharacterTo(world, 1, 3f, 3f); // corridor -> reactor -> cockpit, at the doors' shared height
-        MoveCharacterTo(world, 1, 3f, 4f); // helm console
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        SitAtHelm(world, 1);
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
 
         for (var i = 0; i < 60; i++)

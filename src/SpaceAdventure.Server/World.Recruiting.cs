@@ -25,7 +25,7 @@ public sealed partial class World
         CrewRole.Security => 180,
         CrewRole.Engineer => 160,
         CrewRole.Mechanic => 150,
-        _ => 130, // Medic
+        _ => 130, // Scientist
     };
 
     private List<BotCandidate> _recruitRoster = new();
@@ -56,7 +56,7 @@ public sealed partial class World
 
     private void TryHireCandidate(string? candidateId)
     {
-        if (candidateId is null || Phase != VoyagePhase.Station)
+        if (candidateId is null || !IsDocked)
             return;
 
         if (IsHostileHere)
@@ -113,6 +113,6 @@ public sealed partial class World
         CrewRole.Security => Ship.Turrets.Count > 0
             ? (Ship.Turrets[0].PeriscopePosition, Ship.Turrets[0].RoomId)
             : (Ship.SpawnPoint, Ship.SpawnRoomId),
-        _ => (Ship.SpawnPoint, Ship.SpawnRoomId), // Medic: no sickbay fixture exists, tends the crew from wherever it stands
+        _ => (Ship.SpawnPoint, Ship.SpawnRoomId), // Scientist: no sickbay/scanner fixture exists, tends the crew from wherever it stands
     };
 }

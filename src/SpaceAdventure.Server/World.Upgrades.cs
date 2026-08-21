@@ -22,7 +22,7 @@ public sealed partial class World
     // No-ops if not docked, the track is already maxed, or the crew can't afford the next level.
     private void TryPurchaseUpgrade(ShipUpgradeTrack track)
     {
-        if (Phase != VoyagePhase.Station)
+        if (!IsDocked)
             return;
 
         var level = _upgradeLevels[track];

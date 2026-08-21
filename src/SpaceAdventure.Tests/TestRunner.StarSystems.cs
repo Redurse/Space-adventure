@@ -16,22 +16,22 @@ internal static partial class TestRunner
             && world.AsteroidField == world.GalaxyMap.GetSystem("sol").Field;
     }
 
-    // A point clear of every asteroid in sol's field by a wide margin (a horizontal line at
-    // y=150 from the dock berth), 140 units from the field's centre (150,150) - just past
-    // GalaxyMap.WarpZoneRadius (138), so flying there and slowing down arms CanWarpNow with no
-    // specific point to hunt down and park on, the same "parked alongside, under the speed limit"
-    // gate as docking (World.StationDocking.cs's CanDockNow), just aimed at an area instead.
-    private const float SolWarpZoneX = 10f;
-    private const float SolWarpZoneY = 150f;
+    // A point clear of every asteroid in sol's field by a wide margin, just past
+    // GalaxyMap.WarpZoneRadius(1104) from the field's own centre (1200,1200, M40's 2400x2400
+    // scale, recentred alongside sol's own hand-placed content - AsteroidField.RecenterOffsetM40)
+    // - was (10,150), just past the old WarpZoneRadius(138) from the old (150,150) centre, for the
+    // old 300x300 field. Flying there and slowing down arms CanWarpNow with no specific point to
+    // hunt down and park on, the same "parked alongside, under the speed limit" gate as docking
+    // (World.StationDocking.cs's CanDockNow), just aimed at an area instead.
+    private const float SolWarpZoneX = 80f;
+    private const float SolWarpZoneY = 1200f;
 
     private static bool World_StarSystem_FlyToWarpZoneThenJumpToOtherSystem()
     {
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToX: SolWarpZoneX, TravelToY: SolWarpZoneY));
-        for (var i = 0; i < 120 * 30 && !world.CanWarpNow; i++)
-            world.Step(RealtimeStep);
+        FlyToward(world, new Vec2(SolWarpZoneX, SolWarpZoneY), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
 
         if (!world.CanWarpNow)
             return false; // never reached the warp zone - setup problem, not the behavior under test
@@ -53,9 +53,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToX: SolWarpZoneX, TravelToY: SolWarpZoneY));
-        for (var i = 0; i < 120 * 30 && !world.CanWarpNow; i++)
-            world.Step(RealtimeStep);
+        FlyToward(world, new Vec2(SolWarpZoneX, SolWarpZoneY), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
         if (!world.CanWarpNow)
             return false; // never reached the warp zone - setup problem, not the behavior under test
 
@@ -93,9 +91,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToX: SolWarpZoneX, TravelToY: SolWarpZoneY));
-        for (var i = 0; i < 120 * 30 && !world.CanWarpNow; i++)
-            world.Step(RealtimeStep);
+        FlyToward(world, new Vec2(SolWarpZoneX, SolWarpZoneY), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
         if (!world.CanWarpNow)
             return false; // never reached the warp zone - setup problem, not the behavior under test
 
@@ -134,6 +130,10 @@ internal static partial class TestRunner
     {
         var world = new World();
         var map = world.GalaxyMap;
+        // The procedural tail is generated lazily now (GalaxyMap.cs's EnsureGenerated) - an
+        // impossible neighbour target forces it to roll out every remaining system before this
+        // test's own full-reachability sweep below.
+        map.EnsureGenerated(map.Systems[0].Id, int.MaxValue);
         if (map.Systems.Count != 200)
             return false;
 
@@ -149,5 +149,98 @@ internal static partial class TestRunner
         }
 
         return visited.Count == 200;
+    }
+
+    // Most of the procedural tail answers to somebody (GalaxyMap.cs's ControlledSystemChance),
+    // not left null/contested by default - the whole point of the distinction existing.
+    private static bool World_StarSystem_MostProceduralSystemsHaveAControllingFaction()
+    {
+        var map = GalaxyMap.CreateStarter();
+        map.EnsureAtLeast(50);
+        var procedural = map.Systems.Skip(6).Take(50).ToList(); // the 6 hand-authored come first
+        return procedural.Count(s => s.ControllingFaction is not null) > 30; // ~85% expected, generous margin
+    }
+
+    // A controlled system generates calmer than a contested one - fewer of its own single point
+    // turns up as a HostileSector (GalaxyMap.cs's ControlledSystemHostileSectorChance vs.
+    // ContestedSystemHostileSectorChance).
+    private static bool World_StarSystem_ControlledSystemsGetFewerHostileSectorsThanContested()
+    {
+        var map = GalaxyMap.CreateStarter();
+        map.EnsureAtLeast(194);
+        var procedural = map.Systems.Skip(6).ToList();
+        var controlled = procedural.Where(s => s.ControllingFaction is not null).ToList();
+        var contested = procedural.Where(s => s.ControllingFaction is null).ToList();
+        if (controlled.Count < 20 || contested.Count < 5)
+            return false; // not enough of either to compare meaningfully - setup problem
+
+        var controlledHostileFraction = controlled.Count(s => s.Points[0].Kind == GalaxyPointKind.HostileSector) / (float)controlled.Count;
+        var contestedHostileFraction = contested.Count(s => s.Points[0].Kind == GalaxyPointKind.HostileSector) / (float)contested.Count;
+        return controlledHostileFraction < contestedHostileFraction;
+    }
+
+    // Rolling the same galaxy in different-sized chunks must land on exactly the same systems in
+    // the same order - GalaxyMap.cs's own _proceduralRandom picks up where the last call left it,
+    // never restarting, so the pacing of EnsureAtLeast/EnsureGenerated calls can never change what
+    // the galaxy actually turns out to be.
+    private static bool World_StarSystem_ChunkedGenerationMatchesWhicheverPacingReachesIt()
+    {
+        var mapA = GalaxyMap.CreateStarter();
+        mapA.EnsureAtLeast(194);
+
+        var mapB = GalaxyMap.CreateStarter();
+        for (var target = mapB.GeneratedProceduralCount + 7; target <= 194; target += 7)
+            mapB.EnsureAtLeast(target);
+        mapB.EnsureAtLeast(194); // covers any remainder the loop's own step size didn't land on exactly
+
+        if (mapA.Systems.Count != mapB.Systems.Count)
+            return false;
+        for (var i = 0; i < mapA.Systems.Count; i++)
+        {
+            var (a, b) = (mapA.Systems[i], mapB.Systems[i]);
+            if (a.Id != b.Id || a.GalaxyX != b.GalaxyX || a.GalaxyY != b.GalaxyY || a.ControllingFaction != b.ControllingFaction)
+                return false;
+        }
+        return true;
+    }
+
+    // The whole point of lazy generation: asking for more neighbours than currently exist actually
+    // grows the galaxy to satisfy that, rather than just reporting however many happen to be there.
+    // +1, not some larger fixed jump - sol's own spiral placement only ever has so many procedural
+    // systems land within WarpJumpRadius even with the whole 194-system tail rolled out (a sparser
+    // neighbourhood than a denser-packed system might get), so asking for more than that would
+    // never be satisfiable no matter how this method behaves - +1 stays safely inside whatever
+    // that ceiling turns out to be while still proving growth actually happens on demand.
+    private static bool World_StarSystem_EnsureGeneratedGrowsUntilNeighborTargetIsMet()
+    {
+        var map = GalaxyMap.CreateStarter();
+        var before = map.SystemsWithinWarpRange("sol").Count;
+        map.EnsureGenerated("sol", before + 1);
+        return map.SystemsWithinWarpRange("sol").Count >= before + 1;
+    }
+
+    // A station's own controlling faction stands down peacefully unless the crew has actually made
+    // an enemy of it - fall far enough (World.Voyage.cs's Arrive, M37) and the station meets the
+    // approach with a defensive squadron instead of the usual docking approach.
+    private static bool World_Station_HostileStandingTriggersDefensiveSquadronOnApproach()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        EquipSuit(world, 1); // survives any breaches the fight opens up
+        GrindStandingHostile(world, "sector-delta", FactionId.Consortium); // trade-station is Consortium's
+        if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.HostileThreshold)
+            return false; // didn't actually anger them enough - setup problem, not the behavior under test
+
+        // Flying at the berth itself (World.Voyage.cs's UpdateNearestStation checks hostility on
+        // the same proximity scan that arms CanDockNow) - there's no separate "approach" state to
+        // land in short of the fight any more (M39), so this is just flying at the station until
+        // either the fight starts or the berth would otherwise be reachable. FlyToward's own until
+        // predicate stops it the moment either happens, rather than fighting through a battle the
+        // way ApproachBerth does - catching that moment is the whole point of this test.
+        var target = world.GalaxyMap.GetPoint("trade-station").Position;
+        FlyToward(world, target, () => world.IsInBattle ||
+            ((world.DockBerthPosition - target).Length() < 40f && world.CanDockNow), 1, maxTicks: 200 * 30);
+
+        return world.IsInBattle;
     }
 }

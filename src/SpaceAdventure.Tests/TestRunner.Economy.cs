@@ -98,10 +98,8 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
-        if (world.Phase != VoyagePhase.Battle)
+        EnterBattle(world);
+        if (!world.IsInBattle)
             return false; // must actually have left the station for this test to mean anything
 
         var creditsBefore = world.CreateSnapshot().Credits;
@@ -164,9 +162,8 @@ internal static partial class TestRunner
             return false;
         var creditsBefore = world.CreateSnapshot().Credits;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: quest.DestinationPointId));
-        DockAtStation(world);
-        if (world.Phase != VoyagePhase.Station)
+        DockAtStation(world, quest.DestinationPointId);
+        if (!world.IsDocked)
             return false; // didn't dock as expected
 
         world.ApplyCommand(1, new ClientCommand(1, TurnInCargoQuestPressed: true));
@@ -189,7 +186,7 @@ internal static partial class TestRunner
         var issuerFaction = world.GalaxyMap.GetPoint(quest.IssuedByPointId).Faction;
         var standingBefore = world.GetStanding(issuerFaction);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: quest.DestinationPointId)); // left the dock
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // left the dock
         world.ApplyCommand(1, new ClientCommand(1, AbandonQuestPressed: true));
 
         return world.CreateSnapshot().ActiveQuest is null
@@ -201,10 +198,8 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
-        if (world.Phase != VoyagePhase.Battle)
+        EnterBattle(world);
+        if (!world.IsInBattle)
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, AcceptCargoQuestPressed: true, AcceptQuestKind: QuestKind.Delivery));
@@ -231,28 +226,39 @@ internal static partial class TestRunner
     private static bool World_MedKit_HealsSelfAndConsumesItem()
     {
         var world = new World();
-        world.SpawnCharacter(1); // stays in the corridor (spawn point) while it gets dangerous
+        world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
-
-        for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "corridor"); i++)
-            world.Step(RealtimeStep);
-
-        for (var i = 0; i < 300 * 30; i++)
-        {
-            world.Step(RealtimeStep);
-            if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health < 60f)
-                break;
-        }
-        if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health >= 60f)
-            return false; // never got hurt enough within budget
-
+        // Grab and hold the medkit BEFORE things get dangerous, not after: TakeFromRack walks
+        // there (WalkAcrossShipTo), and an unresolved fight (nothing here ever fires back) keeps
+        // damaging the whole hull for as long as that walk takes - long enough, it turns out, to
+        // cross the entire gap from "just started taking damage" to dead. Holding it in advance
+        // means the only thing left to do once hurt is press the button, no walking through live
+        // decompression required.
         var medkitSlot = TakeFromRack(world, ItemType.MedKit);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: medkitSlot)); // hold it
 
-        var healthBeforeHeal = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health;
+        // EnterBattle only teleports the ship (World.DebugPlaceShip) - it never touches the
+        // character, so whoever's holding the medkit just stays put at the rack they grabbed it
+        // from for the rest of this test. Deliberately not walking anywhere once the fight is
+        // live: any further movement risks the same bang-bang MoveCharacterTo walk stepping into
+        // a hull breach that's opened up somewhere along the way and crossing it straight into
+        // vacuum (World.Eva.cs's TryCrossIntoVacuum only fires on an actual move step) - which
+        // would silently reroute a later Interact press to the EVA handler instead of the medkit.
+        EnterBattle(world);
+
+        // Watch health directly, tick by tick, rather than waiting for corridor's own wall to
+        // breach first (or for it to drop some way below full): a single tick's
+        // decompression/impact damage can be large enough to fall clean through any lower
+        // threshold, so bailing at the very first sign of any damage at all keeps this test's own
+        // wait from being the thing that overshoots into a kill; the medkit assertion below only
+        // needs "not full, still alive", not a specific health value.
+        for (var i = 0; i < 600 * 30 && world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health >= Character.MaxHealth; i++)
+            world.Step(RealtimeStep);
+        var hurtHealth = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health;
+        if (hurtHealth <= 0f || hurtHealth >= Character.MaxHealth)
+            return false; // either never got hurt within budget, or the same hit that hurt them killed them
+
+        var healthBeforeHeal = hurtHealth;
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // use the medkit
 
         var snapshot = world.CreateSnapshot();
@@ -293,9 +299,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1); // pilot, sends commands
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "corridor"); i++)
             world.Step(RealtimeStep);
@@ -401,10 +405,8 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
-        if (world.Phase != VoyagePhase.Battle)
+        EnterBattle(world);
+        if (!world.IsInBattle)
             return false;
 
         var creditsBefore = world.CreateSnapshot().Credits;
@@ -421,9 +423,11 @@ internal static partial class TestRunner
 
         world.ApplyCommand(1, new ClientCommand(1, PurchaseUpgradeTrack: ShipUpgradeTrack.WeaponDamage)); // +3 dmg
 
+        // Flying there needs a hand on the helm first (no more autopilot) - man the bow turret only
+        // once the fight has actually started.
+        EnterBattle(world);
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man the bow turret
-        EnterBattle(world);
 
         world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
         StepFor(world, 60);

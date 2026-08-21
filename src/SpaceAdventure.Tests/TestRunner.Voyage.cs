@@ -9,14 +9,12 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        if (world.Phase != VoyagePhase.Station) // starts docked at the home station
+        if (!world.IsDocked) // starts docked at the home station
             return false;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++) // generous margin over a real cruise at ShipMaxSpeed
-            world.Step(RealtimeStep);
+        EnterBattle(world); // generous margin over a real cruise at ShipMaxSpeed built into FlyToward's own budget
 
-        return world.Phase == VoyagePhase.Battle;
+        return world.IsInBattle;
     }
 
     private static bool World_Voyage_DefeatingEnemyReturnsToTraveling()
@@ -24,95 +22,47 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         FireBowTurretUntilEnemyDefeated(world, 1);
 
         // Open navigation: victory drops back into open space rather than auto-docking, so the
         // player can freely pick the next destination (a station, or another fight).
-        return world.Phase == VoyagePhase.Traveling;
+        return !world.IsDocked && !world.IsInBattle;
     }
 
-    // Every location can be flown away from now, not just won/docked/reselected out of
-    // (World.Voyage.cs's per-phase exit radii) - flying clear of the asteroid field's own
-    // AsteroidFieldExitRadius from its centre drops the ship straight back into open space.
-    private static bool World_Voyage_FlyingClearOfTheAsteroidFieldReturnsToTraveling()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        EnterAsteroidFieldAndManHelm(world);
-        if (world.Phase != VoyagePhase.AsteroidField)
-            return false;
+    // REMOVED (M39): World_Voyage_FlyingClearOfTheAsteroidFieldReturnsToTraveling and
+    // World_Voyage_FlyingClearOfTheAsteroidFieldDoesNotStrandTheShipAtTheEdge used to check a
+    // discrete VoyagePhase.AsteroidField -> VoyagePhase.Traveling transition, triggered by flying
+    // past a dedicated AsteroidFieldExitRadius from the field's centre. Neither the phase nor that
+    // radius exist any more - "AsteroidField" and "Traveling" were always the same undocked,
+    // out-of-battle state, and the ship's field position is simply clamped to the system's
+    // Width x Height rectangle (World.ShipField.cs's StepShipFieldPhysics) with no separate "left
+    // the field" event to observe. There is nothing left for either test to check: flying to the
+    // far corner or clear along one axis no longer changes any observable state at all, and
+    // "parked at the edge of the field" isn't a stranded-ship bug any more - it is just one edge of
+    // the map, same as flying to any other corner of open space. See the final report for this
+    // milestone for the explicit call-out.
 
-        // Aim for the far corner of the field - comfortably past AsteroidFieldExitRadius from its
-        // centre, unlike every default asteroid/ore deposit (World.Voyage.cs's own reasoning for
-        // picking that radius).
-        var farCorner = world.AsteroidField.Center + new Vec2(1000f, 1000f);
-        for (var i = 0; i < 120 * 30 && world.Phase == VoyagePhase.AsteroidField; i++)
-        {
-            world.ApplyCommand(1, SteerToward(world, 1, farCorner));
-            world.Step(RealtimeStep);
-        }
-
-        return world.Phase == VoyagePhase.Traveling;
-    }
-
-    // Regression: the old exit radius (160) was bigger than the field's own cardinal half-extent
-    // (150 for a 300x300 field), so retreating in a straight cardinal direction - the ordinary way
-    // a player would actually fly away, not deliberately toward a far corner - could only reach it
-    // by first hitting the field's own wall, leaving the ship pinned to the system's edge instead
-    // of somewhere flyable once back in Traveling.
-    private static bool World_Voyage_FlyingClearOfTheAsteroidFieldDoesNotStrandTheShipAtTheEdge()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        EnterAsteroidFieldAndManHelm(world);
-        if (world.Phase != VoyagePhase.AsteroidField)
-            return false;
-
-        var farAlongX = world.AsteroidField.Center + new Vec2(1000f, 0f); // purely cardinal, the old worst case
-        for (var i = 0; i < 120 * 30 && world.Phase == VoyagePhase.AsteroidField; i++)
-        {
-            world.ApplyCommand(1, SteerToward(world, 1, farAlongX));
-            world.Step(RealtimeStep);
-        }
-
-        if (world.Phase != VoyagePhase.Traveling)
-            return false; // never actually escaped in this direction
-
-        var shipField = world.CreateSnapshot().ShipField;
-        return shipField.X > 5f && shipField.X < world.AsteroidField.Width - 5f;
-    }
-
-    // Same story for a docking approach that's been called off: flying away instead of alongside
-    // the berth is a valid way to leave, not just successfully docking.
+    // Flying away instead of alongside the berth is a valid way to leave a docking attempt, not
+    // just successfully docking - there's no separate "approach" state to abort out of any more
+    // (M39), so this is really just CanDockNow going false again once the ship backs off, and
+    // staying undocked throughout.
     private static bool World_Voyage_FlyingAwayFromTheBerthAbortsTheApproach()
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "trade-station"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
-            world.Step(RealtimeStep);
-        if (world.Phase != VoyagePhase.StationApproach)
+        ApproachBerth(world, "trade-station");
+        if (!world.CanDockNow)
             return false;
 
-        MoveCharacterTo(world, 1, 3f, 3f);
-        MoveCharacterTo(world, 1, 3f, 4f);
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f));
-        for (var i = 0; i < 60; i++)
-            world.Step(RealtimeStep);
-
-        // Straight astern - the approach starts lined up bow-first on the berth
-        // (EnterStationApproach), so backing off the throttle moves directly away from it without
-        // needing to turn the ship around first.
+        // Straight astern - ApproachBerth leaves the ship lined up bow-first on the berth, so
+        // backing off the throttle moves directly away from it without needing to turn around.
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: -1f));
-        for (var i = 0; i < 60 * 30 && world.Phase == VoyagePhase.StationApproach; i++)
+        for (var i = 0; i < 60 * 30 && world.CanDockNow; i++)
             world.Step(RealtimeStep);
 
-        return world.Phase == VoyagePhase.Traveling;
+        return !world.CanDockNow && !world.IsDocked;
     }
 
     private static bool World_Voyage_StationRefuelsAndClearsBreaches()
@@ -120,12 +70,12 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        // Keep the reactor under real load throughout so there's fuel left to refill. Both go in
-        // one command — a second ApplyCommand with default power fields would otherwise reset
-        // the slider input before it ever gets a tick to act on.
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        // Keep the reactor under real load throughout so there's fuel left to refill. Issued
+        // after EnterBattle, not before it - EnterBattle's own DockPressed command (a fresh
+        // ClientCommand, PowerSystemIndex defaulting to -1) would otherwise overwrite this held
+        // slider input before a single Step ever applies it.
+        EnterBattle(world);
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f));
         for (var i = 0; i < 10 * 30; i++) // let the slider ramp to full and actually burn fuel for a while
             world.Step(RealtimeStep);
         var fuelDuringFlight = world.CreateSnapshot().Power.ReactorFuel;
@@ -133,8 +83,7 @@ internal static partial class TestRunner
         FireBowTurretUntilEnemyDefeated(world, 1);
 
         // Head back to the home station to resupply.
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station"));
-        DockAtStation(world);
+        DockAtStation(world, "home-station");
 
         var snapshot = world.CreateSnapshot();
         // Refuel snaps to MaxFuel exactly on arrival, but firing/repair activity can continue
@@ -143,7 +92,7 @@ internal static partial class TestRunner
         // units gained: the burn rate is deliberately slow now (PowerGrid), so a fight's worth of
         // flying costs only a few units and any "gained at least N" threshold is really an
         // assertion about the rate, not about refuelling.
-        return snapshot.Voyage.Phase == VoyagePhase.Station
+        return world.IsDocked
             && fuelDuringFlight < 500f
             && snapshot.Power.ReactorFuel > fuelDuringFlight
             && snapshot.Power.ReactorFuel > 490f
@@ -155,28 +104,35 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 10; i++) // a handful of ticks — nowhere near arrival yet
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock
+        for (var i = 0; i < 10; i++) // a handful of ticks — nowhere near any hostile sector yet
             world.Step(RealtimeStep);
 
-        return world.Phase == VoyagePhase.Traveling && world.CreateSnapshot().WallBlockStates.All(s => !s.Breached);
+        return !world.IsInBattle && world.CreateSnapshot().WallBlockStates.All(s => !s.Breached);
     }
 
     private static bool World_Voyage_ShipMovesContinuouslyTowardTarget()
     {
         var world = new World();
         world.SpawnCharacter(1);
-
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        var before = world.CreateSnapshot().Voyage.ShipMapPosition;
-        // 2s - past even a full about-turn (ShipRotationDegreesPerSecond's slowest case, up to 180
-        // degrees) before the autopilot's throttle re-engages (AutopilotToward cuts thrust above a
-        // 25-degree heading error), and still nowhere near arrival at the now much longer cruise.
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock
+        world.Step(RealtimeStep);
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
         for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
+        SitAtHelm(world, 1);
+
+        var target = world.GalaxyMap.GetPoint("sector-alpha").Position;
+        var before = world.CreateSnapshot().Voyage.ShipMapPosition;
+        // 2s of continued manual flight, still nowhere near arrival at the now much longer cruise.
+        for (var i = 0; i < 60; i++)
+        {
+            world.ApplyCommand(1, SteerToward(world, 1, target));
+            world.Step(RealtimeStep);
+        }
         var after = world.CreateSnapshot().Voyage.ShipMapPosition;
 
-        return (after - before).Length() > 0f && world.Phase == VoyagePhase.Traveling; // moving, not yet arrived
+        return (after - before).Length() > 0f && !world.IsDocked && !world.IsInBattle; // moving, not yet arrived
     }
 
     // Free-form destination (game_design.md - click anywhere in the system, not just a point of
@@ -185,46 +141,67 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-
-        world.ApplyCommand(1, new ClientCommand(1, TravelToX: 140f, TravelToY: 150f)); // open space near the starting berth
-        var before = world.CreateSnapshot().Voyage.ShipMapPosition;
-        for (var i = 0; i < 15; i++) // half a second
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock
+        world.Step(RealtimeStep);
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
+        for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
+        SitAtHelm(world, 1);
+
+        // +Y, not +X: the station's own room row extends toward +X from the berth
+        // (Station.Default.cs), so a target off to the side of it (the same direction
+        // PeelAwayFromBerth backs away in) is open space, not a course straight through the hull.
+        var target = world.CreateSnapshot().Voyage.ShipMapPosition + new Vec2(0f, 50f);
+        var before = world.CreateSnapshot().Voyage.ShipMapPosition;
+        // +Y sits roughly 90 degrees off the ship's rest heading, unlike the old +X target this
+        // replaced (which sat close to dead ahead) - throttle only engages once turned to within
+        // 25 degrees of the bearing (SteerToward), so this needs enough ticks to actually finish
+        // that turn before movement can start, not just enough to confirm it already had.
+        for (var i = 0; i < 90; i++) // 3s - comfortably outlasts a worst-case 180-degree RCS turn
+        {
+            world.ApplyCommand(1, SteerToward(world, 1, target));
+            world.Step(RealtimeStep);
+        }
         var after = world.CreateSnapshot().Voyage.ShipMapPosition;
 
-        return (after - before).Length() > 0f && world.Phase == VoyagePhase.Traveling;
+        return (after - before).Length() > 0f && !world.IsDocked && !world.IsInBattle;
     }
 
-    // The generalized capture-radius scan (World.Voyage.cs's StepTraveling): every point of
-    // interest catches the ship on its own radius, not just whichever one was actually clicked -
-    // flying close enough to sector-alpha (without ever naming it) still starts the fight.
+    // The generalized capture-radius scan (World.Voyage.cs's TryEngageHostileSector): every
+    // hostile sector catches the ship on its own radius, not just when steered directly at its
+    // marker - flying close enough to sector-alpha (without ever aiming right at it) still starts
+    // the fight.
     private static bool World_Voyage_FreeFormClickNearHostileSectorStillTriggersBattle()
     {
         var world = new World();
         world.SpawnCharacter(1);
 
-        // 5 units off sector-alpha's own (52, 97) marker - inside its CaptureRadius (8) but not the
-        // point itself, so this can only pass through the proximity scan, not an id match.
-        world.ApplyCommand(1, new ClientCommand(1, TravelToX: 57f, TravelToY: 97f));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        // 5 units off sector-alpha's own marker - inside its CaptureRadius (8) but not the point
+        // itself, so this can only pass through the proximity scan, not landing on it exactly.
+        // targetPointId excludes sector-alpha from AvoidIncidentalHazards - without it, the
+        // generic hazard-avoidance would treat the very sector this test is trying to reach as
+        // something to detour around, and the ship would circle it forever without ever crossing
+        // its capture radius.
+        FlyToward(world, world.GalaxyMap.GetPoint("sector-alpha").Position + new Vec2(5f, 0f), () => world.IsInBattle, 1, targetPointId: "sector-alpha");
 
-        return world.Phase == VoyagePhase.Battle;
+        return world.IsInBattle;
     }
 
     private static bool World_Voyage_CannotChangeDestinationMidBattle()
     {
         var world = new World();
         world.SpawnCharacter(1);
+        EnterBattle(world);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
-
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station")); // try to flee
+        // Steering away for a single tick doesn't end the fight by itself any more than picking a
+        // new destination used to - only actually flying clear of the sector does
+        // (World.Voyage.cs's HasFledTheSector, exercised in full by EnemyFleet.cs's own test).
+        SitAtHelm(world, 1);
+        var homeTarget = world.GalaxyMap.GetPoint("home-station").Position;
+        world.ApplyCommand(1, SteerToward(world, 1, homeTarget)); // try to flee
         world.Step(RealtimeStep);
 
-        return world.Phase == VoyagePhase.Battle; // still fighting — the command was ignored
+        return world.IsInBattle; // still fighting — one tick of turning away doesn't drop you out
     }
 
     private static bool World_SuitAction_RequiresProximityToLocker()
@@ -272,9 +249,7 @@ internal static partial class TestRunner
         // is suited (fully immune) so it can safely sit in engine through the whole search below;
         // character 2 (the unsuited control) isn't spawned until right before measuring — see why
         // in World_Decompression_DrainsHealthInBreachedRoom just above.
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "engine"); i++)
             world.Step(RealtimeStep);
@@ -341,9 +316,11 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
+        // Flying there needs a hand on the helm first (no more autopilot) - man the laser turret
+        // only once the fight has actually started.
+        EnterBattle(world);
         MoveCharacterTo(world, 1, 6.5f, 3f); // laser turret periscope, reactor room
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it — no crate needed
-        EnterBattle(world);
 
         var before = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-laser").Charge; // starts full
         world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));

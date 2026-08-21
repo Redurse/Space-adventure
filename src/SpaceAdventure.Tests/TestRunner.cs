@@ -45,8 +45,6 @@ internal static partial class TestRunner
         ("World_Voyage_TravelingToHostileSectorStartsBattle", World_Voyage_TravelingToHostileSectorStartsBattle),
         ("World_Voyage_DefeatingEnemyReturnsToTraveling", World_Voyage_DefeatingEnemyReturnsToTraveling),
         ("World_Voyage_StationRefuelsAndClearsBreaches", World_Voyage_StationRefuelsAndClearsBreaches),
-        ("World_Voyage_FlyingClearOfTheAsteroidFieldReturnsToTraveling", World_Voyage_FlyingClearOfTheAsteroidFieldReturnsToTraveling),
-        ("World_Voyage_FlyingClearOfTheAsteroidFieldDoesNotStrandTheShipAtTheEdge", World_Voyage_FlyingClearOfTheAsteroidFieldDoesNotStrandTheShipAtTheEdge),
         ("World_Voyage_FlyingAwayFromTheBerthAbortsTheApproach", World_Voyage_FlyingAwayFromTheBerthAbortsTheApproach),
         ("World_EnemyAi_DormantWhileTraveling", World_EnemyAi_DormantWhileTraveling),
         ("World_SuitAction_RequiresProximityToLocker", World_SuitAction_RequiresProximityToLocker),
@@ -196,7 +194,7 @@ internal static partial class TestRunner
         ("World_ShipKindScout_SpawnsAndSteps", World_ShipKindScout_SpawnsAndSteps),
         ("World_ShipKindCruiser_SpawnsAndSteps", World_ShipKindCruiser_SpawnsAndSteps),
         ("RoomLayout_MoveAlongAxis_BlocksAtWallWithoutDoor", RoomLayout_MoveAlongAxis_BlocksAtWallWithoutDoor),
-        ("World_Station_ArrivingSetsStationApproachNotInstantDock", World_Station_ArrivingSetsStationApproachNotInstantDock),
+        ("World_Station_ArrivingNearStationDoesNotAutoDock", World_Station_ArrivingNearStationDoesNotAutoDock),
         ("World_Station_DockAtStation_ReachesStationPhase", World_Station_DockAtStation_ReachesStationPhase),
         ("World_Station_WalkThroughOpenOuterDoor_EntersStation", World_Station_WalkThroughOpenOuterDoor_EntersStation),
         ("World_Station_WalkBackThroughConnector_ReturnsToShip", World_Station_WalkBackThroughConnector_ReturnsToShip),
@@ -268,7 +266,7 @@ internal static partial class TestRunner
         ("World_Recruiting_RespectsMaxHiredBotsCap", World_Recruiting_RespectsMaxHiredBotsCap),
         ("World_Recruiting_SecurityBotAutoMansAndFiresAtEnemy", World_Recruiting_SecurityBotAutoMansAndFiresAtEnemy),
         ("World_Recruiting_MechanicBotRefuelsDrainedReactor", World_Recruiting_MechanicBotRefuelsDrainedReactor),
-        ("World_Recruiting_MedicBotLeavesHealthyCrewAlone", World_Recruiting_MedicBotLeavesHealthyCrewAlone),
+        ("World_Recruiting_ScientistBotLeavesHealthyCrewAlone", World_Recruiting_ScientistBotLeavesHealthyCrewAlone),
         ("World_Recruiting_EngineerBotFeedsUnpoweredSystems", World_Recruiting_EngineerBotFeedsUnpoweredSystems),
         ("World_Recruiting_CaptainBotStabilizesAbandonedHelm", World_Recruiting_CaptainBotStabilizesAbandonedHelm),
         ("World_StarSystem_GalaxyHasMoreThanOneSystemFromTheStart", World_StarSystem_GalaxyHasMoreThanOneSystemFromTheStart),
@@ -302,6 +300,11 @@ internal static partial class TestRunner
         ("World_Axe_ChopsClosedDoorInTwoHits", World_Axe_ChopsClosedDoorInTwoHits),
         ("World_Axe_DoesNothingWithoutAxeInHand", World_Axe_DoesNothingWithoutAxeInHand),
         ("World_StarSystem_GalaxyHas200SystemsAllReachable", World_StarSystem_GalaxyHas200SystemsAllReachable),
+        ("World_StarSystem_MostProceduralSystemsHaveAControllingFaction", World_StarSystem_MostProceduralSystemsHaveAControllingFaction),
+        ("World_StarSystem_ControlledSystemsGetFewerHostileSectorsThanContested", World_StarSystem_ControlledSystemsGetFewerHostileSectorsThanContested),
+        ("World_StarSystem_ChunkedGenerationMatchesWhicheverPacingReachesIt", World_StarSystem_ChunkedGenerationMatchesWhicheverPacingReachesIt),
+        ("World_StarSystem_EnsureGeneratedGrowsUntilNeighborTargetIsMet", World_StarSystem_EnsureGeneratedGrowsUntilNeighborTargetIsMet),
+        ("World_Station_HostileStandingTriggersDefensiveSquadronOnApproach", World_Station_HostileStandingTriggersDefensiveSquadronOnApproach),
         ("World_Equip_BeltBag_HoldsItemsInItsOwnSubSlots", World_Equip_BeltBag_HoldsItemsInItsOwnSubSlots),
         ("World_Equip_CannotUnequipNonEmptyBeltBag", World_Equip_CannotUnequipNonEmptyBeltBag),
         ("World_Equip_WrongItemTypeIsRefused", World_Equip_WrongItemTypeIsRefused),
@@ -309,6 +312,12 @@ internal static partial class TestRunner
         ("World_Eva_MagneticBoots_AttachToStationHull", World_Eva_MagneticBoots_AttachToStationHull),
         ("World_Eva_BootsOff_BouncesOffStationHull", World_Eva_BootsOff_BouncesOffStationHull),
     };
+
+    // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via
+    // Program.cs's DIAG=1 env var switch while chasing a specific failure interactively.
+    public static void Diagnostic()
+    {
+    }
 
     public static int Run()
     {

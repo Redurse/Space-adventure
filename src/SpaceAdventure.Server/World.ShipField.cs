@@ -19,10 +19,21 @@ public sealed partial class World
     // края системы к другому") - the same cruise speed applies whether a human is flying or the
     // autopilot is (World.Voyage.cs's StepTraveling no longer runs the unmanned case on a faster
     // clock than a manned one).
+    // RCS mode (M41) - today's original free-rotation flight, unchanged: turning spins the bow in
+    // place at a constant rate regardless of speed, useful for precision work (docking, lining up
+    // a shot) where the bow has to point somewhere the ship isn't actually travelling.
     private const float ShipMaxSpeed = 5f;
     private const float ShipThrustAccelerationPerSecond = 4f;
-    private const float ShipAutoStabilizeDecelerationPerSecond = 6f;
     private const float ShipRotationDegreesPerSecond = 90f;
+    // Arc mode (M41, the default) - turning banks the nose at a rate tied to current speed instead
+    // (IntegrateShipFieldMotion), the way a real vessel carrying real momentum comes about: standing
+    // still, the bow doesn't swing at all. Faster top speed and acceleration than RCS to make it
+    // the more capable mode for actually getting somewhere, trading away the ability to pivot in
+    // place - that's what Z (Rcs) is for.
+    private const float ArcMaxSpeed = 9f;
+    private const float ArcThrustAccelerationPerSecond = 6.5f;
+    private const float ArcMaxYawRateDegreesPerSecond = 50f;
+    private const float ShipAutoStabilizeDecelerationPerSecond = 6f;
     private const float ShipEngineReferencePower = 10f; // same order of magnitude as the "10 power ~= 1 breach" oxygen constant
     // Backing up runs the manoeuvring thrusters, not the main engines - astern is for easing off a
     // berth or out of a rock, not for flying anywhere.
@@ -38,6 +49,10 @@ public sealed partial class World
     private bool _shipAutoStabilize = true;
     private float _helmThrottle;
     private float _helmTurn;
+    public ShipControlMode ControlMode { get; private set; } = ShipControlMode.Arc;
+
+    private void ToggleControlMode() =>
+        ControlMode = ControlMode == ShipControlMode.Arc ? ShipControlMode.Rcs : ShipControlMode.Arc;
 
     // Where the bow points in world terms, which is the ship's own forward axis turned by its
     // current heading (Ship.ForwardDegrees).
@@ -60,31 +75,38 @@ public sealed partial class World
         _shipAutoStabilize = true;
     }
 
-    // Thrust/drag/turn integration shared by any local-space flight (asteroid field, station
-    // approach - World.StationDocking.cs): only the "what happens on arrival at candidatePosition"
-    // part differs (breach a wall block vs. capture a dock), so that part stays in each phase's
-    // own Step method instead of being duplicated here.
-    //
-    // fullPower bypasses the Engine allocation gate - the autopilot cruise between systems'
-    // points of interest (World.Voyage.cs's StepTraveling) is the ship's own automated running,
-    // not a manual burn, and a crew that hasn't touched the power sliders yet still has to be
-    // able to leave dock on their very first trip. Manual flight (the default, fullPower: false)
-    // keeps depending on GetEffectivePower exactly as it always has - anyone actually at the helm
-    // still has to feed the engines like any other system.
-    private Vec2 IntegrateShipFieldMotion(double deltaSeconds, bool fullPower = false)
+    // Thrust/drag/turn integration for the ship's own manual flight (World.Voyage.cs's StepVoyage) -
+    // only the "what happens on arrival at candidatePosition" part differs by hazard (breach a wall
+    // block, ram an enemy hull, bump a station's plating), so that part stays in
+    // StepShipFieldPhysics below instead of being duplicated here.
+    private Vec2 IntegrateShipFieldMotion(double deltaSeconds)
     {
         var dt = (float)deltaSeconds;
         _hullContactCooldown = Math.Max(0f, _hullContactCooldown - dt);
-        var enginePowerScale = fullPower ? 1f : Math.Min(2f, GetEffectivePower(PowerSystemId.Engine) / ShipEngineReferencePower);
+        var enginePowerScale = Math.Min(2f, GetEffectivePower(PowerSystemId.Engine) / ShipEngineReferencePower);
 
-        // Heading is steered, not inferred. It used to swing round to face whatever direction the
-        // ship was drifting, which meant the pilot could never point the bow anywhere on purpose -
-        // and with the guns and the airlock bolted to particular sides of the hull, pointing it is
-        // the whole job.
-        _shipRotationDegrees += _helmTurn * ShipRotationDegreesPerSecond * dt;
+        // Heading is steered, not inferred - the pilot always points the bow on purpose, never has
+        // it swing round to face wherever the ship happens to be drifting (with the guns and the
+        // airlock bolted to particular sides of the hull, pointing it is the whole job). RCS turns
+        // it at a flat rate regardless of speed - can pivot standing still. Arc (the default, M41)
+        // ties the rate to current speed instead, zero at a standstill - a real vessel's own
+        // momentum resisting a spin in place - which is what actually reads as "banking a turn"
+        // rather than "spinning the whole hull".
+        if (ControlMode == ShipControlMode.Arc)
+        {
+            var speedFraction = Math.Min(1f, _shipVelocity.Length() / ArcMaxSpeed);
+            _shipRotationDegrees += _helmTurn * ArcMaxYawRateDegreesPerSecond * speedFraction * dt;
+        }
+        else
+        {
+            _shipRotationDegrees += _helmTurn * ShipRotationDegreesPerSecond * dt;
+        }
 
         var throttle = _helmThrottle < 0f ? _helmThrottle * ShipReverseThrustFraction : _helmThrottle;
         _shipThrust = ShipNoseDirection * throttle;
+
+        var maxSpeed = ControlMode == ShipControlMode.Arc ? ArcMaxSpeed : ShipMaxSpeed;
+        var thrustAccelerationPerSecond = ControlMode == ShipControlMode.Arc ? ArcThrustAccelerationPerSecond : ShipThrustAccelerationPerSecond;
 
         if (_shipAutoStabilize)
         {
@@ -94,25 +116,23 @@ public sealed partial class World
         }
         else
         {
-            _shipVelocity += _shipThrust * ShipThrustAccelerationPerSecond * enginePowerScale * dt;
-            if (_shipVelocity.Length() > ShipMaxSpeed)
-                _shipVelocity = _shipVelocity.Normalized() * ShipMaxSpeed;
+            _shipVelocity += _shipThrust * thrustAccelerationPerSecond * enginePowerScale * dt;
+            if (_shipVelocity.Length() > maxSpeed)
+                _shipVelocity = _shipVelocity.Normalized() * maxSpeed;
         }
 
         return _shipFieldPosition + _shipVelocity * dt;
     }
 
-    // ignoreAsteroids is set only by the open cruise between points (World.Voyage.cs's
-    // StepTraveling) - a long-distance transit is meant to be a safe background trip the crew can
-    // walk around during, not an obstacle course through whatever the belt happens to sit between
-    // two points; asteroids only matter as physical hazards once you're actually doing something
-    // in the field (mining, fighting, docking), not passing through en route to somewhere else.
-    private void StepShipFieldPhysics(double deltaSeconds, bool fullPower = false, bool ignoreAsteroids = false)
+    // Every physical hazard the field can hold applies at once now (M39) - there's no separate
+    // "mode" where only asteroids matter or only a station's hull does, since the ship can be near
+    // any combination of them simultaneously.
+    private void StepShipFieldPhysics(double deltaSeconds)
     {
-        var candidatePosition = IntegrateShipFieldMotion(deltaSeconds, fullPower)
+        var candidatePosition = IntegrateShipFieldMotion(deltaSeconds)
             .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
 
-        if (!ignoreAsteroids && TryFindHullCollision(candidatePosition, _shipRotationDegrees, out var localContactPoint))
+        if (TryFindHullCollision(candidatePosition, _shipRotationDegrees, out var localContactPoint))
         {
             // Refusing the whole step is what used to wedge the ship against a rock: pressed
             // against one, every direction with any component into it was thrown away too, so
@@ -138,6 +158,22 @@ public sealed partial class World
         // holing them: the enemy's plating is a match for yours, and a fight that can be won by
         // steering into the other ship isn't one worth having.
         if (HullOverlapsEnemy(candidatePosition))
+        {
+            _shipVelocity = Vec2.Zero;
+            return;
+        }
+
+        // The station's own compartments are solid too, whichever one happens to be nearest right
+        // now (World.Voyage.cs's UpdateNearestStation) - shoulder into them and the ship stops dead
+        // rather than passing through (its hull is sturdier than a lone asteroid, and docking is a
+        // deliberate button press, not a drift-in). Only blocks a step that's newly entering the
+        // station's silhouette, not one that's already inside it: the instant after undocking the
+        // ship IS still mated to the berth (by construction - that's what "docked" means), so
+        // gating on the candidate position alone would wedge it there forever, unable to ever
+        // thrust clear on the very first tick of casting off. A course that curves back through
+        // the same structure later is correctly blocked again once the ship has actually left it -
+        // this only ever forgives the single moment of casting off, not the structure as a whole.
+        if (!HullTouchesStation(_shipFieldPosition) && HullTouchesStation(candidatePosition))
         {
             _shipVelocity = Vec2.Zero;
             return;
@@ -240,5 +276,23 @@ public sealed partial class World
         var nearest = Ship.WallBlocks.OrderBy(b => (b.Position - localContactPoint).Length()).FirstOrDefault();
         if (nearest is not null)
             DamageWallBlock(nearest.Id, WallBlockMaxHp);
+    }
+
+    // Test-only convenience - never called by real gameplay code, no client command reaches it.
+    // Instantly relocates the ship as if a perfect pilot had already arrived, stopped dead,
+    // skipping the actual flight for setup that isn't itself about piloting. Most of the test
+    // suite needs "the ship is docked at X" or "a fight with Y has started" purely as scaffolding
+    // for something else entirely (a faction/quest/trade/combat mechanic) - simulating a real,
+    // straight-line-pilot flight across a system now scattered with several hostile sectors and
+    // multiple stations' own solid hulls (M39/M40) turned out to need actual obstacle-avoidance to
+    // do reliably, which is a real feature in its own right, not a side effect of any single
+    // milestone here. The handful of tests that ARE about piloting itself (TestRunner.HelmAndHull.cs,
+    // TestRunner.Voyage.cs's own manual-flight tests) still fly for real and never call this.
+    public void DebugPlaceShip(Vec2 position)
+    {
+        _shipFieldPosition = position.Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+        _shipVelocity = Vec2.Zero;
+        _shipThrust = Vec2.Zero;
+        _shipRotationDegrees = 0f;
     }
 }

@@ -11,7 +11,7 @@ namespace SpaceAdventure.Server;
 public sealed partial class World
 {
     private const float MechanicActionCooldownSeconds = 4f;
-    private const float MedicHealPerSecond = 8f;
+    private const float ScientistHealPerSecond = 8f;
     private const float BotTurretAimToleranceDegrees = 2f;
 
     private readonly Dictionary<int, float> _mechanicCooldowns = new();
@@ -31,8 +31,8 @@ public sealed partial class World
                 case CrewRole.Mechanic:
                     StepMechanicBot(bot, deltaSeconds);
                     break;
-                case CrewRole.Medic:
-                    StepMedicBot(deltaSeconds);
+                case CrewRole.Scientist:
+                    StepScientistBot(deltaSeconds);
                     break;
                 case CrewRole.Captain:
                     StepCaptainBot();
@@ -53,7 +53,7 @@ public sealed partial class World
             return;
 
         var runtime = _turretRuntimes[turretId];
-        if (Phase != VoyagePhase.Battle || runtime.Damaged)
+        if (!IsInBattle || runtime.Damaged)
         {
             _turretAimInput[turretId] = 0f;
             return;
@@ -145,8 +145,10 @@ public sealed partial class World
     // be Health >= 0's mistaken twin: it excluded the one crewmate who needs it most - there is no
     // separate "dead" state (World.Injuries.cs), so a character at exactly 0 is incapacitated
     // (can't weld/cut) rather than gone, and this was the one path that could bring them back
-    // without a MedKit in hand.
-    private void StepMedicBot(double deltaSeconds)
+    // without a MedKit in hand. Same healing job the role always did (M42 just renamed
+    // Medic->Scientist and gave a live player at the console a scanner to run too, M44) - a hired
+    // bot has no perception of the scanner side of the job, only this one.
+    private void StepScientistBot(double deltaSeconds)
     {
         var patient = _characters.Values
             .Where(c => c.Health < Character.MaxHealth && c.Health >= 0)
@@ -155,19 +157,18 @@ public sealed partial class World
         if (patient is null)
             return;
 
-        patient.Health = Math.Min(Character.MaxHealth, patient.Health + MedicHealPerSecond * (float)deltaSeconds);
+        patient.Health = Math.Min(Character.MaxHealth, patient.Health + ScientistHealPerSecond * (float)deltaSeconds);
     }
 
     // A safety net, not a pilot: if nobody living is at the helm and the ship is coasting, brake it
     // rather than let it drift wherever its last commanded thrust was pointed. Doesn't touch the
-    // helm at all while a real player is flying. Traveling is deliberately excluded - that phase
-    // already has its own pilot when nobody's at the console (World.Voyage.cs's StepTraveling
-    // autopilot), and this safety brake would fight it tick for tick otherwise.
+    // helm at all while a real player is flying. Docked is excluded - a docked ship isn't drifting
+    // anywhere, there's nothing to brake.
     private void StepCaptainBot()
     {
         if (_characters.Values.Any(c => !c.IsBot && c.IsAtHelm))
             return;
-        if (Phase is not (VoyagePhase.Battle or VoyagePhase.AsteroidField or VoyagePhase.StationApproach))
+        if (IsDocked)
             return;
         if (_shipAutoStabilize || _shipVelocity.Length() < 0.5f)
             return;

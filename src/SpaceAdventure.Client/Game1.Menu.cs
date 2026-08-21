@@ -25,6 +25,7 @@ public partial class Game1
         Role,
         Main,
         ShipSelect,
+        Prologue,
         Join,
         ShipEditor,
         Credits,
@@ -32,7 +33,7 @@ public partial class Game1
     }
 
     private static readonly ShipKind[] SelectableShipKinds = { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette };
-    private static readonly CrewRole[] RoleChoices = { CrewRole.Captain, CrewRole.Engineer, CrewRole.Mechanic, CrewRole.Security, CrewRole.Medic };
+    private static readonly CrewRole[] RoleChoices = { CrewRole.Captain, CrewRole.Engineer, CrewRole.Mechanic, CrewRole.Security, CrewRole.Scientist };
     private const int RoleIconBoxSize = 70;
     private const int RoleIconGap = 30;
     private const int RoleIconsY = 220;
@@ -115,7 +116,7 @@ public partial class Game1
             _joinAddress += e.Character;
     }
 
-    private void HandleMenu(KeyboardState keyboard)
+    private void HandleMenu(KeyboardState keyboard, float deltaSeconds)
     {
         if (_joinTask is not null)
         {
@@ -132,6 +133,8 @@ public partial class Game1
             HandleMainMenuClick();
         else if (_menuScreen == MenuScreen.ShipSelect)
             HandleShipSelect(keyboard);
+        else if (_menuScreen == MenuScreen.Prologue)
+            HandlePrologueScreen(keyboard, deltaSeconds);
         else if (_menuScreen == MenuScreen.ShipEditor)
             HandleShipEditorScreen(keyboard);
         else if (_menuScreen == MenuScreen.Credits)
@@ -207,6 +210,11 @@ public partial class Game1
             _menuScreen = MenuScreen.Main;
             return true;
         }
+        if (_menuScreen == MenuScreen.Prologue)
+        {
+            SkipPrologue();
+            return true;
+        }
         if (_menuScreen == MenuScreen.ShipEditor)
         {
             _menuScreen = MenuScreen.Main;
@@ -264,6 +272,24 @@ public partial class Game1
         ("НАСТРОЙКИ", new Rectangle(76, 420, 160, 24), MainMenuAction.Settings, MainMenuIcon.Bars),
         ("АВТОРЫ", new Rectangle(76, 456, 160, 26), MainMenuAction.Credits, MainMenuIcon.Medal),
         ("ВЫХОД", new Rectangle(76, 488, 160, 24), MainMenuAction.Exit, MainMenuIcon.Exit),
+    };
+
+    // A plate before each group of buttons, the way the reference screen marks its sections.
+    //
+    // Not lined up in a single column: the groups themselves start from two different left edges, and
+    // a column of plates beside a staggered list reads as a separate thing standing next to the menu
+    // rather than as part of it. Each plate takes its own group's indent, so the stagger is shared.
+    //
+    // The x for the near groups is 8 rather than 76-12-64=0 - at zero the plate is welded to the
+    // screen edge. Vertical centres are the middle of each group's own span, so a group growing a
+    // button moves its plate with it.
+    private const int SectionPlateSize = 64;
+    private static readonly (MenuSection Section, Rectangle Box)[] MainMenuSections =
+    {
+        (MenuSection.Campaign, new Rectangle(68, 44, SectionPlateSize, SectionPlateSize)),
+        (MenuSection.Network, new Rectangle(8, 164, SectionPlateSize, SectionPlateSize)),
+        (MenuSection.Shipyard, new Rectangle(68, 312, SectionPlateSize, SectionPlateSize)),
+        (MenuSection.Systems, new Rectangle(8, 434, SectionPlateSize, SectionPlateSize)),
     };
 
     // Continue only exists once there's actually a save to continue - same "not drawn/clickable
@@ -374,7 +400,9 @@ public partial class Game1
         // Starting fresh abandons the old run - the first docking would overwrite it anyway, so
         // clearing it now keeps "continue" from offering a save that no longer matches.
         SaveStore.Delete();
-        StartHostedSession(SelectableShipKinds[index], loadFrom: null);
+        // A genuinely new campaign, unlike Continue/Tutorial above - the one path that gets the
+        // prologue (Game1.Prologue.cs), which only starts the session once it has played out.
+        BeginPrologue(SelectableShipKinds[index]);
     }
 
     private void HandleJoinScreen(KeyboardState keyboard)
@@ -515,6 +543,8 @@ public partial class Game1
             DrawMainMenuScreen(totalSeconds);
         else if (_menuScreen == MenuScreen.ShipSelect)
             DrawShipSelectScreen();
+        else if (_menuScreen == MenuScreen.Prologue)
+            DrawPrologueScreen(totalSeconds);
         else if (_menuScreen == MenuScreen.ShipEditor)
             DrawShipEditorScreen();
         else if (_menuScreen == MenuScreen.Credits)
@@ -547,6 +577,17 @@ public partial class Game1
         DrawMainMenuPanelPlate(totalSeconds);
 
         var sinceEnter = totalSeconds - (_mainMenuEnterTime ?? totalSeconds - 999f);
+
+        // The plates arrive first, on the same stagger the buttons use - a heading that appears after
+        // the things under it has the order backwards.
+        for (var i = 0; i < MainMenuSections.Length; i++)
+        {
+            var (section, box) = MainMenuSections[i];
+            var plateProgress = MainMenuButtonProgress(sinceEnter, i);
+            MenuSectionIcons.Draw(_spriteBatch, _pixel, section, box,
+                new Color(90, 220, 195) * (0.85f * plateProgress));
+        }
+
         var visibleIndex = 0;
         foreach (var (staticLabel, rect, action, icon) in MainMenuButtons)
         {
@@ -572,126 +613,340 @@ public partial class Game1
     // with nothing grouping them need their own edge to read as a discrete clickable thing.
     // `progress` drives both the fade-in and a slide-up on arrival, same convention every other
     // menu animation in this file already uses.
+    // Amber, and only here. The reference screen gets its punch from having exactly one saturated
+    // colour in the whole frame, appearing four or five times against cold near-black. Spend it
+    // anywhere else and it stops being an accent.
+    private static readonly Color MenuAmber = new(196, 116, 16);
+    private static readonly Color MenuAmberInk = new(16, 18, 17);
+
     private void DrawMainMenuButton(Rectangle rect, string label, bool enabled, float progress, MainMenuIcon icon, float totalSeconds)
     {
         var slide = (int)((1f - progress) * 14f);
         var drawRect = new Rectangle(rect.X, rect.Y + slide, rect.Width, rect.Height);
         var hovered = enabled && drawRect.Contains(_designMouse);
-        // Held down over the button: the plate sinks a pixel and its face brightens, so a click
-        // has a physical answer instead of the label simply changing colour on release.
+        // Held down over the button: the bar sinks a pixel, so a click has a physical answer instead
+        // of the label simply changing colour on release.
         var held = hovered && Mouse.GetState().LeftButton == ButtonState.Pressed;
         if (held)
             drawRect = new Rectangle(drawRect.X + 1, drawRect.Y + 1, drawRect.Width, drawRect.Height);
-        var accent = !enabled ? new Color(90, 96, 96) : hovered ? Color.Gold : new Color(90, 220, 195);
 
-        _spriteBatch.Draw(_pixel, drawRect, new Color(14, 20, 20) * progress);
+        var labelWidth = _font.MeasureString(label).X * 0.5f;
+
+        // No plate and no outline when idle. A box around every item is the thing that makes a menu
+        // look like a form; without it the items sit on the surface, which is the whole point of
+        // having given the surface a material.
+        //
+        // The bar is sized to the label rather than to the button. Stretched to the full hit area it
+        // left the longer labels running off its chewed end into the dark, which reads as clipping;
+        // hugging the text is also what the reference does. The button's hit area is untouched.
         if (hovered)
         {
-            // A band of light crossing the plate, left to right, on a loop. Drawn as a handful of
-            // one-pixel columns with a triangular falloff because there is no scissor rect here to
-            // clip a wide quad against, and a gradient texture for one effect is not worth it.
-            _spriteBatch.Draw(_pixel, drawRect, accent * (held ? 0.22f : 0.12f) * progress);
-            var sweep = drawRect.X + (totalSeconds * 0.85f % 1f) * drawRect.Width;
-            for (var i = -7; i <= 7; i++)
-            {
-                var x = (int)sweep + i;
-                if (x < drawRect.X || x >= drawRect.Right)
-                    continue;
-                var falloff = (1f - MathF.Abs(i) / 8f) * 0.20f;
-                _spriteBatch.Draw(_pixel, new Rectangle(x, drawRect.Y + 1, 1, drawRect.Height - 2), Color.White * falloff * progress);
-            }
+            // Not clamped to the button. "ПРОДОЛЖИТЬ (Корвет, 300 кред.)" is already wider than its
+            // own hit area - it was overflowing before any of this, the old border just made it look
+            // deliberate - and a bar that stops short of its own label reads as clipping. Drawing
+            // wider changes nothing about where the button is or what it catches.
+            var barWidth = (int)(drawRect.Height + 4 + labelWidth) + 14;
+            DrawAmberBar(new Rectangle(drawRect.X, drawRect.Y, Math.Max(drawRect.Width, barWidth), drawRect.Height),
+                progress, held, totalSeconds);
         }
-        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, drawRect, accent * progress, 1);
 
-        var iconBoxSize = drawRect.Height - 8;
+        var accent = !enabled ? new Color(78, 84, 84)
+            : hovered ? MenuAmberInk
+            : new Color(90, 220, 195);
+
+        var iconBoxSize = drawRect.Height - 4;
         var iconBox = new Rectangle(drawRect.X + 4, drawRect.Y + (drawRect.Height - iconBoxSize) / 2, iconBoxSize, iconBoxSize);
-        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, iconBox, accent * (progress * 0.6f), 1);
+        DrawMenuIconTile(iconBox, accent, progress, hovered);
         DrawMainMenuButtonIcon(icon, iconBox, accent * progress);
 
-        var textColor = (!enabled ? Color.Gray : hovered ? Color.Gold : Color.LightGray) * progress;
+        var textColor = (!enabled ? new Color(96, 102, 102)
+            : hovered ? MenuAmberInk
+            : new Color(206, 214, 212)) * progress;
         var textSize = _font.MeasureString(label) * 0.5f;
-        var textX = iconBox.Right + 8;
-        var textPos = new Vector2(textX, drawRect.Center.Y - textSize.Y / 2f);
+        var textPos = new Vector2(iconBox.Right + 8, drawRect.Center.Y - textSize.Y / 2f);
         _spriteBatch.DrawString(_font, label, textPos, textColor, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
-    // Same glyph vocabulary the old grouped sections used before each header (HudIcons' ship/
-    // signal/flag/medal/bars glyphs), plus a few quick vector icons for actions that never had
-    // one - all drawn with the same line/circle/triangle primitives, no image assets.
-    private void DrawMainMenuButtonIcon(MainMenuIcon icon, Rectangle box, Color color)
+    // The selected item, as a solid bar whose right end has been eaten away.
+    //
+    // The ragged end is the signature, and it has to be deterministic per row or the edge crawls
+    // every frame - which reads as a rendering fault, not as corrosion. A hash of the row does that
+    // and costs nothing to keep.
+    private void DrawAmberBar(Rectangle bar, float progress, bool held, float totalSeconds)
     {
-        var center = new Vector2(box.Center.X, box.Center.Y);
-        var scale = box.Width / 20f;
-        switch (icon)
+        var colour = MenuAmber * progress;
+        const int chew = 22;
+        for (var y = bar.Y; y < bar.Bottom; y++)
         {
-            case MainMenuIcon.Play:
-                Primitives.FillTriangle(_spriteBatch, _pixel,
-                    center + new Vector2(6f * scale, 0),
-                    center + new Vector2(-4f * scale, -6f * scale),
-                    center + new Vector2(-4f * scale, 6f * scale),
-                    color);
-                break;
-            case MainMenuIcon.Ship:
-                HudIcons.DrawShipGlyph(_spriteBatch, _pixel, center, scale, color);
-                break;
-            case MainMenuIcon.Flag:
-                HudIcons.DrawFlagGlyph(_spriteBatch, _pixel, center, scale * 0.8f, color);
-                break;
-            case MainMenuIcon.Signal:
-                HudIcons.DrawSignalGlyph(_spriteBatch, _pixel, center, scale * 0.8f, color);
-                break;
-            case MainMenuIcon.Plug:
-                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-7f * scale, 0), center + new Vector2(2f * scale, 0), color, 1.8f * scale);
-                _spriteBatch.Draw(_pixel, new Rectangle((int)(center.X + 2f * scale), (int)(center.Y - 5f * scale), (int)(5f * scale), (int)(10f * scale)), color);
-                break;
-            case MainMenuIcon.Wrench:
-                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-6f * scale, 6f * scale), center + new Vector2(5f * scale, -5f * scale), color, 2.2f * scale);
-                HudIcons.DrawRingArc(_spriteBatch, _pixel, center + new Vector2(6f * scale, -6f * scale), 3.2f * scale, 0f, 360f, color, 8, 1.6f * scale);
-                break;
-            case MainMenuIcon.Person:
-                HudIcons.DrawPerson(_spriteBatch, _pixel, center + new Vector2(0, 7f * scale), scale * 0.85f, color);
-                break;
-            case MainMenuIcon.Bars:
-                HudIcons.DrawBarsGlyph(_spriteBatch, _pixel, center, scale * 0.7f, color);
-                break;
-            case MainMenuIcon.Medal:
-                HudIcons.DrawMedalGlyph(_spriteBatch, _pixel, center, scale * 0.8f, color);
-                break;
-            case MainMenuIcon.Exit:
-                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-6f * scale, -6f * scale), center + new Vector2(6f * scale, 6f * scale), color, 2f * scale);
-                HudIcons.DrawLine(_spriteBatch, _pixel, center + new Vector2(-6f * scale, 6f * scale), center + new Vector2(6f * scale, -6f * scale), color, 2f * scale);
-                break;
+            var noise = MenuEdgeNoise(y);
+            // Squared, so most rows are barely bitten and a few are bitten deeply. A uniform spread
+            // gives a fuzzy edge; this gives a broken one.
+            var bite = (int)(chew * noise * noise);
+            _spriteBatch.Draw(_pixel, new Rectangle(bar.X, y, Math.Max(4, bar.Width - bite), 1), colour);
+        }
+
+        // Flecks that have come off the end entirely. Three or four is enough to say the edge is
+        // damage rather than a shape.
+        for (var i = 0; i < 5; i++)
+        {
+            var n = MenuEdgeNoise(bar.Y * 31 + i * 17);
+            if (n < 0.45f)
+                continue;
+            var fx = bar.Right - (int)(chew * 0.4f) + (int)(n * 16f);
+            var fy = bar.Y + (int)(MenuEdgeNoise(i * 977 + bar.Y) * (bar.Height - 2));
+            _spriteBatch.Draw(_pixel, new Rectangle(fx, fy, 1 + (int)(n * 2f), 1 + (int)(n * 2f)), colour);
+        }
+
+        // The sweep survives, dimmed: on a bright bar it only has to suggest a scan, and at the old
+        // strength it fought the amber instead of riding over it.
+        var sweep = bar.X + (totalSeconds * 0.85f % 1f) * bar.Width;
+        for (var i = -7; i <= 7; i++)
+        {
+            var x = (int)sweep + i;
+            if (x < bar.X || x >= bar.Right - 6)
+                continue;
+            var falloff = (1f - MathF.Abs(i) / 8f) * 0.10f;
+            _spriteBatch.Draw(_pixel, new Rectangle(x, bar.Y + 1, 1, bar.Height - 2), Color.White * falloff * progress);
         }
     }
 
-    // The left panel's own material - the same armour-plate texture the hull itself uses
-    // reads as flat near-black with just a whisper of a blueprint grid, not a repeating armour-
-    // plate tile - a tiled hull texture at this scale read as "a bunch of plates" instead of a
-    // moody backdrop, so this is a flat fill plus thin grid lines instead. Also carries a thin
-    // animated status strip down the panel's right edge.
+    private static float MenuEdgeNoise(int n)
+    {
+        var h = (uint)(n * 374761393 + 668265263);
+        h ^= h >> 13;
+        h *= 1274126177u;
+        return ((h ^ (h >> 16)) & 0xffff) / 65535f;
+    }
+
+    // The icon square, drawn as a plate off a schematic rather than a border: a thin frame, a hint of
+    // fill so it is a surface and not a hole, and tick marks along the bottom edge - the small
+    // draughting detail that makes a box read as an instrument panel.
+    private void DrawMenuIconTile(Rectangle box, Color accent, float progress, bool hovered)
+    {
+        if (!hovered)
+            _spriteBatch.Draw(_pixel, box, new Color(24, 46, 44) * (0.55f * progress));
+        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, box, accent * (progress * 0.75f), 1);
+
+        const int ticks = 5;
+        for (var i = 0; i < ticks; i++)
+        {
+            var x = box.X + 3 + (int)((box.Width - 6) * (i / (float)(ticks - 1)));
+            var height = i % 2 == 0 ? 3 : 2;
+            _spriteBatch.Draw(_pixel, new Rectangle(x, box.Bottom + 1, 1, height), accent * (progress * 0.5f));
+        }
+    }
+
+    // The left panel's own material - painted rather than filled. A flat fill is exactly what an
+    // interface looks like; a surface with marks on it is a place that happens to have an interface
+    // sitting on it. MenuPlateTexture lays the strokes and bakes the result once.
+    //
+    // There is also no frame and no edge strip. A box says "widget", and the reference this is
+    // chasing has no box at all - only a surface with the items lying directly on it.
+    private Texture2D? _menuPlate;
+
     private void DrawMainMenuPanelPlate(float totalSeconds)
     {
         var panelRect = new Rectangle(0, 0, MenuPaneX, DesignHeight);
-        _spriteBatch.Draw(_pixel, panelRect, new Color(7, 11, 12));
+        _menuPlate ??= MenuPlateTexture.Create(GraphicsDevice, MenuPaneX, DesignHeight);
+        _spriteBatch.Draw(_menuPlate, panelRect, Color.White);
 
+        // The blueprint grid stays, but barely. On a flat fill it was the only texture there was and
+        // had to carry the panel; over a surface with its own grain it only has to be a hint that
+        // something was drafted here.
         const int cell = 28;
-        var gridColor = new Color(90, 220, 195) * 0.05f;
+        var gridColor = new Color(90, 220, 195) * 0.025f;
         for (var x = panelRect.X; x < panelRect.Right; x += cell)
             _spriteBatch.Draw(_pixel, new Rectangle(x, panelRect.Y, 1, panelRect.Height), gridColor);
         for (var y = panelRect.Y; y < panelRect.Bottom; y += cell)
             _spriteBatch.Draw(_pixel, new Rectangle(panelRect.X, y, panelRect.Width, 1), gridColor);
 
-        // A soft glow low in the corner the sections actually sit in, fading to nothing toward the
-        // opposite edges - depth without a second competing pattern.
-        HudIcons.FillCircle(_spriteBatch, _pixel, new Vector2(panelRect.X + 40, panelRect.Y + 260), 260f, new Color(40, 70, 65) * 0.10f);
+        DrawMenuSeam(panelRect, totalSeconds);
+    }
 
-        const int stripWidth = 3;
-        var stripRect = new Rectangle(panelRect.Right - stripWidth, 0, stripWidth, DesignHeight);
-        _spriteBatch.Draw(_pixel, stripRect, new Color(20, 26, 26));
-        var pulse = 0.5f + 0.5f * MathF.Sin(totalSeconds * 1.6f);
-        const int litHeight = 40;
-        var litY = (int)(pulse * (DesignHeight - litHeight));
-        _spriteBatch.Draw(_pixel, new Rectangle(stripRect.X, litY, stripWidth, litHeight), new Color(90, 220, 195) * 0.8f);
+    // The join between the plate and the art behind it.
+    //
+    // It was a ruler-straight line with a soft shadow bled over the art - honest, and the dullest
+    // thing on the screen. A cut edge is never straight, and an edge with nothing on it has no scale:
+    // there is no way to tell whether the plate is a millimetre thick or a hand's width until
+    // something sits on it. So the line is torn, the cut catches light, bolts hold the plate down,
+    // and three brackets straddle the edge - the brackets matter most, because a line the eye can
+    // follow uninterrupted from top to bottom reads as a border no matter what shape it is.
+    private void DrawMenuSeam(Rectangle panelRect, float totalSeconds)
+    {
+        // The shadow first, under everything, and still straight: it falls on the art from a plate
+        // whose edge is only a few pixels ragged, and at this distance that raggedness would not show
+        // in a shadow anyway.
+        const int bleed = 26;
+        for (var i = 0; i < bleed; i++)
+        {
+            var fade = 1f - i / (float)bleed;
+            _spriteBatch.Draw(_pixel, new Rectangle(panelRect.Right + i, 0, 1, DesignHeight),
+                new Color(4, 7, 8) * (fade * fade * 0.85f));
+        }
+
+        // The tear, drawn in runs rather than per row. Rows that share a tear depth are contiguous
+        // because the noise sits on a lattice, so merging them turns five hundred draws into a few
+        // dozen for exactly the same picture.
+        var voidColour = new Color(3, 5, 7);
+        var lipColour = new Color(122, 158, 168) * 0.42f;
+        var runStart = 0;
+        var runTear = SeamTear(0);
+        for (var y = 1; y <= DesignHeight; y++)
+        {
+            var tear = y < DesignHeight ? SeamTear(y) : -1;
+            if (tear == runTear)
+                continue;
+
+            var height = y - runStart;
+            if (runTear > 0)
+            {
+                _spriteBatch.Draw(_pixel, new Rectangle(panelRect.Right - runTear, runStart, runTear, height), voidColour);
+                // The inner face of the cut, one pixel of it. A bite that is flat black is a hole in
+                // a sheet of paper; a bite with a wall inside it is a hole in something that has
+                // thickness, and thickness is the whole reason to have an edge at all.
+                if (runTear > 4)
+                    _spriteBatch.Draw(_pixel, new Rectangle(panelRect.Right - runTear + 1, runStart, 1, height),
+                        new Color(30, 38, 42) * 0.7f);
+            }
+            // The lit edge of the cut - but only where the cut actually faces the light. Running it
+            // at full strength down the whole edge was the other half of what made this read as a
+            // drawn line: a continuous highlight is a stroke, while metal glints in short pieces
+            // where a facet happens to turn upward. The edge is near-vertical, so its normal points
+            // away from the light almost everywhere; it catches light only where the tear steps
+            // outward, which is the top lip of each bite.
+            var slope = runTear - SeamTear(Math.Max(0, runStart - 4));
+            var glint = MathHelper.Clamp(slope / 4f, 0f, 1f);
+            _spriteBatch.Draw(_pixel, new Rectangle(panelRect.Right - runTear - 1, runStart, 1, height),
+                lipColour * (0.18f + glint * 0.82f));
+
+            runStart = y;
+            runTear = tear;
+        }
+
+        // Rust, running down from each bolt. Drawn before the bolts so the head sits on top of its
+        // own stain, and this is what ties the hardware to the surface: a bolt with nothing bleeding
+        // out of it looks laid on the panel rather than driven into it.
+        const int bolts = 9;
+        for (var i = 0; i < bolts; i++)
+        {
+            var y = (int)((i + 0.5f) / bolts * DesignHeight);
+            var x = panelRect.Right - 15 - (int)(SeamNoise(i * 37, 1) * 3f);
+            var runLength = 9 + (int)(SeamNoise(i * 91, 1) * 17f);
+            for (var d = 0; d < runLength; d++)
+            {
+                var fade = (1f - d / (float)runLength);
+                var wide = d < 3 ? 3 : 2;
+                _spriteBatch.Draw(_pixel, new Rectangle(x, y + 3 + d, wide, 1),
+                    new Color(96, 58, 30) * (fade * fade * 0.38f));
+            }
+        }
+
+        // The cable run. The edge of a plate is where wiring goes, and giving the join a job is worth
+        // more than any amount of extra dirt on it. It sags between its clamps, because a cable that
+        // runs dead straight is a drawn line and not a cable.
+        var clampYs = new[] { 24, 132, 256, 372, 494 };
+        var cableX = panelRect.Right - 24;
+        for (var i = 0; i < clampYs.Length - 1; i++)
+        {
+            var y0 = clampYs[i];
+            var y1 = clampYs[i + 1];
+            for (var y = y0; y < y1; y++)
+            {
+                var t = (y - y0) / (float)(y1 - y0);
+                var sag = MathF.Sin(t * MathF.PI) * (4f + SeamNoise(i * 53, 1) * 3f);
+                var x = cableX - (int)sag;
+                _spriteBatch.Draw(_pixel, new Rectangle(x, y, 3, 1), new Color(10, 12, 15));
+                _spriteBatch.Draw(_pixel, new Rectangle(x, y, 1, 1), new Color(64, 80, 88) * 0.26f);
+            }
+        }
+        foreach (var y in clampYs)
+        {
+            _spriteBatch.Draw(_pixel, new Rectangle(cableX - 2, y - 2, 7, 5), new Color(31, 39, 43));
+            _spriteBatch.Draw(_pixel, new Rectangle(cableX - 2, y - 2, 7, 1), new Color(104, 132, 140) * 0.28f);
+        }
+
+        // Bolt heads last, over their stains.
+        for (var i = 0; i < bolts; i++)
+        {
+            var y = (int)((i + 0.5f) / bolts * DesignHeight);
+            var x = panelRect.Right - 15 - (int)(SeamNoise(i * 37, 1) * 3f);
+            _spriteBatch.Draw(_pixel, new Rectangle(x - 1, y - 1, 5, 5), new Color(8, 11, 13) * 0.7f);
+            _spriteBatch.Draw(_pixel, new Rectangle(x, y, 3, 3), new Color(34, 43, 48));
+            _spriteBatch.Draw(_pixel, new Rectangle(x, y, 2, 1), new Color(118, 148, 158) * 0.75f);
+            _spriteBatch.Draw(_pixel, new Rectangle(x, y + 1, 1, 1), new Color(96, 122, 130) * 0.35f);
+        }
+
+        // Three brackets across the join. Deliberately unevenly spaced: at equal intervals they read
+        // as a repeating decoration rather than as hardware someone bolted on where it was needed.
+        // Each one is given a different job, so the eye is not looking at the same object three times.
+        var brackets = new[] { 86, 271, 448 };
+        for (var b = 0; b < brackets.Length; b++)
+        {
+            var y = brackets[b];
+            var plate = new Rectangle(panelRect.Right - 10, y, 24, 9);
+            _spriteBatch.Draw(_pixel, plate, new Color(26, 33, 37));
+
+            // Hazard stripes on the middle one. A stencil is the strongest industrial cue there is
+            // and it costs a loop - but only one of the three gets it, because a marking repeated on
+            // every bracket stops being a marking and becomes a pattern.
+            if (b == 1)
+            {
+                for (var i = 0; i < plate.Width + plate.Height; i += 6)
+                {
+                    for (var k = 0; k < 3; k++)
+                    {
+                        var sx = plate.X + i - k;
+                        var sy = plate.Y + k;
+                        if (sx < plate.X || sx >= plate.Right || sy >= plate.Bottom)
+                            continue;
+                        _spriteBatch.Draw(_pixel, new Rectangle(sx, sy, 1, 3), new Color(150, 104, 24) * 0.55f);
+                    }
+                }
+            }
+
+            _spriteBatch.Draw(_pixel, new Rectangle(plate.X, plate.Y, plate.Width, 1), new Color(104, 132, 140) * 0.45f);
+            _spriteBatch.Draw(_pixel, new Rectangle(plate.X, plate.Bottom - 1, plate.Width, 1), new Color(6, 9, 11));
+            _spriteBatch.Draw(_pixel, new Rectangle(plate.X + 3, plate.Y + 3, 2, 2), new Color(8, 11, 13));
+            _spriteBatch.Draw(_pixel, new Rectangle(plate.Right - 5, plate.Y + 3, 2, 2), new Color(8, 11, 13));
+
+            // One indicator, on the top bracket only. The single live thing on the whole join: a slow
+            // breath rather than a blink, because a blinking light demands attention and this is
+            // meant to be noticed on the second look, not the first.
+            if (b != 0)
+                continue;
+            var pulse = 0.35f + 0.65f * (0.5f + 0.5f * MathF.Sin(totalSeconds * 1.1f));
+            _spriteBatch.Draw(_pixel, new Rectangle(plate.X + 11, plate.Y + 3, 2, 2), new Color(120, 220, 170) * pulse);
+        }
+    }
+
+    // How deep the tear bites into the plate at this row.
+    //
+    // The first version summed two lattices and got a wobble of near-constant amplitude all the way
+    // down - which is a sine, not damage, and read as a squiggle drawn over the screen. Torn metal is
+    // the opposite shape: long stretches that are almost straight, punctuated by a few deep bites.
+    // Cubing the coarse term is what produces that - it pushes most rows towards nothing and leaves
+    // the occasional one high - and the fine term only roughens what is already there.
+    private static int SeamTear(int y)
+    {
+        var coarse = SeamNoise(y, 61);
+        var bite = coarse * coarse * coarse * 15f;
+        return (int)(bite + SeamNoise(y + 500, 6) * 1.6f);
+    }
+
+    private static float SeamNoise(int y, int cell)
+    {
+        var i0 = y / cell;
+        var t = (y - i0 * cell) / (float)cell;
+        t = t * t * (3f - 2f * t);
+        return Hash01(i0) * (1f - t) + Hash01(i0 + 1) * t;
+    }
+
+    private static float Hash01(int n)
+    {
+        var h = (uint)(n * 374761393 + 668265263);
+        h ^= h >> 13;
+        h *= 1274126177u;
+        return ((h ^ (h >> 16)) & 0xffff) / 65535f;
     }
 
     // Right-hand art pane - a planet on a slow orbit with the player's own ship circling it
@@ -708,9 +963,13 @@ public partial class Game1
         // A soft cyan glow behind the title (several oversized, near-transparent copies offset in
         // a ring) plus a hard black drop shadow, then the crisp white face on top - the cheapest
         // way to fake a bloomed title with nothing but flat text draws.
-        const string title = "SPACE ADVENTURE";
+        const string title = "UNIDENTIFIED SIGNAL";
         const float titleScale = 1.7f;
-        var titlePosition = new Vector2(pane.Right - 460, pane.Bottom - 92);
+        // Anchored by its right edge, not its left. The old fixed offset was measured against a
+        // fifteen-character name, so the first longer title would have run into the end of the rule
+        // beneath it; this keeps the title ending where it always did whatever it says.
+        var titleWidth = _font.MeasureString(title).X * titleScale;
+        var titlePosition = new Vector2(pane.Right - 110 - titleWidth, pane.Bottom - 92);
         var glow = new Color(90, 220, 195);
         // Three sine waves whose periods do not divide into each other, so the sign never settles
         // into a rhythm the eye can predict - that unevenness is the whole difference between a

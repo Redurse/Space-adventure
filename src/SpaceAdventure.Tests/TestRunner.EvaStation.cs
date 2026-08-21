@@ -14,7 +14,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         ApproachBerth(world);
-        if (world.Phase != VoyagePhase.StationApproach)
+        if (!world.CanDockNow)
             return false; // setup problem, not the behavior under test
 
         ExitShipIntoVacuum(world); // boots on by this helper's own last step
@@ -53,7 +53,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         ApproachBerth(world);
-        if (world.Phase != VoyagePhase.StationApproach)
+        if (!world.CanDockNow)
             return false;
 
         ExitShipIntoVacuum(world); // boots on...

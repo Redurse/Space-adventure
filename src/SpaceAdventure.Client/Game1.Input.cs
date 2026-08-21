@@ -510,12 +510,12 @@ public partial class Game1
     // close), (6) clicking empty space closes whatever's open. Edge-triggered so a held button
     // doesn't spam. The helm joystick's continuous drag is handled separately (UpdateHelmThrustDrag)
     // since it isn't an edge-triggered click.
-    private (int ToggleHoldSlotIndex, int ToggleReactorSlotIndex, string? TravelToPointId, ItemType? BuyItemType, int SellSlotIndex, bool AcceptCargoQuestPressed, bool TurnInCargoQuestPressed, ShipUpgradeTrack? PurchaseUpgradeTrack, bool HelmStabilizePressed, string? DoorToggleId) HandleMouseClick(MouseState mouse)
+    private (int ToggleHoldSlotIndex, int ToggleReactorSlotIndex, ItemType? BuyItemType, int SellSlotIndex, bool AcceptCargoQuestPressed, bool TurnInCargoQuestPressed, ShipUpgradeTrack? PurchaseUpgradeTrack, bool HelmStabilizePressed, string? DoorToggleId) HandleMouseClick(MouseState mouse)
     {
         var clicked = mouse.LeftButton == ButtonState.Pressed && _prevLeftMouseButton == ButtonState.Released;
         _prevLeftMouseButton = mouse.LeftButton;
         if (!clicked)
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
 
         // The pause menu (Game1.Update's Esc handling) sits over literally everything else, so its
         // own 4 buttons are checked before even the turret early-return below. "Главное меню" only
@@ -533,7 +533,7 @@ public partial class Game1
                 _pendingReturnToMainMenu = true; // Главное меню
             // Button 1 (Настройки) has no screen behind it yet - a dim placeholder, same convention
             // as the top-bar "Управление" button before it got the ship editor.
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         var snapshot = _client.LatestSnapshot;
@@ -543,7 +543,7 @@ public partial class Game1
         // out at the gun and at half scale, so every world-space hit test below would be pointing
         // at whatever used to be under the cursor rather than what's there now.
         if (snapshot is not null && MannedTurret(snapshot) is not null)
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
 
         // The 3 top-bar buttons and, while it's open, InfoPanel's own 5 tab buttons - pure client
         // state toggles, no server command involved, so they're handled here directly rather than
@@ -551,7 +551,7 @@ public partial class Game1
         if (GetTopBarButtonRect(0).Contains(_designMouse))
         {
             _crewPanelOpen = !_crewPanelOpen;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
         if (GetTopBarButtonRect(1).Contains(_designMouse))
         {
@@ -561,7 +561,7 @@ public partial class Game1
                 _infoPanelOpen = false;
                 _openBlock = ClickTarget.None;
             }
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
         if (GetTopBarButtonRect(2).Contains(_designMouse))
         {
@@ -571,7 +571,7 @@ public partial class Game1
                 _openBlock = ClickTarget.None;
                 _shipEditorOpen = false;
             }
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
         if (_infoPanelOpen)
         {
@@ -580,7 +580,7 @@ public partial class Game1
                 if (!InfoPanel.GetTabRect(i, InfoPanelOrigin).Contains(_designMouse))
                     continue;
                 _infoPanelTab = (InfoTab)i;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
         if (_shipEditorOpen && snapshot is not null)
@@ -590,7 +590,7 @@ public partial class Game1
                 if (!ShipEditorPanel.GetRowRect(i, ShipEditorPanelOrigin).Contains(_designMouse))
                     continue;
                 _shipEditorSelectedComponentId = snapshot.Components[i].Id;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
         // The crew panel's own picker row (CrewPanel.Draw) - clicking the role you're already on
@@ -615,7 +615,7 @@ public partial class Game1
                     _pendingSetOwnRoleTo = picked;
                     _pendingClearOwnRole = false;
                 }
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -630,17 +630,17 @@ public partial class Game1
                 if (!CardGamePanel.GetOwnHandCardRect(i, myHand.Count, CardGamePanelOrigin).Contains(_designMouse))
                     continue;
                 _pendingPlayCard = myHand[i];
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
             if (CardGamePanel.GetTakeButtonRect(CardGamePanelOrigin).Contains(_designMouse))
             {
                 _pendingCardGameTake = true;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
             if (CardGamePanel.GetEndRoundButtonRect(CardGamePanelOrigin).Contains(_designMouse))
             {
                 _pendingCardGameEndRound = true;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -648,23 +648,23 @@ public partial class Game1
         for (var i = 0; i < slotCount; i++)
         {
             if (InventoryPanel.GetHoldStripRect(i, InventoryRowOrigin(slotCount)).Contains(_designMouse))
-                return (i, -1, null, null, -1, false, false, null, false, null);
+                return (i, -1, null, -1, false, false, null, false, null);
         }
 
         if (snapshot is null || me is null)
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
 
         if (me.IsAtHelm && HelmPanel.GetStabilizeButtonRect(HelmPanelOrigin).Contains(_designMouse))
-            return (-1, -1, null, null, -1, false, false, null, true, null);
+            return (-1, -1, null, -1, false, false, null, true, null);
 
         // Armed either while the server says the ship is actually alongside the berth (docks) or
         // while already sitting docked (casts off instead, same button - World.StationDocking.cs's
         // HandleDockButtonPressed). Clicking a dimmed "distance to port" readout does nothing.
-        if (me.IsAtHelm && (snapshot.CanDock || snapshot.Voyage.Phase == VoyagePhase.Station) &&
+        if (me.IsAtHelm && (snapshot.CanDock || snapshot.Voyage.DockedPointId is not null) &&
             HelmPanel.GetDockButtonRect(HelmPanelOrigin).Contains(_designMouse))
         {
             _pendingDock = true;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         if (_openBlock.Kind == BlockKind.Reactor)
@@ -672,7 +672,7 @@ public partial class Game1
             for (var i = 0; i < snapshot.Reactor.RodCharges.Count; i++)
             {
                 if (ReactorPanel.GetSlotRect(i, PowerPanelOrigin).Contains(_designMouse))
-                    return (-1, i, null, null, -1, false, false, null, false, null);
+                    return (-1, i, null, -1, false, false, null, false, null);
             }
         }
 
@@ -684,31 +684,7 @@ public partial class Game1
                 if (!GalacticMapPanel.GetNodeRect(system, galacticMapOrigin, _galacticMapZoom).Contains(_designMouse))
                     continue;
                 _pendingWarpToSystemId = system.Id;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
-            }
-        }
-
-        if (_openBlock.Kind == BlockKind.Navigation)
-        {
-            var mapOrigin = GalaxyMapPanel.ComputeMapOrigin(GalaxyMapPanelOrigin, snapshot.GalaxyPoints, _mapZoom, _mapPanOffset);
-            foreach (var point in snapshot.GalaxyPoints)
-            {
-                if (GalaxyMapPanel.GetPointRect(point, mapOrigin, _mapZoom).Contains(_designMouse))
-                    return (-1, -1, point.Id, null, -1, false, false, null, false, null);
-            }
-
-            // Empty map background - a free-form destination (game_design.md, "может тыкнуть в
-            // любое место системы"), not just a point of interest. Only within the current
-            // system's own bounded field (and clear of the system-list sidebar off to the right)
-            // counts - anywhere else on this screen is some other panel's text, not the map.
-            var currentField = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
-            var clickedField = GalaxyMapPanel.ScreenToField(new Vector2(_designMouse.X, _designMouse.Y), mapOrigin, _mapZoom);
-            if (_designMouse.X < GalaxyMapPanelOrigin.X + 660 &&
-                clickedField.X >= 0 && clickedField.X <= currentField.Width &&
-                clickedField.Y >= 0 && clickedField.Y <= currentField.Height)
-            {
-                _pendingTravelToPosition = clickedField;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -721,13 +697,13 @@ public partial class Game1
                 for (var i = 0; i < TradeCatalog.Goods.Count; i++)
                 {
                     if (StationPanel.GetGoodRect(i, StationPanelOrigin).Contains(_designMouse))
-                        return (-1, -1, null, TradeCatalog.Goods[i].Item, -1, false, false, null, false, null);
+                        return (-1, -1, TradeCatalog.Goods[i].Item, -1, false, false, null, false, null);
                 }
 
                 for (var i = 0; i < slotCount; i++)
                 {
                     if (StationPanel.GetSellRect(i, StationPanelOrigin).Contains(_designMouse))
-                        return (-1, -1, null, null, i, false, false, null, false, null);
+                        return (-1, -1, null, i, false, false, null, false, null);
                 }
             }
 
@@ -741,7 +717,7 @@ public partial class Game1
                         if (!StationPanel.GetQuestOfferRect(i, StationPanelOrigin).Contains(_designMouse))
                             continue;
                         _pendingQuestKind = StationPanel.OfferedQuestKinds[i];
-                        return (-1, -1, null, null, -1, true, false, null, false, null);
+                        return (-1, -1, null, -1, true, false, null, false, null);
                     }
                 }
                 else if (StationPanel.GetAdminActionRect(StationPanelOrigin).Contains(_designMouse))
@@ -752,13 +728,13 @@ public partial class Game1
                         ? quest.DestinationPointId == snapshot.Voyage.DockedPointId
                         : quest.IssuedByPointId == snapshot.Voyage.DockedPointId;
                     if (turnInHere)
-                        return (-1, -1, null, null, -1, false, true, null, false, null);
+                        return (-1, -1, null, -1, false, true, null, false, null);
 
                     // Same button, opposite offer, when the job can't be finished here (Station
                     // Panel's own tuple is already at its practical limit, so this rides as a
                     // field like the other Administrator/Recruiter actions above).
                     _pendingAbandonQuest = true;
-                    return (-1, -1, null, null, -1, false, false, null, false, null);
+                    return (-1, -1, null, -1, false, false, null, false, null);
                 }
             }
 
@@ -767,7 +743,7 @@ public partial class Game1
                 for (var i = 0; i < ShipUpgradeCatalog.Tracks.Count; i++)
                 {
                     if (StationPanel.GetUpgradeRect(i, StationPanelOrigin).Contains(_designMouse))
-                        return (-1, -1, null, null, -1, false, false, ShipUpgradeCatalog.Tracks[i].Track, false, null);
+                        return (-1, -1, null, -1, false, false, ShipUpgradeCatalog.Tracks[i].Track, false, null);
                 }
             }
 
@@ -778,7 +754,7 @@ public partial class Game1
                     if (!StationPanel.GetShipRect(i, StationPanelOrigin).Contains(_designMouse))
                         continue;
                     _pendingShipPurchase = StationPanel.PurchasableShipKinds[i];
-                    return (-1, -1, null, null, -1, false, false, null, false, null);
+                    return (-1, -1, null, -1, false, false, null, false, null);
                 }
             }
 
@@ -789,7 +765,7 @@ public partial class Game1
                     if (!StationPanel.GetCandidateRect(i, StationPanelOrigin).Contains(_designMouse))
                         continue;
                     _pendingHireCandidateId = snapshot.RecruitCandidates[i].Id;
-                    return (-1, -1, null, null, -1, false, false, null, false, null);
+                    return (-1, -1, null, -1, false, false, null, false, null);
                 }
             }
         }
@@ -808,12 +784,12 @@ public partial class Game1
                     continue;
                 _talkingToNpcId = _talkingToNpcId == npc.Id ? null : npc.Id;
                 _openBlock = _talkingToNpcId is null ? ClickTarget.None : ClickTarget.Station;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
 
             _openBlock = ClickTarget.None;
             _talkingToNpcId = null;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         // Everything above this point is the open panel's own controls - slots, pins, buttons.
@@ -823,7 +799,7 @@ public partial class Game1
         // panel. It has to be swallowed here rather than at the end of the method: by then the world
         // hit tests have already run and returned.
         if (CurrentPanelHousing() is { } openPanelBounds && openPanelBounds.Contains(_designMouse))
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
 
         var myPosition = new Vec2(me.X, me.Y);
         bool NearEnough(Vec2 blockPosition) => (blockPosition - myPosition).Length() < TurretInteractionRadius;
@@ -851,7 +827,7 @@ public partial class Game1
                     case 1: _pendingToggleReactorEmergency = true; break;
                     case 2: _pendingToggleDoorsLocked = true; break;
                 }
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -859,7 +835,7 @@ public partial class Game1
             ShipRenderer.GetBlockRect(snapshot.ReactorBlock.Position, ShipRenderer.BigBlockSize, origin).Contains(_designMouse))
         {
             _openBlock = _openBlock.Kind == BlockKind.Reactor ? ClickTarget.None : ClickTarget.Reactor;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         if (NearEnough(snapshot.DistributionBlock.Position) &&
@@ -869,14 +845,14 @@ public partial class Game1
                 _openBlock = ToggleConnections(distribution.Id);
             else
                 _openBlock = _openBlock.Kind == BlockKind.Distribution ? ClickTarget.None : ClickTarget.Distribution;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         if (NearEnough(snapshot.BatteryBlock.Position) &&
             ShipRenderer.GetBlockRect(snapshot.BatteryBlock.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
         {
             _openBlock = _openBlock.Kind == BlockKind.Battery ? ClickTarget.None : ClickTarget.Battery;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         if (NearEnough(snapshot.NavigationConsole.Position) &&
@@ -885,7 +861,7 @@ public partial class Game1
             _openBlock = _openBlock.Kind == BlockKind.Navigation ? ClickTarget.None : ClickTarget.Navigation;
             _infoPanelOpen = false; // one full-viewport takeover at a time
             _shipEditorOpen = false;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         foreach (var rack in snapshot.StorageRacks)
@@ -895,7 +871,7 @@ public partial class Game1
             _openBlock = _openBlock.Kind == BlockKind.Rack && _openBlock.TargetComponentId == rack.Id
                 ? ClickTarget.None
                 : ClickTarget.ForRack(rack.Id);
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         // Read-only card (SuitLockerPanel) - the actual take/put-back is still the E-key interact
@@ -907,7 +883,7 @@ public partial class Game1
             _openBlock = _openBlock.Kind == BlockKind.SuitLocker && _openBlock.TargetComponentId == locker.Id
                 ? ClickTarget.None
                 : ClickTarget.ForSuitLocker(locker.Id);
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         foreach (var device in snapshot.SystemDevices)
@@ -921,7 +897,7 @@ public partial class Game1
                 if (HoldingGoshaScrewdriver())
                 {
                     _pendingSabotageDeviceId = device.Id;
-                    return (-1, -1, null, null, -1, false, false, null, false, null);
+                    return (-1, -1, null, -1, false, false, null, false, null);
                 }
 
                 _openBlock = HoldingScrewdriver()
@@ -929,7 +905,7 @@ public partial class Game1
                     : _openBlock.Kind == BlockKind.System && _openBlock.System == device.System
                         ? ClickTarget.None
                         : ClickTarget.ForSystem(device.System);
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -943,7 +919,7 @@ public partial class Game1
                 if (!NearEnough(junction.Position) || !ShipRenderer.GetBlockRect(junction.Position, ShipRenderer.NormalBlockSize, origin).Contains(_designMouse))
                     continue;
                 _openBlock = ToggleConnections(junction.Id);
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -961,7 +937,7 @@ public partial class Game1
                 if (!InventoryPanel.GetSocketRect(InventoryPanel.GetMainSlotRect(i, InventoryRowOrigin(tankInventory.MainSlots.Count)), above: true).Contains(_designMouse))
                     continue;
                 QueueSocketClick(tankInventory, i);
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
 
             for (var i = 0; i < InventoryPanel.EquipSlots.Length; i++)
@@ -972,7 +948,7 @@ public partial class Game1
                 if (!InventoryPanel.GetSocketRect(InventoryPanel.GetSlotRect(i, EquipSlotsOrigin), above: true).Contains(_designMouse))
                     continue;
                 QueueSocketClick(tankInventory, -1); // Inventory.WornSuitSlot
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -992,7 +968,7 @@ public partial class Game1
                 if (owner is null || !NearEnough(owner.Position))
                     continue;
                 _pendingPinInteract = pin;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
         else
@@ -1010,7 +986,7 @@ public partial class Game1
                     _openBlock = ToggleConnections(installedId);
                 else
                     _pendingComponentMountInteractId = mount.Id;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -1023,7 +999,7 @@ public partial class Game1
             if (!NearEnough(dropped.Position) || !ShipRenderer.GetDroppedItemRect(dropped, origin).Contains(_designMouse))
                 continue;
             _pendingPickupDroppedItemId = dropped.Id;
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         if (me.IsOutside)
@@ -1039,7 +1015,7 @@ public partial class Game1
                 if (!rect.Contains(_designMouse))
                     continue;
                 _pendingPickupDroppedItemId = dropped.Id;
-                return (-1, -1, null, null, -1, false, false, null, false, null);
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -1065,13 +1041,13 @@ public partial class Game1
             foreach (var door in snapshot.Doors)
             {
                 if (DoorNearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
-                    return (-1, -1, null, null, -1, false, false, null, false, door.Id);
+                    return (-1, -1, null, -1, false, false, null, false, door.Id);
             }
 
             foreach (var outerDoor in snapshot.AirlockOuterDoors)
             {
                 if (DoorNearEnough(outerDoor.Position) && ShipRenderer.GetDoorRect(outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, origin).Contains(_designMouse))
-                    return (-1, -1, null, null, -1, false, false, null, false, outerDoor.Id);
+                    return (-1, -1, null, -1, false, false, null, false, outerDoor.Id);
             }
 
             // Aboard a boarded hull the doors are the fight: they start closed, and opening one lets
@@ -1080,7 +1056,7 @@ public partial class Game1
             foreach (var door in snapshot.EnemyShip.Doors)
             {
                 if (NearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
-                    return (-1, -1, null, null, -1, false, false, null, false, door.Id);
+                    return (-1, -1, null, -1, false, false, null, false, door.Id);
             }
         }
 
@@ -1091,18 +1067,18 @@ public partial class Game1
         if (me.LayingWireFromPin is not null)
         {
             _pendingWireBendAt = new Vec2((_designMouse.X - origin.X) / ShipRenderer.PixelsPerUnit, (_designMouse.Y - origin.Y) / ShipRenderer.PixelsPerUnit);
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
         }
 
         // A click that landed on the open panel but hit none of its controls still belongs to the
         // panel - pressing bare housing metal is not "clicked away". Only a click genuinely outside
         // it closes the thing, which is what everybody expects of a window.
         if (CurrentPanelHousing() is { } openPanel && openPanel.Contains(_designMouse))
-            return (-1, -1, null, null, -1, false, false, null, false, null);
+            return (-1, -1, null, -1, false, false, null, false, null);
 
         _openBlock = ClickTarget.None;
         _talkingToNpcId = null;
-        return (-1, -1, null, null, -1, false, false, null, false, null);
+        return (-1, -1, null, -1, false, false, null, false, null);
     }
 
     // Flying the ship: W ahead, X astern, A/D swing the bow, S brakes. The mouse used to drag a

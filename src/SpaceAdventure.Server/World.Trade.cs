@@ -5,7 +5,7 @@ namespace SpaceAdventure.Server;
 // Trading with the station's Trader NPC (game_design.md sections 6, 10 — M10 economy). One
 // shared crew wallet, fixed catalog/prices everywhere (TradeCatalog) — no reputation discounts,
 // no per-station variation yet, both deliberately deferred. Only usable while actually docked
-// (VoyagePhase.Station), same gate as the airlock console that gets you here in the first place.
+// (IsDocked), same gate as the airlock console that gets you here in the first place.
 public sealed partial class World
 {
     private const int StartingCredits = 300;
@@ -23,7 +23,7 @@ public sealed partial class World
     // spent) if the crew can't afford it, the inventory row is full, or the ship isn't docked.
     private void TryBuyItem(Character character, ItemType item)
     {
-        if (Phase != VoyagePhase.Station)
+        if (!IsDocked)
             return;
 
         // Reputation with whoever owns this station scales the price (game_design.md section 12,
@@ -46,7 +46,7 @@ public sealed partial class World
     // weapons like Rifle/Knife are — they're just not in the catalog).
     private void TrySellItem(Character character, int slotIndex)
     {
-        if (Phase != VoyagePhase.Station)
+        if (!IsDocked)
             return;
 
         if (character.Inventory.ItemAt(slotIndex) is not { } item)

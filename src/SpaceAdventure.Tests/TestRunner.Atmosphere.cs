@@ -10,9 +10,7 @@ internal static partial class TestRunner
     // residual flake risk.
     private static void BreachEveryRoom(World world)
     {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         for (var i = 0; i < 600 * 30; i++)
             world.Step(RealtimeStep);
@@ -25,9 +23,7 @@ internal static partial class TestRunner
     // gets to use the breach for anything.
     private static void BreachRoom(World world, string roomId)
     {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), roomId); i++)
             world.Step(RealtimeStep);
@@ -56,9 +52,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1); // pilot — only sends commands, its health is never checked
 
         // Enemy AI only attacks once in Battle — get there first via the galaxy map.
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         // A single breach only leaks oxygen slowly — wait for an actual breach, then keep
         // stepping until oxygen has actually dropped clearly (not just barely, which could
@@ -112,9 +106,8 @@ internal static partial class TestRunner
             world.SpawnCharacter(1); // pilot — only sends commands
 
             // PowerSystemId order: Oxygen(0), Engine, Shields, WeaponCharger, Secondary.
-            world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f, TravelToPointId: "sector-alpha"));
-            for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-                world.Step(RealtimeStep);
+            world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f));
+            EnterBattle(world);
 
             for (var i = 0; i < 7 * 30; i++) // just past the first 6s attack-cooldown tick
                 world.Step(RealtimeStep);
@@ -201,6 +194,12 @@ internal static partial class TestRunner
     {
         const string turretId = "turret-bow";
 
+        // EnterBattle needs a hand on the helm to get here at all - stand up first, or the walk to
+        // the turret below (locked in place while IsAtHelm, same as at any manned station) is a
+        // no-op and this loops uselessly forever.
+        if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == playerId).IsAtHelm)
+            world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
+
         // Grab and hold a wrench up front so a mid-fight turret-damage attack can be repaired —
         // repair now requires the tool actually held in hand, not just F near the turret.
         var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
@@ -240,10 +239,64 @@ internal static partial class TestRunner
 
             MoveCharacterTo(world, playerId, 1.5f, 3f);
             EnsureManning(world, playerId, turretId);
+
+            // Actively track the enemy's bearing rather than assuming the turret is already aimed
+            // at it - the squadron's own formation AI keeps every hull moving
+            // (World.EnemyFleet.cs's SteerEnemy), and the aim itself persists from whatever it was
+            // last left at (including a previous, unrelated fight within the same run), so a
+            // turret that happens to start off-target can otherwise sit there firing into empty
+            // space for the whole 400-iteration budget without ever converging on its own.
+            for (var aimTick = 0; aimTick < 30; aimTick++)
+            {
+                var error = TurretAimErrorToEnemy(world, turretId);
+                if (MathF.Abs(error) < 1f)
+                    break;
+                world.ApplyCommand(playerId, new ClientCommand(playerId, TurretAimDirection: MathF.Sign(error)));
+                world.Step(RealtimeStep);
+            }
+
             world.ApplyCommand(playerId, new ClientCommand(playerId, FirePressed: true));
             for (var i = 0; i < 20; i++) // outlast the 0.5s cooldown before the next shot
                 world.Step(RealtimeStep);
         }
+
+        // The kill that actually ends the loop leaves the character still seated at the turret -
+        // every other exit above (damaged/out of ammo) explicitly stands up first, but the normal
+        // "enemy defeated" path never does. Manning locks movement the same way IsAtHelm does, so
+        // a caller that assumes "standing free" (several do, to walk somewhere else next) would
+        // otherwise find MoveCharacterTo silently doing nothing and an Interact meant for some
+        // other console just unmanning this turret instead.
+        if (world.CreateSnapshot().TurretStates.Single(t => t.Id == turretId).MannedByPlayerId == playerId)
+            world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
     }
 
+    // Same bearing math World.CrewAi.cs's StepSecurityBot uses to aim a hired bot's turret,
+    // rebuilt from the public snapshot instead of the server's own private hull-frame helpers -
+    // how far turretId's current aim is from pointing straight at the enemy right now.
+    private static float TurretAimErrorToEnemy(World world, string turretId)
+    {
+        var snapshot = world.CreateSnapshot();
+        var turretState = snapshot.TurretStates.Single(t => t.Id == turretId);
+        var turret = world.Ship.Turrets.Single(t => t.Id == turretId);
+        var mount = TurretMount.For(world.Ship.Rooms, world.Ship.Turrets, turret);
+
+        var minX = world.Ship.Rooms.Min(r => r.Left);
+        var maxX = world.Ship.Rooms.Max(r => r.Right);
+        var minY = world.Ship.Rooms.Min(r => r.Top);
+        var maxY = world.Ship.Rooms.Max(r => r.Bottom);
+        var hullLocalCenter = new Vec2((minX + maxX) / 2, (minY + maxY) / 2);
+
+        var shipField = snapshot.ShipField;
+        var worldOffset = new Vec2(snapshot.EnemyShip.Position.X - shipField.X, snapshot.EnemyShip.Position.Y - shipField.Y);
+        var radians = shipField.RotationDegrees * (MathF.PI / 180f);
+        var cos = MathF.Cos(radians);
+        var sin = MathF.Sin(radians);
+        var enemyLocal = new Vec2(worldOffset.X * cos + worldOffset.Y * sin, -worldOffset.X * sin + worldOffset.Y * cos) + hullLocalCenter;
+
+        var toEnemy = enemyLocal - mount.Position;
+        var bearingDegrees = MathF.Atan2(toEnemy.Y, toEnemy.X) * (180f / MathF.PI);
+        var shortest = ((bearingDegrees - mount.OutwardDegrees) % 360f + 540f) % 360f - 180f;
+        var wanted = Math.Clamp(shortest, turret.MinAimDegrees, turret.MaxAimDegrees);
+        return wanted - turretState.AimDegrees;
+    }
 }

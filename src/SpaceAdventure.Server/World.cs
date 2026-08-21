@@ -32,13 +32,14 @@ public sealed partial class World
 
     public Station Station => _stationsByKind[CurrentStationKind];
 
-    // Falls back to the destination while still flying in (the approach phase already needs the
-    // right hull drawn ahead of it), then to the home station's kind when neither applies.
+    // Falls back to whichever station point the ship is currently nearest (World.Voyage.cs's
+    // UpdateNearestStation - the approach already needs the right hull drawn before docking), then
+    // to Outpost when there's no station nearby at all.
     private StationKind CurrentStationKind
     {
         get
         {
-            var pointId = _dockedPointId ?? _travelTargetPointId;
+            var pointId = _dockedPointId ?? _nearestStationPointId;
             if (pointId is not null && GalaxyMap.Points.FirstOrDefault(p => p.Id == pointId) is { Kind: GalaxyPointKind.Station } point)
                 return point.StationKind;
             return StationKind.Outpost;
@@ -49,7 +50,12 @@ public sealed partial class World
     // Eva.cs, Quests.cs, Projectiles.cs, CrewAi.cs) keeps working unchanged even though there's no
     // longer a single field for the whole game.
     public AsteroidField AsteroidField => GalaxyMap.GetSystem(_currentSystemId).Field;
-    public VoyagePhase Phase { get; private set; } = VoyagePhase.Station;
+
+    // Replaces the old VoyagePhase enum (M39): docking/combat/mining are all continuous, proximity-
+    // driven states now rather than an exclusive mode the ship is "in", so there is no single flag
+    // left to switch on - just these two independent, overlappable facts about where the ship is.
+    public bool IsDocked => _dockedPointId is not null;
+    public bool IsInBattle => _battleSectorPointId is not null;
 
     // What the galaxy map actually plots as the ship's marker. While docked, _shipFieldPosition
     // holds DockBerthPosition - a field-space point anchored to the ship's OWN airlock door
@@ -57,12 +63,10 @@ public sealed partial class World
     // walking between them. That point has no relationship to the docked GalaxyPoint's real
     // position on the map (e.g. home-station sits at (35,141) in Sol), so plotting it directly
     // put the marker floating off in open space instead of on the station it's actually docked
-    // at. Every other phase already keeps _shipFieldPosition in real GalaxyPoint-space (M31-M33),
-    // so only the docked case needs to substitute the docked point's own position instead.
+    // at. Undocked, _shipFieldPosition is already real GalaxyPoint-space, so only the docked case
+    // needs to substitute the docked point's own position instead.
     private Vec2 ShipMapPosition =>
-        Phase == VoyagePhase.Station && _dockedPointId is not null
-            ? GalaxyMap.GetPoint(_dockedPointId).Position
-            : _shipFieldPosition;
+        _dockedPointId is { } dockedId ? GalaxyMap.GetPoint(dockedId).Position : _shipFieldPosition;
 
     private readonly Dictionary<int, Character> _characters = new();
     private readonly Dictionary<int, Vec2> _moveInput = new();
@@ -228,9 +232,6 @@ public sealed partial class World
                 DoorsLocked = !DoorsLocked;
         }
 
-        if (command.TravelToPointId is not null || (command.TravelToX is not null && command.TravelToY is not null))
-            TryStartTravel(command.TravelToPointId, command.TravelToX, command.TravelToY);
-
         if (command.BuyItemType is { } buyItemType)
             TryBuyItem(character, buyItemType);
 
@@ -297,6 +298,9 @@ public sealed partial class World
                 EngageAutoStabilize();
             else
                 SetHelmInput(command.HelmThrottle, command.HelmTurn); // zero is a real "hands off the controls" state, not "no input" - it still overwrites what was commanded
+
+            if (command.ToggleControlModePressed)
+                ToggleControlMode();
         }
 
         // Space means "fire the turret" at a periscope and "fire the held weapon" while boarding -
@@ -458,7 +462,7 @@ public sealed partial class World
                 c.MagneticBootsOn);
         }).ToArray(),
         PowerGrid.CreateState(),
-        new VoyageState(Phase, ShipMapPosition, _dockedPointId, _travelTargetPointId, _travelTargetPosition),
+        new VoyageState(ShipMapPosition, _dockedPointId, IsInBattle, IsDocked || _nearestStationPointId is not null),
         Credits,
         ActiveQuest,
         new Dictionary<ShipUpgradeTrack, int>(UpgradeLevels),
@@ -472,7 +476,7 @@ public sealed partial class World
         _droppedItems.ToArray(),
         new ShipFieldState(
             _shipFieldPosition.X, _shipFieldPosition.Y, _shipRotationDegrees,
-            _shipVelocity.X, _shipVelocity.Y, _shipThrust.X, _shipThrust.Y, _shipAutoStabilize),
+            _shipVelocity.X, _shipVelocity.Y, _shipThrust.X, _shipThrust.Y, _shipAutoStabilize, ControlMode),
         _recruitRoster,
         CreateStarSystemSummaries(),
         _currentSystemId,

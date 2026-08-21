@@ -161,9 +161,9 @@ internal static partial class TestRunner
 
     // A single broken block is a leak to see space through, not a way out. Docked at the home
     // station the airlock itself wouldn't let anyone through either (TryCrossIntoVacuum blocks all
-    // crossing during VoyagePhase.Station - it leads onto the station's own walkway there, not
-    // vacuum), so this has to actually be out in the field first for the breach check itself to be
-    // what's on trial.
+    // crossing while IsDocked - it leads onto the station's own walkway there, not vacuum), so
+    // this has to actually be out in the field first for the breach check itself to be what's on
+    // trial.
     private static bool World_Eva_SingleBrokenBlock_IsNotPassable()
     {
         var world = new World();

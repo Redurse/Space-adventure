@@ -31,7 +31,7 @@ public sealed class ShipRenderer
     private readonly Texture2D _pixel;
     private readonly Texture2D _floorPlate;
     private readonly Texture2D _wallPlate;
-    private readonly Texture2D _hullPlate;
+    private readonly Texture2D[] _hullPlates;
     private readonly Texture2D _devicePlate;
     private readonly Texture2D _floorNormals;
     private readonly Texture2D _hullNormals;
@@ -48,7 +48,7 @@ public sealed class ShipRenderer
         _pixel.SetData(new[] { Color.White });
         _floorPlate = TileTextures.CreateFloorPlate(graphicsDevice);
         _wallPlate = TileTextures.CreateWallPlate(graphicsDevice);
-        _hullPlate = TileTextures.CreateHullPlate(graphicsDevice);
+        _hullPlates = TileTextures.CreateHullPlates(graphicsDevice);
         _devicePlate = TileTextures.CreateDevicePlate(graphicsDevice);
         _floorNormals = TileTextures.CreateFloorNormals(graphicsDevice);
         _hullNormals = TileTextures.CreateHullNormals(graphicsDevice);
@@ -115,7 +115,7 @@ public sealed class ShipRenderer
 
         // The armour the compartments sit inside, under everything else - what shows of it is the
         // plated border around the decks and the bow sticking out ahead of them.
-        HullSkin.Draw(spriteBatch, _pixel, _hullPlate, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
+        HullSkin.Draw(spriteBatch, _pixel, _hullPlates, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
             origin, forwardDegrees, snapshot.CurrentShipKind, totalSeconds, snapshot.SystemStates);
 
         // Floors first, walls second: the bulkheads are thick and straddle the boundary between

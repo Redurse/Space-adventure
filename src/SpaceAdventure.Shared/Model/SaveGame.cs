@@ -27,7 +27,11 @@ public sealed record SaveGame(
     // (World.Campaign.cs) - both absent in older files, restoring as NotStarted/empty, the same
     // "additive, no version bump needed" pattern RackSlots/CustomShip above already established.
     CampaignStage Campaign = CampaignStage.NotStarted,
-    IReadOnlyList<string>? StoryLog = null)
+    IReadOnlyList<string>? StoryLog = null,
+    // How far the procedural galaxy tail had already grown (GalaxyMap.cs's EnsureGenerated/
+    // GeneratedProceduralCount) - absent in older files, restoring as null, which just leaves the
+    // galaxy at whatever CreateStarter's own small initial seed already generated.
+    int? GeneratedProceduralSystemCount = null)
 {
     // Bumped whenever the shape changes incompatibly; SaveStore refuses anything it doesn't know,
     // so an old file fails to load cleanly instead of half-restoring into a broken run.

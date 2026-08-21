@@ -59,29 +59,31 @@ internal static partial class TestRunner
         EquipSuit(world, 1); // survives the breaches the sector-delta fight will open up
         world.StartCampaign(); // Act 1: delivery quest assigned, same call GameServer makes for a new game
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "trade-station"));
-        DockAtStation(world);
+        DockAtStation(world, "trade-station");
         world.ApplyCommand(1, new ClientCommand(1, TurnInCargoQuestPressed: true));
         if (world.Campaign != CampaignStage.RescueAssigned ||
             world.ActiveQuest is not { Kind: QuestKind.Bounty, DestinationPointId: "sector-delta", IssuedByPointId: "mining-outpost" })
             return false;
 
         WinBattleAt(world, "sector-delta");
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "mining-outpost"));
-        DockAtStation(world);
+        DockAtStation(world, "mining-outpost");
         world.ApplyCommand(1, new ClientCommand(1, TurnInCargoQuestPressed: true));
         if (world.Campaign != CampaignStage.EdgeBeckons)
             return false;
 
-        // Undock and fly clear past sol's own warp zone, due south from mining-outpost - checked
-        // clear of every asteroid and hostile sector along the way (the straight line from
-        // mining-outpost's own position, (100,237), to here stays a wide margin from sector-beta,
-        // the nearest hazard, unlike a straight line toward the warp-mechanic tests' own (10,150)
-        // target, which passes almost through sector-beta's own capture radius from this different
-        // starting point).
-        world.ApplyCommand(1, new ClientCommand(1, TravelToX: 150f, TravelToY: 295f));
-        for (var i = 0; i < 120 * 30 && !world.CanWarpNow; i++)
-            world.Step(RealtimeStep);
+        // Undock and fly clear past sol's own warp zone, roughly south-southeast of mining-outpost
+        // - checked clear of every asteroid and hostile sector along the way (the straight line
+        // from mining-outpost's own position to here stays a wide margin from sector-beta, the
+        // nearest hazard, unlike a straight line toward the warp-mechanic tests' own
+        // SolWarpZoneX/Y target, which passes almost through sector-beta's own capture radius from
+        // this different starting point). The bearing (50,58) is the same one the old 300x300
+        // field used (was a fixed point at that offset from the field's own centre, (150,295)) -
+        // preserved here and just extended out to the new, ×8-scaled WarpZoneRadius (M40) instead
+        // of repeating the old fixed offset, which would land nowhere near clear of the field's own
+        // new centre any more.
+        var fieldCenter = world.AsteroidField.Center;
+        var safeBearing = new Vec2(50f, 58f).Normalized();
+        FlyToward(world, fieldCenter + safeBearing * (GalaxyMap.WarpZoneRadius + 50f), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
         if (!world.CanWarpNow)
             return false;
 
@@ -95,8 +97,7 @@ internal static partial class TestRunner
         if (world.CreateSnapshot().CurrentSystemId != "sol")
             return false;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station"));
-        DockAtStation(world);
+        DockAtStation(world, "home-station");
         world.Step(RealtimeStep);
 
         return world.Campaign == CampaignStage.Complete && world.StoryLog.Count == 5;

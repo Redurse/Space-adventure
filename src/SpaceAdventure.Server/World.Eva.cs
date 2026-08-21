@@ -98,7 +98,7 @@ public sealed partial class World
 
         // The connector, and only while it actually is one. Null underway, so nothing is excluded
         // there and a single-port ship keeps its only way out.
-        var connectorId = Phase == VoyagePhase.Station && Ship.AirlockOuterDoors.Count > 0
+        var connectorId = IsDocked && Ship.AirlockOuterDoors.Count > 0
             ? Ship.AirlockOuterDoors[0].Id
             : null;
 
@@ -368,10 +368,10 @@ public sealed partial class World
         // enough - 0.25 units a sample - that a single tick blowing straight through the whole
         // attach margin between two samples shouldn't happen at any speed this game reaches), but
         // if it somehow still does, this is what stops a drifter dead inside the station's own
-        // rooms instead of leaving it lodged there. Same phase guard as the station branch above:
-        // Station.Position/WorldOffset is "the docking-approach field space" (Station.cs's own
-        // comment), not whatever field the ship is actually in the rest of the time.
-        if (character.EvaAttachedTo == EvaAttachment.None && Phase == VoyagePhase.StationApproach &&
+        // rooms instead of leaving it lodged there. Same undocked guard as the station branch
+        // below: Station.Position/WorldOffset only tracks the nearest station while undocked
+        // (World.Voyage.cs's UpdateNearestStation) - once docked it's frozen at the berth instead.
+        if (character.EvaAttachedTo == EvaAttachment.None && !IsDocked &&
             Station.ContainsPoint(character.EvaLocalOffset - Station.WorldOffset))
         {
             character.EvaLocalOffset = from;
@@ -444,12 +444,11 @@ public sealed partial class World
         }
 
         // The station's hull, exactly the same shape of check as the ship's own just above -
-        // only meaningful during the same phase StepFreeFloating's own station check already
-        // guards on: Station.Position/WorldOffset is "the docking-approach field space" (that
-        // check's own comment), not whatever field the player is actually in the rest of the
-        // time, so testing it unconditionally would attach to (or bounce off) stale coordinates
-        // from a completely unrelated field.
-        if (Phase == VoyagePhase.StationApproach)
+        // only meaningful while undocked, same guard as StepFreeFloating's own station check
+        // above: Station.Position/WorldOffset only tracks the nearest station while undocked
+        // (World.Voyage.cs's UpdateNearestStation), so testing it while docked would attach to
+        // (or bounce off) the berth's own frozen coordinates instead.
+        if (!IsDocked)
         {
             var localToStation = worldPos - Station.WorldOffset;
             if (HullSilhouette.DistanceOutside(Station.Rooms, localToStation) <= StationAttachZoneMargin)

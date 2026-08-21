@@ -45,8 +45,15 @@ public sealed class HelmPanel
 
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin)
     {
-        spriteBatch.DrawString(_font, "[W] ход  [X] назад  [A/D] поворот  [S] стабилизация",
+        spriteBatch.DrawString(_font, "[W] ход  [X] назад  [A/D] поворот  [S] стабилизация  [Z] режим руления",
             panelOrigin + new Vector2(0, -24), Color.Yellow, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        // Which of Arc/Rcs is currently flying the ship (World.ShipField.cs, M41) - drawn right
+        // next to the dial its own turning behavior actually depends on.
+        var modeLabel = snapshot.ShipField.ControlMode == ShipControlMode.Arc ? "ВИРАЖ" : "РСУ";
+        var modeColor = snapshot.ShipField.ControlMode == ShipControlMode.Arc ? Color.SkyBlue : Color.Orange;
+        spriteBatch.DrawString(_font, modeLabel, panelOrigin + StickCenterOffset + new Vector2(-18, StickRadius + 10),
+            modeColor, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
 
         DrawAttitudeDial(spriteBatch, snapshot.ShipField, panelOrigin);
         DrawStabilizeButton(spriteBatch, snapshot.ShipField, panelOrigin);
@@ -62,7 +69,7 @@ public sealed class HelmPanel
     {
         var rect = GetDockButtonRect(panelOrigin);
 
-        if (snapshot.Voyage.Phase == VoyagePhase.Station)
+        if (snapshot.Voyage.DockedPointId is not null)
         {
             spriteBatch.Draw(_pixel, rect, Color.SeaGreen);
             spriteBatch.DrawString(_font, "[Клик] ОТСТЫКОВАТЬСЯ", new Vector2(rect.X + 6, rect.Y + 9), Color.White,
@@ -70,7 +77,7 @@ public sealed class HelmPanel
             return;
         }
 
-        if (snapshot.Voyage.Phase != VoyagePhase.StationApproach)
+        if (!snapshot.Voyage.HasNearbyStation)
             return;
 
         if (snapshot.CanDock)
@@ -170,7 +177,7 @@ public sealed class HelmPanel
         // clamped to the radar's rim rather than hidden when out of range, so the pilot always has
         // a bearing to steer by - losing track of where the station is would make the whole manual
         // approach guesswork.
-        if (snapshot.Voyage.Phase.HasStationInField())
+        if (snapshot.Voyage.HasNearbyStation)
         {
             // The station is plotted as its real compartments, so what the radar shows is the same
             // shape the pilot will be walking around a minute later - and the berth's position on

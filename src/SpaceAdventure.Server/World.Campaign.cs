@@ -45,7 +45,7 @@ public sealed partial class World
             _campaignStage = CampaignStage.Returning;
         }
         else if (_campaignStage == CampaignStage.Returning && _currentSystemId == "sol" &&
-                 Phase == VoyagePhase.Station && _dockedPointId == "home-station")
+                 _dockedPointId == "home-station")
         {
             LogStory("Возвращение домой. Груз довезли. Врагов нажили. Экипаж жив. На сегодня достаточно.");
             _campaignStage = CampaignStage.Complete;

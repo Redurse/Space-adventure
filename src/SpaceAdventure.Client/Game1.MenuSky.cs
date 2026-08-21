@@ -6,15 +6,11 @@ namespace SpaceAdventure.Client;
 
 // The two things behind and around the menu's scene: the starfield and the star's glare.
 //
-// Both used to be part of the backdrop image, and being part of it was the problem. Stars baked into
-// the same layer as the planet and the ship cannot move relative to them, so the vista had no depth -
-// and a painted glare cannot react to anything. Neither needs a shader; both need to stop being
+// Both used to be part of the backdrop image, and being part of it was the problem: a painted star
+// cannot change and a painted glare cannot react. Neither needs a shader; both needed to stop being
 // pixels in a still.
 public partial class Game1
 {
-    // Fractional part, correct for negative input too - the drift runs backwards.
-    private static float Wrap(float v) => v - MathF.Floor(v);
-
     // Deterministic, so a star is in the same place every frame without a list to keep, and the whole
     // field costs three hashes per star and no memory at all.
     private static float StarHash(int index, int salt)
@@ -25,45 +21,68 @@ public partial class Game1
         return ((n ^ (n >> 16)) & 0xffff) / 65535f;
     }
 
-    // Depth layers. The near ones are fewer, brighter, bigger and faster - that combination is the
-    // whole illusion, and getting any one of the four wrong flattens it. Drift is in pane widths per
-    // second, so it is resolution independent.
-    private static readonly (int Count, float Speed, float Dim, float Bright, int Size)[] StarLayers =
+    // Magnitude classes. These used to be depth layers with their own drift speeds; with the field
+    // held still what is left of them is what a real sky has anyway - a great many faint stars, fewer
+    // ordinary ones, and a handful of bright ones.
+    //
+    // The last number is how hard each class twinkles, and it falls as they get brighter. That is
+    // what it looks like: a bright star holds steady while the faint ones flutter, because the same
+    // swing in brightness is a far larger share of a dim star than of a bright one. Giving every star
+    // the same twinkle reads as an effect applied to the screen rather than as stars.
+    private static readonly (int Count, float Dim, float Bright, int Size, float Twinkle)[] StarLayers =
     {
-        (520, 0.0022f, 0.20f, 0.46f, 1),
-        (240, 0.0058f, 0.40f, 0.74f, 1),
-        (90, 0.0125f, 0.62f, 1.00f, 2),
+        (520, 0.20f, 0.46f, 1, 0.62f),
+        (240, 0.40f, 0.74f, 1, 0.42f),
+        (90, 0.62f, 1.00f, 2, 0.24f),
     };
-
-    // Sideways and very slightly down, so the ship reads as making way rather than as falling. No
-    // twinkle: stars twinkle because air moves in front of them, and there is no air out here. It
-    // would be pretty and it would be a lie.
-    private static readonly Vector2 StarDrift = new(-1f, 0.09f);
 
     private void DrawMenuStars(Rectangle pane, float totalSeconds)
     {
         _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, SamplerState.PointClamp,
             transformMatrix: _renderScale);
         var index = 0;
-        foreach (var (count, speed, dim, bright, size) in StarLayers)
+        foreach (var (count, dim, bright, size, twinkle) in StarLayers)
         {
             for (var k = 0; k < count; k++, index++)
             {
-                var u = Wrap(StarHash(index, 1) + totalSeconds * speed * StarDrift.X);
-                var v = Wrap(StarHash(index, 2) + totalSeconds * speed * StarDrift.Y);
+                var x = pane.X + (int)(StarHash(index, 1) * pane.Width);
+                var y = pane.Y + (int)(StarHash(index, 2) * pane.Height);
                 var shade = dim + StarHash(index, 3) * (bright - dim);
 
-                // A few are warm and a few are blue, most are neither. Hard pixels rather than soft
-                // points: the backdrop is pixel art and a blurred star would be the one smooth thing
-                // in the frame.
+                // Two sines at unrelated rates rather than one. A single rate gives every star a
+                // clean breath with a findable period, and a field of them ends up pulsing together
+                // no matter how the phases are scattered; summing a second incommensurable rate
+                // breaks the period long enough that the eye stops counting it.
+                var rate = 0.55f + StarHash(index, 5) * 1.9f;
+                var phase = StarHash(index, 6) * MathF.Tau;
+                var flutter = MathF.Sin(totalSeconds * rate + phase) * 0.62f
+                            + MathF.Sin(totalSeconds * rate * (1.43f + StarHash(index, 7) * 0.8f) + phase * 1.7f) * 0.38f;
+
+                // How much each individual star swings, on top of its class. Without this spread the
+                // whole field flutters by the same amount and reads as one animation.
+                var amplitude = twinkle * (0.35f + StarHash(index, 8));
+
+                // Floored well above zero: a star that reaches black and comes back is not twinkling,
+                // it is a dead pixel.
+                var lit = shade * MathHelper.Clamp(1f + flutter * amplitude, 0.30f, 1.85f);
+
                 var tint = StarHash(index, 4);
                 var colour = tint > 0.93f ? new Color(255, 226, 190)
                     : tint < 0.07f ? new Color(200, 222, 255)
                     : Color.White;
 
-                _spriteBatch.Draw(_pixel,
-                    new Rectangle(pane.X + (int)(u * pane.Width), pane.Y + (int)(v * pane.Height), size, size),
-                    colour * shade);
+                _spriteBatch.Draw(_pixel, new Rectangle(x, y, size, size), colour * lit);
+
+                // At its peak a bright star throws four short arms. In pixel art this is what actually
+                // says "twinkle" - brightness alone reads as a fade, while a shape that appears and
+                // goes is unmistakable. Only the bright class, and only near the top of its swing.
+                if (size < 2 || flutter < 0.82f)
+                    continue;
+                var spark = colour * (lit * (flutter - 0.82f) / 0.18f * 0.55f);
+                _spriteBatch.Draw(_pixel, new Rectangle(x - 1, y, 1, size), spark);
+                _spriteBatch.Draw(_pixel, new Rectangle(x + size, y, 1, size), spark);
+                _spriteBatch.Draw(_pixel, new Rectangle(x, y - 1, size, 1), spark);
+                _spriteBatch.Draw(_pixel, new Rectangle(x, y + size, size, 1), spark);
             }
         }
         _spriteBatch.End();

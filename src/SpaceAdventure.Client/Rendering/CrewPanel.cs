@@ -29,7 +29,7 @@ public sealed class CrewPanel
     // "No role" first, then the 5 CrewRoles in their own enum order - a fixed set of options, not
     // tied to any particular crew row, so clicking one doesn't depend on where in the list the
     // player's own row happens to land.
-    private static readonly CrewRole?[] RoleOptions = { null, CrewRole.Captain, CrewRole.Engineer, CrewRole.Mechanic, CrewRole.Security, CrewRole.Medic };
+    private static readonly CrewRole?[] RoleOptions = { null, CrewRole.Captain, CrewRole.Engineer, CrewRole.Mechanic, CrewRole.Security, CrewRole.Scientist };
 
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;

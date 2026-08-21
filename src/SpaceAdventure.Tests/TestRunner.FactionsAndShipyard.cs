@@ -10,14 +10,12 @@ internal static partial class TestRunner
     // a row, and stopping early would leave the caller mid-battle instead of victorious.
     private static void WinBattleAt(World world, string sectorId)
     {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: sectorId));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world, sectorId: sectorId);
 
-        for (var round = 0; round < 8 && world.Phase == VoyagePhase.Battle; round++)
+        for (var round = 0; round < 8 && world.IsInBattle; round++)
         {
             FireBowTurretUntilEnemyDefeated(world, 1);
-            for (var i = 0; i < 30 && world.Phase == VoyagePhase.Battle && world.Enemy.Hp <= 0; i++)
+            for (var i = 0; i < 30 && world.IsInBattle && world.Enemy.Hp <= 0; i++)
                 world.Step(RealtimeStep); // let StepVoyage resolve the kill and settle the standing
         }
     }
@@ -51,14 +49,13 @@ internal static partial class TestRunner
             // Bounded rather than unbounded, same reasoning as WinBattleAt's own retry: an
             // oversized-enough squadron could in principle never fully clear, and this must not
             // hang either.
-            for (var cleanup = 0; cleanup < 3 && world.Phase == VoyagePhase.Battle; cleanup++)
+            for (var cleanup = 0; cleanup < 3 && world.IsInBattle; cleanup++)
                 WinBattleAt(world, sectorId);
 
             // Always put in for repairs, including after the final battle - the caller still has
             // to fly somewhere afterwards, and doing that on a freshly shot-up ship is exactly
             // what made the last docking flaky.
-            world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station"));
-            DockAtStation(world);
+            DockAtStation(world, "home-station");
         }
     }
 
@@ -88,8 +85,7 @@ internal static partial class TestRunner
 
         var destinationFaction = world.GalaxyMap.GetPoint(quest.DestinationPointId).Faction;
         var before = world.GetStanding(destinationFaction);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: quest.DestinationPointId));
-        DockAtStation(world);
+        DockAtStation(world, quest.DestinationPointId);
         world.ApplyCommand(1, new ClientCommand(1, TurnInCargoQuestPressed: true));
 
         return world.CreateSnapshot().ActiveQuest is null
@@ -118,8 +114,7 @@ internal static partial class TestRunner
                 continue;
 
             var before = world.GetStanding(rival);
-            world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: quest.DestinationPointId));
-            DockAtStation(world);
+            DockAtStation(world, quest.DestinationPointId);
             world.ApplyCommand(1, new ClientCommand(1, TurnInCargoQuestPressed: true));
 
             return world.CreateSnapshot().ActiveQuest is null
@@ -148,9 +143,8 @@ internal static partial class TestRunner
         // trade-station, not outpost-gamma: it's Consortium-held *and* actually has an
         // Administrator to refuse you (outpost-gamma is a Shipyard - no quests there at all, so
         // it would pass for the wrong reason).
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "trade-station"));
-        DockAtStation(world);
-        if (world.Phase != VoyagePhase.Station)
+        DockAtStation(world, "trade-station");
+        if (!world.IsDocked)
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, AcceptCargoQuestPressed: true, AcceptQuestKind: QuestKind.Delivery));
@@ -166,8 +160,7 @@ internal static partial class TestRunner
         if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.HostileThreshold)
             return false;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
 
         // Buy with a freshly spawned character: three battles leave player 1 with a full
         // inventory row (tools/crates picked up along the way), and a failed TryAdd is a silent
@@ -212,8 +205,7 @@ internal static partial class TestRunner
         var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.Mineral);
         var creditsBefore = world.Credits;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "mining-outpost"));
-        DockAtStation(world);
+        DockAtStation(world, "mining-outpost");
         world.ApplyCommand(1, new ClientCommand(1, SellSlotIndex: slotIndex));
 
         var gained = world.Credits - creditsBefore;
@@ -241,8 +233,7 @@ internal static partial class TestRunner
             var before = world.GetStanding(FactionId.Consortium);
             WinBattleAt(world, "sector-delta");
             kills += (before - world.GetStanding(FactionId.Consortium)) / -FactionDefinitions.StandingPerShipDestroyed;
-            world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station"));
-            DockAtStation(world);
+            DockAtStation(world, "home-station");
         }
 
         if (kills < killsNeeded)
@@ -260,18 +251,14 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         EquipSuit(world, 1); // see World_Faction_HostileStanding_BlocksQuestOffers
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-delta"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world, sectorId: "sector-delta");
         var baselineSize = world.CreateSnapshot().EnemyShip.Ships.Count;
 
         GrindStandingHostile(world, "sector-delta", FactionId.Consortium);
         if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.HostileThreshold)
             return false; // didn't actually anger them enough - setup problem, not the behavior under test
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-delta"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world, sectorId: "sector-delta");
 
         return world.CreateSnapshot().EnemyShip.Ships.Count == baselineSize + 1;
     }
@@ -298,7 +285,7 @@ internal static partial class TestRunner
             return false; // armed despite being at war with whoever owns this berth
 
         world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
-        return world.Phase == VoyagePhase.StationApproach; // pressed anyway - still refused
+        return !world.IsDocked; // pressed anyway - still refused
     }
 
     // Trading a Frigate down to a Scout costs less than the trade-in is worth, so the yard pays
@@ -309,8 +296,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         // Only a Shipyard-kind station sells hulls (game_design.md section 10) - the home outpost
         // has no Shipwright at all, so the trip is part of the mechanic, not test overhead.
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
 
         var creditsBefore = world.Credits;
         var expectedCost = world.GetShipSwapCost(ShipKind.Scout);
@@ -328,8 +314,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma")); // the Shipyard station
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma"); // the Shipyard station
 
         // A Cruiser costs far more than the starting wallet even after trading in the Frigate.
         var creditsBefore = world.Credits;
@@ -342,9 +327,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
         return world.CurrentShipKind == ShipKind.Frigate;
@@ -361,8 +344,7 @@ internal static partial class TestRunner
         // the one station that actually has a Shipwright.
         EquipSuit(world, 1);
         WinBattleAt(world, "sector-alpha");
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
 
         var creditsBefore = world.Credits;
         var expectedCost = world.GetShipSwapCost(ShipKind.Scout);

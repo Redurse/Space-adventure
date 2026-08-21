@@ -334,8 +334,7 @@ internal static partial class TestRunner
         var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.Mineral);
         var creditsBefore = world.Credits;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station"));
-        DockAtStation(world);
+        DockAtStation(world, "home-station");
 
         world.ApplyCommand(1, new ClientCommand(1, SellSlotIndex: slotIndex));
 

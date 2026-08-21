@@ -61,7 +61,7 @@ public sealed partial class World
             character.RoomId = roomAfterY;
             // Which structure you're in is a consequence of which room you walked into, not a
             // separate transition step (World.StationDocking.cs).
-            if (Phase == VoyagePhase.Station)
+            if (IsDocked)
                 character.OnStation = IsStationRoom(roomAfterY);
         }
     }
@@ -74,7 +74,7 @@ public sealed partial class World
     {
         if (character.OnEnemyShip)
             return EnemyShipLayout.MoveAlongAxis(position, roomId, delta, IsDoorOpen);
-        if (Phase == VoyagePhase.Station)
+        if (IsDocked)
         {
             var (rooms, doors) = GetDockedLayout();
             return RoomLayout.MoveAlongAxis(rooms, doors, position, roomId, delta, IsDoorOpen);

@@ -3,13 +3,13 @@ using SpaceAdventure.Shared.Model;
 namespace SpaceAdventure.Server;
 
 // Manual docking (game_design.md section 5/10 - stations are walkable, reached by physically
-// docking): arriving at a Station-kind galaxy point no longer teleports the player straight into
-// the station menu. Instead it drops the ship into VoyagePhase.StationApproach, a small manual
-// flight using the exact same helm/thrust physics as the asteroid field (World.ShipField.cs's
-// IntegrateShipFieldMotion) - bring the ship alongside the station's docking port slowly, and a
-// "Стыковка" button appears at the helm. Docking is that deliberate press, not an automatic
-// capture: drifting into the berth by accident shouldn't dock you, and the button is what makes
-// the whole approach readable rather than something that just happens.
+// docking): the ship is always hand-flown (World.ShipField.cs's own physics, now including station-
+// hull collision), and the nearest station in the system is continuously tracked
+// (World.Voyage.cs's UpdateNearestStation) rather than picked by clicking a destination - fly up to
+// any station's berth slowly enough and a "Стыковка" button appears at the helm. Docking is that
+// deliberate press, not an automatic capture: drifting into the berth by accident shouldn't dock
+// you, and the button is what makes the whole approach readable rather than something that just
+// happens.
 //
 // Once docked, walking through the ship's own outer airlock (the same door EVA already uses)
 // leads directly onto the station and back - no suit needed, it's a sealed connector, not vacuum.
@@ -17,7 +17,6 @@ public sealed partial class World
 {
     private const float DockCaptureRadius = 4f; // how close to the berth counts as "alongside"
     private const float DockMaxSpeed = 2f; // must be crawling, not ramming, for the button to arm
-    private const float StationApproachStartDistance = 20f; // fixed starting distance, straight down +X toward the station
     private const float HullClearance = 0.1f; // shrinks the hull for the collision test, so mating flush isn't a crash
 
     // Where the hull's centre has to end up for the ship's own outer airlock door to sit exactly on
@@ -28,28 +27,19 @@ public sealed partial class World
     // system, which is what removes the last hidden transition in the game.
     public Vec2 DockBerthPosition => Station.WorldOffset + GetHullLocalBounds().Center;
 
-    private void EnterStationApproach()
-    {
-        Phase = VoyagePhase.StationApproach;
-        _shipFieldPosition = DockBerthPosition - new Vec2(StationApproachStartDistance, 0);
-        _shipVelocity = Vec2.Zero;
-        _shipThrust = Vec2.Zero;
-        // Bow already pointing at the station, whichever way this hull's nose sits in its own
-        // layout - a forgiving line-up that doesn't start the approach with a turn.
-        _shipRotationDegrees = -Ship.ForwardDegrees;
-        _shipAutoStabilize = true;
-    }
-
-    // True while the ship is parked alongside the berth slowly enough to mate with it - what arms
-    // the helm's "Стыковка" button (the client mirrors this to decide whether to draw it). A
-    // faction whose territory this is can refuse the ship outright at deep enough hostility
-    // (World.Factions.cs) - the approach itself is still allowed, so nothing strands the ship
-    // mid-flight, but the button never arms and the crew is left to fix things elsewhere.
+    // True while the ship is parked alongside the nearest station's berth slowly enough to mate
+    // with it - what arms the helm's "Стыковка" button (the client mirrors this to decide whether
+    // to draw it). A faction whose territory this is can refuse the ship outright at deep enough
+    // hostility (World.Factions.cs) - flying up to the berth itself is still allowed, so nothing
+    // strands the ship mid-flight, but the button never arms and the crew is left to fix things
+    // elsewhere. Mid-fight the same station can instead be actively defending itself
+    // (World.Voyage.cs's UpdateNearestStation) - docking is refused then too, not just once things
+    // are calm enough to talk.
     public bool CanDockNow =>
-        Phase == VoyagePhase.StationApproach &&
+        !IsDocked && !IsInBattle && _nearestStationPointId is { } stationId &&
         (DockBerthPosition - _shipFieldPosition).Length() < DockCaptureRadius &&
         _shipVelocity.Length() < DockMaxSpeed &&
-        GetStanding(OwnerOf(_travelTargetPointId!)) > FactionDefinitions.WarThreshold;
+        GetStanding(OwnerOf(stationId)) > FactionDefinitions.WarThreshold;
 
     // The deliberate press. Ignored unless actually alongside, so a mashed button can't dock the
     // ship from across the field. The capture radius is deliberately forgiving and the mating
@@ -65,9 +55,7 @@ public sealed partial class World
         _shipVelocity = Vec2.Zero;
         _shipThrust = Vec2.Zero;
         _shipAutoStabilize = true;
-        // _travelTargetPointId was never cleared on arrival for a station (World.Voyage.cs's
-        // Arrive) - it's still the point we were heading to the whole time we were maneuvering.
-        EnterStation(_travelTargetPointId!);
+        EnterStation(_nearestStationPointId!);
     }
 
     // Same button either way (the helm's "Стыковка"/"Отстыковаться" toggle) - docks when alongside
@@ -76,30 +64,25 @@ public sealed partial class World
     // same as TryDockAtStation's own CanDockNow gate.
     private void HandleDockButtonPressed()
     {
-        if (Phase == VoyagePhase.Station)
+        if (IsDocked)
             Undock();
         else
             TryDockAtStation();
     }
 
-    // Leaves the berth without picking a destination yet - the same "idling in open space" state
-    // StepTraveling's own early return already handles, just without a course chosen in the same
-    // breath the way casting off via TryStartTravel does. The ship stays sitting right where it
-    // was; nothing captures it back onto the station (World.Voyage.cs's StepTraveling excludes
-    // Station from the universal incidental-capture scan) until it's deliberately targeted again.
+    // Leaves the berth - the ship stays sitting right where it was, free to fly wherever. Nothing
+    // captures it back onto the station on its own; the next dock only happens on another
+    // deliberate press once it's actually alongside a berth again.
     private void Undock()
     {
         PullCrewOffStation();
-        Phase = VoyagePhase.Traveling;
         _dockedPointId = null;
-        _travelTargetPointId = null;
-        _travelTargetPosition = null;
     }
 
-    // Casting off (either through this button or by picking a destination straight from the docked
-    // menu, World.Voyage.cs's TryStartTravel) takes the station's rooms out of the docked layout, so
-    // anyone still standing in them would be left walking around geometry that no longer connects
-    // to anything - they get pulled back through the connector into the airlock chamber instead.
+    // Casting off (either through this button or by walking away from the docked layout entirely)
+    // takes the station's rooms out of the docked layout, so anyone still standing in them would be
+    // left walking around geometry that no longer connects to anything - they get pulled back
+    // through the connector into the airlock chamber instead.
     private void PullCrewOffStation()
     {
         foreach (var character in _characters.Values.Where(c => c.OnStation))
@@ -108,25 +91,6 @@ public sealed partial class World
             character.RoomId = Ship.AirlockOuterDoors.First().RoomId;
             character.Position = Ship.GetRoom(character.RoomId).Center;
         }
-    }
-
-    private void StepStationApproachPhysics(double deltaSeconds)
-    {
-        var candidatePosition = IntegrateShipFieldMotion(deltaSeconds)
-            .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
-
-        // The station's own compartments are solid: shoulder into them and the ship stops dead
-        // rather than passing through or taking damage (its hull is sturdier than a lone asteroid,
-        // and this isn't combat). Tested against the real room footprint rather than a circle, now
-        // that the station is drawn as the shape it actually is - and against the hull's four
-        // corners rather than its centre, so a long ship can't slide its nose through a wall.
-        if (HullTouchesStation(candidatePosition))
-        {
-            _shipVelocity = Vec2.Zero;
-            return;
-        }
-
-        _shipFieldPosition = candidatePosition;
     }
 
     private bool HullTouchesStation(Vec2 candidateWorldCenter)

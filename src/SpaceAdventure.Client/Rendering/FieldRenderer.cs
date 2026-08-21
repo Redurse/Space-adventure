@@ -93,17 +93,17 @@ public sealed class FieldRenderer
 
         DrawEngines(spriteBatch, snapshot, origin, hullCenter, totalSeconds);
 
-        // Only where a station is actually part of the sector - in a hostile sector or an asteroid
-        // belt there is none, and the layout the World keeps around for docking is not a thing in
-        // the sky (VoyagePhases.HasStationInField).
-        if (snapshot.Voyage.Phase.HasStationInField())
+        // Only where a station actually exists in this system - many procedural systems have none
+        // at all (GalaxyMap.cs), and the layout the World keeps around for docking is not a thing
+        // in the sky when there's nothing nearby to anchor it to (snapshot.Voyage.HasNearbyStation).
+        if (snapshot.Voyage.HasNearbyStation)
         {
             var stationScreen = WorldToScreen(snapshot.Station.Position);
             var portScreen = WorldToScreen(snapshot.Station.DockingPortPosition);
             // Once docked the interior is drawn in full by StationRenderer, in these same
             // coordinates - the exterior would land exactly on top of it, so it's skipped rather
             // than double-drawn.
-            if (snapshot.Voyage.Phase != VoyagePhase.Station || seenFromOutside)
+            if (snapshot.Voyage.DockedPointId is null || seenFromOutside)
                 DrawStationExterior(spriteBatch, snapshot, WorldToScreen, stationScreen);
             DrawDockingPort(spriteBatch, portScreen, snapshot.CanDock, totalSeconds);
             // Off-screen bearings, so neither the station nor the berth can be lost track of during
@@ -190,7 +190,7 @@ public sealed class FieldRenderer
     {
         // Only burning where the ship can actually fly: a joystick pushed at a docked ship commands
         // nothing, and lit engines against a station berth would be a lie the display tells.
-        var underWay = snapshot.Voyage.Phase is VoyagePhase.AsteroidField or VoyagePhase.Battle or VoyagePhase.StationApproach;
+        var underWay = snapshot.Voyage.DockedPointId is null;
         var thrust = underWay
             ? Math.Clamp(new Vector2(snapshot.ShipField.ThrustX, snapshot.ShipField.ThrustY).Length(), 0f, 1f)
             : 0f;

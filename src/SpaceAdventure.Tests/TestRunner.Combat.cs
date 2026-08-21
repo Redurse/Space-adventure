@@ -9,9 +9,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-beta")); // a picket of two
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world, sectorId: "sector-beta"); // a picket of two
 
         var atArrival = world.CreateSnapshot();
         if (atArrival.EnemyShip.Ships.Count != 2 || atArrival.EnemyShip.Ships.Count(e => e.IsBoardable) != 1)
@@ -77,9 +75,11 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
+        // Flying there needs a hand on the helm (no more autopilot) - only man the bow turret once
+        // the fight has actually started.
+        EnterBattle(world);
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man the bow turret
-        EnterBattle(world);
 
         // Traverse the barrel to the edge of its arc, then fire: the shell leaves the muzzle along
         // the barrel and sails past the enemy sitting dead astern.
@@ -100,11 +100,14 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        // Man the gun before flying in, not after: raiders start shooting a few seconds into the
-        // sector, and one of their hits can knock this very turret out mid-test.
+        // Flying there needs a hand on the helm first (no more autopilot) - the gun can only be
+        // manned once the fight has actually started, so there's a short window right after
+        // arrival where a raider could in principle land a hit on this turret before it's manned;
+        // unlike the old autopilot version (manned well before the sector was ever reached), that
+        // window is no longer zero, just short.
+        EnterBattle(world);
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
-        EnterBattle(world);
 
         world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
         world.Step(RealtimeStep);
@@ -136,9 +139,9 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
+        EnterBattle(world); // see World_Fire_DamagesEnemyAndRespectsCooldown on the ordering
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it
-        EnterBattle(world); // see World_Fire_DamagesEnemyAndRespectsCooldown on the ordering
 
         for (var shot = 0; shot < 6; shot++) // magazine capacity
         {
@@ -255,7 +258,7 @@ internal static partial class TestRunner
 
         ApproachBerth(world); // undocks, flies out, and back to a berth
         world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
-        if (world.Phase != VoyagePhase.Station)
+        if (!world.IsDocked)
             return false;
 
         var after = world.CreateSnapshot().AmmoStorageStates.First(s => s.StorageId == "ammo-storage-quarters").Remaining;
@@ -540,18 +543,54 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
+        // Only 2s, not long enough to actually hit the reactor's own ceiling (60): PowerGrid's
+        // sliders share one hard budget, and FlyToward is about to need real Engine allocation of
+        // its own to fly anywhere at all - maxing Shields out first would leave it none (a fully
+        // capped Shields slider blocks Engine from growing past 0, since othersTotal already
+        // equals CurrentOutput), stalling the ship in place for the rest of this test. The
+        // assertion below only needs some charge before the fight (pointsBeforeAttack > 0f), not
+        // a full bar.
         world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 2, PowerDirection: 1f)); // Shields
-        for (var i = 0; i < 300; i++) // 10s — shield ramps to full while still in open space
+        for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
+        var chargedBeforeDeparture = world.CreateSnapshot().Shield.Points;
+
+        // Flying there now needs a hand on the helm (no more autopilot), which FlyToward handles
+        // itself (undocking, ramping Engine, peeling clear of the berth, avoiding any other
+        // hostile sector along the way) - the Shields hold above survives it untouched, since
+        // ApplyCommand's PowerSystemIndex is a single per-player slot (World.cs) that FlyToward
+        // only ever points at Engine.
+        var target = world.GalaxyMap.GetPoint("sector-alpha").Position;
+
+        // Only fly for real until the fight actually starts - FlyToward's own SteerToward keeps
+        // pointing at the sector's marker every tick it runs, which is exactly wrong once the
+        // squadron has already caught up (it overshoots the marker and just keeps flying, giving
+        // the enemy AI a fast, unpredictable target that can take a long time to actually hit).
+        FlyToward(world, target, () => world.IsInBattle, 1, maxTicks: 400 * 30, targetPointId: "sector-alpha");
+
+        // Snap onto the sector's own marker before settling - wherever the real flight happened
+        // to be standing when TryEngageHostileSector fired is arbitrary, and an asteroid field
+        // surrounds this sector (World.EnemyFleet.cs's HasLineOfSight checks AsteroidField.Asteroids
+        // for exactly this). Landing in that asteroid's shadow means the squadron never gets a
+        // clear shot for as long as this waits, no matter how long the budget is - the marker
+        // itself is the one position every EnterBattle-based test already relies on being clear.
+        world.DebugPlaceShip(target);
+        world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+
+        // The real baseline for "did a hit land" is whatever the shield sits at right now, not
+        // back when it was first charged: it keeps recharging off its own held allocation for the
+        // whole flight out here (FlyToward can take minutes at ShipMaxSpeed over the M40-sized
+        // field), so by the time the fight actually starts it's usually back at MaxPoints(100) -
+        // comparing a later dip against the old, much lower reading captured before departure
+        // would only ever trip once the shield had somehow dropped below where it started, which
+        // a single 34-point hit against a full bar never does.
         var pointsBeforeAttack = world.CreateSnapshot().Shield.Points;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-
-        // Step tick-by-tick and catch the exact moment the first attack lands (travel time plus
-        // the 6s attack cooldown after arriving), rather than sampling long after — shield regen
-        // is fast enough to mask the dip by then.
+        // Step tick-by-tick and catch the exact moment the first attack lands (the 6s attack
+        // cooldown after the fight starts), rather than sampling long after — shield regen is
+        // fast enough to mask the dip by then.
         var absorbedAHit = false;
-        for (var i = 0; i < 60 * 30 && !absorbedAHit; i++)
+        for (var i = 0; i < 60 * 30 && world.IsInBattle && !absorbedAHit; i++)
         {
             world.Step(RealtimeStep);
             if (world.CreateSnapshot().Shield.Points < pointsBeforeAttack)
@@ -559,7 +598,7 @@ internal static partial class TestRunner
         }
 
         var snapshot = world.CreateSnapshot();
-        return pointsBeforeAttack > 0f
+        return chargedBeforeDeparture > 0f
             && absorbedAHit
             && snapshot.WallBlockStates.All(s => !s.Breached)
             && snapshot.TurretStates.All(t => !t.Damaged)

@@ -10,7 +10,10 @@ public enum CrewRole
     Engineer,
     Mechanic,
     Security,
-    Medic,
+    // Heals the crew (the same job Medic always did) and, from the navigation console, operates
+    // the scanner (M44) - the console's old "pick an autopilot destination" job became useless
+    // once flight went fully manual (M39), so it's repurposed rather than adding a new block.
+    Scientist,
 }
 
 public static class CrewRoles
@@ -21,6 +24,6 @@ public static class CrewRoles
         CrewRole.Engineer => "Инженер",
         CrewRole.Mechanic => "Механик",
         CrewRole.Security => "Охрана",
-        _ => "Медик",
+        _ => "Учёный",
     };
 }

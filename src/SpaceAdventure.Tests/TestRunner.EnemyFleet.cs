@@ -8,12 +8,7 @@ internal static partial class TestRunner
     // (Enemy.ApplyDamage) rather than through the turrets: FireBowTurretUntilEnemyDefeated loops
     // until the enemy's HP hits zero, which against a squadron seamlessly rolls on into the *next*
     // ship - useful for "just win the fight", useless for observing what happens between kills.
-    private static void EngageSector(World world, string sectorId)
-    {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: sectorId));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
-    }
+    private static void EngageSector(World world, string sectorId) => EnterBattle(world, sectorId: sectorId);
 
     private static void DestroyCurrentEnemyShip(World world)
     {
@@ -29,25 +24,27 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        // Sits far from the low-X field edge (235 of Sol's 300 units, GalaxyMap.cs) - Arrive()
+        // sector-delta sits well clear of every field edge even after M40's recentring - StartBattle
         // always parks the ship at rotation 0 for a fresh fight, so astern thrust always retreats
         // in -X regardless of which sector this is, and this one has the room for it.
         EngageSector(world, "sector-delta");
-        if (world.Phase != VoyagePhase.Battle)
+        if (!world.IsInBattle)
             return false;
 
-        MoveCharacterTo(world, 1, 3f, 3f);
-        MoveCharacterTo(world, 1, 3f, 4f);
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        SitAtHelm(world, 1);
         world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f));
         for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
 
+        // BattleFleeDistance is 280 now (M40, ×8 alongside the field) - reverse-thrust tops out at
+        // the same ShipMaxSpeed(5) forward flight does, just slower to ramp up
+        // (ShipReverseThrustFraction), so clearing it takes noticeably longer than the old 35-unit
+        // version did; 100s is comfortably more than the ~56s minimum at full reverse speed.
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: -1f)); // straight astern, away from the marker
-        for (var i = 0; i < 30 * 30 && world.Phase == VoyagePhase.Battle; i++)
+        for (var i = 0; i < 100 * 30 && world.IsInBattle; i++)
             world.Step(RealtimeStep);
 
-        return world.Phase == VoyagePhase.Traveling && world.CreateSnapshot().Enemy.RemainingShips > 0;
+        return !world.IsInBattle && world.CreateSnapshot().Enemy.RemainingShips > 0;
     }
 
     // A defended sector sends its ships in one after another (game_design.md section 12) - killing
@@ -64,14 +61,14 @@ internal static partial class TestRunner
 
         // The fight continues, against a fresh full-health hull with its own intact crew to board.
         var afterFirst = world.CreateSnapshot();
-        if (world.Phase != VoyagePhase.Battle || afterFirst.Enemy.RemainingShips != 1)
+        if (!world.IsInBattle || afterFirst.Enemy.RemainingShips != 1)
             return false;
         if (afterFirst.Enemy.Hp < afterFirst.Enemy.MaxHp || afterFirst.EnemyShip.Crew.Any(c => !c.Alive))
             return false;
 
         DestroyCurrentEnemyShip(world);
 
-        return world.Phase == VoyagePhase.Traveling && world.CreateSnapshot().Enemy.RemainingShips == 0;
+        return !world.IsInBattle && world.CreateSnapshot().Enemy.RemainingShips == 0;
     }
 
     private static bool World_Squadron_EveryKillCostsOwnerStanding()
@@ -113,7 +110,7 @@ internal static partial class TestRunner
                 return false; // a squadron isn't beaten until its last ship is
         }
 
-        return world.Phase == VoyagePhase.Traveling;
+        return !world.IsInBattle;
     }
 
 }

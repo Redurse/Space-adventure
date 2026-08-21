@@ -17,17 +17,11 @@ public sealed class VoyagePanel
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
     {
         var voyage = snapshot.Voyage;
-        var text = voyage.Phase switch
+        var text = voyage switch
         {
-            VoyagePhase.Station => $"На станции: {PointName(snapshot, voyage.DockedPointId)}",
-            VoyagePhase.Battle => "Бой на месте прибытия",
-            VoyagePhase.Traveling when voyage.TravelTargetPointId is not null =>
-                $"Курс на {PointName(snapshot, voyage.TravelTargetPointId)}... {DistanceRemaining(snapshot):0} ед.",
-            // A free-form click (game_design.md - "может тыкнуть в любое место системы") has no
-            // name to show, just the distance closing.
-            VoyagePhase.Traveling when voyage.TravelTargetPosition is not null =>
-                $"Курс на точку... {DistanceRemaining(snapshot):0} ед.",
-            _ => "В открытом космосе - выберите курс на навигационной консоли",
+            { DockedPointId: { } dockedId } => $"На станции: {PointName(snapshot, dockedId)}",
+            { IsInBattle: true } => "Бой на месте прибытия",
+            _ => "В открытом космосе - штурвал на ручном управлении",
         };
 
         spriteBatch.DrawString(_font, text, origin, Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
@@ -37,9 +31,4 @@ public sealed class VoyagePanel
 
     private static string PointName(WorldSnapshot snapshot, string? pointId) =>
         snapshot.GalaxyPoints.FirstOrDefault(p => p.Id == pointId)?.Name ?? "?";
-
-    private static float DistanceRemaining(WorldSnapshot snapshot) =>
-        snapshot.Voyage.TravelTargetPosition is { } target
-            ? (target - snapshot.Voyage.ShipMapPosition).Length()
-            : 0f;
 }

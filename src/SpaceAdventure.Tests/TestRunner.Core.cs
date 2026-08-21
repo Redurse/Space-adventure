@@ -246,13 +246,197 @@ internal static partial class TestRunner
         return Math.Abs(state.AimDegrees - 45f) < 0.5f;
     }
 
+    // Walks the character to the helm console (the same two-leg route every test in this project
+    // already used by hand: onto the shared y=3 spine first, then up into the console itself, so a
+    // diagonal move can never clip a corner) and mans it, unless already there.
+    private static void SitAtHelm(World world, int playerId = 1)
+    {
+        if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == playerId).IsAtHelm)
+        {
+            MoveCharacterTo(world, playerId, 3f, 3f); // corridor -> reactor -> cockpit, at the doors' shared height
+            MoveCharacterTo(world, playerId, 3f, 4f); // helm console
+            world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
+        }
+
+        // Every test helper that flies the ship by hand (SteerToward and everything built on it)
+        // was written against RCS's free rotation - it can turn in place at any speed. Arc (M41's
+        // default) can't turn at all from a dead stop, which breaks the whole "aim, then thrust"
+        // pattern those helpers depend on. Switching to RCS here, once, covers every caller
+        // uniformly - the same choice a real pilot would make for precision work (docking, lining
+        // up on a target) rather than something special-cased just for tests.
+        if (world.CreateSnapshot().ShipField.ControlMode == ShipControlMode.Arc)
+            world.ApplyCommand(playerId, new ClientCommand(playerId, ToggleControlModePressed: true));
+    }
+
+    // True once the ship's current field position is within `radius` of `point`.
+    private static bool NearPosition(World world, Vec2 point, float radius)
+    {
+        var shipField = world.CreateSnapshot().ShipField;
+        return (point - new Vec2(shipField.X, shipField.Y)).Length() < radius;
+    }
+
+    // Flies to within a stone's throw of a world-space point and brakes to a dead stop there - the
+    // manual-flight replacement for the old autopilot's own guaranteed-stationary arrival, which
+    // several tests below rely on (starting at rest, to measure a single control input in
+    // isolation) and which real asteroid/EVA-target positions are calibrated relative to (they sit
+    // near the field's own asteroid-dense marker, not near wherever the ship happens to undock).
+    private static void FlyNearAndStop(World world, Vec2 target, int playerId = 1)
+    {
+        FlyToward(world, target, () => NearPosition(world, target, 10f), playerId);
+        world.ApplyCommand(playerId, new ClientCommand(playerId, HelmStabilizePressed: true));
+        for (var i = 0; i < 10 * 30; i++)
+            world.Step(RealtimeStep);
+
+        // The old autopilot's "guaranteed-stationary arrival" was rotation-locked at 0 too, not
+        // just velocity-zeroed - several EVA/hull tests calibrated against this helper assume the
+        // ship's local frame lines up with world axes afterwards. Manual flight leaves the ship
+        // pointed wherever it was last steered, so square it back up explicitly.
+        for (var i = 0; i < 10 * 30 && MathF.Abs(NormalizeDegrees(world.CreateSnapshot().ShipField.RotationDegrees)) > 0.5f; i++)
+        {
+            var error = -NormalizeDegrees(world.CreateSnapshot().ShipField.RotationDegrees);
+            world.ApplyCommand(playerId, new ClientCommand(playerId, HelmTurn: MathF.Sign(error)));
+            world.Step(RealtimeStep);
+        }
+        world.ApplyCommand(playerId, new ClientCommand(playerId, HelmTurn: 0f));
+        world.Step(RealtimeStep);
+    }
+
+    private static float NormalizeDegrees(float degrees) => ((degrees % 360f) + 540f) % 360f - 180f;
+
+    // Undocks (if needed), ramps the Engine and mans the helm, then steers straight at a
+    // world-space point until `until` is satisfied or the tick budget runs out - the manual-flight
+    // replacement for every "TravelToPointId/TravelToX,Y then wait for arrival" pattern the old
+    // server-side autopilot used to cover (M39 removed it entirely - see World.Voyage.cs).
+    // targetPointId, when the target IS a hostile sector's own marker (EnterBattle's case),
+    // excludes it from AvoidIncidentalHazards below - the whole point there is to actually reach it.
+    private static void FlyToward(World world, Vec2 target, Func<bool> until, int playerId = 1, int maxTicks = 120 * 30, string? targetPointId = null)
+    {
+        var wasDocked = world.IsDocked;
+        var berth = world.DockBerthPosition; // read before undocking - it's meaningless once cast off
+        if (wasDocked)
+        {
+            world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
+            world.Step(RealtimeStep);
+        }
+
+        world.ApplyCommand(playerId, new ClientCommand(playerId, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
+        for (var i = 0; i < 60; i++)
+            world.Step(RealtimeStep);
+
+        SitAtHelm(world, playerId);
+
+        // A real pilot backs off the berth before setting a course, rather than pointing straight
+        // at wherever they're ultimately headed - the station's own structure is solid now
+        // (World.ShipField.cs), and it sits right where the ship was just mated to it, so a
+        // beeline toward an arbitrary target can point straight back through it. SteerToward has
+        // no obstacle-avoidance of its own (it's a straight-line dumb pilot), so this peels the
+        // ship a short, safe distance clear of the berth first - same shape as backing a real ship
+        // out before turning onto a heading.
+        if (wasDocked)
+            PeelAwayFromBerth(world, berth, target, playerId);
+
+        for (var i = 0; i < maxTicks && !until(); i++)
+        {
+            var shipPos = new Vec2(world.CreateSnapshot().ShipField.X, world.CreateSnapshot().ShipField.Y);
+            var steerTarget = AvoidIncidentalHazards(world, shipPos, target, targetPointId);
+            world.ApplyCommand(playerId, SteerToward(world, playerId, steerTarget));
+            world.Step(RealtimeStep);
+        }
+    }
+
+    // How far clear of a hostile sector's own CaptureRadius(8) a course cutting across the system
+    // has to stay - SteerToward has no obstacle-avoidance of its own, so a straight line toward
+    // some other target can otherwise clip a sector it was never actually headed for, starting a
+    // fight that has nothing to do with whatever the test is checking.
+    private const float HazardClearance = 20f;
+
+    // If the straight line from `from` to `target` would pass within HazardClearance of some
+    // hostile sector OTHER than targetPointId in the ship's current system, returns a waypoint
+    // that clears it with the smallest possible sideways detour instead; otherwise returns
+    // `target` unchanged. Recomputed fresh every tick (FlyToward's own loop) off the ship's actual
+    // current position, so the course keeps curving smoothly around the hazard rather than
+    // committing to one fixed detour point regardless of how the approach angle changes.
+    private static Vec2 AvoidIncidentalHazards(World world, Vec2 from, Vec2 target, string? targetPointId)
+    {
+        var toTarget = target - from;
+        var length = toTarget.Length();
+        if (length < 1f)
+            return target;
+        var dir = toTarget * (1f / length);
+
+        foreach (var hazard in world.GalaxyMap.GetSystem(world.CreateSnapshot().CurrentSystemId).Points
+                     .Where(p => p.Kind == GalaxyPointKind.HostileSector && p.Id != targetPointId))
+        {
+            var toHazard = hazard.Position - from;
+            var projected = toHazard.X * dir.X + toHazard.Y * dir.Y;
+            if (projected < 0f || projected > length)
+                continue; // not actually between here and the target
+
+            var closestPoint = from + dir * projected;
+            var offset = hazard.Position - closestPoint;
+            if (offset.Length() >= HazardClearance)
+                continue;
+
+            var perpendicular = new Vec2(-dir.Y, dir.X);
+            var side = offset.X * perpendicular.X + offset.Y * perpendicular.Y >= 0f ? -1f : 1f;
+            return closestPoint + perpendicular * (side * HazardClearance);
+        }
+
+        return target;
+    }
+
+    // Perpendicular to the berth row (±Y), not along it (±X): every station's own room row
+    // (Station.Default.cs) is a thin strip - only RoomHeight(6) tall, but running however many
+    // modules wide in +X from the connector - so stepping sideways off the row clears the whole
+    // structure in a short, fixed distance regardless of how far it happens to extend lengthwise.
+    // Backing straight out along -X (the direction a real approach starts from) looks tempting,
+    // but only actually helps when wherever the ship is headed next also happens to lie in -X -
+    // for most destinations in this game (they sit roughly east of home) that just walks the ship
+    // straight back into the same row it was trying to leave, since -X is a dead end for anywhere
+    // else. The Y side is picked to match: peeling toward the SAME side of the row the target
+    // already sits on means the subsequent straight-line course, wherever it goes from here,
+    // never has to cross back through the row's own Y-band to get there - peeling to the opposite
+    // side just relocates that same crossing to later in the trip instead of avoiding it. Whatever
+    // OTHER hazard this sideways step happens to put in the way of the subsequent course is
+    // FlyToward's own problem, not this one's - AvoidIncidentalHazards handles that generally, for
+    // any leg of the trip, not just this first one. Assumes the ship is already undocked and
+    // sitting at `berth`.
+    private static void PeelAwayFromBerth(World world, Vec2 berth, Vec2 target, int playerId = 1)
+    {
+        var side = target.Y >= berth.Y ? 1f : -1f;
+        var awayTarget = berth + new Vec2(0f, side * 40f);
+        for (var i = 0; i < 15 * 30 && !NearPosition(world, awayTarget, 15f); i++)
+        {
+            world.ApplyCommand(playerId, SteerToward(world, playerId, awayTarget));
+            world.Step(RealtimeStep);
+        }
+    }
+
     // Shells travel now (World.Projectiles.cs), so there has to be something out there to hit and
     // the shot needs time to reach it - "fire and read the HP next tick" isn't a thing any more.
-    private static void EnterBattle(World world, int playerId = 1)
+    // Places the ship right on the named hostile sector's own marker so the proximity scan starts
+    // the fight immediately (World.Voyage.cs's TryEngageHostileSector) - almost every caller is
+    // using "a fight has started" purely as scaffolding for a combat/boarding/faction mechanic, not
+    // testing the approach itself, so this doesn't fly there for real (World.DebugPlaceShip -
+    // test-only, see its own doc comment; a system now scattered with several such sectors and
+    // multiple stations' own solid hulls needs actual obstacle-avoidance to reach reliably by a
+    // straight-line pilot, which is a real feature in its own right, not scaffolding). Stands the
+    // pilot back up (old autopilot arrival never needed a human at the helm) - every caller expects
+    // to find the character standing free right after this, free to walk off to a turret, the ammo
+    // rack, or wherever the actual test needs it next.
+    private static void EnterBattle(World world, int playerId = 1, string sectorId = "sector-alpha")
     {
-        world.ApplyCommand(playerId, new ClientCommand(playerId, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
+        if (world.IsDocked)
+        {
+            world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
             world.Step(RealtimeStep);
+        }
+
+        world.DebugPlaceShip(world.GalaxyMap.GetPoint(sectorId).Position);
+        world.Step(RealtimeStep);
+
+        if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == playerId).IsAtHelm)
+            world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
     }
 
     private static void StepFor(World world, int ticks)

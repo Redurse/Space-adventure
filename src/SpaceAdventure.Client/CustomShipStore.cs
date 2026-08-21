@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SpaceAdventure.Shared.Model;
+using SpaceAdventure.Shared;
 
 namespace SpaceAdventure.Client;
 
@@ -19,10 +20,7 @@ public static class CustomShipStore
     };
 
     public static string DefaultPath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SpaceAdventure",
-            "custom-ship.json");
+        Path.Combine(GameDataPath.Root, "custom-ship.json");
 
     public static CustomShipDefinition? Load(string? path = null)
     {

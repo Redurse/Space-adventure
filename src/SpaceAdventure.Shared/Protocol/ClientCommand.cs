@@ -11,8 +11,6 @@ namespace SpaceAdventure.Shared.Protocol;
 // main inventory slot index whose hold strip was clicked (game_design.md section 13 —
 // Barotrauma-style hand equip). ToggleReactorSlotIndex is the same pattern for the reactor's
 // 4 fuel-rod slots (-1 = no click), only meaningful while standing at the reactor.
-// TravelToPointId is set the one frame a galaxy map point was clicked (null otherwise) — only
-// takes effect while docked or idling in open space, not mid-battle.
 // BuyItemType/SellSlotIndex are edge-triggered like the rest (null/-1 = no click that frame) —
 // trading with the station's Trader NPC (game_design.md sections 6, 10 — M10 economy). Both are
 // only honored server-side while actually docked (VoyagePhase.Station).
@@ -45,7 +43,6 @@ public sealed record ClientCommand(
     bool FirePressed = false,
     int ToggleHoldSlotIndex = -1,
     int ToggleReactorSlotIndex = -1,
-    string? TravelToPointId = null,
     ItemType? BuyItemType = null,
     int SellSlotIndex = -1,
     bool AcceptCargoQuestPressed = false,
@@ -162,16 +159,9 @@ public sealed record ClientCommand(
     // seen (0 before the first snapshot arrives) - lets the server measure this player's round
     // trip off its own clock (CharacterState.PingMs).
     long LastServerTimestampMs = 0,
-    // A free-form destination in the current system's own field space - clicking anywhere on the
-    // system map, not just a known point of interest (game_design.md - two-tier map). Set together,
-    // the one frame the click happened; null means no click, same convention as TravelToPointId.
-    // Only one of TravelToPointId/TravelToX+Y is ever set for a given click - the server resolves
-    // whichever is present (World.Voyage.cs's TryStartTravel).
-    float? TravelToX = null,
-    float? TravelToY = null,
     // A LMB click while laying a wire that didn't land on a pin fixes a bend at that world spot
     // instead (World.Wiring.cs's HandleWireBend) - null means no such click this frame, same
-    // convention as TravelToX/Y. WireLayCancelPressed now backs out one step at a time: the last
+    // convention as DoorToggleId. WireLayCancelPressed now backs out one step at a time: the last
     // fixed bend if there is one, the whole anchor otherwise (World.Wiring.cs's HandleWireLayCancel) -
     // no new field needed for that half, just a generalized meaning for the existing one.
     float? WireBendAtX = null,
@@ -191,4 +181,8 @@ public sealed record ClientCommand(
     // edge-triggered like DoorToggleId/ComponentMountInteractId, null meaning no such click this
     // frame. Same trusted-client, no-proximity-check convention as those two: the client already
     // gated the click on NearEnough before ever setting this.
-    string? SabotageDeviceId = null);
+    string? SabotageDeviceId = null,
+    // Edge-triggered like HelmStabilizePressed - flips the helm between ShipControlMode.Arc and
+    // .Rcs (World.ShipField.cs, M41), the Z key at the client. Only meaningful while actually
+    // manning the helm, same as HelmThrottle/HelmTurn/HelmStabilizePressed.
+    bool ToggleControlModePressed = false);

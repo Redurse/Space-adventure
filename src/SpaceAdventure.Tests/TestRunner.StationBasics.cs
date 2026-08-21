@@ -5,28 +5,28 @@ using SpaceAdventure.Shared.Protocol;
 
 internal static partial class TestRunner
 {
-    // Arriving at a station (game_design.md section 10 - walkable stations, manual docking) no
-    // longer teleports straight into VoyagePhase.Station - it drops into StationApproach first
-    // (World.StationDocking.cs), same as the M15 asteroid-field arrival pattern.
-    private static bool World_Station_ArrivingSetsStationApproachNotInstantDock()
+    // Arriving near a station (game_design.md section 10 - walkable stations, manual docking) must
+    // not auto-dock the ship - there's no separate "approach" state to drop into any more (M39),
+    // CanDockNow just goes true once close and slow enough, and docking itself still needs the
+    // deliberate button press (World.StationDocking.cs).
+    private static bool World_Station_ArrivingNearStationDoesNotAutoDock()
     {
         var world = new World();
         world.SpawnCharacter(1); // starts already docked at home-station - travel elsewhere first
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
-            world.Step(RealtimeStep);
+        // Reuses the same "fly near a berth, stop the moment CanDockNow genuinely arms for it,
+        // never press the button" helper the docking-button tests share (TestRunner.StationDocking.cs).
+        ApproachBerth(world, "outpost-gamma");
 
-        return world.Phase == VoyagePhase.StationApproach;
+        return world.CanDockNow && !world.IsDocked;
     }
 
     private static bool World_Station_DockAtStation_ReachesStationPhase()
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
 
-        return world.Phase == VoyagePhase.Station && world.CreateSnapshot().Voyage.DockedPointId == "outpost-gamma";
+        return world.IsDocked && world.CreateSnapshot().Voyage.DockedPointId == "outpost-gamma";
     }
 
     // Walking through the ship's own outer airlock door while actually docked leads onto the
@@ -60,7 +60,7 @@ internal static partial class TestRunner
     }
 
     // Same open outer door, but the ship isn't docked (mid-battle): the connector-to-station
-    // special case (TryCrossIntoVacuum's own connectorId, only set while Phase == Station) plays
+    // special case (TryCrossIntoVacuum's own connectorId, only set while IsDocked) plays
     // no part here, so this can never land the character on a station it isn't anywhere near -
     // it falls through to an ordinary vacuum exit instead, exactly like the same door already
     // does out in the asteroid field (World.Eva.cs). This used to be blocked outright on the
@@ -71,9 +71,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         EquipSuit(world, 1); // suit+tank, so this isolates the docked/not-docked question alone
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));

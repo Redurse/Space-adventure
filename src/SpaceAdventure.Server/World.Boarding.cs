@@ -131,7 +131,7 @@ public sealed partial class World
     // to get there, unlike a station's sealed connector) and only during a battle.
     private bool TryBoardEnemyShip(Character character, Vec2 moveDelta)
     {
-        if (character.OnEnemyShip || !character.IsOutside || Phase != VoyagePhase.Battle)
+        if (character.OnEnemyShip || !character.IsOutside || !IsInBattle)
             return false;
 
         var worldPos = GetEvaWorldPosition(character) + moveDelta;

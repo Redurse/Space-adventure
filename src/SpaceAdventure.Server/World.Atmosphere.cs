@@ -49,7 +49,7 @@ public sealed partial class World
         // ashore is a normal thing to do and must not vent the ship on the way.
         foreach (var outerDoor in Ship.AirlockOuterDoors)
         {
-            if (!IsDoorOpen(outerDoor.Id) || Phase == VoyagePhase.Station)
+            if (!IsDoorOpen(outerDoor.Id) || IsDocked)
                 continue;
             var flow = OxygenDiffusionRatePerSecond * _roomOxygen[outerDoor.RoomId] * (float)deltaSeconds;
             deltas[outerDoor.RoomId] = deltas.GetValueOrDefault(outerDoor.RoomId) - flow;

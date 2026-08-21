@@ -10,6 +10,12 @@ namespace SpaceAdventure.Shared.Model;
 // (World.Factions.cs's OwnerOf, World.Quests.cs, World.Save.cs, and so on) keeps working unchanged.
 // Only code that actually cares about locality (World.StarSystems.cs's warp, in-system quest
 // generation) needs `Systems`/`SystemOf` instead.
+//
+// The procedural tail of the galaxy is generated INCREMENTALLY (EnsureGenerated below) rather than
+// all at once at startup - only the systems the player has actually explored near exist yet, the
+// rest simply haven't been rolled. This is why `Systems`/`Points` are backed by mutable lists
+// behind read-only views: growing the galaxy must never invalidate a reference anything already
+// holds onto (World's own `GalaxyMap` property is a single long-lived instance, never replaced).
 public sealed class GalaxyMap
 {
     // How far (in StarSystem.GalaxyX/Y units) a single jump can reach - the "warp circle" drawn
@@ -24,20 +30,40 @@ public sealed class GalaxyMap
     // How far (in a system's own LOCAL field-space units, AsteroidField.Center-relative) the ship
     // has to fly from the field's centre before a jump is possible at all - the "edge of the solar
     // system", a plain ring around the whole system rather than one specific point to hunt down and
-    // park on. Every system shares one 300x300 field (AsteroidField.CreateDefault/the shared empty
-    // stub), whose cardinal edges sit exactly 150 units from centre - kept comfortably under that so
-    // the full ring stays reachable in every direction, not just along the diagonals.
-    public const float WarpZoneRadius = 138f;
+    // park on. Every system shares one 2400x2400 field (AsteroidField.CreateDefault/the shared
+    // empty stub, M40), whose cardinal edges sit exactly 1200 units from centre - kept comfortably
+    // under that so the full ring stays reachable in every direction, not just along the diagonals.
+    // Scaled ×8 alongside the field itself (was 138 for the old 300x300 field) - otherwise the ring
+    // would sit at barely a tenth of the way out, letting a ship warp away just moments after
+    // undocking instead of the manually-flown crossing this milestone is actually about.
+    public const float WarpZoneRadius = 1104f;
 
-    public IReadOnlyList<StarSystem> Systems { get; }
+    private readonly List<StarSystem> _systems;
+    private readonly List<GalaxyPoint> _points;
+    public IReadOnlyList<StarSystem> Systems => _systems;
+    public IReadOnlyList<GalaxyPoint> Points => _points;
     public string HomePointId { get; }
-    public IReadOnlyList<GalaxyPoint> Points { get; }
 
-    public GalaxyMap(IReadOnlyList<StarSystem> systems, string homePointId)
+    // How many of the procedural tail's own systems exist so far - what World.Save.cs persists so
+    // a reloaded session doesn't forget how much of the galaxy the crew had already reached.
+    public int GeneratedProceduralCount { get; private set; }
+
+    // The one seeded RNG behind the whole procedural tail, kept alive across every EnsureGenerated
+    // call rather than restarted each time - continuing the same sequence chunk by chunk gives the
+    // exact same galaxy a single big upfront pass would have, just rolled lazily. A fresh Random
+    // each call would still be deterministic per call, but would NOT reproduce the single-pass
+    // sequence (each call would restart from the same seed instead of picking up where the last
+    // one left off), which is what actually matters here: exploring in a different order/pace must
+    // still eventually reveal the same galaxy.
+    private readonly Random _proceduralRandom = new(2000_02_00);
+    private readonly AsteroidField _proceduralField;
+
+    private GalaxyMap(IReadOnlyList<StarSystem> handAuthoredSystems, AsteroidField proceduralField, string homePointId)
     {
-        Systems = systems;
+        _systems = handAuthoredSystems.ToList();
+        _points = _systems.SelectMany(s => s.Points).ToList();
         HomePointId = homePointId;
-        Points = systems.SelectMany(s => s.Points).ToArray();
+        _proceduralField = proceduralField;
     }
 
     public GalaxyPoint GetPoint(string id) => Points.First(p => p.Id == id);
@@ -54,43 +80,71 @@ public sealed class GalaxyMap
     public IReadOnlyList<string> SystemsWithinWarpRange(string systemId) =>
         Systems.Where(s => s.Id != systemId && IsWithinWarpRange(systemId, s.Id)).Select(s => s.Id).ToArray();
 
+    // Called wherever a player might act on "which systems can I warp to" (World.StarSystems.cs's
+    // CanWarpNow/TryWarpTo, and the galactic-map snapshot) - tops the galaxy up with another chunk
+    // of the procedural tail if the given system doesn't yet have enough already-generated company
+    // nearby. A no-op once MaxProceduralSystems is reached or the neighbour count is already met,
+    // so it's cheap to call unconditionally every time rather than tracking "did I already check
+    // this tick" separately.
+    public void EnsureGenerated(string nearSystemId, int minReachableNeighbors)
+    {
+        while (GeneratedProceduralCount < MaxProceduralSystems &&
+               SystemsWithinWarpRange(nearSystemId).Count < minReachableNeighbors)
+        {
+            GenerateProceduralChunk(ProceduralChunkSize);
+        }
+    }
+
+    // Restoring a save (World.Save.cs): tops the procedural tail back up to at least however far
+    // the crew had already explored before the file was written, rather than starting the count
+    // over from CreateStarter's own small initial seed - same underlying chunked generator, just
+    // driven by a target count instead of a neighbour count.
+    public void EnsureAtLeast(int proceduralCount)
+    {
+        while (GeneratedProceduralCount < Math.Min(proceduralCount, MaxProceduralSystems))
+            GenerateProceduralChunk(ProceduralChunkSize);
+    }
+
     public static GalaxyMap CreateStarter()
     {
-        // Coordinates are real positions in this system's own local field (World.StarSystems.cs,
-        // World.Voyage.cs's StepTraveling) - the same 300x300 space AsteroidField.CreateDefault's
-        // asteroids already occupy (roughly the 60-220 band on both axes), so every point below
-        // sits in one of the open corners/edges instead of inside a rock.
-        // Every point below is placed so the straight line from the ship's fixed departure spot
-        // (DockBerthPosition, ~(124.5,150) for the starter Frigate) clears every asteroid by a
-        // real margin, not just at the point itself - a position that looks clear in isolation can
-        // still sit on the flight path to it and wedge the ship against a rock mid-transit
-        // (World.Voyage.cs's StepTraveling/AutopilotToward). Checked by direct point-to-segment
-        // distance against each asteroid's centre, not eyeballed.
+        // Coordinates are real positions in this system's own local field (World.Voyage.cs), all
+        // shifted by AsteroidField.RecenterOffsetM40 from where they were originally authored in
+        // the old 300x300 field so the whole recognizable layout keeps sitting in the middle of
+        // the new 2400x2400 one (M40) - the same 60-220-ish band around the old centre (150,150),
+        // now around the new one (1200,1200), so every point below still sits in one of the open
+        // corners/edges instead of inside a rock, and the straight line from the ship's fixed
+        // departure spot (DockBerthPosition) still clears every asteroid by the same real margin
+        // it always did - a uniform shift changes no relative distances at all.
+        const float R = AsteroidField.RecenterOffsetM40;
         var sol = new StarSystem("sol", "Солнечная система", new[]
         {
             // Faction ownership (game_design.md section 12): home stays neutral so a new crew
             // always has somewhere that treats them the same regardless of reputation; the other
             // two stations belong to the rival powers, as do the sectors their raiders patrol.
-            new GalaxyPoint("home-station", "Домашняя станция", 35f, 141f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
-            new GalaxyPoint("sector-alpha", "Сектор Альфа", 52f, 97f, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
+            new GalaxyPoint("home-station", "Домашняя станция", 35f + R, 141f + R, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("sector-alpha", "Сектор Альфа", 52f + R, 97f + R, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
             // Beta is a picket of two and Delta a patrol of three - the map's difficulty gradient
             // is squadron size, not per-ship strength (game_design.md section 12).
-            new GalaxyPoint("sector-beta", "Сектор Бета", 42f, 187f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 189f, 61f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
-            new GalaxyPoint("sector-delta", "Сектор Дельта", 235f, 150f, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
-            new GalaxyPoint("trade-station", "Торговая станция", 151f, 257f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
-            new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 150f, 150f, GalaxyPointKind.AsteroidField),
+            new GalaxyPoint("sector-beta", "Сектор Бета", 42f + R, 187f + R, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
+            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 189f + R, 61f + R, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
+            new GalaxyPoint("sector-delta", "Сектор Дельта", 235f + R, 150f + R, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
+            new GalaxyPoint("trade-station", "Торговая станция", 151f + R, 257f + R, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
+            new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 150f + R, 150f + R, GalaxyPointKind.AsteroidField),
             // The Miners' Guild (game_design.md section 12, Phase 4 - MinersGuild) sits right by
             // the belt it works, staying out of the Consortium/FreeFleet fight entirely.
-            new GalaxyPoint("mining-outpost", "Форпост старателей", 100f, 237f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
-        }, AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f);
+            new GalaxyPoint("mining-outpost", "Форпост старателей", 100f + R, 237f + R, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
+            // No single faction actually owns this contested a home system outright - the crew's
+            // own neutral turf sits alongside two rivals' sectors and a third guild's own outpost.
+        }, AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null);
 
-        var emptyField = new AsteroidField(300f, 300f, Array.Empty<Asteroid>(), Array.Empty<OreDeposit>());
+        var proceduralField = new AsteroidField(2400f, 2400f, Array.Empty<Asteroid>(), Array.Empty<OreDeposit>());
 
+        // Every hand-authored stub below is controlled by whichever faction its own single point
+        // already belongs to - simplest reading of "who actually runs this place".
         var alphaCentauri = new StarSystem("alpha-centauri", "Альфа Центавра", new[]
         {
-            new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 150f, 150f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
-        }, emptyField, galaxyX: 420f, galaxyY: 200f);
+            new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 1200f, 1200f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+        }, proceduralField, galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
 
         // The rest of the chain (game_design.md - "куча систем"): each new system is a light stub,
         // the same shape alpha-centauri already was - a single point of interest, no dedicated warp
@@ -102,38 +156,44 @@ public sealed class GalaxyMap
         // one hop at a time despite there being no explicit edge list anymore.
         var sirius = new StarSystem("sirius", "Сириус", new[]
         {
-            new GalaxyPoint("sirius-trade-post", "Торговый пост Сириуса", 150f, 150f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
-        }, emptyField, galaxyX: 180f, galaxyY: 200f);
+            new GalaxyPoint("sirius-trade-post", "Торговый пост Сириуса", 1200f, 1200f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
+        }, proceduralField, galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium);
 
         var vega = new StarSystem("vega", "Вега", new[]
         {
-            new GalaxyPoint("vega-outpost", "Аванпост Веги", 150f, 150f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
-        }, emptyField, galaxyX: 60f, galaxyY: 300f);
+            new GalaxyPoint("vega-outpost", "Аванпост Веги", 1200f, 1200f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+        }, proceduralField, galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
 
         var tauCeti = new StarSystem("tau-ceti", "Тау Кита", new[]
         {
-            new GalaxyPoint("tau-ceti-sector", "Сектор Тау Кита", 150f, 150f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-        }, emptyField, galaxyX: 540f, galaxyY: 300f);
+            new GalaxyPoint("tau-ceti-sector", "Сектор Тау Кита", 1200f, 1200f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
+        }, proceduralField, galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet);
 
         var barnardsStar = new StarSystem("barnards-star", "Звезда Барнарда", new[]
         {
-            new GalaxyPoint("barnard-mining-outpost", "Форпост старателей Барнарда", 150f, 150f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
-        }, emptyField, galaxyX: 660f, galaxyY: 200f);
+            new GalaxyPoint("barnard-mining-outpost", "Форпост старателей Барнарда", 1200f, 1200f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
+        }, proceduralField, galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild);
 
         var handAuthoredSystems = new[] { sol, alphaCentauri, sirius, vega, tauCeti, barnardsStar };
-        var proceduralSystems = GenerateProceduralSystems(handAuthoredSystems, emptyField);
-
-        return new GalaxyMap(handAuthoredSystems.Concat(proceduralSystems).ToArray(), "home-station");
+        var map = new GalaxyMap(handAuthoredSystems, proceduralField, "home-station");
+        // Seeds just enough of the procedural tail for each hand-authored system to have a handful
+        // of real jump targets from the very start - not the whole 194-system galaxy, which now
+        // only fills in as the crew actually explores (EnsureGenerated, called from
+        // World.StarSystems.cs's CanWarpNow and the galactic-map snapshot as they fly around).
+        foreach (var system in handAuthoredSystems)
+            map.EnsureGenerated(system.Id, MinReachableNeighborsAtStart);
+        return map;
     }
 
-    // "Большая галактическая карта" - 194 more systems on top of the 6 hand-authored ones above,
-    // for 200 total. Fixed seed, not the gameplay _random's per-instance sequence, so the galaxy is
-    // identical every session (a save's DockedPointId/_currentSystemId would otherwise point into a
-    // galaxy that no longer looks the same on reload). Each new system is the same light "stub"
-    // template alpha-centauri/sirius/etc. already established above - a single point of interest, no
-    // dedicated warp marker (any position past WarpZoneRadius from the shared field's own centre
-    // works), the same shared empty field - not full Sol-scale content, since hand-tuning 194
-    // asteroid fields is a different project than the map/travel system this generates.
+    // "Большая галактическая карта" - up to 194 more systems on top of the 6 hand-authored ones
+    // above, for 200 total, generated in chunks as the crew actually explores rather than all at
+    // once (EnsureGenerated). Fixed seed, not the gameplay _random's per-instance sequence, so the
+    // galaxy is identical every session (a save's DockedPointId/_currentSystemId would otherwise
+    // point into a galaxy that no longer looks the same on reload). Each new system is the same
+    // light "stub" template alpha-centauri/sirius/etc. already established above - a single point
+    // of interest, no dedicated warp marker (any position past WarpZoneRadius from the shared
+    // field's own centre works) - not full Sol-scale content, since hand-tuning 194 asteroid fields
+    // is a different project than the map/travel system this generates.
     //
     // Connectivity: each new system is placed by the spiral formula below, but if that spot would
     // land further than WarpJumpRadius from every already-placed system (one of the original 6, or
@@ -142,7 +202,9 @@ public sealed class GalaxyMap
     // this guarantees by induction that the whole galaxy stays one single warp-reachable component
     // (World_StarSystem_GalaxyHas200SystemsAllReachable) - a plain geometric guarantee, not a
     // hand-authored edge list.
-    private const int ProceduralSystemCount = 194;
+    private const int MaxProceduralSystems = 194;
+    private const int ProceduralChunkSize = 20; // how many EnsureGenerated rolls out per top-up
+    private const int MinReachableNeighborsAtStart = 3; // CreateStarter's own initial seeding, per hand-authored system
     private const float ProceduralMinSpacing = 90f; // keeps galactic-map nodes from overlapping
 
     // Logarithmic-spiral placement (PULSAR: Lost Colony's own galaxy screen, and every other
@@ -164,6 +226,13 @@ public sealed class GalaxyMap
     // comfortably inside the jump circle rather than right on its edge, so floating-point rounding
     // can never push a system that was pulled in for connectivity back outside warp range.
     private const float PulledInDistanceFactor = 0.85f;
+    // Most systems answer to somebody - a controlled system generates calmer (see below) than the
+    // rarer contested ones, which is the whole point of the distinction existing.
+    private const float ControlledSystemChance = 0.85f;
+    // A controlled system's own point still occasionally turns up a hostile sector (nobody's
+    // territory is perfectly quiet), just far less often than a contested one's coin-flip.
+    private const float ControlledSystemHostileSectorChance = 0.1f;
+    private const float ContestedSystemHostileSectorChance = 0.5f;
 
     private static readonly string[] ProceduralStarNames =
     {
@@ -185,19 +254,27 @@ public sealed class GalaxyMap
     private static float Distance(float x1, float y1, float x2, float y2) =>
         MathF.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
 
-    private static IReadOnlyList<StarSystem> GenerateProceduralSystems(
-        IReadOnlyList<StarSystem> handAuthoredSystems, AsteroidField emptyField)
+    // Rolls the next `count` procedural systems (or however many remain under MaxProceduralSystems)
+    // and appends them - called both by CreateStarter (one big eager chunk today) and by
+    // EnsureGenerated (small top-up chunks as the crew explores). Always continues _proceduralRandom
+    // and GeneratedProceduralCount exactly where the last call left them, so calling this in 20-
+    // system chunks ten times in a row produces byte-for-byte the same galaxy as one 200-system call.
+    private void GenerateProceduralChunk(int count)
     {
-        var random = new Random(2000_02_00); // fixed - see the doc comment above
+        var random = _proceduralRandom;
+        var startIndex = GeneratedProceduralCount;
+        var endIndex = Math.Min(startIndex + count, MaxProceduralSystems);
 
-        var placed = handAuthoredSystems.Select(s => (s.Id, s.GalaxyX, s.GalaxyY)).ToList();
-        var systems = new List<StarSystem>(ProceduralSystemCount);
+        // Rebuilt fresh each call from the current Systems list rather than kept as a running field -
+        // this is O(placed-so-far) per new system, fine at this total scale (at most 200), and means
+        // there's no separate bookkeeping list to keep in sync with _systems.
+        var placed = _systems.Select(s => (s.GalaxyX, s.GalaxyY)).ToList();
 
-        for (var i = 0; i < ProceduralSystemCount; i++)
+        for (var i = startIndex; i < endIndex; i++)
         {
             // Evenly cycling the arm index (rather than picking one at random per system) spreads
-            // the ProceduralSystemCount systems ~evenly across all 4 arms instead of leaving some
-            // arms sparse and others crowded by chance.
+            // the systems ~evenly across all 4 arms instead of leaving some arms sparse and others
+            // crowded by chance.
             var armAngle = (i % SpiralArmCount) * (2f * MathF.PI / SpiralArmCount);
 
             var x = 0f;
@@ -240,17 +317,28 @@ public sealed class GalaxyMap
             var id = $"sys-{i + 1:000}";
             var name = ProceduralSystemName(i, random);
 
-            var faction = (FactionId)random.Next(Enum.GetValues<FactionId>().Length);
-            var poi = random.NextDouble() < 0.7
-                ? new GalaxyPoint($"{id}-poi", $"База {name}", 150f, 150f, GalaxyPointKind.Station, faction,
+            // Most systems answer to one faction, same weight regardless of which - a controlled
+            // system's own point belongs to its controller (simplest reading of "whose territory
+            // this actually is"), a contested one still gets some faction's flag on its one point
+            // (someone's still flying it, just without the rest of the system backing them), picked
+            // independently of anyone else's claim.
+            var isControlled = random.NextDouble() < ControlledSystemChance;
+            var pointFaction = (FactionId)random.Next(Enum.GetValues<FactionId>().Length);
+            FactionId? controllingFaction = isControlled ? pointFaction : null;
+            var hostileSectorChance = isControlled ? ControlledSystemHostileSectorChance : ContestedSystemHostileSectorChance;
+
+            var poi = random.NextDouble() >= hostileSectorChance
+                ? new GalaxyPoint($"{id}-poi", $"База {name}", 1200f, 1200f, GalaxyPointKind.Station, pointFaction,
                     (StationKind)random.Next(Enum.GetValues<StationKind>().Length))
-                : new GalaxyPoint($"{id}-poi", $"Сектор {name}", 150f, 150f, GalaxyPointKind.HostileSector, faction,
+                : new GalaxyPoint($"{id}-poi", $"Сектор {name}", 1200f, 1200f, GalaxyPointKind.HostileSector, pointFaction,
                     SquadronSize: random.Next(1, 4));
 
-            systems.Add(new StarSystem(id, name, new[] { poi }, emptyField, galaxyX: x, galaxyY: y));
-            placed.Add((id, x, y));
+            var system = new StarSystem(id, name, new[] { poi }, _proceduralField, galaxyX: x, galaxyY: y, controllingFaction: controllingFaction);
+            _systems.Add(system);
+            _points.AddRange(system.Points);
+            placed.Add((x, y));
         }
 
-        return systems;
+        GeneratedProceduralCount = endIndex;
     }
 }

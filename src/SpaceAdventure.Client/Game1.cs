@@ -249,7 +249,6 @@ public partial class Game1 : Game
     private SlotRef? _pendingDropItemFrom; // drag ended over empty space (World.Storage.cs)
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
     private string? _pendingWarpToSystemId; // clicked a system on GalaxyMapPanel's own list (World.StarSystems.cs)
-    private Vector2? _pendingTravelToPosition; // clicked empty map background - a free-form destination (World.Voyage.cs)
     private CrewRole? _pendingSetOwnRoleTo; // clicked a role icon on the crew panel's own row
     private bool _pendingClearOwnRole; // clicked the same icon a second time, or the "none" option
     private PlayingCard? _pendingPlayCard; // clicked a card in CardGamePanel - own hand or a defend/перевод play
@@ -302,6 +301,9 @@ public partial class Game1 : Game
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
+        // Set explicitly. Left alone, the caption is whatever the assembly happens to be called,
+        // which is the one place a working title survives a rename without anybody noticing.
+        Window.Title = "Unidentified Signal";
     }
 
     protected override void Initialize()
@@ -502,7 +504,7 @@ public partial class Game1 : Game
 
         if (!_sessionStarted)
         {
-            HandleMenu(keyboard);
+            HandleMenu(keyboard, (float)gameTime.ElapsedGameTime.TotalSeconds);
             base.Update(gameTime);
             return;
         }
@@ -564,6 +566,11 @@ public partial class Game1 : Game
                 _shipEditorOpen = false;
             }
         }
+
+        // Z swaps between Arc (banked turning, tied to speed) and Rcs (free rotation) at the helm
+        // (World.ShipField.cs, M41) - edge-triggered like M above, or holding it down would flip
+        // the mode every frame.
+        var toggleControlModePressed = isAtHelm && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
 
         var interactDown = keyboard.IsKeyDown(Keys.E);
         var spaceDown = keyboard.IsKeyDown(Keys.Space);
@@ -635,9 +642,9 @@ public partial class Game1 : Game
             : UpdateItemDrag(mouse, gameTime.TotalGameTime.TotalSeconds);
         if (dragTookTheClick)
             _prevLeftMouseButton = mouse.LeftButton; // keep HandleMouseClick's own edge detection in step
-        var (toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmStabilizePressed, doorToggleId) =
+        var (toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmStabilizePressed, doorToggleId) =
             dragTookTheClick
-                ? (-1, -1, (string?)null, (ItemType?)null, -1, false, false, (ShipUpgradeTrack?)null, false, (string?)null)
+                ? (-1, -1, (ItemType?)null, -1, false, false, (ShipUpgradeTrack?)null, false, (string?)null)
                 : HandleMouseClick(mouse);
 
         // Bail out of the rest of this frame immediately - _client is about to become null, and
@@ -715,9 +722,6 @@ public partial class Game1 : Game
         var warpToSystemId = _pendingWarpToSystemId;
         _pendingWarpToSystemId = null;
 
-        var travelToPosition = _pendingTravelToPosition;
-        _pendingTravelToPosition = null;
-
         var setOwnRoleTo = _pendingSetOwnRoleTo;
         var clearOwnRolePressed = _pendingClearOwnRole;
         _pendingSetOwnRoleTo = null;
@@ -753,11 +757,11 @@ public partial class Game1 : Game
         var weldHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingWelder();
         var axeSwingHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingAxe();
 
-        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, travelToPointId, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, pushOffDirection.X, pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, lookDirection.X, lookDirection.Y,
+        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, pushOffDirection.X, pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, lookDirection.X, lookDirection.Y,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
-            _client.LatestSnapshot?.ServerTimestampMs ?? 0, travelToPosition?.X, travelToPosition?.Y, wireBendAt?.X, wireBendAt?.Y,
-            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId);
+            _client.LatestSnapshot?.ServerTimestampMs ?? 0, wireBendAt?.X, wireBendAt?.Y,
+            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1062,7 +1066,7 @@ public partial class Game1 : Game
             // While docked the station's compartments are part of the same layout, in the same
             // coordinates - its walls block the view exactly like the ship's own.
             var rooms = snapshot.Rooms;
-            var docked = snapshot.Voyage.Phase == VoyagePhase.Station;
+            var docked = snapshot.Voyage.DockedPointId is not null;
             if (docked)
             {
                 foreach (var door in snapshot.Station.Doors)
@@ -1285,7 +1289,7 @@ public partial class Game1 : Game
                 // A docked station is laid out in these same coordinates, joined to the ship by the
                 // shared airlock rectangle - drawn alongside the interior rather than instead of it,
                 // so there's no moment where the view swaps to "the station screen".
-                if (snapshot.Voyage.Phase == VoyagePhase.Station && !fromOutside)
+                if (snapshot.Voyage.DockedPointId is not null && !fromOutside)
                     _stationRenderer.Draw(_spriteBatch, snapshot, origin, _talkingToNpcId, totalSeconds);
                 // Viewport divided by the zoom for the same reason as the camera origin: the
                 // off-screen markers clamp against the screen edges, which live at design

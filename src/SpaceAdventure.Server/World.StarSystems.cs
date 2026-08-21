@@ -13,10 +13,15 @@ namespace SpaceAdventure.Server;
 public sealed partial class World
 {
     private const float WarpMaxSpeed = 2f;
+    // How many already-generated jump targets the current system should have on hand at all times
+    // - the trigger for GalaxyMap.EnsureGenerated's own lazy top-up (Shared/Model/GalaxyMap.cs).
+    // Checked every snapshot (CreateStarSystemSummaries below), so the galactic map always has real
+    // targets to show near wherever the crew actually is, without ever pre-rolling the whole thing.
+    private const int MinReachableNeighborsWhileExploring = 3;
 
     // What arms the helm's "Прыжок" button - the client mirrors this to decide whether to draw it.
     public bool CanWarpNow =>
-        Phase == VoyagePhase.Traveling &&
+        !IsDocked && !IsInBattle &&
         (_shipFieldPosition - GalaxyMap.GetSystem(_currentSystemId).Field.Center).Length() >= GalaxyMap.WarpZoneRadius &&
         _shipVelocity.Length() < WarpMaxSpeed;
 
@@ -24,6 +29,7 @@ public sealed partial class World
     {
         if (!CanWarpNow || systemId is null || systemId == _currentSystemId)
             return;
+        GalaxyMap.EnsureGenerated(_currentSystemId, MinReachableNeighborsWhileExploring);
         if (!GalaxyMap.IsWithinWarpRange(_currentSystemId, systemId))
             return;
 
@@ -36,8 +42,6 @@ public sealed partial class World
             heading = new Vec2(0f, -1f);
 
         _currentSystemId = systemId;
-        _travelTargetPointId = null;
-        _travelTargetPosition = null;
         // Dropped stopped and stable, right at the edge again - not the field's bare centre, which
         // is nowhere near warp range (game_design.md - two-tier map). This also means CanWarpNow is
         // already true again the instant the jump lands (still exactly WarpZoneRadius out, 0
@@ -50,6 +54,13 @@ public sealed partial class World
         _shipAutoStabilize = true;
     }
 
-    private IReadOnlyList<StarSystemSummary> CreateStarSystemSummaries() =>
-        GalaxyMap.Systems.Select(s => new StarSystemSummary(s.Id, s.Name, s.Field.Width, s.Field.Height, s.GalaxyX, s.GalaxyY)).ToArray();
+    private IReadOnlyList<StarSystemSummary> CreateStarSystemSummaries()
+    {
+        // Grows the galaxy before reporting it, not after - so a client never sees a "known
+        // neighbours" count drop below the threshold for even one frame while flying around.
+        GalaxyMap.EnsureGenerated(_currentSystemId, MinReachableNeighborsWhileExploring);
+        return GalaxyMap.Systems
+            .Select(s => new StarSystemSummary(s.Id, s.Name, s.Field.Width, s.Field.Height, s.GalaxyX, s.GalaxyY, s.ControllingFaction))
+            .ToArray();
+    }
 }

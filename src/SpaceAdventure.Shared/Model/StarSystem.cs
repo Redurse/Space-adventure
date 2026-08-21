@@ -18,8 +18,16 @@ public sealed class StarSystem
     // coordinates, free-form click targets) never share a coordinate space by accident.
     public float GalaxyX { get; }
     public float GalaxyY { get; }
+    // Whoever holds this system as their own territory - independent of any one GalaxyPoint's own
+    // Faction (a system can be "Consortium space" while still having an Independent-run outpost in
+    // it). Null means contested/unclaimed - no single faction keeps the peace there, so it
+    // generates rougher than a controlled one (GalaxyMap.cs's GenerateProceduralSystems) and its
+    // own station(s) never get the "stands down unless you're actually hostile" treatment a
+    // controlling faction's do (World.Voyage.cs's Arrive).
+    public FactionId? ControllingFaction { get; }
 
-    public StarSystem(string id, string name, IReadOnlyList<GalaxyPoint> points, AsteroidField field, float galaxyX = 0f, float galaxyY = 0f)
+    public StarSystem(string id, string name, IReadOnlyList<GalaxyPoint> points, AsteroidField field,
+        float galaxyX = 0f, float galaxyY = 0f, FactionId? controllingFaction = null)
     {
         Id = id;
         Name = name;
@@ -29,5 +37,6 @@ public sealed class StarSystem
         Field = field;
         GalaxyX = galaxyX;
         GalaxyY = galaxyY;
+        ControllingFaction = controllingFaction;
     }
 }

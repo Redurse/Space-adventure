@@ -167,10 +167,9 @@ internal static partial class TestRunner
         // the long walk forward to the helm that DockAtStation needs.
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "trade-station"));
-        DockAtStation(world);
+        DockAtStation(world, "trade-station");
 
-        return world.Phase == VoyagePhase.Station && !world.IsCrateLooted(crate.Id) && world.GetStolenItemCount(1) == 0;
+        return world.IsDocked && !world.IsCrateLooted(crate.Id) && world.GetStolenItemCount(1) == 0;
     }
 
     // Flies to a sector and puts the ship there into a battle. Damage is then applied directly

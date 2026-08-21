@@ -10,9 +10,7 @@ internal static partial class TestRunner
     // just aimed at the enemy ship instead of an ore deposit.
     private static void BoardEnemyShip(World world, ItemType weapon)
     {
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
-        for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
-            world.Step(RealtimeStep);
+        EnterBattle(world);
 
         var slot = TakeFromRack(world, weapon);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: slot));

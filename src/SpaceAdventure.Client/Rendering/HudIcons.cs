@@ -198,8 +198,8 @@ public static class HudIcons
             case CrewRole.Security:
                 DrawShield(spriteBatch, pixel, center, scale, color);
                 break;
-            case CrewRole.Medic:
-                DrawCross(spriteBatch, pixel, center, scale, color);
+            case CrewRole.Scientist:
+                DrawMagnifier(spriteBatch, pixel, center, scale, color);
                 break;
             default:
                 DrawPerson(spriteBatch, pixel, center + new Vector2(0, 5f * scale), scale, color);
@@ -245,9 +245,12 @@ public static class HudIcons
         Primitives.FillTriangle(spriteBatch, pixel, left, right, bottom, color);
     }
 
-    private static void DrawCross(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
+    // The scientist's own two jobs, medic's healing cross replaced (M42) - a lens for the scanner
+    // they run at the navigation console (M44), same reading either way: "looks closer at things".
+    private static void DrawMagnifier(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
     {
-        spriteBatch.Draw(pixel, new Rectangle((int)(center.X - 2.5f * scale), (int)(center.Y - 8f * scale), (int)(5f * scale), (int)(16f * scale)), color);
-        spriteBatch.Draw(pixel, new Rectangle((int)(center.X - 8f * scale), (int)(center.Y - 2.5f * scale), (int)(16f * scale), (int)(5f * scale)), color);
+        var lensCenter = center + new Vector2(-2f * scale, -2f * scale);
+        DrawRingArc(spriteBatch, pixel, lensCenter, 5f * scale, 0f, 360f, color, 16, 2f * scale);
+        DrawLine(spriteBatch, pixel, lensCenter + new Vector2(3.5f * scale, 3.5f * scale), center + new Vector2(8f * scale, 8f * scale), color, 2.5f * scale);
     }
 }

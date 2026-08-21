@@ -678,8 +678,7 @@ internal static partial class TestRunner
 
         // Only a Shipyard-kind station sells hulls (game_design.md section 10) - the home outpost
         // has no Shipwright at all.
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
         world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
 
         var afterMounts = world.CreateSnapshot().ComponentMountStates;
@@ -721,8 +720,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DropItemFrom: new SlotRef(ItemSlotKind.Rack, wrenchSlot)));
         var depletedCount = world.CreateSnapshot().RackSlots.Count(s => s == ItemType.Wrench);
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
         world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
 
         var restockedCount = world.CreateSnapshot().RackSlots.Count(s => s == ItemType.Wrench);

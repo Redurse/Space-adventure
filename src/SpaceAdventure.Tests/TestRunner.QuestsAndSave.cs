@@ -23,8 +23,7 @@ internal static partial class TestRunner
             return false; // the kill should have marked it done even though we're nowhere near a station
 
         var creditsBefore = world.Credits;
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: quest.IssuedByPointId));
-        DockAtStation(world);
+        DockAtStation(world, quest.IssuedByPointId);
         world.ApplyCommand(1, new ClientCommand(1, TurnInCargoQuestPressed: true));
 
         return world.CreateSnapshot().ActiveQuest is null && world.Credits == creditsBefore + quest.RewardCredits;
@@ -57,9 +56,8 @@ internal static partial class TestRunner
         // digging makes no difference to what's being tested here - only one docking trip either
         // way, instead of two.
         MineOre(world, 2);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station"));
-        DockAtStation(world);
-        if (world.Phase != VoyagePhase.Station)
+        DockAtStation(world, "home-station");
+        if (!world.IsDocked)
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, AcceptCargoQuestPressed: true, AcceptQuestKind: QuestKind.Mining));
@@ -86,9 +84,8 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
 
         MineOre(world, 1); // one short of what a mining contract asks for
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "home-station"));
-        DockAtStation(world);
-        if (world.Phase != VoyagePhase.Station)
+        DockAtStation(world, "home-station");
+        if (!world.IsDocked)
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, AcceptCargoQuestPressed: true, AcceptQuestKind: QuestKind.Mining));
@@ -111,9 +108,8 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma")); // Shipyard kind
-        DockAtStation(world);
-        if (world.Phase != VoyagePhase.Station)
+        DockAtStation(world, "outpost-gamma"); // Shipyard kind
+        if (!world.IsDocked)
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, AcceptCargoQuestPressed: true, AcceptQuestKind: QuestKind.Delivery));
@@ -134,8 +130,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, PurchaseUpgradeTrack: ShipUpgradeCatalog.Tracks[0].Track));
         EquipSuit(world, 1);
         WinBattleAt(world, "sector-alpha"); // shifts faction standing
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
         world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout)); // trading down pays out
 
         var save = world.CreateSave();
@@ -153,7 +148,7 @@ internal static partial class TestRunner
             && restored.UpgradeLevels[ShipUpgradeCatalog.Tracks[0].Track] == world.UpgradeLevels[ShipUpgradeCatalog.Tracks[0].Track]
             && restored.CreateSnapshot().ActiveQuest == world.CreateSnapshot().ActiveQuest
             && restored.CreateSnapshot().Voyage.DockedPointId == "outpost-gamma"
-            && restored.Phase == VoyagePhase.Station
+            && restored.IsDocked
             && restoredInventory.MainSlots.Count(s => s is not null) == save.Inventory.Count;
     }
 
@@ -167,10 +162,9 @@ internal static partial class TestRunner
         if (world.AutosavePending)
             return false;
 
-        world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "outpost-gamma"));
-        DockAtStation(world);
+        DockAtStation(world, "outpost-gamma");
 
-        return world.Phase == VoyagePhase.Station && world.AutosavePending;
+        return world.IsDocked && world.AutosavePending;
     }
 
     private static string TempSavePath() =>

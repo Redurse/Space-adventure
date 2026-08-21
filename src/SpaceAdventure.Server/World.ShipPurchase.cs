@@ -50,7 +50,7 @@ public sealed partial class World
 
     private void TryPurchaseShip(ShipKind kind)
     {
-        if (Phase != VoyagePhase.Station || kind == CurrentShipKind)
+        if (!IsDocked || kind == CurrentShipKind)
             return;
 
         // Only stations that actually have a Shipwright sell hulls (game_design.md section 10 -

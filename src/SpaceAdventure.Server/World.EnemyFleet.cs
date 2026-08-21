@@ -66,7 +66,11 @@ public sealed partial class World
     // never the freighter: the one you meet first should be the one that shoots back.
     private EnemyShipLayout EnemyClassFor(int index)
     {
-        var seed = StableSectorSeed(_travelTargetPointId ?? _dockedPointId ?? "sector") + index * 7;
+        // _battleSectorPointId is which sector/station the current fight is at (M39's VoyagePhase
+        // removal dropped the old _travelTargetPointId this used to read) - falls back to
+        // _dockedPointId (rare: a resolved fight can still be ticking down while the ship is
+        // already back at a berth) and then a fixed seed so this never throws.
+        var seed = StableSectorSeed(_battleSectorPointId ?? _dockedPointId ?? "sector") + index * 7;
         var classes = EnemyShipLayout.All;
         var pick = classes[Math.Abs(seed) % classes.Count];
         return index == 0 && pick.Kind == EnemyShipClass.Freighter
@@ -89,7 +93,7 @@ public sealed partial class World
 
     private void StepEnemyFleet(double deltaSeconds)
     {
-        if (Phase != VoyagePhase.Battle)
+        if (!IsInBattle)
             return;
 
         var alive = _enemyShips.Where(e => e.Alive).ToList();
