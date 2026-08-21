@@ -90,59 +90,93 @@ public partial class Game1
         _spriteBatch.End();
     }
 
-    // The engines. The hull is part of the backdrop image, but a plume painted into it would be
-    // frozen, and a frozen exhaust is worse than none - it reads as a ship that has stalled.
+    // The three nozzle mouths, in pane fractions, and the axis the exhaust leaves along.
+    //
+    // These are not read off a screenshot - that is what went wrong the first time, and an exhaust
+    // aimed by eye came out across the hull instead of out of it. They are the ship's own geometry:
+    // the bake lays the hull from tail (0.10, 0.62) to nose (0.52, 0.20) of the pane and hangs three
+    // bells off the back at 0.015 along that axis, offset 30 render pixels either side. Below are
+    // those three points, and the axis reversed. The pane and the bake share an aspect ratio of
+    // 1.5357, so a direction carries across between them without correction.
+    private static readonly Vector2[] NozzleMouths =
+    {
+        new(0.09678f, 0.59125f),
+        new(0.10630f, 0.61370f),
+        new(0.11582f, 0.63615f),
+    };
+
+    // Bell mouth radii in design pixels. The middle engine is the big one, as it is in the art.
+    private static readonly float[] NozzleRadii = { 8.5f, 10.5f, 8.5f };
+
+    private static readonly Vector2 ExhaustAxis = new(-0.837998f, 0.545673f);
+
+    // Cone length as a fraction of the pane. Matches the exhaust the bake used to paint, so the live
+    // plume takes over the same space rather than sitting on top of a stump.
+    private const float PlumeLength = 0.1534f;
+
+    // The engines. The hull is part of the backdrop image, but the plume is not: a painted one would
+    // be frozen, and a frozen exhaust is worse than none - it reads as a ship that has stalled. The
+    // backdrop is baked with its nozzles empty (orbit2.BAKE_PLUME) precisely so this is the only
+    // plume in the frame; two of them, one static, and the static one wins the eye.
+    //
+    // The shape is the wide, pale, diffuse mass the first version of this screen had, which came out
+    // of the bake's narrow blue cone and the first live plume overlapping - together they read as one
+    // broad wash rather than as either of them. Matched to that: it opens to roughly three bell radii
+    // instead of one and two thirds, and the colour is close to white with only a blue cast, because
+    // the saturated blue of the bake on its own reads as a laser rather than as exhaust.
     private void DrawMenuEnginePlume(Rectangle pane, float totalSeconds)
     {
-        // The three nozzle mouths, in pane fractions, taken from where the ship was rendered.
-        var mouths = new[]
-        {
-            new Vector2(0.083f, 0.585f),
-            new Vector2(0.097f, 0.618f),
-            new Vector2(0.111f, 0.651f),
-        };
+        var rotation = MathF.Atan2(ExhaustAxis.Y, ExhaustAxis.X);
 
-        // Down and to the left, opposite the way the ship is pointing.
-        var dir = new Vector2(-0.63f, 0.78f);
-        dir.Normalize();
+        // Stamped with the soft blob rather than a scaled pixel: a pixel blown up is a solid
+        // rectangle, and a row of solid rectangles at falling alpha steps in visible bands instead of
+        // fading. The blob carries its own smoothstep falloff.
+        var soft = _scenePost.Blob;
+        var softOrigin = new Vector2(soft.Width * 0.5f, soft.Height * 0.5f);
 
         _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, SamplerState.LinearClamp,
             transformMatrix: _renderScale);
-        for (var i = 0; i < mouths.Length; i++)
+        for (var i = 0; i < NozzleMouths.Length; i++)
         {
-            var origin = new Vector2(pane.X + pane.Width * mouths[i].X, pane.Y + pane.Height * mouths[i].Y);
+            var mouth = new Vector2(pane.X + pane.Width * NozzleMouths[i].X,
+                pane.Y + pane.Height * NozzleMouths[i].Y);
 
             // Three unrelated frequencies per nozzle, offset per engine: a plume that pulses on one
             // clean sine reads as a blinking light rather than as combustion, and three engines
             // flickering in step read as one.
             var phase = i * 2.17f;
-            var flicker = 0.72f
+            var flicker = 1f
                 + MathF.Sin(totalSeconds * 11.3f + phase) * 0.11f
                 + MathF.Sin(totalSeconds * 27.7f + phase * 1.7f) * 0.09f
                 + MathF.Sin(totalSeconds * 41.1f + phase * 0.6f) * 0.05f;
 
-            var length = pane.Width * 0.10f * flicker;
-            var width = pane.Width * 0.006f;
+            var radius = NozzleRadii[i];
+            var length = pane.Width * PlumeLength * flicker;
 
-            // Drawn as a stack of shrinking, fading quads: cheap, and it gives the plume a soft edge
-            // without needing a gradient texture.
-            const int steps = 22;
+            // Slices laid across the axis rather than square blobs along it: squares stair-step down a
+            // diagonal, while slices turned to face the flow give a clean flare.
+            const int steps = 32;
+            var slice = length / steps * 2.2f;
             for (var s = 0; s < steps; s++)
             {
                 var t = s / (float)steps;
-                var pos = origin + dir * (length * t);
-                var w = width * (1.0f + t * 2.6f);
-                var fade = MathF.Pow(1f - t, 2.0f) * 0.30f * flicker;
-                var colour = Color.Lerp(new Color(196, 226, 255), new Color(60, 96, 200), t);
-                _spriteBatch.Draw(_pixel,
-                    new Rectangle((int)(pos.X - w), (int)(pos.Y - w), (int)(w * 2), (int)(w * 2)),
-                    colour * fade);
+                var pos = mouth + ExhaustAxis * (length * t);
+                // Opens hard. A cone that stays narrow reads as a beam; the width is most of what
+                // made the original look like something burning and spreading.
+                var w = radius * (0.6f + 2.7f * t);
+                // Additive blending is (SourceAlpha, One), so a tint scaled by f lands as f squared.
+                var fade = MathF.Pow(1f - t, 1.9f) * 0.66f * flicker;
+                var colour = Color.Lerp(new Color(198, 214, 238), new Color(104, 126, 176), t);
+                _spriteBatch.Draw(soft, pos, null, colour * fade, rotation,
+                    softOrigin, new Vector2(slice / soft.Width, w * 2f / soft.Height),
+                    SpriteEffects.None, 0f);
             }
 
-            // The mouth itself, hottest and steadiest.
-            _spriteBatch.Draw(_pixel,
-                new Rectangle((int)origin.X - 2, (int)origin.Y - 2, 5, 5),
-                new Color(220, 240, 255) * (0.55f * flicker));
+            // Inside the mouth. Kept modest: the bell's hot interior is still painted into the
+            // backdrop - only the cone was taken out of it - so all this has to add is the pulse.
+            _spriteBatch.Draw(soft, mouth, null,
+                new Color(220, 240, 255) * (0.62f * flicker), rotation, softOrigin,
+                new Vector2(radius * 0.7f / soft.Width, radius / soft.Height), SpriteEffects.None, 0f);
         }
         _spriteBatch.End();
     }

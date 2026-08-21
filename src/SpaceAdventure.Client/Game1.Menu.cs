@@ -48,8 +48,8 @@ public partial class Game1
     // number written into both the backdrop and the plate behind the buttons - those two have to
     // agree exactly or a seam shows between them.
     //
-    // 340 is close to the floor: the rightmost button in MainMenuButtons (РЕДАКТОР КОРАБЛЯ at x=168,
-    // 160 wide) ends at 328, so anything below ~336 would push buttons out over the artwork.
+    // 340 is close to the floor: the rightmost buttons in MainMenuButtons (the x=144 column, 160
+    // wide) end at 304, so anything below ~312 would push buttons out over the artwork.
     private const int MenuPaneX = 340;
     // "Игрок" rather than "" for a fresh machine - with the nickname screen no longer shown at
     // startup, nothing else would ever give an empty nickname a real value before it's sent.
@@ -257,10 +257,10 @@ public partial class Game1
         ("ПРОДОЛЖИТЬ", new Rectangle(144, 64, 160, 24), MainMenuAction.Continue, MainMenuIcon.Play),
         ("НОВАЯ ИГРА", new Rectangle(144, 96, 160, 24), MainMenuAction.NewGame, MainMenuIcon.Ship),
         ("ОБУЧЕНИЕ", new Rectangle(144, 32, 160, 26), MainMenuAction.Tutorial, MainMenuIcon.Flag),
-        ("СОЗДАТЬ СЕРВЕР", new Rectangle(88, 168, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Signal),
-        ("ПРИСОЕДИНИТЬСЯ", new Rectangle(88, 200, 160, 24), MainMenuAction.Join, MainMenuIcon.Plug),
-        ("РЕДАКТОР КОРАБЛЯ", new Rectangle(168, 316, 160, 24), MainMenuAction.ShipEditor, MainMenuIcon.Wrench),
-        ("СМЕНИТЬ НИК", new Rectangle(168, 348, 160, 24), MainMenuAction.ChangeNick, MainMenuIcon.Person),
+        ("СОЗДАТЬ СЕРВЕР", new Rectangle(76, 168, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Signal),
+        ("ПРИСОЕДИНИТЬСЯ", new Rectangle(76, 200, 160, 24), MainMenuAction.Join, MainMenuIcon.Plug),
+        ("РЕДАКТОР КОРАБЛЯ", new Rectangle(144, 316, 160, 24), MainMenuAction.ShipEditor, MainMenuIcon.Wrench),
+        ("СМЕНИТЬ НИК", new Rectangle(144, 348, 160, 24), MainMenuAction.ChangeNick, MainMenuIcon.Person),
         ("НАСТРОЙКИ", new Rectangle(76, 420, 160, 24), MainMenuAction.Settings, MainMenuIcon.Bars),
         ("АВТОРЫ", new Rectangle(76, 456, 160, 26), MainMenuAction.Credits, MainMenuIcon.Medal),
         ("ВЫХОД", new Rectangle(76, 488, 160, 24), MainMenuAction.Exit, MainMenuIcon.Exit),
