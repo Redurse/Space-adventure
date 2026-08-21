@@ -102,13 +102,16 @@ internal static partial class TestRunner
         if (from < 0)
             return false;
 
-        // The rack's very last slot, however big the starter stock (World.Storage.cs's
-        // InitializeRackSlots) turns out to be - guaranteed empty since both starter arrays are
-        // filled from index 0 up, so this is a stow onto an empty slot, not a swap with whatever
-        // starter item happens to already live there. A fixed index (23, back when the starter
-        // stock topped out at 21 items) broke the moment a later addition to that same stock grew
-        // past it and landed something real there instead.
-        var emptySlot = world.CreateSnapshot().RackSlots.Count - 1;
+        // The *first* rack's own last slot - the one StandAtRackHolding just stood the character
+        // next to, not the ship's very last slot overall, which can easily belong to a second,
+        // physically distant shelf and get the move refused for being out of reach instead of
+        // proving anything about stowing onto an empty one. Empty is guaranteed the same way
+        // either way: both starter arrays (World.Storage.cs's InitializeRackSlots) fill from
+        // index 0 up, so anything left unfilled sits at the tail of whichever shelf it belongs
+        // to. A fixed index (23, back when the starter stock topped out at 21 items) broke the
+        // moment a later addition to that same stock grew past it and landed something real
+        // there instead.
+        var emptySlot = StorageRack.Capacity - 1;
         world.ApplyCommand(1, new ClientCommand(1,
             MoveItemFrom: new SlotRef(ItemSlotKind.Main, from),
             MoveItemTo: new SlotRef(ItemSlotKind.Rack, emptySlot)));
@@ -143,10 +146,11 @@ internal static partial class TestRunner
         var from = StandAtRackHolding(world, ItemType.Wrench);
         WalkAcrossShipTo(world, 3f, 3f); // off to the cockpit, far from the rack
 
-        // The rack's very last slot (see World_Rack_DragFromInventory_StowsItem's own comment on
-        // why a fixed index doesn't stay empty forever) - "is null" only proves anything if it
-        // started that way.
-        var emptySlot = world.CreateSnapshot().RackSlots.Count - 1;
+        // Same slot World_Rack_DragFromInventory_StowsItem uses, and the same reason (see its own
+        // comment) - "is null" only proves anything if it started out that way, and picking a
+        // slot on the *other* shelf would make this pass for the wrong reason (out of reach
+        // twice over) instead of the one this test actually names.
+        var emptySlot = StorageRack.Capacity - 1;
         world.ApplyCommand(1, new ClientCommand(1,
             MoveItemFrom: new SlotRef(ItemSlotKind.Main, from),
             MoveItemTo: new SlotRef(ItemSlotKind.Rack, emptySlot)));

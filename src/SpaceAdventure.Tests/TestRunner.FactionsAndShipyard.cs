@@ -41,6 +41,19 @@ internal static partial class TestRunner
         for (var attempt = 0; attempt < 20 && world.GetStanding(faction) > threshold; attempt++)
         {
             WinBattleAt(world, sectorId);
+            // WinBattleAt's own round budget can give up with the enemy still flying (its own doc
+            // comment above) - more likely once a deep grind (a WarThreshold caller, not just
+            // HostileThreshold) scales the squadron up (SquadronSizeAdjustment) past what the
+            // same fixed round budget was tuned against. Finished off here, before the repair
+            // stop below, rather than left for the caller to inherit a ship still sitting in
+            // Battle a handful of units from the sector's own marker - too close for anything it
+            // tries next to get moving before getting pulled straight back into the same fight.
+            // Bounded rather than unbounded, same reasoning as WinBattleAt's own retry: an
+            // oversized-enough squadron could in principle never fully clear, and this must not
+            // hang either.
+            for (var cleanup = 0; cleanup < 3 && world.Phase == VoyagePhase.Battle; cleanup++)
+                WinBattleAt(world, sectorId);
+
             // Always put in for repairs, including after the final battle - the caller still has
             // to fly somewhere afterwards, and doing that on a freshly shot-up ship is exactly
             // what made the last docking flaky.

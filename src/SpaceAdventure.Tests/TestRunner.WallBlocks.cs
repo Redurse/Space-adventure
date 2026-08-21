@@ -71,39 +71,45 @@ internal static partial class TestRunner
         EnterAsteroidFieldStationary(world);
         ExitShipIntoVacuum(world); // boots on, standing right on the plating beside the airlock
 
-        // A block on the airlock chamber's own *right* wall (X=26, the same wall the door itself
-        // sits in, at Y=3) but well clear of the door's own span - reached by walking there
-        // magnetized (StepShipAttachedWalk) along that one face, not by pushing off and flying
-        // (ExitShipAndFlyTo): a deliberate push-off marks the character immune to re-grabbing the
-        // *ship* specifically (TryAutoAttach's PushedOffFrom == PushOffOrigin.Ship check) until it
-        // clears the ship's own attach zone by a full extra margin (PushOffClearMargin) first -
-        // which a target this close to the same hull never would. Staying on the same face matters
-        // too: a straight line from the door to a point on a *different* face of a convex room
-        // cuts through the room's own interior corner, which StepShipAttachedWalk reads as
+        // The airlock chamber's own *outward* wall (X=26, where the door itself sits) was built
+        // with no wall blocks on it at all (Ship.cs's CreateStarter: GenerateOuterWallBlocks(...,
+        // right: false)) - that whole face is the airlock door assembly, not separately weldable
+        // plating. The nearest real block is on the *bottom* wall instead, which means walking
+        // there magnetized (StepShipAttachedWalk) has to actually round the corner rather than
+        // aim straight at it: a straight line from the door to a point on a *different* face of a
+        // convex room cuts through the room's own interior, which StepShipAttachedWalk reads as
         // stepping back inward and, next to a still-open door, walks the character straight back
-        // through it - picking a target on the same wall keeps every step of the walk genuinely
-        // tangential, the same way a player rounding a corner would hug the hull face by face
-        // rather than cut the corner.
-        var block = world.Ship.WallBlocks.First(b => b.RoomId == "airlock-chamber" && b.Position.X == 26f && MathF.Abs(b.Position.Y - 3f) > 1.5f);
+        // through it. Two fixed-direction legs instead - straight down the right face past the
+        // corner, then straight along the bottom face - keep every step genuinely tangential, the
+        // same way a player rounding a corner would hug the hull face by face rather than cut it;
+        // SnapToHullSurface's own nearest-point projection is what actually carries the character
+        // around the corner once the raw input pushes past it, matching its own doc comment.
+        var block = world.Ship.WallBlocks.First(b => b.RoomId == "airlock-chamber" && b.Position.Y == 6f && b.Position.X == 25.5f);
         var hullCenterLocal = new Vec2(
             (world.Ship.Rooms.Min(r => r.Left) + world.Ship.Rooms.Max(r => r.Right)) / 2f,
             (world.Ship.Rooms.Min(r => r.Top) + world.Ship.Rooms.Max(r => r.Bottom)) / 2f);
 
-        for (var i = 0; i < 20 * 30; i++) // comfortably past the few seconds a short walk around one corner takes
+        for (var i = 0; i < 2 * 30; i++) // down the right face, just past the bottom-right corner
         {
-            var shipField = world.CreateSnapshot().ShipField;
-            var blockFieldTarget = new Vec2(
-                shipField.X + (block.Position.X - hullCenterLocal.X),
-                shipField.Y + (block.Position.Y - hullCenterLocal.Y));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0f, MoveY: 1f));
+            world.Step(RealtimeStep);
+        }
+        // Left along the bottom face, now distance-checked rather than a fixed duration: the
+        // block sits barely past the corner (the whole room is only 3 units wide), and a fixed
+        // walk long enough to be safe on a wider hull overshot it by a wide margin here, sailing
+        // straight past it down the *rest* of the ship's own bottom hull (every room shares the
+        // same Y-bounds, so the bottom edge runs continuously the whole length of the ship) into
+        // the corridor's own wall, units away from where it needed to stop.
+        var shipFieldForWalk = world.CreateSnapshot().ShipField;
+        var walkTarget = new Vec2(
+            shipFieldForWalk.X + (block.Position.X - hullCenterLocal.X),
+            shipFieldForWalk.Y + (block.Position.Y - hullCenterLocal.Y));
+        for (var i = 0; i < 10 * 30; i++)
+        {
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var toTarget = new Vec2(blockFieldTarget.X - me.X, blockFieldTarget.Y - me.Y);
-            // Magnetized walking keeps the character HullWalkClearance (0.35) off the raw hull
-            // surface the block's own Position sits on, so "at the target" never reaches 0 - only
-            // ever as close as that same clearance allows.
-            if (toTarget.Length() <= 0.5f)
+            if (new Vec2(walkTarget.X - me.X, walkTarget.Y - me.Y).Length() <= 1f)
                 break;
-            var dir = toTarget.Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: -1f, MoveY: 0f));
             world.Step(RealtimeStep);
         }
 
