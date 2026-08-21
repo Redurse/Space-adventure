@@ -268,30 +268,24 @@ internal static partial class TestRunner
     // The ship can still fly right up to the berth; the button just never arms.
     private static bool World_Docking_AtWar_NeverArmsTheButton()
     {
-        for (var attempt = 0; attempt < 15; attempt++)
-        {
-            var world = new World();
-            world.SpawnCharacter(1);
-            EquipSuit(world, 1); // see World_Faction_HostileStanding_BlocksQuestOffers
-            GrindStandingHostile(world, "sector-delta", FactionId.Consortium, FactionDefinitions.WarThreshold);
-            if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.WarThreshold)
-            {
-                Console.WriteLine($"     DIAG attempt={attempt} setup-failed standing={world.GetStanding(FactionId.Consortium)}");
-                continue;
-            }
+        var world = new World();
+        world.SpawnCharacter(1);
+        EquipSuit(world, 1); // see World_Faction_HostileStanding_BlocksQuestOffers
+        GrindStandingHostile(world, "sector-delta", FactionId.Consortium, FactionDefinitions.WarThreshold);
+        if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.WarThreshold)
+            return false; // didn't actually reach war - setup problem, not the behavior under test
 
-            ApproachBerth(world, "trade-station");
-            if (world.CanDockNow)
-            {
-                Console.WriteLine($"     DIAG attempt={attempt} CanDockNow=true standing={world.GetStanding(FactionId.Consortium)}");
-                continue;
-            }
+        // trade-station, not outpost-gamma: grinding this deep can overshoot past
+        // WarEffortToFlipSector too (a single hostility-enlarged squadron kill can swing standing
+        // by more than one threshold at once) and hand outpost-gamma itself to FreeFleet - which
+        // would make it dockable again for an unrelated reason. trade-station is never a war front,
+        // so it stays Consortium's regardless of how far this grind overshoots.
+        ApproachBerth(world, "trade-station"); // resolves any incidental ambush along the way itself
+        if (world.CanDockNow)
+            return false; // armed despite being at war with whoever owns this berth
 
-            world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
-            if (world.Phase != VoyagePhase.StationApproach)
-                Console.WriteLine($"     DIAG attempt={attempt} phase={world.Phase} standing={world.GetStanding(FactionId.Consortium)}");
-        }
-        return true;
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        return world.Phase == VoyagePhase.StationApproach; // pressed anyway - still refused
     }
 
     // Trading a Frigate down to a Scout costs less than the trade-in is worth, so the yard pays

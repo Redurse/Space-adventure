@@ -10,8 +10,33 @@ internal static partial class TestRunner
     private static void ApproachBerth(World world, string targetPointId = "trade-station")
     {
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: targetPointId));
+        // Deep hostility with whoever owns some *other* nearby sector can still snag the ship into
+        // an incidental battle en route to the berth (World.Voyage.cs's Arrive - its own comment
+        // calls this the "universal capture-radius scan", and it fires from anywhere near a
+        // hostile sector's marker, not just when that sector was the actual target). Resolved a
+        // bounded number of times rather than every time it happens: the ship sits still exactly
+        // where the fight ended (Arrive's own doc comment - "starts wherever the ship already
+        // was"), so the very first few ticks of the resumed trip can still be inside the same
+        // capture radius and roll straight into a second one, and a third, indefinitely - each
+        // full fight costs real time, so an unbounded retry here turned one slow test into one
+        // that never finished. Past a handful of fights this just gives up on dodging them and
+        // lets the loop's own timeout run out sitting in whatever battle it's in, same as it
+        // always could before this existed.
+        var ambushesResolved = 0;
         for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.StationApproach; i++)
+        {
+            if (world.Phase == VoyagePhase.Battle)
+            {
+                if (ambushesResolved++ >= 5)
+                    break;
+                FireBowTurretUntilEnemyDefeated(world, 1);
+                for (var j = 0; j < 30 && world.Phase == VoyagePhase.Battle; j++)
+                    world.Step(RealtimeStep); // let StepVoyage resolve the kill
+                world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: targetPointId)); // resume
+                continue;
+            }
             world.Step(RealtimeStep);
+        }
 
         MoveCharacterTo(world, 1, 3f, 3f);
         MoveCharacterTo(world, 1, 3f, 4f); // helm console
