@@ -37,13 +37,26 @@ public partial class Game1
     private const int RoleIconGap = 30;
     private const int RoleIconsY = 220;
 
-    private MenuScreen _menuScreen = MenuScreen.Nickname;
+    // Nickname is remembered between launches (PlayerSettingsStore) and only needs asking once
+    // ever - starting straight at Role skips the now-redundant "what's your name" screen every
+    // launch; MainMenuAction.ChangeNick/Settings' own "ИЗМЕНИТЬ" button still reach MenuScreen.
+    // Nickname on demand for anyone who actually wants to change it.
+    private MenuScreen _menuScreen = MenuScreen.Role;
     private float _screenChangedAt = -99f;
-    private string _nickname = PlayerSettingsStore.LoadNickname() ?? "";
-    // Same "always ask, pre-filled from last time" shape as the nickname above - purely a
-    // self-identification label (Character.cs's own comment), so there's no wrong answer and no
-    // need to force a choice; Enter with nothing picked just continues without one, same as
-    // today's default for a player who never opens the crew panel.
+
+    // Where the button column ends and the art pane begins. One constant rather than the same
+    // number written into both the backdrop and the plate behind the buttons - those two have to
+    // agree exactly or a seam shows between them.
+    //
+    // 340 is close to the floor: the rightmost button in MainMenuButtons (РЕДАКТОР КОРАБЛЯ at x=168,
+    // 160 wide) ends at 328, so anything below ~336 would push buttons out over the artwork.
+    private const int MenuPaneX = 340;
+    // "Игрок" rather than "" for a fresh machine - with the nickname screen no longer shown at
+    // startup, nothing else would ever give an empty nickname a real value before it's sent.
+    private string _nickname = PlayerSettingsStore.LoadNickname() ?? "Игрок";
+    // "Always ask, never skip" for Role specifically, since there's no wrong answer and no need to
+    // force a choice - Enter with nothing picked just continues without one, same as today's
+    // default for a player who never opens the crew panel.
     private CrewRole? _selectedRole = PlayerSettingsStore.LoadRole();
     private bool _openToNetwork;
     private string _joinAddress = "127.0.0.1";
@@ -131,10 +144,10 @@ public partial class Game1
         _prevMenuKeyboard = keyboard;
     }
 
-    // Enter confirms whatever's typed (blank falls back to "Игрок" rather than sending an empty
-    // name to the server) and remembers it for next launch - a fresh machine sees this screen
-    // empty, but every launch after that starts pre-filled, satisfying "always ask" and "remember
-    // between sessions" at once.
+    // No longer a startup screen - reached only on demand (MainMenuAction.ChangeNick, Settings'
+    // "ИЗМЕНИТЬ" button), pre-filled with whatever's already saved. Enter confirms whatever's
+    // typed (blank falls back to "Игрок" rather than sending an empty name to the server) and
+    // remembers it for next launch.
     private void HandleNicknameScreen(KeyboardState keyboard)
     {
         if (!Pressed(keyboard, Keys.Enter))
@@ -476,6 +489,23 @@ public partial class Game1
             _screenChangedAt = totalSeconds;
         _lastDrawnMenuScreen = _menuScreen;
 
+        // The backdrop goes down in its own batch, before the main one, because it needs PointClamp
+        // and the rest of the menu wants the default filtering. It is pixel art authored at 286x186,
+        // so any smoothing on the way up to the pane would destroy the whole reason for drawing it
+        // that way. Cheaper and clearer than ending and restarting the main batch mid-screen.
+        if (_menuScreen == MenuScreen.Main && _menuBackdrop is not null)
+        {
+            var backdropPane = new Rectangle(MenuPaneX, 0, DesignWidth - MenuPaneX, DesignHeight);
+            _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp,
+                transformMatrix: _renderScale);
+            _spriteBatch.Draw(_menuBackdrop, backdropPane, Color.White);
+            _spriteBatch.End();
+
+            // The moving half of the scene: the planet turning and the engines burning, both drawn
+            // over the still image rather than baked into it.
+            DrawMenuScene(totalSeconds);
+        }
+
         _spriteBatch.Begin(transformMatrix: _renderScale);
         if (_menuScreen == MenuScreen.Nickname)
             DrawNicknameScreen();
@@ -641,7 +671,7 @@ public partial class Game1
     // animated status strip down the panel's right edge.
     private void DrawMainMenuPanelPlate(float totalSeconds)
     {
-        var panelRect = new Rectangle(0, 0, 480, DesignHeight);
+        var panelRect = new Rectangle(0, 0, MenuPaneX, DesignHeight);
         _spriteBatch.Draw(_pixel, panelRect, new Color(7, 11, 12));
 
         const int cell = 28;
@@ -669,8 +699,11 @@ public partial class Game1
     // are no image assets anywhere in this project.
     private void DrawMainMenuBackdrop(float totalSeconds)
     {
-        var pane = new Rectangle(480, 0, DesignWidth - 480, DesignHeight);
-        MenuPlanetScene.Draw(_spriteBatch, _pixel, pane, totalSeconds);
+        var pane = new Rectangle(MenuPaneX, 0, DesignWidth - MenuPaneX, DesignHeight);
+        // Only when there is no backdrop image. The two would fight: the procedural scene paints its
+        // own starfield and planet straight over the art.
+        if (_menuBackdrop is null)
+            MenuPlanetScene.Draw(_spriteBatch, _pixel, pane, totalSeconds);
 
         // A soft cyan glow behind the title (several oversized, near-transparent copies offset in
         // a ring) plus a hard black drop shadow, then the crisp white face on top - the cheapest
@@ -721,21 +754,157 @@ public partial class Game1
         "ТОПЛИВНЫЙ КОНВОЙ ПРИБЫВАЕТ ЧЕРЕЗ 6 ЧАСОВ",
         "НАПОМИНАНИЕ: СКАФАНДР ПРОВЕРЯЕТСЯ ПЕРЕД КАЖДЫМ ВЫХОДОМ",
         "МЕДОТСЕК: ПЛАНОВЫЙ ОСМОТР ЭКИПАЖА ПЕРЕНЕСЁН НА ЗАВТРА",
+        "ДИСПЕТЧЕР: ОЧЕРЕДЬ НА ШЛЮЗ 2 - ОЖИДАНИЕ ОКОЛО 20 МИНУТ",
+        "БОРТ 'ПОЛЫНЬ' ЗАПРАШИВАЕТ ПРИОРИТЕТНУЮ ЗАПРАВКУ",
+        "СТАНЦИЯ: ЦЕНЫ НА РУДУ ОБНОВЛЕНЫ, СМ. ТЕРМИНАЛ ТОРГОВЦА",
+        "ВНИМАНИЕ: В СЕКТОРЕ ЗАФИКСИРОВАНО ПОВЫШЕННОЕ ГРАВИТАЦИОННОЕ ВОЗМУЩЕНИЕ",
+        "ОТДЕЛ КАДРОВ: ВАКАНСИИ МЕХАНИКА И МЕДИКА ОТКРЫТЫ ДО КОНЦА СМЕНЫ",
+        "ПАТРУЛЬ СООБЩАЕТ О ЧИСТОМ КОРИДОРЕ В КВАДРАНТЕ 9",
+        "СКЛАД: ПОСТАВКА ЗАПАСНЫХ ЩИТКОВ ЗАДЕРЖИВАЕТСЯ НА СУТКИ",
+        "НАПОМИНАНИЕ: НЕСАНКЦИОНИРОВАННАЯ СВАРКА В ШЛЮЗОВОЙ ЗАПРЕЩЕНА",
+        "БОРТ 'ЗАРЯ' ДОКЛАДЫВАЕТ О НЕЗНАЧИТЕЛЬНОЙ ПРОБОИНЕ, УГРОЗЫ НЕТ",
+        "ДИСПЕТЧЕР: ВНЕШНИЙ ПРИЧАЛ 7 ВРЕМЕННО НЕДОСТУПЕН ДЛЯ ШВАРТОВКИ",
+        "ВНИМАНИЕ: В ПОЯСЕ АСТЕРОИДОВ ЗАМЕЧЕНА ПОВЫШЕННАЯ АКТИВНОСТЬ ДОБЫТЧИКОВ",
+        "АДМИНИСТРАЦИЯ: НОВЫЕ ГРУЗОВЫЕ ЗАКАЗЫ ДОСТУПНЫ НА ДОСКЕ ОБЪЯВЛЕНИЙ",
+        "РЕАКТОРНЫЙ ОТСЕК: ПЛАНОВАЯ ПРОВЕРКА ТОПЛИВНЫХ СТЕРЖНЕЙ ЗАВЕРШЕНА",
+        "БОРТ 'ГОРИЗОНТ' БЛАГОДАРИТ ЗА ПОМОЩЬ ПРИ ШВАРТОВКЕ",
+        "ВНИМАНИЕ: РАДИАЦИОННЫЙ ФОН В НОРМЕ, ДАТЧИКИ ПРОВЕРЕНЫ",
+        "СТАНЦИЯ: ПОТЕРЯННЫЙ ГРУЗ С БОРТА 'ВЕГА' ЖДЁТ ВЛАДЕЛЬЦА НА СКЛАДЕ",
+        "ДИСПЕТЧЕР: ВНИМАНИЕ ЭКИПАЖАМ - УЧЕБНАЯ ТРЕВОГА В 14:00 ПО СТАНЦИОННОМУ",
+        "НАПОМИНАНИЕ: ПРОСРОЧЕННЫЕ АПТЕЧКИ МЕНЯЮТСЯ В МЕДОТСЕКЕ БЕСПЛАТНО",
+        "БОРТ 'СКИТАЛЕЦ' ЗАПРАШИВАЕТ РАЗРЕШЕНИЕ НА ВЫХОД В ОТКРЫТЫЙ КОСМОС",
+        "СЛУЖБА БЕЗОПАСНОСТИ: НЕОПЛАЧЕННЫЕ ДОЛГИ ПЕРЕДАЮТСЯ ВЗЫСКАТЕЛЯМ",
+        "БОРТ 'НАБАТ' ДОКЛАДЫВАЕТ О ПОЛНОЙ ГОТОВНОСТИ К ОТБЫТИЮ",
+        "ДИСПЕТЧЕР: ПРИЧАЛ 3 ОСВОБОДИЛСЯ, ОЧЕРЕДЬ СДВИНУЛАСЬ НА ОДНОГО",
+        "ВНИМАНИЕ: КОРОТКОЕ ЗАМЫКАНИЕ НА ТОРГОВОЙ ПЛОЩАДКЕ, ОСВЕЩЕНИЕ ВРЕМЕННОЕ",
+        "СТАНЦИЯ: ЛОТ РЕДКОГО МИНЕРАЛА ВЫСТАВЛЕН НА ТЕРМИНАЛЕ ТОРГОВЦА",
+        "НАПОМИНАНИЕ: КАРТОЧКА ЭКИПАЖА ОБЯЗАТЕЛЬНА ПРИ ПРОХОДЕ ЧЕРЕЗ ШЛЮЗ",
+        "БОРТ 'ЗАТИШЬЕ' СООБЩАЕТ О СТОЛКНОВЕНИИ С МЕЛКИМ МУСОРОМ, ПОВРЕЖДЕНИЙ НЕТ",
+        "ОТДЕЛ КАДРОВ: РЕКРУТЁР ПРИНИМАЕТ ЗАЯВКИ НА СВОБОДНЫЕ МЕСТА В ЭКИПАЖЕ",
+        "ВНИМАНИЕ: ОКНО СВЯЗИ С ЦЕНТРОМ УПРАВЛЕНИЯ ЗАКРЫВАЕТСЯ ЧЕРЕЗ ЧАС",
+        "ПАТРУЛЬ ЗАПРАШИВАЕТ ПОДКРЕПЛЕНИЕ В КВАДРАНТЕ 4, УГРОЗА НЕВЫСОКАЯ",
+        "СКЛАД: ЛИШНИЕ ОБРЕЗКИ ОБШИВКИ ПРИНИМАЮТСЯ НА ПЕРЕПЛАВКУ",
+        "БОРТ 'ПОЛУНОЧНИК' БЛАГОДАРИТ ДИСПЕТЧЕРА ЗА ТОЧНЫЙ КОРИДОР ЗАХОДА",
+        "НАПОМИНАНИЕ: ЛИЧНОЕ ОРУЖИЕ ХРАНИТЬ РАЗРЯЖЕННЫМ ВНЕ БОЕВОЙ ОБСТАНОВКИ",
+        "ВНИМАНИЕ: ПЫЛЕВОЕ ОБЛАКО СНИЖАЕТ ВИДИМОСТЬ НА ВНЕШНИХ КАМЕРАХ",
+        "АДМИНИСТРАЦИЯ: ПРЕМИЯ ЗА СДАННЫЙ ГРУЗ НАЧИСЛЕНА НА СЧЁТ СТАНЦИИ",
+        "БОРТ 'ШИРОТА' ЗАПРАШИВАЕТ ТЕХНИЧЕСКУЮ ПОМОЩЬ С ДВИГАТЕЛЕМ",
+        "ДИСПЕТЧЕР: ВНЕШНИЙ КОНТУР ОСВЕЩЕНИЯ СТАНЦИИ ПЕРЕВЕДЁН В НОЧНОЙ РЕЖИМ",
+        "МЕДОТСЕК: ЗАПАС ОБЕЗБОЛИВАЮЩИХ ВОСПОЛНЕН ДО ПОЛНОЙ НОРМЫ",
+        "ВНИМАНИЕ: ПРОБНАЯ ТРАНСЛЯЦИЯ АВАРИЙНОЙ ЧАСТОТЫ В 18:00, ЭТО УЧЕНИЯ",
+        "СТАНЦИЯ: НАЙДЕННЫЕ ЛИЧНЫЕ ВЕЩИ СДАЮТСЯ НА ПОСТ ДИСПЕТЧЕРА",
+        "АМОГУС!",
     };
+
+    private const float TickerSpeed = 34f; // pixels/second, unchanged from before
+    // The empty space kept between one line's trailing edge and the next line's leading edge -
+    // constant regardless of either line's own width, which is exactly what spacing spawns a fixed
+    // time apart couldn't guarantee (a long line's tail could still be on screen when a short gap
+    // let the next one already catch up to it, i.e. the overlap the old timing produced).
+    private const float TickerLineGap = 80f;
+
+    // Per-line width in pixels, indexed exactly like TrafficLines - lazily built from the real font
+    // metrics the first time this draws, then reused every frame after. The lap length is just the
+    // sum of these plus one gap per line, which holds regardless of what order they play in within
+    // a lap - only ShuffleLap below cares about order.
+    private float[]? _trafficLineWidths;
+    private float _trafficCycleLength;
+
+    private void EnsureTrafficLineWidths()
+    {
+        if (_trafficLineWidths is not null)
+            return;
+
+        _trafficLineWidths = new float[TrafficLines.Length];
+        var total = 0f;
+        for (var i = 0; i < TrafficLines.Length; i++)
+        {
+            _trafficLineWidths[i] = _font.MeasureString(TrafficLines[i]).X * 0.5f;
+            total += _trafficLineWidths[i] + TickerLineGap;
+        }
+        _trafficCycleLength = total;
+    }
+
+    // Every full lap through TrafficLines plays in its own random order (a fresh shuffle seeded by
+    // the lap number, so it's deterministic within a frame but different lap to lap) - reusing the
+    // same fixed order every time was exactly what read as repetitive, and a lap boundary is a
+    // natural point to reshuffle since nothing is ever mid-line there. Returns both the shuffled
+    // line order and each entry's cumulative start offset within this lap (same running-sum shape
+    // the old fixed-order table had, just built for whichever order this particular lap drew).
+    private (int[] Order, float[] Offsets) ShuffleLap(int lap)
+    {
+        var count = TrafficLines.Length;
+        var order = new int[count];
+        for (var i = 0; i < count; i++)
+            order[i] = i;
+
+        var rng = new Random(lap);
+        for (var i = count - 1; i > 0; i--)
+        {
+            var j = rng.Next(i + 1);
+            (order[i], order[j]) = (order[j], order[i]);
+        }
+
+        var offsets = new float[count];
+        var offset = 0f;
+        for (var i = 0; i < count; i++)
+        {
+            offsets[i] = offset;
+            offset += _trafficLineWidths![order[i]] + TickerLineGap;
+        }
+        return (order, offsets);
+    }
 
     private void DrawTrafficTicker(Rectangle pane, float totalSeconds)
     {
-        var line = TrafficLines[(int)(totalSeconds / 11f) % TrafficLines.Length];
-        var width = _font.MeasureString(line).X * 0.5f;
-        // Scrolls right to left across the whole pane and wraps with a gap, so there is never a
-        // moment where the strip is empty and the effect visibly stops.
-        var travel = (pane.Width + width + 120f);
-        var x = pane.Right - totalSeconds % (travel / 34f) * 34f;
-        var y = pane.Bottom - 16f;
+        EnsureTrafficLineWidths();
+        var count = TrafficLines.Length;
 
+        var y = pane.Bottom - 16f;
         _spriteBatch.Draw(_pixel, new Rectangle(pane.X, (int)y - 3, pane.Width, 14), new Color(8, 14, 18) * 0.55f);
         _spriteBatch.Draw(_pixel, new Rectangle(pane.X, (int)y - 4, pane.Width, 1), new Color(90, 220, 195) * 0.25f);
-        _spriteBatch.DrawString(_font, line, new Vector2(x, y), new Color(120, 200, 185) * 0.75f, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+
+        // Every line's own start distance is lap * cycleLength + that lap's own offset for it -
+        // strictly increasing within a lap (however it got shuffled) and across the lap boundary
+        // too, so walking backward through a lap's slots, then into the previous lap's once this
+        // one runs out, still makes age increase monotonically - the moment one line is fully off
+        // the left edge, every older one (this lap's remainder, or the whole lap before it) is too.
+        var traveled = totalSeconds * TickerSpeed;
+        var lap = (int)MathF.Floor(traveled / _trafficCycleLength);
+        var remainder = traveled - lap * _trafficCycleLength;
+
+        var (order, offsets) = ShuffleLap(lap);
+        var index = 0;
+        for (var i = count - 1; i >= 0; i--)
+        {
+            if (offsets[i] <= remainder)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        while (true)
+        {
+            var lineIndex = order[index];
+            var spawnDistance = lap * _trafficCycleLength + offsets[index];
+            var line = TrafficLines[lineIndex];
+            var width = _trafficLineWidths![lineIndex];
+            var age = traveled - spawnDistance;
+            var x = pane.Right - age;
+            if (x + width < pane.X)
+                break;
+
+            _spriteBatch.DrawString(_font, line, new Vector2(x, y), new Color(120, 200, 185) * 0.75f, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+
+            index--;
+            if (index < 0)
+            {
+                lap--;
+                (order, offsets) = ShuffleLap(lap);
+                index = count - 1;
+            }
+        }
     }
 
     private void DrawNicknameScreen()

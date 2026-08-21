@@ -22,6 +22,7 @@ public sealed partial class World
         ItemType.OxygenTank, ItemType.OxygenTank, ItemType.OxygenTank,
         ItemType.WeldingTank, ItemType.WeldingTank, ItemType.WeldingTank,
         ItemType.Axe, ItemType.Axe, ItemType.Axe,
+        ItemType.GoshaScrewdriver, ItemType.GoshaScrewdriver, ItemType.GoshaScrewdriver,
     };
 
     private static readonly ItemType[] RackSuppliesAndWeapons =

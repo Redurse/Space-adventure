@@ -91,9 +91,12 @@ internal static partial class TestRunner
         return maxTicks;
     }
 
-    // A suit is a shell: without a tank in it, the airlock won't let anyone through, because
-    // stepping into vacuum in an empty suit is just a slower way of stepping into vacuum.
-    private static bool World_Eva_SuitWithoutTank_CannotStepOutside()
+    // Stepping into vacuum in an empty suit used to be gated out at the door entirely - now it's
+    // let through (World.Eva.cs's TryCrossIntoVacuum no longer checks the tank at all) and
+    // survivable for exactly UnsuitedGraceSeconds instead: long enough to turn round and grab a
+    // tank, not long enough to go anywhere. StepUnsuitedExposure is what runs the clock and kills
+    // at the end of it.
+    private static bool World_Eva_SuitWithoutTank_SurvivesOnlyTheGracePeriod()
     {
         var world = new World();
         world.SpawnCharacter(1);
@@ -104,21 +107,14 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f); // push at the open door
 
-        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        if (me.IsOutside || me.SuitTank is not null)
-            return false;
+        var afterCrossing = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (!afterCrossing.IsOutside || afterCrossing.SuitTank is not null)
+            return false; // the crossing itself is unsuited-blind now - no tank check at the door
 
-        // With a tank plugged in, the same walk works - proving it was the air that was missing and
-        // not something else about the door. Back out to the door's own height first: MoveCharacterTo
-        // walks both axes at once, and a diagonal out of the airlock chamber leaves the doorway's
-        // 1.8-unit band before it reaches the wall, so the crossing never happens.
-        MoveCharacterTo(world, 1, 21.5f, 3f);
-        TakeTankFromRack(world);
-        AttachTankTo(world, WornSuitSlotIndex);
-        MoveCharacterTo(world, 1, 23f, 3f);
-        WalkFixedDirection(world, 1, 1f, 0f);
+        for (var i = 0; i < 4 * 30; i++) // comfortably past the 3-second grace
+            world.Step(RealtimeStep);
 
-        return world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsOutside;
+        return world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health <= 0f;
     }
 
     // The tank is spent by being outside, and an empty one stops protecting: at that point the suit

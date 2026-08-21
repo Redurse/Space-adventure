@@ -59,23 +59,29 @@ internal static partial class TestRunner
         return !world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnStation;
     }
 
-    // Same open outer door, but the ship isn't docked (mid-battle) - falls through to ordinary
-    // hull-boundary movement, exactly like it already does outside VoyagePhase.AsteroidField for
-    // the vacuum-EVA case (no new special-casing needed, see World.Movement.cs).
-    private static bool World_Station_CannotCrossOuterDoorWhileNotDocked()
+    // Same open outer door, but the ship isn't docked (mid-battle): the connector-to-station
+    // special case (TryCrossIntoVacuum's own connectorId, only set while Phase == Station) plays
+    // no part here, so this can never land the character on a station it isn't anywhere near -
+    // it falls through to an ordinary vacuum exit instead, exactly like the same door already
+    // does out in the asteroid field (World.Eva.cs). This used to be blocked outright on the
+    // grounds that "not docked" meant "nowhere to go" - that stopped being true the moment M31-
+    // M33 made every voyage phase a real, physically-simulated field with the ship's own hull
+    // right there to walk out onto.
+    private static bool World_Station_OuterDoorWhileNotDocked_EntersVacuumNotStation()
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         world.ApplyCommand(1, new ClientCommand(1, TravelToPointId: "sector-alpha"));
         for (var i = 0; i < 120 * 30 && world.Phase != VoyagePhase.Battle; i++)
             world.Step(RealtimeStep);
 
+        EquipSuit(world, 1); // suit+tank, so this isolates the docked/not-docked question alone
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f);
 
         var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        return !me.OnStation && !me.IsOutside;
+        return !me.OnStation && me.IsOutside;
     }
 
     // Shared boarding setup (game_design.md Phase 3): start a battle, arm the character with a

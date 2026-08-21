@@ -166,6 +166,7 @@ public partial class Game1 : Game
     private VisibilityMask _visibility = null!;
     private RoomLighting _roomLighting = null!;
     private ScenePost _scenePost = null!;
+    private Texture2D? _menuBackdrop;
     private bool _roomLightingReady;
     // What ApplyGraphicsSettings last actually applied - the Settings screen (Game1.Settings.cs)
     // reads this to seed its staged edits when opened, and to know what "Отмена" should revert to.
@@ -243,6 +244,7 @@ public partial class Game1 : Game
     private PinRef? _pendingPinInteract; // wire-laying (World.Wiring.cs), M19-M23
     private Vec2? _pendingWireBendAt; // LMB click mid-lay that missed every pin - fixes a bend there instead
     private string? _pendingComponentMountInteractId; // install/uninstall/relay-operate a mount
+    private string? _pendingSabotageDeviceId; // Gosha's screwdriver's LMB-on-a-device click (World.Wiring.cs)
     private string? _pendingPickupDroppedItemId; // click-to-pick-up (World.Mining.cs), any context
     private SlotRef? _pendingDropItemFrom; // drag ended over empty space (World.Storage.cs)
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
@@ -404,6 +406,19 @@ public partial class Game1 : Game
         // The one raster texture asset in an otherwise fully-procedural game (ItemIcons.cs draws
         // every other icon from flat primitives) - same defensive load as the sound above, so an
         // unbuilt/missing .xnb falls back to the old procedural DrawScrewdriver instead of crashing.
+        // The hand-rendered main menu backdrop. Kept at its authored 286x186 and blown up with point
+        // filtering at draw time - it is pixel art, and any smoothing on the way up destroys the
+        // whole reason for drawing it that way.
+        // The planet is not part of the backdrop image - it is drawn live so it can turn, from an
+        // equirectangular strip plus Shaders/Planet. Both load defensively: without them the menu
+        // still shows the backdrop, just with a hole where the planet would be, which is a far
+        // better failure than a crash on the first screen anybody sees.
+        _planetSurface = null;
+        try { _planetSurface = Content.Load<Texture2D>("Textures/PlanetSurface"); }
+        catch { _planetSurface = null; }
+        _planetEffect = Shaders.TryLoad(Content, "Shaders/Planet");
+        try { _menuBackdrop = Content.Load<Texture2D>("Textures/MenuBackdrop"); }
+        catch { _menuBackdrop = null; } // missing content build falls back to the procedural scene
         try { ItemIcons.SetScrewdriverTexture(Content.Load<Texture2D>("Textures/Screwdriver")); }
         catch { /* ItemIcons.Draw falls back to the procedural silhouette when this is null */ }
         // Overrides the two volume-knob/window lines above with whatever the player last saved on
@@ -679,9 +694,11 @@ public partial class Game1 : Game
         var pinInteract = _pendingPinInteract;
         var wireBendAt = _pendingWireBendAt;
         var componentMountInteractId = _pendingComponentMountInteractId;
+        var sabotageDeviceId = _pendingSabotageDeviceId;
         _pendingPinInteract = null;
         _pendingWireBendAt = null;
         _pendingComponentMountInteractId = null;
+        _pendingSabotageDeviceId = null;
 
         var pickupDroppedItemId = _pendingPickupDroppedItemId;
         var dropItemFrom = _pendingDropItemFrom;
@@ -736,7 +753,7 @@ public partial class Game1 : Game
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
             _client.LatestSnapshot?.ServerTimestampMs ?? 0, travelToPosition?.X, travelToPosition?.Y, wireBendAt?.X, wireBendAt?.Y,
-            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld);
+            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1365,7 +1382,14 @@ public partial class Game1 : Game
                     _systemDevicePanel.Draw(_spriteBatch, _openBlock.System, hudSnapshot.Power, hudSnapshot.Shield, hudSnapshot.SystemStates, PowerPanelOrigin, totalSeconds);
                     break;
                 case BlockKind.Rack:
-                    _rackPanel.Draw(_spriteBatch, hudSnapshot, RackPanelOrigin, CurrentOpenRackOffset(hudSnapshot), totalSeconds);
+                    var rackOffset = CurrentOpenRackOffset(hudSnapshot);
+                    _rackPanel.Draw(_spriteBatch, hudSnapshot, RackPanelOrigin, rackOffset, totalSeconds);
+                    if (_dragFrom is null && HoveredRackSlotIndex(hudSnapshot, rackOffset) is { } hoveredRackSlot
+                        && hudSnapshot.RackSlots[rackOffset + hoveredRackSlot] is { } hoveredRackItem)
+                    {
+                        var rackSlotRect = RackPanel.GetSlotRect(hoveredRackSlot, RackPanelOrigin);
+                        _inventoryPanel.DrawTooltip(_spriteBatch, hoveredRackItem, null, new Vector2(rackSlotRect.X, rackSlotRect.Y - 16));
+                    }
                     break;
                 case BlockKind.Connections when _openBlock.TargetComponentId is { } targetComponentId:
                     // Height 0 asks the panel to size itself from its pin count; X is centred here

@@ -145,3 +145,20 @@
 /processor:SoundEffectProcessor
 /build:Sounds/reactor_hum_loop.wav
 
+#begin Textures/MenuBackdrop.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/MenuBackdrop.png
+
+#begin Textures/PlanetSurface.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/processorParam:PremultiplyAlpha=False
+/build:Textures/PlanetSurface.png
+
+#begin Shaders/Planet.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Shaders/Planet.fx
+

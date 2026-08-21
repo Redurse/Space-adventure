@@ -102,14 +102,18 @@ internal static partial class TestRunner
         if (from < 0)
             return false;
 
-        // Slot 23 sits past the starter stock's own 21 slots (World.Storage.cs's
-        // InitializeRackSlots) so this is a stow onto an empty slot, not a swap with whatever
-        // starter item happens to already live there.
+        // The rack's very last slot, however big the starter stock (World.Storage.cs's
+        // InitializeRackSlots) turns out to be - guaranteed empty since both starter arrays are
+        // filled from index 0 up, so this is a stow onto an empty slot, not a swap with whatever
+        // starter item happens to already live there. A fixed index (23, back when the starter
+        // stock topped out at 21 items) broke the moment a later addition to that same stock grew
+        // past it and landed something real there instead.
+        var emptySlot = world.CreateSnapshot().RackSlots.Count - 1;
         world.ApplyCommand(1, new ClientCommand(1,
             MoveItemFrom: new SlotRef(ItemSlotKind.Main, from),
-            MoveItemTo: new SlotRef(ItemSlotKind.Rack, 23)));
+            MoveItemTo: new SlotRef(ItemSlotKind.Rack, emptySlot)));
 
-        return RackSlot(world, 23) == ItemType.Wrench && MainSlot(world, from) is null;
+        return RackSlot(world, emptySlot) == ItemType.Wrench && MainSlot(world, from) is null;
     }
 
     // Dropping onto an occupied slot exchanges the two rather than overwriting - losing an item to
@@ -139,13 +143,15 @@ internal static partial class TestRunner
         var from = StandAtRackHolding(world, ItemType.Wrench);
         WalkAcrossShipTo(world, 3f, 3f); // off to the cockpit, far from the rack
 
-        // Slot 23 sits past the starter stock's own 21 slots (World.Storage.cs's
-        // InitializeRackSlots), so it's empty - "is null" only proves anything if it started that way.
+        // The rack's very last slot (see World_Rack_DragFromInventory_StowsItem's own comment on
+        // why a fixed index doesn't stay empty forever) - "is null" only proves anything if it
+        // started that way.
+        var emptySlot = world.CreateSnapshot().RackSlots.Count - 1;
         world.ApplyCommand(1, new ClientCommand(1,
             MoveItemFrom: new SlotRef(ItemSlotKind.Main, from),
-            MoveItemTo: new SlotRef(ItemSlotKind.Rack, 23)));
+            MoveItemTo: new SlotRef(ItemSlotKind.Rack, emptySlot)));
 
-        return RackSlot(world, 23) is null && MainSlot(world, from) == ItemType.Wrench;
+        return RackSlot(world, emptySlot) is null && MainSlot(world, from) == ItemType.Wrench;
     }
 
     // Rearranging your own row needs no rack at all - and anything that moves leaves your hands,

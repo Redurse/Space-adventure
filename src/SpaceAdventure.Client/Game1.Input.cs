@@ -265,6 +265,22 @@ public partial class Game1
         return null;
     }
 
+    // Same tooltip hover test as HoveredMainSlotIndex above, just against a shelf's slots instead
+    // of the belt row - i is local to the open shelf (RackPanel.GetSlotRect's own indexing),
+    // offset is where that shelf's band starts in the snapshot's flat RackSlots array.
+    private int? HoveredRackSlotIndex(WorldSnapshot snapshot, int offset)
+    {
+        for (var i = 0; i < StorageRack.Capacity; i++)
+        {
+            var globalIndex = offset + i;
+            if (globalIndex >= snapshot.RackSlots.Count || snapshot.RackSlots[globalIndex] is null)
+                continue;
+            if (RackPanel.GetSlotRect(i, RackPanelOrigin).Contains(_designMouse))
+                return i;
+        }
+        return null;
+    }
+
     // targetSlot: a row index, or -1 for the suit being worn (Inventory.WornSuitSlot).
     private void QueueSocketClick(InventoryState inventory, int targetSlot)
     {
@@ -303,6 +319,10 @@ public partial class Game1
     private bool HoldingAxe() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
         && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] == ItemType.Axe);
+
+    private bool HoldingGoshaScrewdriver() =>
+        _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
+        && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] == ItemType.GoshaScrewdriver);
 
     private bool HoldingWireSpool() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
@@ -895,6 +915,15 @@ public partial class Game1
             var size = device.System == PowerSystemId.Engine ? ShipRenderer.BigBlockSize : ShipRenderer.NormalBlockSize;
             if (NearEnough(device.Position) && ShipRenderer.GetBlockRect(device.Position, size, origin).Contains(_designMouse))
             {
+                // Gosha's screwdriver doesn't open anything - a click just breaks the device
+                // outright (World.Wiring.cs's HandleSabotageDevice), ahead of the regular
+                // screwdriver's read-the-wiring behavior below.
+                if (HoldingGoshaScrewdriver())
+                {
+                    _pendingSabotageDeviceId = device.Id;
+                    return (-1, -1, null, null, -1, false, false, null, false, null);
+                }
+
                 _openBlock = HoldingScrewdriver()
                     ? ToggleConnections(device.Id)
                     : _openBlock.Kind == BlockKind.System && _openBlock.System == device.System

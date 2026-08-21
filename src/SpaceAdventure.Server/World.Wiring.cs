@@ -157,6 +157,22 @@ public sealed partial class World
             _wireDamaged[trunkWire.Id] = false;
     }
 
+    // Gosha's screwdriver's whole gimmick (ItemType.GoshaScrewdriver, Game1.Input.cs's own
+    // left-click branch for it): instead of fixing a device's drop wire, it cuts it - the exact
+    // reverse of RepairDeviceWiring's own first branch. Only ever a SystemDevice (not a Junction/
+    // door), matching what "прибор" actually names in this game; a no-op if it's already damaged.
+    private void HandleSabotageDevice(Character character, string deviceId)
+    {
+        if (!character.Inventory.IsHolding(ItemType.GoshaScrewdriver))
+            return;
+        if (Ship.SystemDevices.All(d => d.Id != deviceId))
+            return;
+
+        var dropWire = _wires.FirstOrDefault(w => w.ToPin.ComponentId == deviceId);
+        if (dropWire is not null)
+            _wireDamaged[dropWire.Id] = true;
+    }
+
     // What pin kind a PinRef actually names - Distribution/Junction have hull-dependent pins so
     // they're resolved structurally rather than via ComponentDefinitions.PinsFor (which only knows
     // the fixed-arity kinds, M21+'s gates/sensors/etc). Null for a pin that doesn't exist.

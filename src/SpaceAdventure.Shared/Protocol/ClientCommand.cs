@@ -185,4 +185,10 @@ public sealed record ClientCommand(
     // Held, not edge-triggered, same shape as CutHeld/WeldHeld - the axe swings at whatever
     // choppable door is in reach every tick this is true, but World.Doors.cs's own swing cooldown
     // (not this flag) is what actually paces it into two discrete hits rather than one instant kill.
-    bool AxeSwingHeld = false);
+    bool AxeSwingHeld = false,
+    // Which SystemDevice was left-clicked while holding ItemType.GoshaScrewdriver (Game1.Input.cs's
+    // own click branch for it, ahead of the regular screwdriver's open-the-panel behavior) -
+    // edge-triggered like DoorToggleId/ComponentMountInteractId, null meaning no such click this
+    // frame. Same trusted-client, no-proximity-check convention as those two: the client already
+    // gated the click on NearEnough before ever setting this.
+    string? SabotageDeviceId = null);

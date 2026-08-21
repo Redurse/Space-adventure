@@ -264,10 +264,10 @@ internal sealed class Checks : Game
             using var lightRamp = new Texture2D(GraphicsDevice, 2, 1);
             lightRamp.SetData(new[] { new Color(40, 40, 40), Color.White });
 
-            Color Sample(bool withNormals)
+            Color Sample(bool withNormals, float relief = 1.5f)
             {
                 post.NoPost();
-                post.ReliefStrength = 1.5f;
+                post.ReliefStrength = relief;
                 post.SetLightMask(lightRamp);
                 post.Begin(Color.Black);
                 batch.Begin();
@@ -288,12 +288,19 @@ internal sealed class Checks : Game
 
             var mapped = Sample(true);
             var guessed = Sample(false);
+            // Baseline with the relief term switched off entirely. Compared against rather than a
+            // fixed number, because the light mask multiplies the scene now (it is the lighting, not
+            // a hint) - so the "unshaded" value is albedo times light, not the albedo alone. An
+            // earlier version of this check hardcoded the albedo and started failing the day HDR
+            // lighting landed, which is exactly the kind of test that teaches people to ignore red.
+            var baseline = Sample(false, relief: 0f);
             post.SetLightMask(null);
             if (mapped == guessed)
                 return "the normal map made no difference - is the alpha flag surviving the draw?";
-            // A flat fill has no luminance gradient at all, so the fallback path must leave it alone.
-            if (guessed.R != 140)
-                return "with no normals a flat fill must come through unshaded, got " + guessed;
+            // A flat fill has no luminance gradient, so with no normal map the relief term has
+            // nothing to act on and must leave the pixel exactly where the baseline put it.
+            if (guessed != baseline)
+                return "with no normals a flat fill must be untouched by relief: got " + guessed + ", baseline " + baseline;
             return null;
         });
 

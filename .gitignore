@@ -11,3 +11,6 @@ obj/
 # MonoGame Content Pipeline intermediate/output (rebuilt from Content/*.mgcb on build)
 **/Content/bin/
 **/Content/obj/
+
+# Self-contained publish output (built on demand, attached to GitHub Releases instead of tracked here)
+publish/

@@ -279,6 +279,9 @@ public sealed partial class World
         if (command.ComponentMountInteractId is { } mountId)
             HandleComponentMountInteract(character, mountId);
 
+        if (command.SabotageDeviceId is { } sabotageId)
+            HandleSabotageDevice(character, sabotageId);
+
         if (command.DropItemFrom is { } dropFrom)
             TryDropItem(character, dropFrom);
 
