@@ -44,7 +44,7 @@ public sealed partial class StationRenderer
         foreach (var room in snapshot.Station.Rooms)
             _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin, StationAccent);
         foreach (var room in snapshot.Station.Rooms)
-            _shipRenderer.DrawRoomWalls(spriteBatch, room, oxygen: 100f, origin, StationAccent);
+            _shipRenderer.DrawRoomWalls(spriteBatch, room, snapshot.Station.Rooms, oxygen: 100f, origin, StationAccent);
 
         foreach (var door in snapshot.Station.Doors)
             _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen: true, origin);

@@ -451,11 +451,12 @@ public static class TileTextures
         return value;
     }
 
-    // A rivet every `spacing` pixels along all four edges, at a fixed depth into the frame. Most
-    // of this tile is only ever seen whole on a ship's genuinely exterior edges (HullSkin's
-    // DrawHullPlating) - a long run of open hull needs a rivet passing by every so often as the
-    // tile repeats along it, not just the sparse corner/seam/core rivets meant for a single plate
-    // seen in isolation (e.g. a ship-editor preview).
+    // A rivet every `spacing` pixels along all four edges, at a fixed depth into the frame. In the
+    // game itself the tile is normally only seen cropped down to its own outer edge (HullSkin's
+    // DrawHullPlating, ShipRenderer's exterior wall bands) - a long run of open hull still needs a
+    // rivet passing by every so often as that crop repeats along it, not just the sparse
+    // corner/seam/core rivets meant for a single plate seen whole and in isolation (e.g. a
+    // ship-editor preview).
     private static float HullBorderRivets(int x, int y)
     {
         const int depth = 8;

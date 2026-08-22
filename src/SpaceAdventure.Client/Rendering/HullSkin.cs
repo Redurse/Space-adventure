@@ -261,38 +261,34 @@ public static partial class HullSkin
         }
     }
 
-    // How far the plate reaches past the room on each of its four sides, and which of those sides
-    // are the wide, full-block treatment versus the thin flat bezel - computed once per room and
-    // threaded through PlatePolygon/DrawPlateShading/DrawHullPlating so all three agree on the same
-    // silhouette instead of three separate margin calculations quietly drifting apart.
+    // How far the plate reaches past the room on each of its four sides (the same slim margin on
+    // every side - the plate's footprint never grew for the tiled texture), and which of those
+    // sides are open to space rather than facing a neighbouring compartment. Computed once per
+    // room and threaded through PlatePolygon/DrawPlateShading/DrawHullPlating so all three agree on
+    // the same silhouette instead of three separate margin calculations quietly drifting apart.
     private readonly record struct RoomMargins(float Top, float Bottom, float Left, float Right,
         bool TopExterior, bool BottomExterior, bool LeftExterior, bool RightExterior);
 
-    // Wide replaces thin outright on a genuinely open edge - not "thin, then wide beyond it". The
-    // hull plate design is a single 64px block; showing it as one clean, uncropped block starting
-    // right at the room's own wall is the whole point, not a sliver with a second band floating
-    // past it. Interior (room-to-room) edges keep the old thin flat bezel untouched - texturing
-    // that ever mattered here, since the room on the other side paints its own floor over any of
-    // it that would show.
+    // Interior (room-to-room) edges keep the flat, untextured bezel - texturing never mattered
+    // there, since the room on the other side paints its own floor over any of it that would show.
     private static RoomMargins ComputeMargins(Room room, IReadOnlyList<Room> rooms)
     {
         var thin = MarginUnits * ShipRenderer.PixelsPerUnit;
-        float wide = TileTextures.HullTileSize;
         var top = IsExteriorEdge(room, rooms, 0);
         var bottom = IsExteriorEdge(room, rooms, 1);
         var left = IsExteriorEdge(room, rooms, 2);
         var right = IsExteriorEdge(room, rooms, 3);
-        return new RoomMargins(
-            top ? wide : thin, bottom ? wide : thin, left ? wide : thin, right ? wide : thin,
-            top, bottom, left, right);
+        return new RoomMargins(thin, thin, thin, thin, top, bottom, left, right);
     }
 
     // Whether this edge of the room faces open space rather than another compartment - checked
     // against every other room for any overlapping run along the shared coordinate. Rooms in every
     // ship built so far touch edge-to-edge with no gap (see Ship.*.cs), so "shares this coordinate
     // and overlaps the span" is a reliable stand-in for "there is a neighbour here" without needing
-    // an actual adjacency graph.
-    private static bool IsExteriorEdge(Room room, IReadOnlyList<Room> rooms, int edge)
+    // an actual adjacency graph. Internal, not private: ShipRenderer reuses this same check to
+    // decide which of a room's own wall bands should carry the hull-plate texture rather than the
+    // plain interior wall tile, so the two surfaces agree on what counts as "outside".
+    internal static bool IsExteriorEdge(Room room, IReadOnlyList<Room> rooms, int edge)
     {
         const float epsilon = 0.02f;
         foreach (var other in rooms)
@@ -318,33 +314,37 @@ public static partial class HullSkin
     }
 
     // The hull plate's own texture, drawn flush against the room on every exterior edge - no gap,
-    // no separate thin band first, this *is* the plate now. A full, uncropped block, extended into
-    // a shared corner whenever the adjoining edge is exterior too so two open edges meet without a
-    // gap. Interior edges get nothing at all here (the flat bezel from the base FillPolygon in
-    // Draw already covers them, unfaded, exactly as before this whole texture pass existed).
+    // no separate flat band first, this *is* the plate now. The band is only as thick as the
+    // plate's own slim margin, so DrawTiled's per-cell clipping shows just the outer slice of each
+    // 64px tile (its frame and the start of its plate zone) rather than the whole block - the same
+    // crop a plate this narrow would always show, not a scaled-down copy of the tile. Extended
+    // into a shared corner whenever the adjoining edge is exterior too so two open edges meet
+    // without a gap. Interior edges get nothing at all here (the flat bezel from the base
+    // FillPolygon in Draw already covers them, unfaded, exactly as before this whole texture pass
+    // existed).
     private static void DrawHullPlating(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, Room room, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
-        var block = TileTextures.HullTileSize;
+        var pitch = TileTextures.HullTileSize;
         var cellOrigin = new Point((int)origin.X, (int)origin.Y);
 
         if (margins.TopExterior || margins.BottomExterior)
         {
-            var x = rect.X - (margins.LeftExterior ? block : 0);
-            var width = rect.Width + (margins.LeftExterior ? block : 0) + (margins.RightExterior ? block : 0);
+            var x = rect.X - (margins.LeftExterior ? (int)margins.Left : 0);
+            var width = rect.Width + (margins.LeftExterior ? (int)margins.Left : 0) + (margins.RightExterior ? (int)margins.Right : 0);
             if (margins.TopExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, (int)(rect.Y - margins.Top), width, block), Color.White, cellOrigin);
+                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle(x, (int)(rect.Y - margins.Top), width, (int)margins.Top), Color.White, cellOrigin);
             if (margins.BottomExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, rect.Bottom, width, block), Color.White, cellOrigin);
+                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle(x, rect.Bottom, width, (int)margins.Bottom), Color.White, cellOrigin);
         }
         if (margins.LeftExterior || margins.RightExterior)
         {
-            var y = rect.Y - (margins.TopExterior ? block : 0);
-            var height = rect.Height + (margins.TopExterior ? block : 0) + (margins.BottomExterior ? block : 0);
+            var y = rect.Y - (margins.TopExterior ? (int)margins.Top : 0);
+            var height = rect.Height + (margins.TopExterior ? (int)margins.Top : 0) + (margins.BottomExterior ? (int)margins.Bottom : 0);
             if (margins.LeftExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle((int)(rect.X - margins.Left), y, block, height), Color.White, cellOrigin);
+                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle((int)(rect.X - margins.Left), y, (int)margins.Left, height), Color.White, cellOrigin);
             if (margins.RightExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(rect.Right, y, block, height), Color.White, cellOrigin);
+                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle(rect.Right, y, (int)margins.Right, height), Color.White, cellOrigin);
         }
 
         // The bands above are plain rectangles and paint straight into the plate's own cut corners

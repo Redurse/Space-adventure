@@ -37,7 +37,7 @@ public sealed class BoardingRenderer
         foreach (var room in snapshot.EnemyShip.Rooms)
             _shipRenderer.DrawRoomFloor(spriteBatch, room, Oxygen(room.Id), origin);
         foreach (var room in snapshot.EnemyShip.Rooms)
-            _shipRenderer.DrawRoomWalls(spriteBatch, room, Oxygen(room.Id), origin);
+            _shipRenderer.DrawRoomWalls(spriteBatch, room, snapshot.EnemyShip.Rooms, Oxygen(room.Id), origin);
 
         // Doors start closed aboard a hull that has just been boarded, and opening one is how the
         // vacuum gets to the next compartment - so their real state has to show.
