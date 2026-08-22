@@ -56,6 +56,39 @@ internal static partial class TestRunner
             // to fly somewhere afterwards, and doing that on a freshly shot-up ship is exactly
             // what made the last docking flaky.
             DockAtStation(world, "home-station");
+            // Docking alone doesn't fix anything on its own - a cut wire (World.EnemyAi.cs's
+            // ApplyEnemyAttack, "system hit") stays cut until someone actually repairs it. If it
+            // happened to be the Engine's own wire, GetEffectivePower(Engine) reads 0 from then
+            // on regardless of how much the slider is allocated - full throttle, zero thrust,
+            // forever - which reads exactly like a stuck/frozen ship to anything that tries to
+            // fly the caller's world afterward, not a docking problem at all.
+            RepairAllDamagedSystems(world);
+        }
+    }
+
+    // Walks to and repairs every SystemDevice currently disconnected from its own power system
+    // (World.Wiring.cs's IsDeviceConnected) - the general form of the single-device repair helpers
+    // elsewhere, needed here because a battle's "system hit" can cut ANY system's wire, not
+    // predictably the same one every time.
+    private static void RepairAllDamagedSystems(World world, int playerId = 1)
+    {
+        var inventory = world.CreateSnapshot().Characters.Single(c => c.PlayerId == playerId).Inventory!;
+        var alreadyHoldingWrench = inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] == ItemType.Wrench);
+        if (!alreadyHoldingWrench)
+        {
+            var wrenchSlot = TakeFromRack(world, ItemType.Wrench);
+            world.ApplyCommand(playerId, new ClientCommand(playerId, ToggleHoldSlotIndex: wrenchSlot));
+        }
+
+        foreach (var device in world.Ship.SystemDevices)
+        {
+            if (world.IsDeviceConnected(device.Id))
+                continue;
+
+            MoveCharacterTo(world, playerId, device.X, device.Y);
+            world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true)); // starts the repair minigame
+            for (var i = 0; i < 30 * 30 && !world.IsDeviceConnected(device.Id); i++) // 30s - comfortably past the passive-only repair time
+                world.Step(RealtimeStep);
         }
     }
 

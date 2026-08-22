@@ -9,8 +9,21 @@ internal static partial class TestRunner
     // shared setup for the button tests below. Undocks first if needed; there's no separate
     // "approach" state any more (M39) - "parked at the berth" just means close enough and slow
     // enough for CanDockNow to go true, without a DockPressed ever landing.
-    private static void ApproachBerth(World world, string targetPointId = "trade-station")
+    private static void ApproachBerth(World world, string targetPointId = "trade-station", bool leaveAtHelm = false)
     {
+        // Suited up before anything else, the same defensive move every combat-grinding test in
+        // TestRunner.FactionsAndShipyard.cs already makes: a genuinely hostile sector sitting near
+        // the route (World.Voyage.cs's TryEngageHostileSector, not just this target) can still
+        // snag the ship into a real, unresolved-for-a while fight, and a corridor breach that
+        // opens during it is otherwise fatal to an unsuited character within the grace period
+        // (World.Atmosphere.cs) - a dead pilot can never get seated at the helm again, freezing
+        // the ship exactly where the fight left it for the rest of this loop's budget. Skipped if
+        // a caller (TestRunner.EvaStation.cs's own ExitShipIntoVacuum) already suited up first -
+        // EquipSuit's own Interact press toggles, so calling it again on an already-worn suit
+        // would start taking it back off instead of being a harmless no-op.
+        if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.Equipped[EquipSlot.Suit] is null)
+            EquipSuit(world, 1);
+
         var wasDocked = world.IsDocked;
         var homeBerth = world.DockBerthPosition; // meaningless once cast off - read it first
 
@@ -37,6 +50,15 @@ internal static partial class TestRunner
         if (wasDocked)
             PeelAwayFromBerth(world, homeBerth, target, 1);
 
+        // Some routes (home to trade-station among them) cut close enough to a THIRD station's
+        // own marker along the way - not the target, not home - that the straight line clips its
+        // row (same structure home's own row uses, Station.Default.cs) and the hysteresis
+        // collision check in World.ShipField.cs pins the hull right at the boundary indefinitely,
+        // net progress zero, forever (nothing here ever tells it to back off and try a different
+        // line). Unlike a hostile sector, there's no ambush/retry mechanism that would ever
+        // dislodge it.
+        FlyClearOfOtherStations(world, target, targetPointId);
+
         // Deep hostility with whoever owns some *other* nearby sector can still snag the ship into
         // an incidental battle en route to the berth (World.Voyage.cs's TryEngageHostileSector
         // fires from anywhere near a hostile sector's own marker, not just when that sector was
@@ -61,7 +83,12 @@ internal static partial class TestRunner
         // away it still physically is.
         const float BerthTracksIntendedTargetSlack = 40f;
         var ambushesResolved = 0;
-        for (var i = 0; i < 120 * 30; i++)
+        // 300s, not 120s: this loop caps speed at 1.5 (below) for the entire approach, not just
+        // the final crawl, so covering a longer bearing like outpost-gamma's (~180 units from
+        // home) at that capped rate alone eats nearly the whole of a 120s budget with zero slack
+        // left for turning time, an incidental ambush along the way, or the bang-bang cap's own
+        // stabilize/accelerate cycling knocking the average speed below its own ceiling.
+        for (var i = 0; i < 300 * 30; i++)
         {
             if (world.IsInBattle)
             {
@@ -71,6 +98,11 @@ internal static partial class TestRunner
                 for (var j = 0; j < 30 && world.IsInBattle; j++)
                     world.Step(RealtimeStep); // let StepVoyage resolve the kill
                 SitAtHelm(world, 1); // FireBowTurretUntilEnemyDefeated leaves the character standing free
+                // The battle's own disengage nudge (World.Voyage.cs) moved the ship, so the
+                // straight line to the target from here is a different one than at departure -
+                // possibly a fresh clip of some other station's row that the original check never
+                // saw.
+                FlyClearOfOtherStations(world, target, targetPointId);
                 continue;
             }
 
@@ -86,20 +118,82 @@ internal static partial class TestRunner
             else
             {
                 var steerTarget = berthTracksTarget ? world.DockBerthPosition : target;
-                // Some berths (outpost-gamma among them) sit on a bearing from home that clips
-                // straight through a cluster of hostile sectors close enough together that
-                // disengaging one can immediately re-enter another - World.Voyage.cs's
-                // _recentlyDisengagedSectorId only remembers the single most recent one, so a
-                // dumb straight line here can ping-pong between two neighbors and burn through
-                // every ambush retry above without ever actually getting clear of the cluster.
-                // Routing around them the same way FlyToward already does removes the ping-pong
-                // rather than just budgeting more retries for it.
-                var shipPos = new Vec2(shipField.X, shipField.Y);
-                var avoided = AvoidIncidentalHazards(world, shipPos, steerTarget, null);
-                world.ApplyCommand(1, SteerToward(world, 1, avoided));
+                world.ApplyCommand(1, SteerToward(world, 1, steerTarget));
             }
             world.Step(RealtimeStep);
         }
+
+        // Most callers expect to walk character 1 off to do something else right after this (open
+        // the airlock, take a tool, go EVA) - manning a console locks movement the same way
+        // manning a turret does (World.Movement.cs), so leaving the pilot seated here would make
+        // every one of those walks a silent no-op instead of an error, same trap
+        // EnterAsteroidFieldStationary's own doc comment already calls out for the same reason.
+        // The rare caller that wants to keep flying immediately after this returns (still issuing
+        // HelmThrottle/HelmTurn, which World.cs only applies while IsAtHelm) opts out with
+        // leaveAtHelm instead.
+        if (!leaveAtHelm && world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsAtHelm)
+            world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+    }
+
+    // Flies one fixed leg to a clearance waypoint if the current straight line to `target` clips
+    // some other station's row, then stops - a no-op if the line is already clear. Computed and
+    // flown ONCE per call, not recomputed every tick like AvoidIncidentalHazards: recomputing a
+    // detour every tick interacts badly with ApproachBerth's own speed-capped cruise (right at the
+    // clearance boundary the chosen point can flip between the raw line and the detour tick to
+    // tick, and SteerToward only floors the throttle once roughly aimed, so the ship ends up
+    // mostly turning in place instead of ever actually accelerating). Callers re-run this after
+    // anything that relocates the ship (a battle's own disengage nudge, most likely) - the
+    // straight line from the new position is a different one that the last check never saw.
+    private static void FlyClearOfOtherStations(World world, Vec2 target, string? targetPointId)
+    {
+        var shipPos = new Vec2(world.CreateSnapshot().ShipField.X, world.CreateSnapshot().ShipField.Y);
+        if (OneTimeStationClearWaypoint(world, shipPos, target, targetPointId) is not { } clearWaypoint)
+            return;
+
+        for (var k = 0; k < 200 * 30 && !world.IsInBattle &&
+             (clearWaypoint - new Vec2(world.CreateSnapshot().ShipField.X, world.CreateSnapshot().ShipField.Y)).Length() > 15f; k++)
+        {
+            var sf = world.CreateSnapshot().ShipField;
+            var spd = new Vec2(sf.VelocityX, sf.VelocityY).Length();
+            if (spd > 1.5f)
+                world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+            else
+                world.ApplyCommand(1, SteerToward(world, 1, clearWaypoint));
+            world.Step(RealtimeStep);
+        }
+    }
+
+    // If the straight line from `from` to `target` would pass within `clearance` of some OTHER
+    // station's own marker (their row structure - Station.Default.cs - extends from there, just
+    // like home's own), returns a single waypoint that clears it with the smallest possible
+    // sideways detour; otherwise null. Deliberately a one-shot calculation, not recomputed every
+    // tick - see the caller's own comment on why that matters here.
+    private static Vec2? OneTimeStationClearWaypoint(World world, Vec2 from, Vec2 target, string? targetPointId, float clearance = 20f)
+    {
+        var toTarget = target - from;
+        var length = toTarget.Length();
+        if (length < 1f)
+            return null;
+        var dir = toTarget * (1f / length);
+
+        foreach (var station in world.GalaxyMap.GetSystem(world.CreateSnapshot().CurrentSystemId).Points
+                     .Where(p => p.Kind == GalaxyPointKind.Station && p.Id != targetPointId))
+        {
+            var toStation = station.Position - from;
+            var projected = toStation.X * dir.X + toStation.Y * dir.Y;
+            if (projected < 0f || projected > length)
+                continue; // not actually between here and the target
+
+            var closestPoint = from + dir * projected;
+            var offset = station.Position - closestPoint;
+            if (offset.Length() >= clearance)
+                continue;
+
+            var perpendicular = new Vec2(-dir.Y, dir.X);
+            var side = offset.X * perpendicular.X + offset.Y * perpendicular.Y >= 0f ? -1f : 1f;
+            return closestPoint + perpendicular * (side * clearance);
+        }
+        return null;
     }
 
     // Drifting into the berth must not dock the ship by itself - that's the whole point of the

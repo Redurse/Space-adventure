@@ -31,7 +31,10 @@ public sealed record SaveGame(
     // How far the procedural galaxy tail had already grown (GalaxyMap.cs's EnsureGenerated/
     // GeneratedProceduralCount) - absent in older files, restoring as null, which just leaves the
     // galaxy at whatever CreateStarter's own small initial seed already generated.
-    int? GeneratedProceduralSystemCount = null)
+    int? GeneratedProceduralSystemCount = null,
+    // Manually placed scanner markers, shared by the whole crew (World.Scanner.cs, M44) - absent
+    // in older files, restoring as empty, the same additive pattern every field above follows.
+    IReadOnlyList<Vec2>? ManualScannerMarkers = null)
 {
     // Bumped whenever the shape changes incompatibly; SaveStore refuses anything it doesn't know,
     // so an old file fails to load cleanly instead of half-restoring into a broken run.

@@ -127,6 +127,17 @@ public sealed class FieldRenderer
                 enemy.IsBoardable ? "Враг" : "Рейдер", Color.OrangeRed);
         }
 
+        // Ambient traffic (World.NpcShips.cs, M43) - present and flying whether or not the player
+        // has ever come near, unlike the squadron above which only exists during a fight.
+        foreach (var npc in snapshot.NpcShips)
+        {
+            var npcScreen = WorldToScreen(new Vec2(npc.X, npc.Y));
+            DrawNpcShipExterior(spriteBatch, npcScreen, npc, snapshot.FactionStandings,
+                rotation + (npc.RotationDegrees * MathF.PI / 180f));
+            DrawOffScreenMarker(spriteBatch, npcScreen, viewportOrigin, viewportSize,
+                NpcShipLabel(npc), NpcShipMarkerColor(npc, snapshot.FactionStandings));
+        }
+
         foreach (var shot in snapshot.Projectiles)
             DrawProjectile(spriteBatch, shot, WorldToScreen(new Vec2(shot.X, shot.Y)), rotation);
 
@@ -441,6 +452,49 @@ public sealed class FieldRenderer
         var fraction = enemy.MaxHp > 0 ? Math.Clamp(enemy.Hp / enemy.MaxHp, 0f, 1f) : 0f;
         spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Y, (int)(barWidth * fraction), barHeight),
             enemy.IsRetreating ? Color.Goldenrod : Color.OrangeRed);
+    }
+
+    // Whether this NPC's own faction currently hates the player enough to fight - the same
+    // threshold World.NpcShips.cs's TryEngageHostileNpc checks server-side, just read off the
+    // standings the snapshot already carries rather than duplicating the number.
+    private static bool IsNpcHostile(NpcShipFieldState npc, IReadOnlyList<FactionStandingState> standings) =>
+        npc.Kind == NpcShipKind.Military &&
+        (standings.FirstOrDefault(s => s.Faction == npc.FactionId)?.Standing ?? 0) <= FactionDefinitions.HostileThreshold;
+
+    private static string NpcShipLabel(NpcShipFieldState npc) => npc.Kind switch
+    {
+        NpcShipKind.Cargo => "Транспорт",
+        NpcShipKind.Scout => "Разведчик",
+        _ => "Патруль",
+    };
+
+    private static Color NpcShipMarkerColor(NpcShipFieldState npc, IReadOnlyList<FactionStandingState> standings) =>
+        IsNpcHostile(npc, standings) ? Color.OrangeRed : npc.Kind switch
+        {
+            NpcShipKind.Cargo => Color.SteelBlue,
+            NpcShipKind.Scout => Color.LightGray,
+            _ => Color.CornflowerBlue,
+        };
+
+    // A plain triangular hull, unlike the raider's scavenged silhouette (DrawEnemyShipExterior) -
+    // ambient traffic isn't a fight to read the shape of, just a coloured blip with a heading.
+    private void DrawNpcShipExterior(SpriteBatch spriteBatch, Vector2 screenCenter,
+        NpcShipFieldState npc, IReadOnlyList<FactionStandingState> standings, float rotation)
+    {
+        const float npcVisualRadius = 3f;
+        var sizePx = npcVisualRadius * 2 * ShipRenderer.PixelsPerUnit;
+        var color = NpcShipMarkerColor(npc, standings);
+        var cos = MathF.Cos(rotation);
+        var sin = MathF.Sin(rotation);
+        Vector2 Local(float x, float y)
+        {
+            var s = new Vector2(x, y) * sizePx;
+            return screenCenter + new Vector2(s.X * cos - s.Y * sin, s.X * sin + s.Y * cos);
+        }
+
+        var hull = new[] { Local(0.5f, 0f), Local(-0.35f, -0.28f), Local(-0.35f, 0.28f) };
+        Primitives.FillPolygon(spriteBatch, _pixel, screenCenter, hull, color * 0.85f);
+        Primitives.StrokePolygon(spriteBatch, _pixel, hull, Color.Black * 0.5f, 2f);
     }
 
     // A shot in flight, drawn as a short streak along its heading rather than a dot: at these

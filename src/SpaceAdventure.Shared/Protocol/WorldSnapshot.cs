@@ -115,4 +115,13 @@ public sealed record WorldSnapshot(
     IReadOnlyList<string> StoryLog,
     // The "ОБУЧЕНИЕ" run's current instruction (World.Tutorial.cs), null outside it entirely - the
     // client just draws a persistent top banner whenever this is non-null.
-    string? TutorialObjective);
+    string? TutorialObjective,
+    // Persistent ambient traffic in the current system (World.NpcShips.cs, M43) - cargo/military/
+    // scout hulls that fly around whether or not the player has ever come near them.
+    IReadOnlyList<NpcShipFieldState> NpcShips,
+    // Manually placed by a Scientist promoting one of their own private ScannerContacts onto the
+    // shared map (World.Scanner.cs, M44's "чтобы капитан увидел метку... учёный должен сам её туда
+    // поставить") - unlike ScannerContacts these are the same for every player, plain field-space
+    // points with no further identity (the discovery itself is what mattered; the marker is just a
+    // pin left behind for the rest of the crew).
+    IReadOnlyList<Vec2> ManualScannerMarkers);

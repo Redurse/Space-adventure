@@ -35,6 +35,11 @@ public sealed class Character
     public string RoomId { get; set; }
     public string? ManningTurretId { get; set; }
     public bool IsAtHelm { get; set; }
+    // The navigation console's scanner dial (World.Scanner.cs, M44) - only ever written while
+    // standing at NavigationConsole, so it simply holds its last value once walked away from,
+    // the same "last commanded thrust stays" idea IsAtHelm's own doc comment already establishes
+    // for HelmThrottle/HelmTurn.
+    public float ScannerSweepDegrees { get; set; }
     public Inventory Inventory { get; } = new();
     public bool CarryingAmmoCrate => Inventory.Has(ItemType.AmmoCrate);
     public float Health { get; set; } = MaxHealth;

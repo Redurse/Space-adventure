@@ -55,7 +55,10 @@ public sealed partial class World
     // driven states now rather than an exclusive mode the ship is "in", so there is no single flag
     // left to switch on - just these two independent, overlappable facts about where the ship is.
     public bool IsDocked => _dockedPointId is not null;
-    public bool IsInBattle => _battleSectorPointId is not null;
+    // Either a hostile sector/station's squadron (World.Voyage.cs) or a persistent Military NPC
+    // that turned hostile and closed the distance (World.NpcShips.cs) - the two are mutually
+    // exclusive, never both set at once.
+    public bool IsInBattle => _battleSectorPointId is not null || _battleNpcShipId is not null;
 
     // What the galaxy map actually plots as the ship's marker. While docked, _shipFieldPosition
     // holds DockBerthPosition - a field-space point anchored to the ship's OWN airlock door
@@ -292,6 +295,8 @@ public sealed partial class World
         if (command.PushOffPressed)
             HandlePushOff(character, new Vec2(command.PushOffDirectionX, command.PushOffDirectionY));
 
+        HandleScannerInput(character, command);
+
         if (character.IsAtHelm)
         {
             if (command.HelmStabilizePressed)
@@ -340,6 +345,11 @@ public sealed partial class World
         StepEnemyFleet(deltaSeconds);
         StepProjectiles(deltaSeconds);
         StepVoyage(deltaSeconds);
+        // After voyage, so a fresh engagement (TryEngageHostileNpc) spawns its squadron against
+        // this tick's already-updated ship position, same freshness UpdateNearestStation's own
+        // station-defense check relies on.
+        StepNpcFleet(deltaSeconds);
+        StepScanners(deltaSeconds);
         StepCampaign();
         StepTutorial();
         StepAtmosphere(deltaSeconds);
@@ -459,7 +469,9 @@ public sealed partial class World
                 GetWallToolTargetId(c),
                 c.LayingWireBends.ToArray(),
                 GetDoorToolTargetId(c),
-                c.MagneticBootsOn);
+                c.MagneticBootsOn,
+                c.ScannerSweepDegrees,
+                CreateScannerContacts(c.PlayerId));
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(ShipMapPosition, _dockedPointId, IsInBattle, IsDocked || _nearestStationPointId is not null),
@@ -488,5 +500,7 @@ public sealed partial class World
         Ship.ForwardDegrees,
         new ReactorLeverState(LightsOn, PowerGrid.Reactor.EmergencyShutdown, DoorsLocked),
         StoryLog,
-        GetTutorialObjective());
+        GetTutorialObjective(),
+        CreateNpcShipStates(),
+        _manualScannerMarkers.ToArray());
 }

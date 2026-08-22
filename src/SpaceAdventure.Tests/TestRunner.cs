@@ -311,6 +311,14 @@ internal static partial class TestRunner
         ("World_Equip_IdCardEquipsIntoItsOwnSlot", World_Equip_IdCardEquipsIntoItsOwnSlot),
         ("World_Eva_MagneticBoots_AttachToStationHull", World_Eva_MagneticBoots_AttachToStationHull),
         ("World_Eva_BootsOff_BouncesOffStationHull", World_Eva_BootsOff_BouncesOffStationHull),
+        ("World_NpcShips_PopulateOnFirstStepAndStayWithinCap", World_NpcShips_PopulateOnFirstStepAndStayWithinCap),
+        ("World_NpcShips_CargoShuttlesBetweenBothEndsOfItsRoute", World_NpcShips_CargoShuttlesBetweenBothEndsOfItsRoute),
+        ("World_NpcShips_MilitaryTurnsHostileAndFightingItCostsStanding", World_NpcShips_MilitaryTurnsHostileAndFightingItCostsStanding),
+        ("World_Scanner_SweepFindsShipInsideConeNotOutside", World_Scanner_SweepFindsShipInsideConeNotOutside),
+        ("World_Scanner_ContactStaysAtLastKnownPositionAfterLeavingTheCone", World_Scanner_ContactStaysAtLastKnownPositionAfterLeavingTheCone),
+        ("World_Scanner_DoesNothingAwayFromTheConsole", World_Scanner_DoesNothingAwayFromTheConsole),
+        ("World_Scanner_PlacingMarkerAddsItToTheSharedMap", World_Scanner_PlacingMarkerAddsItToTheSharedMap),
+        ("World_Scanner_ManualMarkerSurvivesSaveAndLoad", World_Scanner_ManualMarkerSurvivesSaveAndLoad),
     };
 
     // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via

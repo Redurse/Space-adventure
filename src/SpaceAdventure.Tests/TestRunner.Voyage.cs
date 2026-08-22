@@ -52,7 +52,9 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        ApproachBerth(world, "trade-station");
+        // leaveAtHelm: true - this test keeps flying (HelmThrottle) right after ApproachBerth
+        // returns, which World.cs only ever applies while the character is still seated there.
+        ApproachBerth(world, "trade-station", leaveAtHelm: true);
         if (!world.CanDockNow)
             return false;
 

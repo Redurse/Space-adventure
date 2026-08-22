@@ -77,6 +77,7 @@ public sealed partial class World
     {
         PullCrewOffStation();
         _dockedPointId = null;
+        _justCastOffStation = true; // World.ShipField.cs's StepShipFieldPhysics clears this itself
     }
 
     // Casting off (either through this button or by walking away from the docked layout entirely)

@@ -161,6 +161,7 @@ public partial class Game1 : Game
     private HelmPanel _helmPanel = null!;
     private ShipStatusPanel _shipStatusPanel = null!;
     private FieldRenderer _fieldRenderer = null!;
+    private ExternalCameraPanel _externalCameraPanel = null!;
     private StationRenderer _stationRenderer = null!;
     private BoardingRenderer _boardingRenderer = null!;
     private VisibilityMask _visibility = null!;
@@ -266,6 +267,28 @@ public partial class Game1 : Game
     private Vector2 _mapPanOffset = Vector2.Zero;
     private Point? _mapPanLastMouse;
     private int _prevScrollWheelValue;
+    // Left-drag on the system map rotates the scanner sweep (World.Scanner.cs, M44) - true for as
+    // long as the button that STARTED the drag missed every one of this player's own scanner
+    // contacts; a press that lands on one instead places a shared marker there and never starts a
+    // drag at all (see the drag-vs-click branch in Update()).
+    private bool _mapSweepDragging;
+    private ButtonState _prevMapLeftButton = ButtonState.Released;
+    // The cockpit<->system-map crossfade (M45) - see its own doc comment at the Update() site that
+    // maintains these. Counts down from NavTransitionDuration each time _openBlock's Navigation
+    // state just flipped; the overlay in Draw() reads it to fade the screen through black.
+    private const float NavTransitionDuration = 0.3f;
+    private float _navTransitionRemaining;
+    private bool _wasNavigationOpen;
+
+    // External hull cameras (game_design.md, M46) - purely client state, same reasoning
+    // ExternalCameraPanel's own doc comment gives for never sending a camera's look direction to
+    // the server: it isn't a physical thing anyone else needs to see. _externalCameraMode is the
+    // 2x2 grid; a non-null _externalCameraFullscreenIndex is one camera taken fullscreen from it.
+    private bool _externalCameraMode;
+    private int? _externalCameraFullscreenIndex;
+    private float _cameraLookOffsetDegrees;
+    private Point? _cameraLookLastMouse;
+    private const float CameraLookDragDegreesPerPixel = 0.15f;
     // The galactic map's own camera - separate from the system map's above, since the two views
     // use completely different coordinate spaces/scales and are never open at once, but a shared
     // zoom/pan would still leak confusingly from one into the other.
@@ -384,6 +407,7 @@ public partial class Game1 : Game
         _helmPanel = new HelmPanel(GraphicsDevice, _font);
         _shipStatusPanel = new ShipStatusPanel(GraphicsDevice, _font);
         _fieldRenderer = new FieldRenderer(GraphicsDevice, _font);
+        _externalCameraPanel = new ExternalCameraPanel(GraphicsDevice, _font, _fieldRenderer);
         _stationRenderer = new StationRenderer(_shipRenderer, GraphicsDevice, _font);
         _boardingRenderer = new BoardingRenderer(_shipRenderer, GraphicsDevice, _font);
         _visibility = new VisibilityMask(GraphicsDevice);
@@ -535,8 +559,17 @@ public partial class Game1 : Game
             {
                 _pauseMenuOpen = false;
             }
+            else if (_externalCameraFullscreenIndex is not null)
+            {
+                // One step back to the grid rather than closing outright - the same "one thing at
+                // a time" priority the block below already gives every other overlay, just with an
+                // extra step since fullscreen-within-the-grid is itself two levels deep.
+                _externalCameraFullscreenIndex = null;
+                _cameraLookOffsetDegrees = 0f;
+                _cameraLookLastMouse = null;
+            }
             else if (_openBlock.Kind != BlockKind.None || _crewPanelOpen || _infoPanelOpen || _shipEditorOpen
-                     || _galacticMapOpen || _talkingToNpcId is not null || isManningTurret || isAtHelm)
+                     || _galacticMapOpen || _talkingToNpcId is not null || isManningTurret || isAtHelm || _externalCameraMode)
             {
                 _openBlock = ClickTarget.None;
                 _crewPanelOpen = false;
@@ -544,6 +577,7 @@ public partial class Game1 : Game
                 _shipEditorOpen = false;
                 _galacticMapOpen = false;
                 _talkingToNpcId = null;
+                _externalCameraMode = false;
                 escapeSendsInteract = isManningTurret || isAtHelm;
             }
             else
@@ -609,6 +643,73 @@ public partial class Game1 : Game
         _prevScrollWheelValue = mouse.ScrollWheelValue;
         if (mapOpen && scrollDelta != 0)
             _mapZoom = Math.Clamp(_mapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.3f, 3f);
+
+        // Scanner sweep (World.Scanner.cs, M44): left-drag rotates the beam toward the cursor, the
+        // same "read the current mouse angle" idea turret aim uses (ReadTurretAimTowardCursor),
+        // just sent as the raw bearing itself since a sensor dial has no traverse speed to respect.
+        // A press that instead lands on one of this player's own scanner contacts promotes it onto
+        // the shared map (PlaceScannerMarkerAtX/Y) and never starts a drag.
+        var scannerSweepDegrees = myCharacter?.ScannerSweepDegrees ?? 0f;
+        float? placeScannerMarkerAtX = null;
+        float? placeScannerMarkerAtY = null;
+        if (mapOpen && myCharacter is not null && _client.LatestSnapshot is { } mapSnapshot)
+        {
+            var mapOrigin = GalaxyMapPanel.ComputeMapOrigin(GalaxyMapPanelOrigin, mapSnapshot.GalaxyPoints, _mapZoom, _mapPanOffset);
+            var leftPressedNow = mouse.LeftButton == ButtonState.Pressed;
+            if (leftPressedNow && !_mapSweepDragging && _prevMapLeftButton != ButtonState.Pressed)
+            {
+                var hit = GalaxyMapPanel.HitTestContact(new Vector2(_designMouse.X, _designMouse.Y), myCharacter, mapOrigin, _mapZoom);
+                if (hit is not null)
+                {
+                    placeScannerMarkerAtX = hit.X;
+                    placeScannerMarkerAtY = hit.Y;
+                }
+                else
+                {
+                    _mapSweepDragging = true;
+                }
+            }
+            else if (!leftPressedNow)
+            {
+                _mapSweepDragging = false;
+            }
+
+            if (_mapSweepDragging)
+            {
+                var shipScreen = mapOrigin + new Vector2(mapSnapshot.Voyage.ShipMapPosition.X, mapSnapshot.Voyage.ShipMapPosition.Y) * GalaxyMapPanel.PixelsPerUnit * _mapZoom;
+                var toCursor = new Vector2(_designMouse.X, _designMouse.Y) - shipScreen;
+                if (toCursor.LengthSquared() > 1f)
+                    scannerSweepDegrees = MathF.Atan2(toCursor.Y, toCursor.X) * (180f / MathF.PI);
+            }
+            _prevMapLeftButton = mouse.LeftButton;
+        }
+        else
+        {
+            _mapSweepDragging = false;
+            _prevMapLeftButton = ButtonState.Released;
+        }
+
+        // External camera look (M46): left-drag pans within the fullscreen camera's own sector,
+        // a plain mouse-delta rather than an absolute cursor angle (unlike the scanner sweep above)
+        // since there's no fixed on-screen point this pan is "aimed toward" - purely client state,
+        // never sent to the server (ExternalCameraPanel's own doc comment).
+        if (_externalCameraMode && _externalCameraFullscreenIndex is not null)
+        {
+            if (mouse.LeftButton == ButtonState.Pressed)
+            {
+                if (_cameraLookLastMouse is { } lastCameraMouse)
+                {
+                    var deltaX = mouse.Position.X - lastCameraMouse.X;
+                    _cameraLookOffsetDegrees = Math.Clamp(_cameraLookOffsetDegrees + deltaX * CameraLookDragDegreesPerPixel,
+                        -ExternalCameraPanel.MaxLookOffsetDegrees, ExternalCameraPanel.MaxLookOffsetDegrees);
+                }
+                _cameraLookLastMouse = mouse.Position;
+            }
+            else
+            {
+                _cameraLookLastMouse = null;
+            }
+        }
 
         // Galactic map camera - same right-drag/scroll gesture as the system map above, own
         // independent zoom/pan state (GalacticMapPanel.cs).
@@ -761,10 +862,24 @@ public partial class Game1 : Game
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
             _client.LatestSnapshot?.ServerTimestampMs ?? 0, wireBendAt?.X, wireBendAt?.Y,
-            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed);
+            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed,
+            scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
+
+        // A short fade-to-black-and-back across the moment the cockpit view and the system map
+        // swap (M45) - a scoped-down "continuous zoom": the two scenes still each render at their
+        // own existing scale (ShipRenderer/GalaxyMapPanel, untouched), this just softens the
+        // otherwise instant cut between them into something that reads as one continuous motion
+        // rather than a mode switch. Whichever way _openBlock just changed this frame (opened by a
+        // console click, closed by walking away or Escape) restarts the same fade.
+        var navigationOpenNow = _openBlock.Kind == BlockKind.Navigation;
+        if (navigationOpenNow != _wasNavigationOpen)
+            _navTransitionRemaining = NavTransitionDuration;
+        else if (_navTransitionRemaining > 0f)
+            _navTransitionRemaining = Math.Max(0f, _navTransitionRemaining - (float)gameTime.ElapsedGameTime.TotalSeconds);
+        _wasNavigationOpen = navigationOpenNow;
 
         _effectTracker.Step((float)gameTime.ElapsedGameTime.TotalSeconds);
         if (_client.LatestSnapshot is { } latestForEffects)
@@ -828,11 +943,12 @@ public partial class Game1 : Game
     private static readonly Color TopBarPlate = new(26, 27, 32);
     private static readonly Color TopBarGold = new(214, 178, 112);
 
-    private void DrawTopBar(SpriteBatch spriteBatch)
+    private void DrawTopBar(SpriteBatch spriteBatch, WorldSnapshot? snapshot)
     {
         var crewRect = GetTopBarButtonRect(0);
         var managementRect = GetTopBarButtonRect(1);
         var infoRect = GetTopBarButtonRect(2);
+        var camerasRect = GetTopBarButtonRect(3);
 
         DrawTopBarButtonFrame(spriteBatch, crewRect);
         HudIcons.DrawCrewGlyph(spriteBatch, _pixel, RectCenter(crewRect), 0.85f, TopBarGold);
@@ -848,6 +964,24 @@ public partial class Game1 : Game
         HudIcons.DrawBarsGlyph(spriteBatch, _pixel, RectCenter(infoRect), 0.85f, TopBarGold);
         if (_infoPanelOpen)
             DrawSlotHighlight(infoRect, Color.LightSkyBlue);
+
+        // Dim without power on the Secondary channel (game_design.md - the same "lamps/scanner/
+        // airlocks" slider ComputeShipPowerMood already reads) - same disabled-look convention as
+        // every other power-gated control, no new power model needed for this button.
+        var camerasPowered = snapshot is not null && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f;
+        DrawTopBarButtonFrame(spriteBatch, camerasRect);
+        DrawCameraGlyph(spriteBatch, RectCenter(camerasRect), camerasPowered ? TopBarGold : Color.DimGray);
+        if (_externalCameraMode)
+            DrawSlotHighlight(camerasRect, Color.LightSkyBlue);
+    }
+
+    // A plain camera body + lens - cheap enough that a dedicated HudIcons method isn't worth it for
+    // one button.
+    private void DrawCameraGlyph(SpriteBatch spriteBatch, Vector2 center, Color color)
+    {
+        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - 9, (int)center.Y - 5, 18, 10), color);
+        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - 4, (int)center.Y - 8, 8, 3), color);
+        HudIcons.FillCircle(spriteBatch, _pixel, center + new Vector2(3, 0), 3.5f, new Color(20, 20, 20));
     }
 
     // A bevelled plate with a gold medallion behind the glyph, rather than a flat icon on a solid
@@ -1265,8 +1399,14 @@ public partial class Game1 : Game
                 // to live in this scene batch, which meant standing in a blind spot when pressing M
                 // made the whole map fade to black along with everything else.
             }
+            else if (_externalCameraMode)
+            {
+                // Same reasoning as the galactic map above - drawn later as its own HUD-batch
+                // overlay (ExternalCameraPanel needs its own scissored sub-batches per quadrant
+                // anyway, which this shared, rotated/masked scene batch has no room for).
+            }
             else if (_openBlock.Kind == BlockKind.Navigation)
-                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, totalSeconds);
+                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, totalSeconds);
             else if (_infoPanelOpen)
                 _infoPanel.Draw(_spriteBatch, snapshot, _client.PlayerId, _infoPanelTab, InfoPanelOrigin);
             else if (myIsAtHelm)
@@ -1366,6 +1506,15 @@ public partial class Game1 : Game
         _scenePost.Present(_spriteBatch, totalSeconds);
 
         _spriteBatch.Begin(transformMatrix: _renderScale);
+        // Peaks at the exact midpoint of the transition (fully opaque, hiding the underlying scene
+        // swap) and is 0 at both ends - the same hump a cross-dissolve needs, without ever having
+        // to render both scenes at once.
+        if (_navTransitionRemaining > 0f)
+        {
+            var progress = _navTransitionRemaining / NavTransitionDuration;
+            var alpha = 1f - MathF.Abs(progress * 2f - 1f);
+            _spriteBatch.Draw(_pixel, new Rectangle(0, 0, DesignWidth, DesignHeight), Color.Black * alpha);
+        }
         if (_client.LatestSnapshot is { } hudSnapshot)
         {
             // Station dialogue is a HUD overlay on top of the physical scene (like the panels
@@ -1536,7 +1685,20 @@ public partial class Game1 : Game
             if (_galacticMapOpen)
                 _galacticMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin, _galacticMapZoom, _galacticMapPanOffset);
 
-            DrawTopBar(_spriteBatch);
+            // External cameras (M46) - same HUD-batch overlay treatment as the galactic map right
+            // above: a full takeover reachable from anywhere power allows it, not masked by sight/
+            // lighting like the ship-interior scene batch it replaces on screen.
+            if (_externalCameraMode)
+            {
+                var cameraArea = new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y,
+                    (int)WorldViewportSize.X, (int)WorldViewportSize.Y);
+                if (_externalCameraFullscreenIndex is { } fsIndex)
+                    _externalCameraPanel.DrawFullscreen(_spriteBatch, GraphicsDevice, hudSnapshot, cameraArea, _renderScale, fsIndex, _cameraLookOffsetDegrees, totalSeconds);
+                else
+                    _externalCameraPanel.DrawGrid(_spriteBatch, GraphicsDevice, hudSnapshot, cameraArea, _renderScale, totalSeconds);
+            }
+
+            DrawTopBar(_spriteBatch, hudSnapshot);
             if (_crewPanelOpen)
                 _crewPanel.Draw(_spriteBatch, hudSnapshot, CrewPanelOrigin, _client.PlayerId);
             // HUD batch rather than the scene batch InfoPanel uses - it's never rotated/zoomed or

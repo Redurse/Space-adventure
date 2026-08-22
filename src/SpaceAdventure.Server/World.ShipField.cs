@@ -42,6 +42,15 @@ public sealed partial class World
     private const float HullContactCooldownSeconds = 1.5f;
 
     private float _hullContactCooldown;
+    // Set by Undock(), cleared the first tick the hull actually reads clear of the station - see
+    // StepShipFieldPhysics's own comment on why a live geometry re-check at each tick isn't enough
+    // on its own: turning in place, before any net displacement, moves the hull's own corners
+    // (HullTouchesStation is corner-based) and can flip "touching" back to true at the very same
+    // position that just read as clear, at whatever rotation the pilot happens to line up on
+    // first. A live re-check would then treat that as a fresh, blockable approach - straight back
+    // into the exact trap this exemption exists to avoid - instead of the single casting-off
+    // event it actually still is.
+    private bool _justCastOffStation;
     private Vec2 _shipFieldPosition;
     private Vec2 _shipVelocity = Vec2.Zero;
     private Vec2 _shipThrust = Vec2.Zero; // world-space, derived from throttle along the nose - what the exhaust is drawn from
@@ -166,14 +175,26 @@ public sealed partial class World
         // The station's own compartments are solid too, whichever one happens to be nearest right
         // now (World.Voyage.cs's UpdateNearestStation) - shoulder into them and the ship stops dead
         // rather than passing through (its hull is sturdier than a lone asteroid, and docking is a
-        // deliberate button press, not a drift-in). Only blocks a step that's newly entering the
-        // station's silhouette, not one that's already inside it: the instant after undocking the
-        // ship IS still mated to the berth (by construction - that's what "docked" means), so
-        // gating on the candidate position alone would wedge it there forever, unable to ever
-        // thrust clear on the very first tick of casting off. A course that curves back through
-        // the same structure later is correctly blocked again once the ship has actually left it -
-        // this only ever forgives the single moment of casting off, not the structure as a whole.
-        if (!HullTouchesStation(_shipFieldPosition) && HullTouchesStation(candidatePosition))
+        // deliberate button press, not a drift-in). Suppressed entirely for the single casting-off
+        // event (_justCastOffStation, set by Undock()) rather than re-derived from live geometry
+        // every tick: the instant after undocking the ship IS still mated to the berth (by
+        // construction), and a pilot lines up a heading before ever building any speed - turning
+        // in place, with zero net displacement, still moves the hull's own corners
+        // (HullTouchesStation is corner-based), which can flip "touching" back to true at
+        // whatever rotation the pilot happens to settle on first. Re-deriving "already touching"
+        // from that same live check would then treat the settled heading as a fresh, blockable
+        // approach and wedge the ship at the berth forever, unable to ever thrust clear - the very
+        // trap this exemption exists to avoid. A course that curves back through the same
+        // structure later is still correctly blocked once the flag has cleared (the first tick the
+        // hull actually reads clear) - this only ever forgives the one casting-off event, not the
+        // structure as a whole.
+        var touchingStationNow = HullTouchesStation(_shipFieldPosition);
+        if (_justCastOffStation)
+        {
+            if (!touchingStationNow)
+                _justCastOffStation = false;
+        }
+        else if (!touchingStationNow && HullTouchesStation(candidatePosition))
         {
             _shipVelocity = Vec2.Zero;
             return;

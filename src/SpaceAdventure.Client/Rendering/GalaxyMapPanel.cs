@@ -75,11 +75,18 @@ public sealed partial class GalaxyMapPanel
         _ => Color.Gray,
     };
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin, float zoom, Vector2 panOffset, float totalSeconds = 0f)
+    // Must match World.Scanner.cs's own ScannerRangeUnits/ScannerSweepHalfAngleDegrees - purely
+    // decorative here (drawing how far/wide the cone reaches), the server is what actually decides
+    // what the sweep finds.
+    private const float ScannerRangeUnits = 900f;
+    private const float ScannerSweepHalfAngleDegrees = 12f;
+
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin, float zoom, Vector2 panOffset,
+        int myPlayerId, float totalSeconds = 0f)
     {
         _starfield.Draw(spriteBatch, totalSeconds);
 
-        spriteBatch.DrawString(_font, $"Карта системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}» - клик (курс, в любую точку), за кольцом — прыжок (M), ПКМ тащить (сдвиг), колесо (масштаб)",
+        spriteBatch.DrawString(_font, $"Карта системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}» - ЛКМ тащить (луч сканера), клик по своей метке (поставить на общую карту), за кольцом — прыжок (M), ПКМ тащить (сдвиг), колесо (масштаб)",
             panelOrigin + new Vector2(0, -24), Color.Yellow, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
 
         var mapOrigin = ComputeMapOrigin(panelOrigin, snapshot.GalaxyPoints, zoom, panOffset);
@@ -125,9 +132,85 @@ public sealed partial class GalaxyMapPanel
         }
 
         var shipCenter = mapOrigin + new Vector2(snapshot.Voyage.ShipMapPosition.X, snapshot.Voyage.ShipMapPosition.Y) * PixelsPerUnit * zoom;
+
+        // Shared with the whole crew (World.Scanner.cs, M44) - drawn before the ship/contacts so a
+        // pin sitting right on top of a live blip still reads as two separate marks.
+        foreach (var marker in snapshot.ManualScannerMarkers)
+        {
+            var markerScreen = mapOrigin + new Vector2(marker.X, marker.Y) * PixelsPerUnit * zoom;
+            DrawGlowDiamond(spriteBatch, markerScreen, 10f, Color.Gold);
+            spriteBatch.DrawString(_font, "метка", markerScreen + new Vector2(8, -6), Color.Gold, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+        }
+
+        var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == myPlayerId);
+        if (me is not null)
+        {
+            // Private to this player (World.Scanner.cs) - frozen at each hull's own last-known
+            // position, not necessarily where it actually is right now.
+            foreach (var contact in me.ScannerContacts ?? Array.Empty<ScannerContactState>())
+            {
+                var contactScreen = mapOrigin + new Vector2(contact.X, contact.Y) * PixelsPerUnit * zoom;
+                var color = contact.Kind switch
+                {
+                    NpcShipKind.Cargo => Color.SteelBlue,
+                    NpcShipKind.Scout => Color.LightGray,
+                    _ => Color.OrangeRed,
+                };
+                HudIcons.FillCircle(spriteBatch, _pixel, contactScreen, 5f, color * 0.85f);
+                HudIcons.DrawRingArc(spriteBatch, _pixel, contactScreen, 8f, 0f, 360f, color, 16, 1.5f);
+            }
+
+            // The sweep cone itself, from the ship's own map position - purely a client-side
+            // picture of ScannerSweepDegrees; the server (World.Scanner.cs) is the one actually
+            // deciding what it finds. A filled fan (centre plus points along the outer arc), the
+            // same "sample points around an arc" shape DrawRingArc already uses for a stroke,
+            // just closed back to the centre instead of left open.
+            var sweepRadiusPixels = ScannerRangeUnits * PixelsPerUnit * zoom;
+            const int sweepSegments = 16;
+            var fan = new Vector2[sweepSegments + 2];
+            fan[0] = shipCenter;
+            for (var i = 0; i <= sweepSegments; i++)
+            {
+                var angle = (me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees +
+                    2f * ScannerSweepHalfAngleDegrees * i / sweepSegments) * (MathF.PI / 180f);
+                fan[i + 1] = shipCenter + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * sweepRadiusPixels;
+            }
+            Primitives.FillPolygon(spriteBatch, _pixel, shipCenter, fan, Color.LimeGreen * 0.12f);
+            HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, sweepRadiusPixels,
+                me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees, me.ScannerSweepDegrees + ScannerSweepHalfAngleDegrees,
+                Color.LimeGreen * 0.5f, 16, 2f);
+        }
+
         spriteBatch.Draw(_pixel, new Rectangle((int)shipCenter.X - 4, (int)shipCenter.Y - 4, 8, 8), Color.White);
 
         DrawFactionStandings(spriteBatch, snapshot.FactionStandings, panelOrigin + new Vector2(700, 0));
+    }
+
+    // Screen-space hit test for the local player's own scanner contacts (Game1.Input.cs's own
+    // click handler while the map is open) - a fixed pixel radius, the same "constant on-screen
+    // size regardless of zoom" reasoning GetPointRect's own doc comment gives for point markers.
+    public static ScannerContactState? HitTestContact(Vector2 screenPoint, CharacterState me, Vector2 mapOrigin, float zoom)
+    {
+        const float hitRadiusPixels = 10f;
+        foreach (var contact in me.ScannerContacts ?? Array.Empty<ScannerContactState>())
+        {
+            var contactScreen = mapOrigin + new Vector2(contact.X, contact.Y) * PixelsPerUnit * zoom;
+            if (Vector2.Distance(screenPoint, contactScreen) <= hitRadiusPixels)
+                return contact;
+        }
+        return null;
+    }
+
+    private void DrawGlowDiamond(SpriteBatch spriteBatch, Vector2 center, float size, Color color)
+    {
+        var half = size / 2f;
+        var points = new[]
+        {
+            center + new Vector2(0, -half), center + new Vector2(half, 0),
+            center + new Vector2(0, half), center + new Vector2(-half, 0),
+        };
+        Primitives.FillPolygon(spriteBatch, _pixel, center, points, color * 0.85f);
+        Primitives.StrokePolygon(spriteBatch, _pixel, points, Color.Black * 0.5f, 1.5f);
     }
 
     // The number and its two known thresholds (FactionDefinitions.StandingLabel) already tell the

@@ -75,6 +75,14 @@ public sealed partial class World
             if (HasFledTheSector())
                 FleeBattle();
         }
+        // A persistent Military NPC's fight (World.NpcShips.cs) instead of a sector/station's -
+        // mutually exclusive with the branch above, never both set at once.
+        else if (_battleNpcShipId is not null)
+        {
+            ResolveNpcBattleLosses();
+            if (HasFledTheNpcBattle())
+                FleeNpcBattle();
+        }
         else
         {
             TryEngageHostileSector();

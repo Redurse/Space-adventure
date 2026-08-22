@@ -30,7 +30,11 @@ internal static partial class TestRunner
         AttachTankTo(world, Array.IndexOf(
             world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.Cutter));
 
-        EquipSuit(world, 1);
+        // Guarded, not unconditional: EquipSuit's own Interact press toggles, so a caller that
+        // already put a suit on earlier (ApproachBerth's defensive suit-up, if an incidental fight
+        // happened on the way) would otherwise have this take it right back off again.
+        if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.Equipped[EquipSlot.Suit] is null)
+            EquipSuit(world, 1);
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
         MoveCharacterTo(world, 1, 23f, 3f);
         WalkFixedDirection(world, 1, 1f, 0f); // exit, attached to the ship

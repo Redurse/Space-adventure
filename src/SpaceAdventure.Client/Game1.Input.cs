@@ -573,6 +573,37 @@ public partial class Game1
             }
             return (-1, -1, null, -1, false, false, null, false, null);
         }
+        // External cameras (M46) - gated on the Secondary power channel the same way
+        // ComputeShipPowerMood already reads it for the ship's own lamps; a click while unpowered
+        // is a no-op rather than opening onto a view that would just read as broken.
+        if (GetTopBarButtonRect(3).Contains(_designMouse))
+        {
+            if (snapshot is not null && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f)
+            {
+                _externalCameraMode = !_externalCameraMode;
+                _externalCameraFullscreenIndex = null;
+                _cameraLookOffsetDegrees = 0f;
+                _cameraLookLastMouse = null;
+                if (_externalCameraMode)
+                {
+                    _openBlock = ClickTarget.None;
+                    _infoPanelOpen = false;
+                    _shipEditorOpen = false;
+                }
+            }
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+        if (_externalCameraMode && _externalCameraFullscreenIndex is null)
+        {
+            var cameraArea = new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y);
+            if (ExternalCameraPanel.QuadrantHitTest(cameraArea, _designMouse) is { } quadrant)
+            {
+                _externalCameraFullscreenIndex = quadrant;
+                _cameraLookOffsetDegrees = 0f;
+                _cameraLookLastMouse = null;
+            }
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
         if (_infoPanelOpen)
         {
             for (var i = 0; i < 5; i++)

@@ -185,4 +185,15 @@ public sealed record ClientCommand(
     // Edge-triggered like HelmStabilizePressed - flips the helm between ShipControlMode.Arc and
     // .Rcs (World.ShipField.cs, M41), the Z key at the client. Only meaningful while actually
     // manning the helm, same as HelmThrottle/HelmTurn/HelmStabilizePressed.
-    bool ToggleControlModePressed = false);
+    bool ToggleControlModePressed = false,
+    // The navigation console's scanner (World.Scanner.cs, M44): a world-space bearing in degrees,
+    // sent continuously like HelmThrottle - only actually applied server-side while this player is
+    // standing at NavigationConsole (same InteractionRadius gate the reactor's own levers use), so
+    // it's simply ignored the rest of the time rather than needing its own separate "am I at the
+    // console" flag.
+    float ScannerSweepDegrees = 0f,
+    // Promotes one of this player's own private scanner contacts onto the shared map, the one
+    // frame it's clicked - null means no such click this frame, same convention as DoorToggleId.
+    // Same console-proximity gate as ScannerSweepDegrees above.
+    float? PlaceScannerMarkerAtX = null,
+    float? PlaceScannerMarkerAtY = null);

@@ -335,6 +335,13 @@ internal static partial class TestRunner
         if (wasDocked)
             PeelAwayFromBerth(world, berth, target, playerId);
 
+        // AvoidIncidentalHazards below only ever steers clear of hostile sectors - a station's own
+        // row (Station.Default.cs) sitting on the straight line to `target` is a different, solid
+        // obstacle it never accounts for, and the collision it causes has no ambush/retry mechanism
+        // to ever dislodge the ship from (TestRunner.StationDocking.cs's own doc comment on this).
+        // One fixed leg to a clearance waypoint first, the same fix ApproachBerth already needed.
+        FlyClearOfOtherStations(world, target, targetPointId);
+
         for (var i = 0; i < maxTicks && !until(); i++)
         {
             var shipPos = new Vec2(world.CreateSnapshot().ShipField.X, world.CreateSnapshot().ShipField.Y);

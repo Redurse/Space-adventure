@@ -33,7 +33,8 @@ public sealed partial class World
             _customShipDefinition,
             _campaignStage,
             _storyLog.ToArray(),
-            GalaxyMap.GeneratedProceduralCount);
+            GalaxyMap.GeneratedProceduralCount,
+            _manualScannerMarkers.ToArray());
     }
 
     public void ClearAutosavePending() => AutosavePending = false;
@@ -74,6 +75,10 @@ public sealed partial class World
 
         if (save.GeneratedProceduralSystemCount is { } proceduralCount)
             GalaxyMap.EnsureAtLeast(proceduralCount);
+
+        _manualScannerMarkers.Clear();
+        if (save.ManualScannerMarkers is { } markers)
+            _manualScannerMarkers.AddRange(markers);
 
         // Docked at the saved station, exactly as if the ship had just finished its approach.
         var point = GalaxyMap.Points.FirstOrDefault(p => p.Id == save.DockedPointId)

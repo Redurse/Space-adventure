@@ -67,4 +67,12 @@ public sealed record CharacterState(
     // Off by default - whether touching the hull/a rock while outside actually grabs on
     // (World.Eva.cs's TryAutoAttach) or just bounces the character back. F toggles it whenever
     // there's nothing closer to pick up instead (World.Mining.cs's HandleEvaInteract).
-    bool MagneticBootsOn = false);
+    bool MagneticBootsOn = false,
+    // The navigation console's scanner (World.Scanner.cs, M44) - only ever updated while this
+    // character is actually standing at NavigationConsole (same proximity gate the reactor's own
+    // levers use), so it simply freezes at its last value once they walk away.
+    float ScannerSweepDegrees = 0f,
+    // Persistent NPC hulls (M43) THIS character's own sweep has actually found, each frozen at its
+    // last-known position - private to this character, unlike the always-visible station/asteroid
+    // markers (game_design.md/M44). Empty for a character who has never operated the scanner.
+    IReadOnlyList<ScannerContactState>? ScannerContacts = null);
