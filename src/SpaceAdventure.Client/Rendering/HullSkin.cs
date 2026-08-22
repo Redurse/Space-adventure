@@ -281,26 +281,35 @@ public static partial class HullSkin
 
     // Interior (room-to-room) edges keep the flat, untextured bezel - texturing never mattered
     // there, since the room on the other side paints its own floor over any of it that would show.
+    // Each bool is "does this edge have *any* exterior stretch at all" - ExteriorSpans below is
+    // what actually finds where; PlatePolygon/DrawReentrantChamfers only need the coarse yes/no to
+    // decide a corner's treatment, since a corner sits at one end of an edge and there a partially
+    // covered edge is either open there or it isn't.
     private static RoomMargins ComputeMargins(Room room, IReadOnlyList<Room> rooms)
     {
         var thin = MarginUnits * ShipRenderer.PixelsPerUnit;
-        var top = IsExteriorEdge(room, rooms, 0);
-        var bottom = IsExteriorEdge(room, rooms, 1);
-        var left = IsExteriorEdge(room, rooms, 2);
-        var right = IsExteriorEdge(room, rooms, 3);
+        var top = ExteriorSpans(room, rooms, 0).Count > 0;
+        var bottom = ExteriorSpans(room, rooms, 1).Count > 0;
+        var left = ExteriorSpans(room, rooms, 2).Count > 0;
+        var right = ExteriorSpans(room, rooms, 3).Count > 0;
         return new RoomMargins(thin, thin, thin, thin, top, bottom, left, right);
     }
 
-    // Whether this edge of the room faces open space rather than another compartment - checked
-    // against every other room for any overlapping run along the shared coordinate. Rooms in every
-    // ship built so far touch edge-to-edge with no gap (see Ship.*.cs), so "shares this coordinate
-    // and overlaps the span" is a reliable stand-in for "there is a neighbour here" without needing
-    // an actual adjacency graph. Only used for HullSkin's own margin now - ShipRenderer's room
-    // walls stopped distinguishing exterior from interior and carry this same plate texture on
-    // every side, since that read better than mixing it with the plainer interior wall pattern.
-    private static bool IsExteriorEdge(Room room, IReadOnlyList<Room> rooms, int edge)
+    // Which stretches of this edge face open space rather than another compartment, in world
+    // units along the edge (X for top/bottom, Y for left/right) - not just whether the edge has
+    // *any* neighbour on it. A room whose edge is only partly covered by a narrower neighbour (a
+    // corridor threaded between two wider rooms, say) used to read as "has a neighbour here" and
+    // go fully interior for its whole length, even past where that neighbour's own span ends -
+    // silently dropping the plate texture off both real exterior stretches on either side of the
+    // corridor mouth. This instead merges every neighbour's covered stretch and returns the gaps:
+    // the genuinely open remainder of the edge, which may be several disjoint stretches.
+    private static List<(float From, float To)> ExteriorSpans(Room room, IReadOnlyList<Room> rooms, int edge)
     {
         const float epsilon = 0.02f;
+        var spanFrom = edge is 0 or 1 ? room.Left : room.Top;
+        var spanTo = edge is 0 or 1 ? room.Right : room.Bottom;
+
+        var covered = new List<(float From, float To)>();
         foreach (var other in rooms)
         {
             if (ReferenceEquals(other, room))
@@ -314,13 +323,26 @@ public static partial class HullSkin
             };
             if (!sharesEdge)
                 continue;
-            var overlapsSpan = edge is 0 or 1
-                ? other.Left < room.Right - epsilon && other.Right > room.Left + epsilon
-                : other.Top < room.Bottom - epsilon && other.Bottom > room.Top + epsilon;
-            if (overlapsSpan)
-                return false;
+            var otherFrom = edge is 0 or 1 ? other.Left : other.Top;
+            var otherTo = edge is 0 or 1 ? other.Right : other.Bottom;
+            var from = MathF.Max(spanFrom, otherFrom);
+            var to = MathF.Min(spanTo, otherTo);
+            if (to > from + epsilon)
+                covered.Add((from, to));
         }
-        return true;
+        covered.Sort((a, b) => a.From.CompareTo(b.From));
+
+        var exterior = new List<(float From, float To)>();
+        var cursor = spanFrom;
+        foreach (var (from, to) in covered)
+        {
+            if (from > cursor + epsilon)
+                exterior.Add((cursor, from));
+            cursor = MathF.Max(cursor, to);
+        }
+        if (cursor < spanTo - epsilon)
+            exterior.Add((cursor, spanTo));
+        return exterior;
     }
 
     // The hull plate's own texture, drawn flush against the room on every exterior edge - no gap,
@@ -337,24 +359,14 @@ public static partial class HullSkin
         var sourceSize = TileTextures.HullTileSize;
         var cellOrigin = new Point((int)origin.X, (int)origin.Y);
 
-        if (margins.TopExterior || margins.BottomExterior)
-        {
-            var x = rect.X - (margins.LeftExterior ? (int)margins.Left : 0);
-            var width = rect.Width + (margins.LeftExterior ? (int)margins.Left : 0) + (margins.RightExterior ? (int)margins.Right : 0);
-            if (margins.TopExterior)
-                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Top, new Rectangle(x, (int)(rect.Y - margins.Top), width, (int)margins.Top), Color.White, cellOrigin);
-            if (margins.BottomExterior)
-                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Bottom, new Rectangle(x, rect.Bottom, width, (int)margins.Bottom), Color.White, cellOrigin);
-        }
-        if (margins.LeftExterior || margins.RightExterior)
-        {
-            var y = rect.Y - (margins.TopExterior ? (int)margins.Top : 0);
-            var height = rect.Height + (margins.TopExterior ? (int)margins.Top : 0) + (margins.BottomExterior ? (int)margins.Bottom : 0);
-            if (margins.LeftExterior)
-                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Left, new Rectangle((int)(rect.X - margins.Left), y, (int)margins.Left, height), Color.White, cellOrigin);
-            if (margins.RightExterior)
-                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Right, new Rectangle(rect.Right, y, (int)margins.Right, height), Color.White, cellOrigin);
-        }
+        if (margins.TopExterior)
+            DrawHorizontalPlating(spriteBatch, hullPlates, sourceSize, cellOrigin, room, rooms, margins, origin, edge: 0, y: rect.Y - (int)margins.Top, height: (int)margins.Top);
+        if (margins.BottomExterior)
+            DrawHorizontalPlating(spriteBatch, hullPlates, sourceSize, cellOrigin, room, rooms, margins, origin, edge: 1, y: rect.Bottom, height: (int)margins.Bottom);
+        if (margins.LeftExterior)
+            DrawVerticalPlating(spriteBatch, hullPlates, sourceSize, cellOrigin, room, rooms, margins, origin, edge: 2, x: rect.X - (int)margins.Left, width: (int)margins.Left);
+        if (margins.RightExterior)
+            DrawVerticalPlating(spriteBatch, hullPlates, sourceSize, cellOrigin, room, rooms, margins, origin, edge: 3, x: rect.Right, width: (int)margins.Right);
 
         // The bands above are plain rectangles and paint straight into the plate's own cut corners
         // on any exterior side; mask those back out with the same flat fill PlatePolygon's own
@@ -382,10 +394,52 @@ public static partial class HullSkin
         DrawReentrantChamfers(spriteBatch, pixel, room, rooms, margins, origin);
     }
 
+    // One band per exterior stretch of the top/bottom edge (ExteriorSpans, plural: a corridor
+    // mouth splits the edge into a stretch on either side of it), each the full margin thickness.
+    // Only the stretch actually touching this room's own left/right corner extends sideways into
+    // a shared corner (and only when that adjoining edge is exterior too) - a middle stretch, with
+    // a real neighbour on both sides of it, has no corner of its own to extend into.
+    private static void DrawHorizontalPlating(SpriteBatch spriteBatch, Texture2D[] hullPlates, int sourceSize, Point cellOrigin,
+        Room room, IReadOnlyList<Room> rooms, RoomMargins margins, Vector2 origin, int edge, int y, int height)
+    {
+        const float epsilon = 0.02f;
+        var spans = ExteriorSpans(room, rooms, edge);
+        for (var i = 0; i < spans.Count; i++)
+        {
+            var (from, to) = spans[i];
+            var extendLeft = i == 0 && from <= room.Left + epsilon && margins.LeftExterior;
+            var extendRight = i == spans.Count - 1 && to >= room.Right - epsilon && margins.RightExterior;
+            var x = (int)(origin.X + from * ShipRenderer.PixelsPerUnit) - (extendLeft ? (int)margins.Left : 0);
+            var right = (int)(origin.X + to * ShipRenderer.PixelsPerUnit) + (extendRight ? (int)margins.Right : 0);
+            if (right <= x)
+                continue;
+            TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, height, new Rectangle(x, y, right - x, height), Color.White, cellOrigin);
+        }
+    }
+
+    // Same as DrawHorizontalPlating but for the left/right edges, splitting on Y instead of X.
+    private static void DrawVerticalPlating(SpriteBatch spriteBatch, Texture2D[] hullPlates, int sourceSize, Point cellOrigin,
+        Room room, IReadOnlyList<Room> rooms, RoomMargins margins, Vector2 origin, int edge, int x, int width)
+    {
+        const float epsilon = 0.02f;
+        var spans = ExteriorSpans(room, rooms, edge);
+        for (var i = 0; i < spans.Count; i++)
+        {
+            var (from, to) = spans[i];
+            var extendUp = i == 0 && from <= room.Top + epsilon && margins.TopExterior;
+            var extendDown = i == spans.Count - 1 && to >= room.Bottom - epsilon && margins.BottomExterior;
+            var y = (int)(origin.Y + from * ShipRenderer.PixelsPerUnit) - (extendUp ? (int)margins.Top : 0);
+            var bottom = (int)(origin.Y + to * ShipRenderer.PixelsPerUnit) + (extendDown ? (int)margins.Bottom : 0);
+            if (bottom <= y)
+                continue;
+            TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, width, new Rectangle(x, y, width, bottom - y), Color.White, cellOrigin);
+        }
+    }
+
     // Whether another room's rectangle touches this one at exactly this corner point - a diagonal,
-    // single-point join - rather than along a shared edge run. IsExteriorEdge's span-overlap test
-    // only rules out edges that actually share a run; two rooms meeting only at a corner (an
-    // L-shaped layout) both still read every edge there as "exterior", so both independently cut
+    // single-point join - rather than along a shared edge run. ExteriorSpans' coverage test above
+    // only rules out the stretches of an edge that actually share a run; two rooms meeting only at
+    // a corner (an L-shaped layout) both still read every edge there as "exterior", so both independently cut
     // that corner, and since the two rooms are rarely the same size the two cuts don't line up -
     // leaving a sliver of bare background between them. Corners are numbered the same way as the
     // vertices PlatePolygon builds: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left. Returns
