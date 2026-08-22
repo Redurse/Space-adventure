@@ -350,7 +350,7 @@ public static partial class HullSkin
         // on any exterior side; mask those back out with the same flat fill PlatePolygon's own
         // silhouette uses, reproducing the corner cut this would otherwise get for free from simply
         // never drawing there. Skipped wherever PlatePolygon itself left that corner square (see
-        // HasDiagonalNeighbor) - masking a cut there would carve a notch out of a corner that is
+        // FindDiagonalNeighbor) - masking a cut there would carve a notch out of a corner that is
         // no longer cut.
         if (margins.TopExterior || margins.BottomExterior || margins.LeftExterior || margins.RightExterior)
         {
@@ -359,15 +359,17 @@ public static partial class HullSkin
             var outerWidth = rect.Width + margins.Left + margins.Right;
             var outerHeight = rect.Height + margins.Top + margins.Bottom;
             var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(outerWidth, outerHeight) / 3f);
-            if (!HasDiagonalNeighbor(room, rooms, 0))
+            if (FindDiagonalNeighbor(room, rooms, 0) is null)
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop), cut, mirrorX: false, mirrorY: false);
-            if (!HasDiagonalNeighbor(room, rooms, 1))
+            if (FindDiagonalNeighbor(room, rooms, 1) is null)
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop), cut, mirrorX: true, mirrorY: false);
-            if (!HasDiagonalNeighbor(room, rooms, 3))
+            if (FindDiagonalNeighbor(room, rooms, 3) is null)
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop + outerHeight), cut, mirrorX: false, mirrorY: true);
-            if (!HasDiagonalNeighbor(room, rooms, 2))
+            if (FindDiagonalNeighbor(room, rooms, 2) is null)
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop + outerHeight), cut, mirrorX: true, mirrorY: true);
         }
+
+        DrawReentrantChamfers(spriteBatch, pixel, room, rooms, margins, origin);
     }
 
     // Whether another room's rectangle touches this one at exactly this corner point - a diagonal,
@@ -376,8 +378,10 @@ public static partial class HullSkin
     // L-shaped layout) both still read every edge there as "exterior", so both independently cut
     // that corner, and since the two rooms are rarely the same size the two cuts don't line up -
     // leaving a sliver of bare background between them. Corners are numbered the same way as the
-    // vertices PlatePolygon builds: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left.
-    private static bool HasDiagonalNeighbor(Room room, IReadOnlyList<Room> rooms, int corner)
+    // vertices PlatePolygon builds: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left. Returns
+    // the neighbour itself (not just whether one exists) - DrawReentrantChamfers needs its rectangle
+    // too, to bridge two different rooms' exterior edges into one shared diagonal.
+    private static Room? FindDiagonalNeighbor(Room room, IReadOnlyList<Room> rooms, int corner)
     {
         const float epsilon = 0.02f;
         foreach (var other in rooms)
@@ -392,9 +396,74 @@ public static partial class HullSkin
                 _ => MathF.Abs(other.Right - room.Left) < epsilon && MathF.Abs(other.Top - room.Bottom) < epsilon,
             };
             if (touches)
-                return true;
+                return other;
         }
-        return false;
+        return null;
+    }
+
+    // A room's exterior edge meeting a diagonal neighbour's exterior edge at the same point, with
+    // a third, empty quadrant between them - an L-shaped layout, three compartments around a
+    // point and open space in the fourth. Each edge's own margin band extends outward
+    // independently there, so the two together read as a doubled-up, sharp right-angle nub rather
+    // than a clean line. Chamfers it into a single diagonal the size of an ordinary convex corner
+    // cut, using the same flat-plate mask - one call per corner, and only when exactly one of that
+    // corner's two edges is exterior (the "square, don't cut" case above already covers a
+    // neighbour whose *own* edges are both exterior, i.e. two rooms touching only at that point
+    // with nothing else there at all).
+    private static void DrawReentrantChamfers(SpriteBatch spriteBatch, Texture2D pixel, Room room, IReadOnlyList<Room> rooms, RoomMargins margins, Vector2 origin)
+    {
+        var rect = RoomRect(room, origin);
+        var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(rect.Width, rect.Height) / 3f);
+        var thin = MarginUnits * ShipRenderer.PixelsPerUnit;
+
+        if (margins.TopExterior != margins.LeftExterior)
+        {
+            var neighbor = FindDiagonalNeighbor(room, rooms, 0);
+            if (neighbor is not null)
+            {
+                var n = RoomRect(neighbor, origin);
+                if (margins.TopExterior)
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Right + thin, rect.Y - margins.Top), cut, mirrorX: true, mirrorY: false);
+                else
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.X - margins.Left, n.Bottom + thin), cut, mirrorX: false, mirrorY: true);
+            }
+        }
+        if (margins.TopExterior != margins.RightExterior)
+        {
+            var neighbor = FindDiagonalNeighbor(room, rooms, 1);
+            if (neighbor is not null)
+            {
+                var n = RoomRect(neighbor, origin);
+                if (margins.TopExterior)
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Left - thin, rect.Y - margins.Top), cut, mirrorX: false, mirrorY: false);
+                else
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.Right + margins.Right, n.Bottom + thin), cut, mirrorX: true, mirrorY: true);
+            }
+        }
+        if (margins.BottomExterior != margins.RightExterior)
+        {
+            var neighbor = FindDiagonalNeighbor(room, rooms, 2);
+            if (neighbor is not null)
+            {
+                var n = RoomRect(neighbor, origin);
+                if (margins.BottomExterior)
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Left - thin, rect.Bottom + margins.Bottom), cut, mirrorX: false, mirrorY: true);
+                else
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.Right + margins.Right, n.Top - thin), cut, mirrorX: true, mirrorY: false);
+            }
+        }
+        if (margins.BottomExterior != margins.LeftExterior)
+        {
+            var neighbor = FindDiagonalNeighbor(room, rooms, 3);
+            if (neighbor is not null)
+            {
+                var n = RoomRect(neighbor, origin);
+                if (margins.BottomExterior)
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Right + thin, rect.Bottom + margins.Bottom), cut, mirrorX: true, mirrorY: true);
+                else
+                    MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.X - margins.Left, n.Top - thin), cut, mirrorX: false, mirrorY: false);
+            }
+        }
     }
 
     // One diagonal cut corner filled back in with the flat plate colour - `corner` is the plate's
@@ -408,7 +477,7 @@ public static partial class HullSkin
     }
 
     // Rectangle with its corners taken off - eight points, filled as a fan from the middle. A
-    // corner that has a diagonal neighbour (HasDiagonalNeighbor) is left square instead - one
+    // corner that has a diagonal neighbour (FindDiagonalNeighbor) is left square instead - one
     // point instead of two - so the two rooms' plates meet flush there rather than each carving an
     // independent, differently-sized notch out of the same shared point.
     private static Vector2[] PlatePolygon(Room room, IReadOnlyList<Room> rooms, RoomMargins margins, Vector2 origin)
@@ -421,10 +490,10 @@ public static partial class HullSkin
         var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(right - left, bottom - top) / 3f);
 
         var points = new List<Vector2>(8);
-        AddCorner(points, HasDiagonalNeighbor(room, rooms, 0), new Vector2(left, top + cut), new Vector2(left + cut, top), new Vector2(left, top));
-        AddCorner(points, HasDiagonalNeighbor(room, rooms, 1), new Vector2(right - cut, top), new Vector2(right, top + cut), new Vector2(right, top));
-        AddCorner(points, HasDiagonalNeighbor(room, rooms, 2), new Vector2(right, bottom - cut), new Vector2(right - cut, bottom), new Vector2(right, bottom));
-        AddCorner(points, HasDiagonalNeighbor(room, rooms, 3), new Vector2(left + cut, bottom), new Vector2(left, bottom - cut), new Vector2(left, bottom));
+        AddCorner(points, FindDiagonalNeighbor(room, rooms, 0) is not null, new Vector2(left, top + cut), new Vector2(left + cut, top), new Vector2(left, top));
+        AddCorner(points, FindDiagonalNeighbor(room, rooms, 1) is not null, new Vector2(right - cut, top), new Vector2(right, top + cut), new Vector2(right, top));
+        AddCorner(points, FindDiagonalNeighbor(room, rooms, 2) is not null, new Vector2(right, bottom - cut), new Vector2(right - cut, bottom), new Vector2(right, bottom));
+        AddCorner(points, FindDiagonalNeighbor(room, rooms, 3) is not null, new Vector2(left + cut, bottom), new Vector2(left, bottom - cut), new Vector2(left, bottom));
         return points.ToArray();
     }
 
