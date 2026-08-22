@@ -419,6 +419,50 @@ public static class TileTextures
         return value;
     }
 
+    // A rivet every `spacing` pixels along all four edges, at a fixed depth into the frame - unlike
+    // the sparse corner/seam/core rivets above (which matter for the plate seen whole, e.g. in a
+    // ship-editor preview), this is the one detail that actually reaches the player: HullSkin's
+    // margin bezel (DrawHullMarginBand) is the only place this texture is normally visible at all,
+    // and it never exposes more than a border a little deeper than the frame - a run of decks needs
+    // a rivet passing by every so often, not two rivets for the whole corridor.
+    private static float HullBorderRivets(int x, int y)
+    {
+        const int depth = 8;
+        const int spacing = 22;
+        var value = 0f;
+        for (var p = spacing; p < HullTileSize; p += spacing)
+        {
+            value += Rivet(x, y, p, depth);
+            value += Rivet(x, y, p, HullTileSize - 1 - depth);
+            value += Rivet(x, y, depth, p);
+            value += Rivet(x, y, HullTileSize - 1 - depth, p);
+        }
+        return value;
+    }
+
+    // A thin joint mark crossing the border every `period` pixels along its length, only within the
+    // depth the margin bezel actually shows - the seam between one length of plating and the next,
+    // the border's own equivalent of HullWeldBead.
+    private static float HullBorderJoints(int x, int y)
+    {
+        const int period = 48;
+        const int visibleDepth = 17;
+        var value = 0f;
+        if (y < visibleDepth || y >= HullTileSize - visibleDepth)
+        {
+            var alongX = Wrap(x, period);
+            if (alongX == 0) value -= 0.035f;
+            else if (alongX == 1) value += 0.02f;
+        }
+        if (x < visibleDepth || x >= HullTileSize - visibleDepth)
+        {
+            var alongY = Wrap(y, period);
+            if (alongY == 0) value -= 0.035f;
+            else if (alongY == 1) value += 0.02f;
+        }
+        return value;
+    }
+
     // Sparse round dimples, distinct from the elongated scratches below - a dent has a dark cup and
     // a small bright rim catching the light on the side the blow came from, not a scraped streak.
     private static float HullMicroDents(int x, int y)
@@ -463,8 +507,9 @@ public static class TileTextures
         var grain = (Fbm(x, y, HullTileSize, 4, 10) - 0.5f) * 0.05f;
         grain += (Noise(x * 16f / HullTileSize, y * 1f / HullTileSize, 16, seed: 5) - 0.5f) * 0.022f;
         grain += HullMicroDents(x, y);
+        grain += HullBorderJoints(x, y);
 
-        var rivets = HullCoreAndSeamRivets(x, y, inPlateZone) + HullFrameCornerRivets(x, y);
+        var rivets = HullCoreAndSeamRivets(x, y, inPlateZone) + HullFrameCornerRivets(x, y) + HullBorderRivets(x, y);
         return grain + layerShade + rivets;
     }
 

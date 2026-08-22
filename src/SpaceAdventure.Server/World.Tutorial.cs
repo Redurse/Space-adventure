@@ -21,6 +21,9 @@ public sealed partial class World
 
     public TutorialStage Tutorial => _tutorialStage;
 
+    // Deliberately does not touch the power grid: the split that a campaign starts with would tick
+    // the AllocatePower step off before the player ever reached the block, and the tutorial is where
+    // that step is the entire point. Starting a tutorial simply never asks for it.
     public void StartTutorial() => _tutorialStage = TutorialStage.ReachReactor;
 
     private void ObserveTutorialInput(Character character, ClientCommand command)

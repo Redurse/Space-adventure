@@ -59,16 +59,7 @@ public static partial class HullSkin
             var plate = PlatePolygon(room, origin);
             var center = RoomCenter(room, origin);
             Primitives.FillPolygon(spriteBatch, pixel, center, plate, Plate);
-            // Textured core, flat bezel: the room's own rect sits inside every cut corner the
-            // margin-expanded plate has, so tiling square across it never spills past the plate's
-            // own silhouette - the untextured sliver around it reads as a raised panel frame, the
-            // same bevelled-border look ShipRenderer's own DrawPanel uses everywhere else.
-            //
-            // White rather than Plate: the tile itself now bakes in a real gunmetal colour (see
-            // TileTextures.HullColor) instead of a grayscale height field meant to be multiplied by
-            // an external tint, so tinting by Plate here a second time would just darken it further.
-            TileTextures.DrawTiled(spriteBatch, hullPlates, TileTextures.HullTileSize, RoomRect(room, origin), Color.White,
-                new Point((int)origin.X, (int)origin.Y));
+            DrawHullMarginBand(spriteBatch, pixel, hullPlates, RoomRect(room, origin), origin);
             Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.6f, 2.5f);
             DrawPlateShading(spriteBatch, pixel, room, origin);
             DrawFlankGreebles(spriteBatch, pixel, room, hullCenter, origin);
@@ -267,6 +258,58 @@ public static partial class HullSkin
             spriteBatch.Draw(pixel, pod, PlateLit);
             spriteBatch.Draw(pixel, new Rectangle(pod.X, pod.Y, pod.Width, 2), Edge * 0.5f);
         }
+    }
+
+    // The one part of the hull's own plating a player normally sees while walking the decks - the
+    // room's own floor is drawn over the exact rect the old version tiled this texture across
+    // (RoomRect), hiding it completely. Four edge strips instead, each positioned so the tile's own
+    // edge - where TileTextures.HullColor's frame zone and the border-only rivets/joints live -
+    // lands exactly on the visible band regardless of which of the four sides it is.
+    private static void DrawHullMarginBand(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, Rectangle roomRect, Vector2 origin)
+    {
+        var margin = (int)(MarginUnits * ShipRenderer.PixelsPerUnit);
+        var size = TileTextures.HullTileSize;
+        // Tied to the ship's own origin, not the room's - HullPlateVariants picks a variant/tone
+        // from the cell's position in ship space, and it has to stay put as the camera moves.
+        var cellOrigin = new Point((int)origin.X, (int)origin.Y);
+
+        var outerLeft = roomRect.X - margin;
+        var outerTop = roomRect.Y - margin;
+        var outerWidth = roomRect.Width + margin * 2;
+        var outerHeight = roomRect.Height + margin * 2;
+
+        // Top and left: a plain strip already samples the tile's own row/column 0 first, which is
+        // exactly where the frame zone lives - no extra phase trick needed.
+        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
+            new Rectangle(outerLeft, outerTop, outerWidth, margin), Color.White, cellOrigin);
+        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
+            new Rectangle(outerLeft, outerTop, margin, outerHeight), Color.White, cellOrigin);
+
+        // Bottom and right: sized as one full, unclipped tile so the *last* row/column (the
+        // mirrored frame zone on that side) lands on the visible band instead of row/column 0.
+        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
+            new Rectangle(outerLeft, roomRect.Bottom + margin - size, outerWidth, size), Color.White, cellOrigin);
+        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
+            new Rectangle(roomRect.Right + margin - size, outerTop, size, outerHeight), Color.White, cellOrigin);
+
+        // The four strips above are plain rectangles and paint straight into the plate's own cut
+        // corners; mask those back out with the same flat fill PlatePolygon's silhouette already
+        // uses, reproducing the corner cut this used to get for free from simply never drawing there.
+        var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(outerWidth, outerHeight) / 3f);
+        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop), cut, mirrorX: false, mirrorY: false);
+        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop), cut, mirrorX: true, mirrorY: false);
+        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop + outerHeight), cut, mirrorX: false, mirrorY: true);
+        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop + outerHeight), cut, mirrorX: true, mirrorY: true);
+    }
+
+    // One diagonal cut corner filled back in with the flat plate colour - `corner` is the plate's
+    // true rectangular corner (before the cut), and the triangle removed reaches `cut` pixels back
+    // along each edge from it, mirrored to whichever of the four corners this call is for.
+    private static void MaskPlateCorner(SpriteBatch spriteBatch, Texture2D pixel, Vector2 corner, float cut, bool mirrorX, bool mirrorY)
+    {
+        var alongX = new Vector2(mirrorX ? -cut : cut, 0f);
+        var alongY = new Vector2(0f, mirrorY ? -cut : cut);
+        Primitives.FillTriangle(spriteBatch, pixel, corner, corner + alongX, corner + alongY, Plate);
     }
 
     // Rectangle with its corners taken off - eight points, filled as a fan from the middle.

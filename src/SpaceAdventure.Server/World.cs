@@ -471,7 +471,8 @@ public sealed partial class World
                 GetDoorToolTargetId(c),
                 c.MagneticBootsOn,
                 c.ScannerSweepDegrees,
-                CreateScannerContacts(c.PlayerId));
+                CreateScannerContacts(c.PlayerId),
+                c.ScannerCooldownRemaining);
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(ShipMapPosition, _dockedPointId, IsInBattle, IsDocked || _nearestStationPointId is not null),

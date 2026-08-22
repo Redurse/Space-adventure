@@ -262,6 +262,7 @@ public partial class Game1 : Game
     private QuestKind? _pendingQuestKind; // same pattern, for the Administrator's job board
     private bool _pendingDock; // and for the helm's "Стыковка" button
     private bool _pendingToggleControlMode; // window 2's own РСУ/ВИРАЖ button, same edge as the Z key
+    private bool _pendingScannerPing; // the scanner console's own "Скан" button (M47 follow-up)
     private string? _pendingHireCandidateId; // and for the Recruiter's board
     private PinRef? _pendingPinInteract; // wire-laying (World.Wiring.cs), M19-M23
     private Vec2? _pendingWireBendAt; // LMB click mid-lay that missed every pin - fixes a bend there instead
@@ -737,7 +738,9 @@ public partial class Game1 : Game
                     placeScannerMarkerAtX = hit.X;
                     placeScannerMarkerAtY = hit.Y;
                 }
-                else
+                // A press on the "Скан" button (M47 follow-up) fires the pulse instead of starting
+                // a drag - HandleMouseClick's own click chain is what actually sets _pendingScannerPing.
+                else if (!GalaxyMapPanel.GetScanButtonRect(GalaxyMapPanelOrigin).Contains(_designMouse))
                 {
                     _mapSweepDragging = true;
                 }
@@ -875,11 +878,13 @@ public partial class Game1 : Game
         var dockPressed = _pendingDock;
         var hireCandidateId = _pendingHireCandidateId;
         var toggleControlModePressed = toggleControlModeKeyPressed || _pendingToggleControlMode;
+        var scannerPingPressed = _pendingScannerPing;
         _pendingShipPurchase = null; // edge-triggered: sent exactly once per click
         _pendingQuestKind = null;
         _pendingDock = false;
         _pendingHireCandidateId = null;
         _pendingToggleControlMode = false;
+        _pendingScannerPing = false;
 
         var tankAttach = _pendingTankAttach;
         var tankDetach = _pendingTankDetach;
@@ -946,7 +951,7 @@ public partial class Game1 : Game
             _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
             _client.LatestSnapshot?.ServerTimestampMs ?? 0, wireBendAt?.X, wireBendAt?.Y,
             toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed,
-            scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY);
+            scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);

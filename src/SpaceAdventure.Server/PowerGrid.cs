@@ -37,6 +37,20 @@ public sealed class PowerGrid
         _allocated = Systems.ToDictionary(s => s, _ => 0f);
     }
 
+    /// <summary>Hands every system an equal share of the reactor.
+    ///
+    /// Called when a run begins - not from the constructor. A ship that boots with nothing allocated
+    /// has no oxygen, no engines and no shields until somebody walks to the distribution block, which
+    /// is a puzzle rather than a start; but a PowerGrid is also constructed by every test that needs
+    /// a world, and handing those a fully powered ship changes what they are testing. Where a rule
+    /// applies is as much part of it as what it says.</summary>
+    public void SplitEvenly()
+    {
+        var share = Reactor.MaxOutput / Systems.Length;
+        foreach (var system in Systems)
+            _allocated[system] = share;
+    }
+
     public void ApplyInput(int playerId, int systemIndex, float direction) =>
         _adjustByPlayer[playerId] = (systemIndex, direction);
 

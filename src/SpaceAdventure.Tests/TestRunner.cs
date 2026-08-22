@@ -18,6 +18,8 @@ internal static partial class TestRunner
         ("Ship_MoveAlongAxis_BlockedWhenMisalignedWithDoor", Ship_MoveAlongAxis_BlockedWhenMisalignedWithDoor),
         ("Reactor_Step_DepletesFuelProportionalToUsage", Reactor_Step_DepletesFuelProportionalToUsage),
         ("Reactor_CurrentOutput_DropsToZeroWhenFuelDepleted", Reactor_CurrentOutput_DropsToZeroWhenFuelDepleted),
+        ("World_NewCampaign_StartsWithAnEqualShareForEverySystem", World_NewCampaign_StartsWithAnEqualShareForEverySystem),
+        ("World_TutorialWorld_StartsWithNothingAllocated", World_TutorialWorld_StartsWithNothingAllocated),
         ("PowerGrid_Allocation_CannotExceedReactorOutput", PowerGrid_Allocation_CannotExceedReactorOutput),
         ("PowerGrid_TwoPlayers_CanAdjustDifferentSlidersSimultaneously", PowerGrid_TwoPlayers_CanAdjustDifferentSlidersSimultaneously),
         ("PowerGrid_Battery_ChargesFromSurplus", PowerGrid_Battery_ChargesFromSurplus),
@@ -317,6 +319,7 @@ internal static partial class TestRunner
         ("World_Scanner_SweepFindsShipInsideConeNotOutside", World_Scanner_SweepFindsShipInsideConeNotOutside),
         ("World_Scanner_ContactStaysAtLastKnownPositionAfterLeavingTheCone", World_Scanner_ContactStaysAtLastKnownPositionAfterLeavingTheCone),
         ("World_Scanner_DoesNothingAwayFromTheConsole", World_Scanner_DoesNothingAwayFromTheConsole),
+        ("World_Scanner_PingDoesNothingWhileOnCooldown", World_Scanner_PingDoesNothingWhileOnCooldown),
         ("World_Scanner_PlacingMarkerAddsItToTheSharedMap", World_Scanner_PlacingMarkerAddsItToTheSharedMap),
         ("World_Scanner_ManualMarkerSurvivesSaveAndLoad", World_Scanner_ManualMarkerSurvivesSaveAndLoad),
     };

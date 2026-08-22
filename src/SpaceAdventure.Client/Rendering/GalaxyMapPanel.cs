@@ -63,6 +63,13 @@ public sealed partial class GalaxyMapPanel
     public static Vector2 ScreenToField(Vector2 screenPoint, Vector2 mapOrigin, float zoom) =>
         (screenPoint - mapOrigin) / (PixelsPerUnit * zoom);
 
+    // Fixed relative to the panel's own origin, not the map camera - same reasoning GetPointRect's
+    // own doc comment gives for keeping markers a constant on-screen size, just for a HUD button
+    // instead of a world marker. Console-operator only (Draw's own pilotView gate).
+    public static Rectangle GetScanButtonRect(Vector2 panelOrigin) =>
+        new((int)panelOrigin.X + ScanButtonRectLocal.X, (int)panelOrigin.Y + ScanButtonRectLocal.Y,
+            ScanButtonRectLocal.Width, ScanButtonRectLocal.Height);
+
     // Whose territory a point sits in, at a glance, independent of the Station/HostileSector fill
     // color above - drawn as a border rather than replacing the fill so both facts stay visible on
     // the same marker instead of one hiding the other.
@@ -80,6 +87,12 @@ public sealed partial class GalaxyMapPanel
     // what the sweep finds.
     private const float ScannerRangeUnits = 900f;
     private const float ScannerSweepHalfAngleDegrees = 12f;
+    // Must match World.Scanner.cs's own ScannerPingCooldownSeconds (M47 follow-up) - purely
+    // decorative here (deriving how long ago the last pulse fired from the cooldown alone), the
+    // server is what actually gates when the next one is allowed to fire.
+    private const float ScannerPingCooldownSeconds = 15f;
+    private const float ScannerPingPulseDurationSeconds = 1.3f;
+    private static readonly Rectangle ScanButtonRectLocal = new(0, -55, 140, 30);
 
     // pilotView: reused wholesale as the helm's own window 1 (M47 follow-up), where sweeping the
     // beam/dropping a marker isn't available (that stays the scanner operator's own job at the
@@ -172,25 +185,40 @@ public sealed partial class GalaxyMapPanel
                 HudIcons.DrawRingArc(spriteBatch, _pixel, contactScreen, 8f, 0f, 360f, color, 16, 1.5f);
             }
 
-            // The sweep cone itself, from the ship's own map position - purely a client-side
-            // picture of ScannerSweepDegrees; the server (World.Scanner.cs) is the one actually
-            // deciding what it finds. A filled fan (centre plus points along the outer arc), the
-            // same "sample points around an arc" shape DrawRingArc already uses for a stroke,
-            // just closed back to the centre instead of left open.
-            var sweepRadiusPixels = ScannerRangeUnits * PixelsPerUnit * zoom;
-            const int sweepSegments = 16;
-            var fan = new Vector2[sweepSegments + 2];
-            fan[0] = shipCenter;
-            for (var i = 0; i <= sweepSegments; i++)
+            // Aiming the dial is still free and continuous even though detecting isn't any more
+            // (M47 follow-up) - a short ray at the console's own bearing, so there's still
+            // something to see moving while dragging it, without implying the whole cone is
+            // actively detecting the way the old permanent fan did. Console-operator only, same as
+            // the button/pulse below - the pilot's own copy of this map (pilotView) doesn't aim.
+            if (!pilotView)
             {
-                var angle = (me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees +
-                    2f * ScannerSweepHalfAngleDegrees * i / sweepSegments) * (MathF.PI / 180f);
-                fan[i + 1] = shipCenter + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * sweepRadiusPixels;
+                const float aimRayLength = 70f;
+                var aimAngle = me.ScannerSweepDegrees * (MathF.PI / 180f);
+                var aimEnd = shipCenter + new Vector2(MathF.Cos(aimAngle), MathF.Sin(aimAngle)) * aimRayLength * zoom;
+                spriteBatch.Draw(_pixel, shipCenter, null, Color.LimeGreen * 0.7f, aimAngle, new Vector2(0f, 0.5f),
+                    new Vector2((aimEnd - shipCenter).Length(), 2f), SpriteEffects.None, 0f);
+                HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, aimRayLength * zoom,
+                    me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees, me.ScannerSweepDegrees + ScannerSweepHalfAngleDegrees,
+                    Color.LimeGreen * 0.35f, 12, 1.5f);
+
+                // The actual detecting pulse (World.Scanner.cs's FireScannerPing) - a sonar-style
+                // expanding wave along the cone, shown only for a moment right after the "Скан"
+                // button fires it, not permanently. Derived from the cooldown alone (no separate
+                // "just fired" flag needed): elapsed-since-ping is simply how far the cooldown has
+                // already counted down from its own max.
+                var elapsedSincePing = ScannerPingCooldownSeconds - me.ScannerCooldownRemaining;
+                if (elapsedSincePing >= 0f && elapsedSincePing < ScannerPingPulseDurationSeconds)
+                {
+                    var pulseFraction = elapsedSincePing / ScannerPingPulseDurationSeconds;
+                    var pulseRadiusPixels = pulseFraction * ScannerRangeUnits * PixelsPerUnit * zoom;
+                    var pulseAlpha = 1f - pulseFraction;
+                    HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, pulseRadiusPixels,
+                        me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees, me.ScannerSweepDegrees + ScannerSweepHalfAngleDegrees,
+                        Color.LimeGreen * pulseAlpha, 16, 3f);
+                }
+
+                DrawScanButton(spriteBatch, panelOrigin, me.ScannerCooldownRemaining);
             }
-            Primitives.FillPolygon(spriteBatch, _pixel, shipCenter, fan, Color.LimeGreen * 0.12f);
-            HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, sweepRadiusPixels,
-                me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees, me.ScannerSweepDegrees + ScannerSweepHalfAngleDegrees,
-                Color.LimeGreen * 0.5f, 16, 2f);
         }
 
         // Everything actually close enough to matter without a scan (M47 follow-up - "в полной
@@ -206,6 +234,18 @@ public sealed partial class GalaxyMapPanel
 
         if (!pilotView)
             DrawFactionStandings(spriteBatch, snapshot.FactionStandings, panelOrigin + new Vector2(700, 0));
+    }
+
+    // The scanner's own trigger (M47 follow-up - "с перезарядкой... при нажатии на кнопку скан") -
+    // ready and clickable at 0 cooldown, otherwise shown as a plain countdown with no click to give.
+    private void DrawScanButton(SpriteBatch spriteBatch, Vector2 panelOrigin, float cooldownRemaining)
+    {
+        var rect = GetScanButtonRect(panelOrigin);
+        var ready = cooldownRemaining <= 0f;
+        spriteBatch.Draw(_pixel, rect, ready ? Color.SeaGreen : new Color(50, 50, 50));
+        var label = ready ? "[Клик] СКАН" : $"Скан: {cooldownRemaining:0.0}с";
+        spriteBatch.DrawString(_font, label, new Vector2(rect.X + 6, rect.Y + 7), ready ? Color.White : Color.Gray,
+            0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
     // Matches the old HelmPanel.RadarRangeUnits exactly (M47 - "как было раньше") - the pilot's

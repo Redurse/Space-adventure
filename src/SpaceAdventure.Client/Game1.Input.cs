@@ -717,6 +717,16 @@ public partial class Game1
             _shipSearchFocused = false;
         }
 
+        // The scanner's own "Скан" button (M47 follow-up) - console-operator only, same as the
+        // button's own drawing gate (GalaxyMapPanel.Draw's pilotView check never even shows it at
+        // the helm), and a no-op click while still on cooldown.
+        if (_openBlock.Kind == BlockKind.Navigation && me.ScannerCooldownRemaining <= 0f &&
+            GalaxyMapPanel.GetScanButtonRect(GalaxyMapPanelOrigin).Contains(_designMouse))
+        {
+            _pendingScannerPing = true;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
         if (_openBlock.Kind == BlockKind.Reactor)
         {
             for (var i = 0; i < snapshot.Reactor.RodCharges.Count; i++)

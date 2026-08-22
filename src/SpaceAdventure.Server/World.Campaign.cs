@@ -25,6 +25,11 @@ public sealed partial class World
     // this again.
     public void StartCampaign()
     {
+        // The ship arrives with its reactor already split five ways rather than with every slider at
+        // zero - twelve units each, which is the same figure World.CrewAi treats as a modest,
+        // sustainable allocation for a system.
+        PowerGrid.SplitEvenly();
+
         if (_campaignStage != CampaignStage.NotStarted)
             return;
 

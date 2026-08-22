@@ -75,4 +75,8 @@ public sealed record CharacterState(
     // Persistent NPC hulls (M43) THIS character's own sweep has actually found, each frozen at its
     // last-known position - private to this character, unlike the always-visible station/asteroid
     // markers (game_design.md/M44). Empty for a character who has never operated the scanner.
-    IReadOnlyList<ScannerContactState>? ScannerContacts = null);
+    IReadOnlyList<ScannerContactState>? ScannerContacts = null,
+    // Seconds left before this character's next scanner pulse can fire, 0 = ready (World.Scanner.cs,
+    // M47 follow-up). Shown as a countdown/disabled state on the "Скан" button regardless of
+    // whether this player is even at the console right now.
+    float ScannerCooldownRemaining = 0f);

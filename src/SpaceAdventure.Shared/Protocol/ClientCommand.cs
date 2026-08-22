@@ -196,4 +196,10 @@ public sealed record ClientCommand(
     // frame it's clicked - null means no such click this frame, same convention as DoorToggleId.
     // Same console-proximity gate as ScannerSweepDegrees above.
     float? PlaceScannerMarkerAtX = null,
-    float? PlaceScannerMarkerAtY = null);
+    float? PlaceScannerMarkerAtY = null,
+    // Fires a single sonar-style pulse along the current ScannerSweepDegrees bearing (M47 follow-up -
+    // "не постоянным сканером а с перезарядкой"): edge-triggered like DoorToggleId, only actually
+    // does anything server-side while at the console AND ScannerCooldownRemaining is 0
+    // (World.Scanner.cs). Aiming the dial itself stays free and continuous - only the detecting
+    // pulse costs the cooldown.
+    bool ScannerPingPressed = false);

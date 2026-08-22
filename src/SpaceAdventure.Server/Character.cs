@@ -40,6 +40,10 @@ public sealed class Character
     // the same "last commanded thrust stays" idea IsAtHelm's own doc comment already establishes
     // for HelmThrottle/HelmTurn.
     public float ScannerSweepDegrees { get; set; }
+    // Seconds left before the next ping can fire (World.Scanner.cs, M47 follow-up - "с
+    // перезарядкой... 15 секунд") - 0 means ready. Counts down regardless of where the character
+    // currently is, the same "just a personal timer" treatment SuitActionRemaining already gets.
+    public float ScannerCooldownRemaining { get; set; }
     public Inventory Inventory { get; } = new();
     public bool CarryingAmmoCrate => Inventory.Has(ItemType.AmmoCrate);
     public float Health { get; set; } = MaxHealth;

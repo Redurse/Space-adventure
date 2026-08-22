@@ -44,6 +44,10 @@ public sealed partial class World
     // than trying to unwind whatever was happening.
     public void ApplySave(SaveGame save)
     {
+        // Slider positions are not in the save, so a loaded run would otherwise come up dead. The
+        // even split is the same thing a new campaign gets, and it beats the zero it used to be.
+        PowerGrid.SplitEvenly();
+
         if (save.ShipKind != CurrentShipKind || save.ShipKind == ShipKind.Custom)
         {
             CurrentShipKind = save.ShipKind;

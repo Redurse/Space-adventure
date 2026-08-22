@@ -18,6 +18,15 @@ internal static partial class TestRunner
         MoveCharacterTo(world, playerId, console.X, console.Y);
     }
 
+    // How long ApplyCommand's own aim/undock/etc. plumbing takes to settle before firing the very
+    // first ping in a fresh test - keeps every test below out of each other's way rather than
+    // sharing a single "first ping ever" edge case.
+    private static void WaitOutScannerCooldown(World world)
+    {
+        for (var i = 0; i < 15 * 30 + 5; i++) // World.Scanner.cs's ScannerPingCooldownSeconds, +margin
+            world.Step(RealtimeStep);
+    }
+
     // Placed a fixed, known distance/bearing from a real ambient hull (World.NpcShips.cs) instead
     // of trusting wherever it happened to spawn - the cone/range math should be exercised the same
     // way every run, not left to whether this test's own setup happened to land within range.
@@ -45,15 +54,22 @@ internal static partial class TestRunner
         // side effect of just approaching, before this test ever sends its own aim.
         world.DebugPlaceShip(new Vec2(npc.X, npc.Y - 100f));
 
-        // Aimed 90 degrees off (the movement-command default bearing, dead west) must not find it.
-        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 0f));
+        // Aimed 90 degrees off (the movement-command default bearing, dead west) and fired must not
+        // find it - a pulse detects only what's actually inside the cone the instant it fires now
+        // (M47 follow-up - cooldown-gated ping, not a permanent sweep).
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 0f, ScannerPingPressed: true));
         world.Step(RealtimeStep);
         var missed = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
         if (missed is not null && missed.Any(c => c.Id == npc.Id))
-            return false; // found it while aimed well outside the sweep cone
+            return false; // found it while aimed well outside the pulse's own cone
 
-        // Swept onto its actual bearing (dead south, 90 degrees) must find it.
-        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f));
+        // Wait for that first pulse's own cooldown to clear, re-fix the bearing (the cargo hull
+        // kept moving along its route the whole time), then fire again onto its actual bearing
+        // (dead south, 90 degrees) - must find it.
+        WaitOutScannerCooldown(world);
+        var npcNow = world.CreateSnapshot().NpcShips.First(n => n.Id == npc.Id);
+        world.DebugPlaceShip(new Vec2(npcNow.X, npcNow.Y - 100f));
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f, ScannerPingPressed: true));
         world.Step(RealtimeStep);
         var found = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
         return found is not null && found.Any(c => c.Id == npc.Id);
@@ -61,7 +77,8 @@ internal static partial class TestRunner
 
     // A hull that wanders back out of the cone stays on the operator's own screen at wherever it
     // was last actually seen (game_design.md/M44 - "в последней известной точке"), not vanishing
-    // the instant the sweep moves past it again.
+    // the instant the sweep moves past it again - now doubly true, since nothing re-detects it at
+    // all without another deliberate (and cooling-down) button press.
     private static bool World_Scanner_ContactStaysAtLastKnownPositionAfterLeavingTheCone()
     {
         var world = new World();
@@ -77,15 +94,15 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
         world.DebugPlaceShip(new Vec2(npc.X, npc.Y - 100f)); // bearing 90, not the movement-default 0
 
-        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f));
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f, ScannerPingPressed: true));
         world.Step(RealtimeStep);
         var firstSeen = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts?
             .FirstOrDefault(c => c.Id == npc.Id);
         if (firstSeen is null)
             return false; // setup problem - didn't even find it the first time
 
-        // Swing well away and let a few seconds pass - a real hull might drift, but the contact
-        // record must not, since nothing has re-swept it since.
+        // Swing well away (no ping fired this time) and let a few seconds pass - a real hull might
+        // drift, but the contact record must not, since nothing has re-pinged since.
         world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 180f));
         for (var i = 0; i < 5 * 30; i++)
             world.Step(RealtimeStep);
@@ -96,7 +113,7 @@ internal static partial class TestRunner
     }
 
     // Far from the console entirely (still holding whatever sweep angle it last had), the operator
-    // stops finding anything new - a scanner needs someone physically standing at it.
+    // can't fire anything - a scanner needs someone physically standing at it.
     private static bool World_Scanner_DoesNothingAwayFromTheConsole()
     {
         var world = new World();
@@ -109,12 +126,54 @@ internal static partial class TestRunner
         world.DebugPlaceShip(new Vec2(npc.X - 100f, npc.Y));
 
         // Nowhere near the console (still at the ship's spawn point) - sending the exact right
-        // bearing must still find nothing.
-        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 0f));
+        // bearing AND pressing the ping must still find nothing.
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 0f, ScannerPingPressed: true));
         world.Step(RealtimeStep);
 
         var contacts = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
         return contacts is null || contacts.Count == 0;
+    }
+
+    // The whole point of the redesign (M47 follow-up - "не постоянным сканером а с перезарядкой"):
+    // a second press before the first pulse's own 15s has actually run out must not find anything
+    // new, even sitting right at the console aimed dead-on.
+    private static bool World_Scanner_PingDoesNothingWhileOnCooldown()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.Step(RealtimeStep);
+        MoveToNavigationConsole(world);
+
+        var npc1 = world.CreateSnapshot().NpcShips.First();
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        world.Step(RealtimeStep);
+        world.DebugPlaceShip(new Vec2(npc1.X, npc1.Y - 100f)); // bearing 90
+
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f, ScannerPingPressed: true));
+        world.Step(RealtimeStep);
+        var afterFirstPing = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (afterFirstPing.ScannerCooldownRemaining <= 0f)
+            return false; // the pulse fired but never actually started its own cooldown
+
+        // A second, different hull placed on the SAME bearing only after the first pulse already
+        // fired - a press right now must not find it, since the pulse hasn't recharged yet.
+        var npc2 = world.CreateSnapshot().NpcShips.First(n => n.Id != npc1.Id);
+        world.DebugPlaceShip(new Vec2(npc2.X, npc2.Y - 100f));
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f, ScannerPingPressed: true));
+        world.Step(RealtimeStep);
+        var stillOnCooldown = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
+        if (stillOnCooldown is not null && stillOnCooldown.Any(c => c.Id == npc2.Id))
+            return false; // fired again despite the cooldown still running
+
+        // Once it actually clears, the very same button (re-aimed onto the hull's own drift) works
+        // again.
+        WaitOutScannerCooldown(world);
+        var npc2Now = world.CreateSnapshot().NpcShips.First(n => n.Id == npc2.Id);
+        world.DebugPlaceShip(new Vec2(npc2Now.X, npc2Now.Y - 100f));
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f, ScannerPingPressed: true));
+        world.Step(RealtimeStep);
+        var afterCooldown = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
+        return afterCooldown is not null && afterCooldown.Any(c => c.Id == npc2.Id);
     }
 
     // A Scientist's own private find only reaches the shared map once they deliberately put it
