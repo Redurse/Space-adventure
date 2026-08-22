@@ -234,10 +234,12 @@ public static partial class HullSkin
             new Vector2(6f, 6f), SpriteEffects.None, 0f);
     }
 
-    // How long a room's own flank has to be, in world units, before it gets its own row of pods.
-    // Without this, a run of small rooms stepping diagonally (a staircase built in the ship editor
-    // to fake a slanted wall) gets a pod on every single step - a toothed row of little
-    // protrusions where the hull should just read as one wall.
+    // How big a room has to be, in world units on its *narrower* side, before it gets its own row
+    // of pods. Checking only the length along the pod-spacing axis still let a long, one-unit-wide
+    // corridor (a wire/pipe run threaded between two system blocks) through: it easily clears that
+    // one check while being far too thin to read as a flank, and got its own ladder of pods
+    // running down its whole length. Requiring the *other* axis too means a room only qualifies
+    // when it is a genuinely chunky compartment, not a corridor of any length.
     private const float MinGreebleFlankUnits = 2f;
 
     // Sensor pods and tanks bolted to whichever flank faces away from the middle of the ship. They
@@ -251,9 +253,9 @@ public static partial class HullSkin
         if (outward.LengthSquared() < 1f)
             return;
 
-        var horizontal = MathF.Abs(outward.X) > MathF.Abs(outward.Y);
-        if ((horizontal ? room.Height : room.Width) < MinGreebleFlankUnits)
+        if (MathF.Min(room.Width, room.Height) < MinGreebleFlankUnits)
             return;
+        var horizontal = MathF.Abs(outward.X) > MathF.Abs(outward.Y);
         var sign = horizontal ? MathF.Sign(outward.X) : MathF.Sign(outward.Y);
         var margin = (int)(MarginUnits * ShipRenderer.PixelsPerUnit);
 
