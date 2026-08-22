@@ -56,16 +56,13 @@ public static partial class HullSkin
 
         foreach (var room in rooms)
         {
-            var plate = PlatePolygon(room, origin);
+            var margins = ComputeMargins(room, rooms);
+            var plate = PlatePolygon(room, margins, origin);
             var center = RoomCenter(room, origin);
             Primitives.FillPolygon(spriteBatch, pixel, center, plate, Plate);
-            // Outside the thin margin band below - a full, uncropped block wherever this room's
-            // own edge actually faces open space, so the plate design reads as the single tile it
-            // is instead of the sliver the margin bezel alone can show.
-            DrawHullArmorSkirt(spriteBatch, hullPlates, room, rooms, origin);
-            DrawHullMarginBand(spriteBatch, pixel, hullPlates, RoomRect(room, origin), origin);
+            DrawHullPlating(spriteBatch, pixel, hullPlates, room, margins, origin);
             Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.6f, 2.5f);
-            DrawPlateShading(spriteBatch, pixel, room, origin);
+            DrawPlateShading(spriteBatch, pixel, room, margins, origin);
             DrawFlankGreebles(spriteBatch, pixel, room, hullCenter, origin);
             if (RoomHasDamagedDevice(room, devices, systemStates))
                 DrawHullDamage(spriteBatch, pixel, room, origin, totalSeconds);
@@ -181,11 +178,11 @@ public static partial class HullSkin
     // A lit edge along the top and left of every plate and a shadow along the bottom and right.
     // One flat tone over the whole hull reads as a cut-out; the same tone with a light on it reads
     // as armour with thickness.
-    private static void DrawPlateShading(SpriteBatch spriteBatch, Texture2D pixel, Room room, Vector2 origin)
+    private static void DrawPlateShading(SpriteBatch spriteBatch, Texture2D pixel, Room room, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
-        var margin = (int)(MarginUnits * ShipRenderer.PixelsPerUnit);
-        var plate = new Rectangle(rect.X - margin, rect.Y - margin, rect.Width + margin * 2, rect.Height + margin * 2);
+        var plate = new Rectangle((int)(rect.X - margins.Left), (int)(rect.Y - margins.Top),
+            (int)(rect.Width + margins.Left + margins.Right), (int)(rect.Height + margins.Top + margins.Bottom));
         var cut = (int)(CornerCutUnits * ShipRenderer.PixelsPerUnit);
 
         spriteBatch.Draw(pixel, new Rectangle(plate.X + cut, plate.Y + 2, plate.Width - cut * 2, 3), Color.White * 0.09f);
@@ -264,6 +261,32 @@ public static partial class HullSkin
         }
     }
 
+    // How far the plate reaches past the room on each of its four sides, and which of those sides
+    // are the wide, full-block treatment versus the thin flat bezel - computed once per room and
+    // threaded through PlatePolygon/DrawPlateShading/DrawHullPlating so all three agree on the same
+    // silhouette instead of three separate margin calculations quietly drifting apart.
+    private readonly record struct RoomMargins(float Top, float Bottom, float Left, float Right,
+        bool TopExterior, bool BottomExterior, bool LeftExterior, bool RightExterior);
+
+    // Wide replaces thin outright on a genuinely open edge - not "thin, then wide beyond it". The
+    // hull plate design is a single 64px block; showing it as one clean, uncropped block starting
+    // right at the room's own wall is the whole point, not a sliver with a second band floating
+    // past it. Interior (room-to-room) edges keep the old thin flat bezel untouched - texturing
+    // that ever mattered here, since the room on the other side paints its own floor over any of
+    // it that would show.
+    private static RoomMargins ComputeMargins(Room room, IReadOnlyList<Room> rooms)
+    {
+        var thin = MarginUnits * ShipRenderer.PixelsPerUnit;
+        float wide = TileTextures.HullTileSize;
+        var top = IsExteriorEdge(room, rooms, 0);
+        var bottom = IsExteriorEdge(room, rooms, 1);
+        var left = IsExteriorEdge(room, rooms, 2);
+        var right = IsExteriorEdge(room, rooms, 3);
+        return new RoomMargins(
+            top ? wide : thin, bottom ? wide : thin, left ? wide : thin, right ? wide : thin,
+            top, bottom, left, right);
+    }
+
     // Whether this edge of the room faces open space rather than another compartment - checked
     // against every other room for any overlapping run along the shared coordinate. Rooms in every
     // ship built so far touch edge-to-edge with no gap (see Ship.*.cs), so "shares this coordinate
@@ -294,83 +317,52 @@ public static partial class HullSkin
         return true;
     }
 
-    // A full, uncropped hull plate - not the sliver the margin bezel below can ever show - stacked
-    // just outside it on whichever of a room's four edges genuinely face open space. Extends into a
-    // shared corner whenever the adjoining edge is exterior too, so two open edges meet without a
-    // gap; stops flush at the room's own corner otherwise, so it never bleeds along a side that is
-    // actually a shared wall with a neighbour.
-    private static void DrawHullArmorSkirt(SpriteBatch spriteBatch, Texture2D[] hullPlates, Room room, IReadOnlyList<Room> rooms, Vector2 origin)
+    // The hull plate's own texture, drawn flush against the room on every exterior edge - no gap,
+    // no separate thin band first, this *is* the plate now. A full, uncropped block, extended into
+    // a shared corner whenever the adjoining edge is exterior too so two open edges meet without a
+    // gap. Interior edges get nothing at all here (the flat bezel from the base FillPolygon in
+    // Draw already covers them, unfaded, exactly as before this whole texture pass existed).
+    private static void DrawHullPlating(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, Room room, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
-        var margin = (int)(MarginUnits * ShipRenderer.PixelsPerUnit);
         var block = TileTextures.HullTileSize;
         var cellOrigin = new Point((int)origin.X, (int)origin.Y);
 
-        var top = IsExteriorEdge(room, rooms, 0);
-        var bottom = IsExteriorEdge(room, rooms, 1);
-        var left = IsExteriorEdge(room, rooms, 2);
-        var right = IsExteriorEdge(room, rooms, 3);
-
-        if (top || bottom)
+        if (margins.TopExterior || margins.BottomExterior)
         {
-            var x = rect.X - (left ? block : 0);
-            var width = rect.Width + (left ? block : 0) + (right ? block : 0);
-            if (top)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, rect.Y - margin - block, width, block), Color.White, cellOrigin);
-            if (bottom)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, rect.Bottom + margin, width, block), Color.White, cellOrigin);
+            var x = rect.X - (margins.LeftExterior ? block : 0);
+            var width = rect.Width + (margins.LeftExterior ? block : 0) + (margins.RightExterior ? block : 0);
+            if (margins.TopExterior)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, (int)(rect.Y - margins.Top), width, block), Color.White, cellOrigin);
+            if (margins.BottomExterior)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, rect.Bottom, width, block), Color.White, cellOrigin);
         }
-        if (left || right)
+        if (margins.LeftExterior || margins.RightExterior)
         {
-            var y = rect.Y - (top ? block : 0);
-            var height = rect.Height + (top ? block : 0) + (bottom ? block : 0);
-            if (left)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(rect.X - margin - block, y, block, height), Color.White, cellOrigin);
-            if (right)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(rect.Right + margin, y, block, height), Color.White, cellOrigin);
+            var y = rect.Y - (margins.TopExterior ? block : 0);
+            var height = rect.Height + (margins.TopExterior ? block : 0) + (margins.BottomExterior ? block : 0);
+            if (margins.LeftExterior)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle((int)(rect.X - margins.Left), y, block, height), Color.White, cellOrigin);
+            if (margins.RightExterior)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(rect.Right, y, block, height), Color.White, cellOrigin);
         }
-    }
 
-    // The one part of the hull's own plating a player normally sees while walking the decks - the
-    // room's own floor is drawn over the exact rect the old version tiled this texture across
-    // (RoomRect), hiding it completely. Four edge strips instead, each positioned so the tile's own
-    // edge - where TileTextures.HullColor's frame zone and the border-only rivets/joints live -
-    // lands exactly on the visible band regardless of which of the four sides it is.
-    private static void DrawHullMarginBand(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, Rectangle roomRect, Vector2 origin)
-    {
-        var margin = (int)(MarginUnits * ShipRenderer.PixelsPerUnit);
-        var size = TileTextures.HullTileSize;
-        // Tied to the ship's own origin, not the room's - HullPlateVariants picks a variant/tone
-        // from the cell's position in ship space, and it has to stay put as the camera moves.
-        var cellOrigin = new Point((int)origin.X, (int)origin.Y);
-
-        var outerLeft = roomRect.X - margin;
-        var outerTop = roomRect.Y - margin;
-        var outerWidth = roomRect.Width + margin * 2;
-        var outerHeight = roomRect.Height + margin * 2;
-
-        // Top and left: a plain strip already samples the tile's own row/column 0 first, which is
-        // exactly where the frame zone lives - no extra phase trick needed.
-        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
-            new Rectangle(outerLeft, outerTop, outerWidth, margin), Color.White, cellOrigin);
-        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
-            new Rectangle(outerLeft, outerTop, margin, outerHeight), Color.White, cellOrigin);
-
-        // Bottom and right: sized as one full, unclipped tile so the *last* row/column (the
-        // mirrored frame zone on that side) lands on the visible band instead of row/column 0.
-        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
-            new Rectangle(outerLeft, roomRect.Bottom + margin - size, outerWidth, size), Color.White, cellOrigin);
-        TileTextures.DrawTiled(spriteBatch, hullPlates, size,
-            new Rectangle(roomRect.Right + margin - size, outerTop, size, outerHeight), Color.White, cellOrigin);
-
-        // The four strips above are plain rectangles and paint straight into the plate's own cut
-        // corners; mask those back out with the same flat fill PlatePolygon's silhouette already
-        // uses, reproducing the corner cut this used to get for free from simply never drawing there.
-        var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(outerWidth, outerHeight) / 3f);
-        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop), cut, mirrorX: false, mirrorY: false);
-        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop), cut, mirrorX: true, mirrorY: false);
-        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop + outerHeight), cut, mirrorX: false, mirrorY: true);
-        MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop + outerHeight), cut, mirrorX: true, mirrorY: true);
+        // The bands above are plain rectangles and paint straight into the plate's own cut corners
+        // on any exterior side; mask those back out with the same flat fill PlatePolygon's own
+        // silhouette uses, reproducing the corner cut this would otherwise get for free from simply
+        // never drawing there.
+        if (margins.TopExterior || margins.BottomExterior || margins.LeftExterior || margins.RightExterior)
+        {
+            var outerLeft = rect.X - margins.Left;
+            var outerTop = rect.Y - margins.Top;
+            var outerWidth = rect.Width + margins.Left + margins.Right;
+            var outerHeight = rect.Height + margins.Top + margins.Bottom;
+            var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(outerWidth, outerHeight) / 3f);
+            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop), cut, mirrorX: false, mirrorY: false);
+            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop), cut, mirrorX: true, mirrorY: false);
+            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop + outerHeight), cut, mirrorX: false, mirrorY: true);
+            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop + outerHeight), cut, mirrorX: true, mirrorY: true);
+        }
     }
 
     // One diagonal cut corner filled back in with the flat plate colour - `corner` is the plate's
@@ -384,14 +376,13 @@ public static partial class HullSkin
     }
 
     // Rectangle with its corners taken off - eight points, filled as a fan from the middle.
-    private static Vector2[] PlatePolygon(Room room, Vector2 origin)
+    private static Vector2[] PlatePolygon(Room room, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
-        var margin = MarginUnits * ShipRenderer.PixelsPerUnit;
-        var left = rect.X - margin;
-        var right = rect.Right + margin;
-        var top = rect.Y - margin;
-        var bottom = rect.Bottom + margin;
+        var left = rect.X - margins.Left;
+        var right = rect.Right + margins.Right;
+        var top = rect.Y - margins.Top;
+        var bottom = rect.Bottom + margins.Bottom;
         var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(right - left, bottom - top) / 3f);
 
         return new[]
