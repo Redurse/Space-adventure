@@ -30,7 +30,7 @@ public static class TileTextures
 
     public static Texture2D CreateWallPlate(GraphicsDevice device) => Build(device, WallTileSize, WallPixel);
 
-    public static Texture2D CreateHullPlate(GraphicsDevice device) => Build(device, HullTileSize, HullPixel);
+    public static Texture2D CreateHullPlate(GraphicsDevice device) => BuildColor(device, HullTileSize, (x, y) => HullColor(x, y, null));
 
     /// <summary>The hull's plates - several of them, because one repeated across a whole ship is what
     /// made the armour read as a texture instead of as plating. See HullPlateVariants.</summary>
@@ -40,8 +40,7 @@ public static class TileTextures
         for (var v = 0; v < plates.Length; v++)
         {
             var variant = v;
-            plates[v] = Build(device, HullTileSize,
-                (x, y) => HullPixel(x, y) + HullPlateVariants.Extra(x, y, HullTileSize, variant));
+            plates[v] = BuildColor(device, HullTileSize, (x, y) => HullColor(x, y, variant));
         }
         return plates;
     }
@@ -188,6 +187,20 @@ public static class TileTextures
         return texture;
     }
 
+    // Same idea as Build, but for the hull plate: a real gunmetal colour baked into the texture
+    // itself instead of a grayscale height field meant to be multiplied by an external tint. No
+    // clamp-to-grey here - HullColor already returns a finished colour.
+    private static Texture2D BuildColor(GraphicsDevice device, int size, Func<int, int, Color> colorAt)
+    {
+        var texture = new Texture2D(device, size, size);
+        var data = new Color[size * size];
+        for (var y = 0; y < size; y++)
+            for (var x = 0; x < size; x++)
+                data[y * size + x] = colorAt(x, y);
+        texture.SetData(data);
+        return texture;
+    }
+
     // Cheap deterministic value noise, no seed state: the same tile comes out the same way every
     // run, so two rooms drawing "the same" texture never shimmer relative to each other or between
     // frames.
@@ -316,76 +329,168 @@ public static class TileTextures
         return 0.95f + tooth + grain;
     }
 
-    // A raised armour panel, not a flat plate - built as several independent layers stacked on top
-    // of each other (base grain, a riveted seam splitting the tile into two half-plates, soft wear
-    // patches, fine scratches, and grime streaks) rather than one texture doing everything at once.
-    // Each layer stays cheap and single-purpose on its own; it's the stack of them together that
-    // reads as "this hull has actually been out flying", not a flat colour cutout.
-    private static float HullPixel(int x, int y)
+    // The armour plate as three physically stacked slabs rather than one flat sheet with fasteners
+    // scattered across it - closer to Barotrauma's hull, where a segment reads as a few big, clearly
+    // stepped panels bolted together. An outer mounting flange, the main plate, and an inset
+    // inspection core, each its own tone, each boundary a real lit/shadow ledge rather than a line -
+    // plus a real gunmetal colour baked into the tile itself instead of a grayscale height field
+    // that only reads as metal once multiplied by an external tint.
+    private const int HullFrameWidth = 6;
+    private const int HullCoreLeft = 17, HullCoreTop = 17;
+    private const int HullCoreRight = HullTileSize - 18, HullCoreBottom = HullTileSize - 18;
+    private const int HullSeamX = HullTileSize / 2;
+
+    private static readonly Color HullFrameColor = new(40, 46, 53);
+    private static readonly Color HullPlateColor = new(64, 71, 80);
+    private static readonly Color HullCoreColor = new(78, 87, 97);
+    private static readonly Color HullHighlight = new(170, 178, 186);
+    private static readonly Color HullShadow = new(22, 26, 31);
+
+    // Which of the three slabs a pixel falls in, that slab's own tone, and the lit/shadow ledges at
+    // whichever boundaries it sits on - the frame's outer and inner edges, or the plate's two steps
+    // down to the flange and up to the core.
+    private static void HullZone(int x, int y, out Color baseTone, out float layerShade, out bool inPlateZone)
     {
-        var value = 0.94f;
-        value += HullBaseGrain(x, y);
-        value += HullBevel(x, y);
-        value += HullPanelSeam(x, y);
-        value += HullScratches(x, y);
-        value += HullGrimeStreaks(x, y);
-        return value + Rivets(x, y, HullTileSize);
+        var inFrame = x < HullFrameWidth || y < HullFrameWidth || x >= HullTileSize - HullFrameWidth || y >= HullTileSize - HullFrameWidth;
+        var inCore = x >= HullCoreLeft && x <= HullCoreRight && y >= HullCoreTop && y <= HullCoreBottom;
+        inPlateZone = !inFrame && !inCore;
+        layerShade = 0f;
+
+        if (inFrame)
+        {
+            baseTone = HullFrameColor;
+            if (x == 0 || y == 0 || x == HullTileSize - 1 || y == HullTileSize - 1) layerShade += 0.11f;
+            if (x == HullFrameWidth - 1 || y == HullFrameWidth - 1 || x == HullTileSize - HullFrameWidth || y == HullTileSize - HullFrameWidth)
+                layerShade -= 0.13f;
+        }
+        else if (inCore)
+        {
+            baseTone = HullCoreColor;
+            if (x == HullCoreLeft || y == HullCoreTop) layerShade += 0.10f;
+            if (x == HullCoreRight || y == HullCoreBottom) layerShade -= 0.11f;
+        }
+        else
+        {
+            baseTone = HullPlateColor;
+            if (x == HullFrameWidth || y == HullFrameWidth) layerShade += 0.10f;
+            if (x == HullTileSize - HullFrameWidth - 1 || y == HullTileSize - HullFrameWidth - 1) layerShade -= 0.07f;
+            if (x == HullCoreLeft - 1 || y == HullCoreTop - 1) layerShade += 0.07f;
+            if (x == HullCoreRight + 1 || y == HullCoreBottom + 1) layerShade -= 0.09f;
+            layerShade += HullWeldBead(x, y);
+        }
     }
 
-    // Layer 1: fine mottling underneath everything else - the metal's own grain, before any wear or
-    // damage is layered on top of it.
-    private static float HullBaseGrain(int x, int y) => (Fbm(x, y, HullTileSize, 2, 10) - 0.5f) * 0.035f;
-
-    // Layer 2: bright top/left, dark bottom/right - the same lit-edge convention ShipRenderer's own
-    // DrawPanel uses, so the tile itself reads as one raised plate bolted onto the hull underneath.
-    private static float HullBevel(int x, int y)
+    // The seam through the main plate as an actual weld bead - per-row irregular speckle along a
+    // 3px band, so it reads as overlapping weld-pool ripples instead of a ruled line. Only runs
+    // through the mid plate; it stops at the flange and the core rather than cutting through either.
+    private static float HullWeldBead(int x, int y)
     {
-        const int bevel = 4;
-        var value = 0f;
-        if (x < bevel || y < bevel) value += 0.05f;
-        if (x >= HullTileSize - bevel || y >= HullTileSize - bevel) value -= 0.07f;
+        var offset = x - HullSeamX;
+        if (offset < -1 || offset > 2)
+            return 0f;
+        var bright = Hash(y, HullSeamX, 77) > 0.55f;
+        return offset switch
+        {
+            -1 => -0.03f,
+            0 => bright ? 0.05f : -0.06f,
+            1 => bright ? 0.07f : -0.02f,
+            _ => 0.02f,
+        };
+    }
+
+    // A small handful of rivets - four holding the inspection core down, two on the seam, four more
+    // set into the flange's own corners - instead of a fastener at every few pixels.
+    private static float HullFrameCornerRivets(int x, int y)
+    {
+        var inset = HullFrameWidth / 2 + 1;
+        return Rivet(x, y, inset, inset) + Rivet(x, y, HullTileSize - 1 - inset, inset)
+             + Rivet(x, y, inset, HullTileSize - 1 - inset) + Rivet(x, y, HullTileSize - 1 - inset, HullTileSize - 1 - inset);
+    }
+
+    private static float HullCoreAndSeamRivets(int x, int y, bool inPlateZone)
+    {
+        var value = Rivet(x, y, HullCoreLeft + 2, HullCoreTop + 2) + Rivet(x, y, HullCoreRight - 2, HullCoreTop + 2)
+                  + Rivet(x, y, HullCoreLeft + 2, HullCoreBottom - 2) + Rivet(x, y, HullCoreRight - 2, HullCoreBottom - 2);
+        if (inPlateZone)
+        {
+            value += Rivet(x, y, HullSeamX, HullFrameWidth + 4);
+            value += Rivet(x, y, HullSeamX, HullTileSize - HullFrameWidth - 5);
+        }
         return value;
     }
 
-    // Layer 3: a second, riveted seam splitting the plate itself in two - one full-size armour
-    // panel this size would be a single implausibly large casting; two smaller ones bolted together
-    // reads as real fabricated plating instead. Vertical rather than diagonal so it never gets
-    // confused for the floor's own tread ridge (FloorPixel) at a glance.
-    private static float HullPanelSeam(int x, int y)
+    // Sparse round dimples, distinct from the elongated scratches below - a dent has a dark cup and
+    // a small bright rim catching the light on the side the blow came from, not a scraped streak.
+    private static float HullMicroDents(int x, int y)
     {
-        const int seamX = HullTileSize / 2;
-        var value = 0f;
-        if (x == seamX) value -= 0.04f;        // the seam's own shadowed crack
-        else if (x == seamX + 1) value += 0.025f; // the lit lip catching light just past it
+        const int cell = 9;
+        var cx = (x / cell) * cell + 4;
+        var cy = (y / cell) * cell + 4;
+        if (Hash(x / cell, y / cell, 63) < 0.9f)
+            return 0f;
 
-        // Two small rivets down the seam, a quarter and three-quarters of the way along - the
-        // fasteners actually holding the two half-plates together.
-        value += Rivet(x, y, seamX, HullTileSize / 4);
-        value += Rivet(x, y, seamX, HullTileSize * 3 / 4);
-        return value;
+        float dx = x - cx, dy = y - cy;
+        var distance = MathF.Sqrt(dx * dx + dy * dy);
+        if (distance > 2.2f)
+            return 0f;
+        var rim = MathHelper.Clamp((-dx - dy) / 3f, 0f, 0.1f);
+        return distance > 1.3f ? rim : -0.09f;
     }
 
-
-    // Layer 5: sparse, elongated flecks rather than a continuous field - a real scratch is a rare,
-    // short event, not something covering the whole plate. Anisotropic noise (many cells across,
-    // few down) makes each fleck read as a short horizontal scuff instead of a round dot; a bright
-    // and a dark threshold on the same field gives both "metal scraped shiny" and "grit dragged
-    // through the paint" without needing two separate noise samples.
-    private static float HullScratches(int x, int y)
+    // Two independent scratch fields rather than one - real wear is not a single noise sample. Kept
+    // separate from HullShadeSum below because scratches blend straight toward the highlight/shadow
+    // colour rather than nudging the same additive height field the layering and rivets share.
+    private static float HullScratch(int x, int y)
     {
-        var scratch = Noise(x * 11f / HullTileSize, y * 3f / HullTileSize, 11, seed: 41);
-        if (scratch > 0.96f) return -0.05f;
-        if (scratch < 0.02f) return 0.03f;
-        return 0f;
+        var scratchA = Noise(x * 11f / HullTileSize, y * 3f / HullTileSize, 11, seed: 41);
+        var scratch = 0f;
+        if (scratchA > 0.96f) scratch = -0.042f;
+        else if (scratchA < 0.02f) scratch = 0.035f;
+
+        var scratchB = Noise(x * 19f / HullTileSize, y * 5f / HullTileSize, 19, seed: 97);
+        if (scratchB > 0.972f) scratch += 0.045f;
+        else if (scratchB < 0.02f) scratch -= 0.02f;
+        return scratch;
     }
 
-    // Layer 6: grime that has run and settled, strongest low on the plate and fading out near the
-    // top - the same "dirt drips down, it does not float up" logic real weathering follows. Only
-    // ever darkens (MathF.Max(0f, ...) below) - grime is a stain, never a bright fleck.
-    private static float HullGrimeStreaks(int x, int y)
+    // The combined structural height field - layering, grain, rivets, dents - shared between the
+    // hull's visible colour (HullColor) and its normal map (CreateHullNormals), the same way
+    // FloorPixel/WallPixel double as both for their own tiles.
+    private static float HullShadeSum(int x, int y, out Color baseTone)
     {
-        var streak = Noise(x * 5f / HullTileSize, y * 0.6f / HullTileSize, 5, seed: 53) - 0.5f;
-        var lowOnThePlate = MathHelper.Clamp((y - HullTileSize * 0.15f) / (HullTileSize * 0.5f), 0f, 1f);
-        return -MathF.Max(0f, streak) * 0.04f * lowOnThePlate;
+        HullZone(x, y, out baseTone, out var layerShade, out var inPlateZone);
+
+        var grain = (Fbm(x, y, HullTileSize, 4, 10) - 0.5f) * 0.05f;
+        grain += (Noise(x * 16f / HullTileSize, y * 1f / HullTileSize, 16, seed: 5) - 0.5f) * 0.022f;
+        grain += HullMicroDents(x, y);
+
+        var rivets = HullCoreAndSeamRivets(x, y, inPlateZone) + HullFrameCornerRivets(x, y);
+        return grain + layerShade + rivets;
+    }
+
+    // Brightness-only reduction of the same recipe HullColor paints with - CreateHullNormals takes
+    // central differences of this to build the hull's normal map, same as FloorPixel/WallPixel.
+    private static float HullPixel(int x, int y) => 0.94f + HullShadeSum(x, y, out _) + HullScratch(x, y) * 0.4f;
+
+    // The hull plate's actual colour: the shade field above turned into a lit/shadow blend around
+    // whichever slab's own tone the pixel falls in, then the scratches painted straight on top.
+    // `variant` folds in HullPlateVariants' per-plate stencil/patch marks (see CreateHullPlates);
+    // null for the single un-varied plate CreateHullPlate hands out to callers that don't tile a set.
+    private static Color HullColor(int x, int y, int? variant)
+    {
+        var shadeSum = HullShadeSum(x, y, out var baseTone);
+        if (variant is { } v)
+            shadeSum += HullPlateVariants.Extra(x, y, HullTileSize, v) * 0.5f;
+
+        var t = MathHelper.Clamp(0.5f + shadeSum * 2.2f, 0f, 1f);
+        var color = t > 0.5f
+            ? Color.Lerp(baseTone, HullHighlight, (t - 0.5f) * 2f)
+            : Color.Lerp(HullShadow, baseTone, t * 2f);
+
+        var scratch = HullScratch(x, y);
+        if (scratch != 0f)
+            color = Color.Lerp(color, scratch > 0 ? HullHighlight : HullShadow, MathF.Abs(scratch) * 6f);
+
+        return color;
     }
 }

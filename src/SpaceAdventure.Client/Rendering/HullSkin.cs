@@ -27,8 +27,12 @@ public static partial class HullSkin
     private const float NoseLengthUnits = 2.3f;
     private const int NoseSegments = 14;
 
-    private static readonly Color Plate = new(46, 54, 66);
-    private static readonly Color PlateLit = new(70, 80, 95);
+    // Matched to TileTextures' own HullPlateColor/HullCoreColor - the tiled texture now carries its
+    // real gunmetal colour itself (see DrawTiled's Color.White tint below), so the flat fills here
+    // (nose, stern brace, flank pods) have to use the same tones by hand instead of relying on a
+    // shared tint to make them agree.
+    private static readonly Color Plate = new(64, 71, 80);
+    private static readonly Color PlateLit = new(92, 100, 112);
     private static readonly Color Edge = new(120, 133, 152);
     private static readonly Color Seam = new(30, 36, 45);
 
@@ -59,7 +63,11 @@ public static partial class HullSkin
             // margin-expanded plate has, so tiling square across it never spills past the plate's
             // own silhouette - the untextured sliver around it reads as a raised panel frame, the
             // same bevelled-border look ShipRenderer's own DrawPanel uses everywhere else.
-            TileTextures.DrawTiled(spriteBatch, hullPlates, TileTextures.HullTileSize, RoomRect(room, origin), Plate,
+            //
+            // White rather than Plate: the tile itself now bakes in a real gunmetal colour (see
+            // TileTextures.HullColor) instead of a grayscale height field meant to be multiplied by
+            // an external tint, so tinting by Plate here a second time would just darken it further.
+            TileTextures.DrawTiled(spriteBatch, hullPlates, TileTextures.HullTileSize, RoomRect(room, origin), Color.White,
                 new Point((int)origin.X, (int)origin.Y));
             Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.6f, 2.5f);
             DrawPlateShading(spriteBatch, pixel, room, origin);

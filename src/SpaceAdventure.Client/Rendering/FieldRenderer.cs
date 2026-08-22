@@ -26,6 +26,16 @@ public sealed class FieldRenderer
     // ids come back every time a field is entered, so this is built once and never again.
     private readonly Dictionary<string, AsteroidTexture.Skin> _asteroidSkins = new();
     private bool _bakedAsteroidThisFrame;
+    // The engine glow's own displayed intensity, separate from the ship's actual instantaneous
+    // thrust - snaps up the moment real thrust appears, but decays on its own once it drops back
+    // to zero instead of cutting out the same instant the throttle is released, so easing off the
+    // stick reads as the engines spooling down rather than a light switching off. Derived from
+    // consecutive totalSeconds values (this method's only time input) rather than a real delta -
+    // harmless if Draw is called more than once for the same frame (ExternalCameraPanel's own
+    // quadrants share this same instance), since a repeated totalSeconds simply yields zero decay.
+    private float _displayedEngineThrust;
+    private float _lastEngineTotalSeconds = -1f;
+    private const float EngineThrustFadePerSecond = 0.6f; // ~1.7s to fade fully from a dead stop
 
     public FieldRenderer(GraphicsDevice graphicsDevice, SpriteFont font)
     {
@@ -202,9 +212,17 @@ public sealed class FieldRenderer
         // Only burning where the ship can actually fly: a joystick pushed at a docked ship commands
         // nothing, and lit engines against a station berth would be a lie the display tells.
         var underWay = snapshot.Voyage.DockedPointId is null;
-        var thrust = underWay
+        var rawThrust = underWay
             ? Math.Clamp(new Vector2(snapshot.ShipField.ThrustX, snapshot.ShipField.ThrustY).Length(), 0f, 1f)
             : 0f;
+
+        // Snaps up to the real value the instant thrust appears, but only ever decays toward it
+        // over time rather than cutting to it - easing off the throttle reads as the engines
+        // spooling down, not a light switching off.
+        var deltaSeconds = _lastEngineTotalSeconds < 0f ? 0f : Math.Max(0f, totalSeconds - _lastEngineTotalSeconds);
+        _lastEngineTotalSeconds = totalSeconds;
+        _displayedEngineThrust = MathF.Max(rawThrust, _displayedEngineThrust - EngineThrustFadePerSecond * deltaSeconds);
+        var thrust = _displayedEngineThrust;
         var halfExtents = ShipLocalFrame.GetHullHalfExtents(snapshot.Rooms);
 
         foreach (var device in snapshot.SystemDevices)
@@ -250,7 +268,10 @@ public sealed class FieldRenderer
         var idlePulse = 0.85f + 0.15f * MathF.Sin(totalSeconds * 2.4f + deviceId.Length * 0.9f);
         var mouth = baseScreen + outward * (housingLength * 0.75f);
         var idleLength = 9f * idlePulse * sizeScale;
-        var burnLength = thrust > 0.05f ? (14f + thrust * 46f) * flicker * sizeScale : 0f;
+        // Long enough at full burn to read as a real drive flame, not a hot spark at the tail -
+        // the pilot flying by this exact glow (now also drawn while at the helm, not just when
+        // walking the ship's own corridors) is the one who most needs it to be unmistakable.
+        var burnLength = thrust > 0.05f ? (18f + thrust * 90f) * flicker * sizeScale : 0f;
         var flameLength = MathF.Max(idleLength, burnLength);
         var flameWidth = housingWidth * (thrust > 0.05f ? 0.7f : 0.5f);
         var burn = Math.Clamp(thrust * 3f, 0f, 1f);
@@ -270,8 +291,8 @@ public sealed class FieldRenderer
         // every frame from how far totalSeconds has carried each one along a repeating cycle.
         if (burn > 0.15f)
         {
-            const int trailCount = 5;
-            const float trailRange = 50f;
+            const int trailCount = 6;
+            const float trailRange = 90f;
             for (var i = 0; i < trailCount; i++)
             {
                 var cycle = (totalSeconds * 46f + i * (trailRange / trailCount) + deviceId.Length * 3f) % trailRange / trailRange;

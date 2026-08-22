@@ -810,8 +810,8 @@ public sealed class ShipRenderer
         DrawHood(spriteBatch, rect);
         DrawScreen(spriteBatch, rect, new Color(70, 200, 210), powered);
         var navigationLabelPos = new Vector2(rect.X + 1, rect.Y + 7);
-        DrawLabelBacking(spriteBatch, "Карта", navigationLabelPos, 0.5f);
-        spriteBatch.DrawString(_font, "Карта", navigationLabelPos, Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        DrawLabelBacking(spriteBatch, "Сканер", navigationLabelPos, 0.5f);
+        spriteBatch.DrawString(_font, "Сканер", navigationLabelPos, Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
 

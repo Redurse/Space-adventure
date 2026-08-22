@@ -30,7 +30,8 @@ internal static partial class TestRunner
             return false;
 
         MoveCharacterTo(world, 1, 3f, 3f);
-        MoveCharacterTo(world, 1, 3f, 4f); // helm console
+        var helmConsole = world.Ship.HelmConsole.Position;
+        MoveCharacterTo(world, 1, helmConsole.X, helmConsole.Y); // helm console
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
         world.Step(RealtimeStep);

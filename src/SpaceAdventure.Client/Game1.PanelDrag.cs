@@ -121,4 +121,38 @@ public partial class Game1
             MathHelper.Clamp(wanted.Y, minY, maxY));
         return true;
     }
+
+    // Window 2 of the helm redesign (M47 follow-up - "в виде мини виджета который можно двигать"):
+    // its own small drag, separate from the _openBlock-keyed system above since this widget is
+    // visible whenever the player is at the helm rather than tied to opening a console. Same
+    // "only the title bar picks it up" reasoning as the housing-edge grab band above.
+    private bool UpdateHelmWidgetDrag(MouseState mouse)
+    {
+        var pressed = mouse.LeftButton == ButtonState.Pressed;
+        var justPressed = pressed && _prevHelmWidgetDragButton == ButtonState.Released;
+        _prevHelmWidgetDragButton = mouse.LeftButton;
+
+        if (!pressed)
+        {
+            _draggingHelmWidget = false;
+            return false;
+        }
+
+        if (justPressed && !_draggingHelmWidget)
+        {
+            if (!HelmButtonsWidget.GetTitleBarRect(_helmWidgetPosition).Contains(_designMouse))
+                return false;
+            _draggingHelmWidget = true;
+            _helmWidgetDragGrab = new Vector2(_designMouse.X, _designMouse.Y) - _helmWidgetPosition;
+        }
+
+        if (!_draggingHelmWidget)
+            return false;
+
+        var wanted = new Vector2(_designMouse.X, _designMouse.Y) - _helmWidgetDragGrab;
+        _helmWidgetPosition = new Vector2(
+            MathHelper.Clamp(wanted.X, 0, DesignWidth - HelmButtonsWidget.Size.X),
+            MathHelper.Clamp(wanted.Y, 0, DesignHeight - HelmButtonsWidget.Size.Y));
+        return true;
+    }
 }

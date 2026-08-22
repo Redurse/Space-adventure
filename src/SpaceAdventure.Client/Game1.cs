@@ -90,7 +90,10 @@ public partial class Game1 : Game
         RoleBoxOrigin.Y - PlayerHealthPanel.BarHeight - 6f);
     private static readonly Vector2 GalaxyMapPanelOrigin = new(60, 64);
     private static readonly Vector2 StationPanelOrigin = new(60, 64);
-    private static readonly Vector2 HelmPanelOrigin = new(120, 100);
+    // Window 3 of the helm redesign (M47 follow-up) - a fixed HUD corner, unlike window 2's own
+    // draggable widget, since nothing about it ever needs to get out of the way of the schematic
+    // underneath (it already floats above window 1, not over any of its own controls).
+    private static readonly Vector2 ShipSchematicPanelOrigin = new(DesignWidth - ShipSchematicPanel.Width - 12, 12);
     private static readonly Vector2 InfoPanelOrigin = new(60, 64);
     private static readonly Vector2 ShipEditorPanelOrigin = new(60, 64);
     // Centered like PauseMenuPanel below - a 2-player minigame taking over the middle of the
@@ -110,9 +113,6 @@ public partial class Game1 : Game
     // y=34, not the corner itself - DebugOverlay's "Tick: N" text already lives at (10,10).
     private static readonly Vector2 TopBarOrigin = new(10, 34);
     private static readonly Vector2 CrewPanelOrigin = new(10, 88);
-    // To the right of the radar, which is why it's expressed relative to the helm's own origin -
-    // the two are one console and should move together.
-    private static readonly Vector2 ShipStatusPanelOffset = new(560, 20);
     // Sight reach in world units. The suit helmet's lamp is a forward cone - wide and long enough to
     // actually work by (mining, lining up an airlock) rather than a keyhole - plus a small all-round
     // pool of spill light, so whatever is right beside you isn't invisible. Unsuited, the
@@ -158,8 +158,28 @@ public partial class Game1 : Game
     private GalacticMapPanel _galacticMapPanel = null!;
     private StationPanel _stationPanel = null!;
     private CardGamePanel _cardGamePanel = null!;
-    private HelmPanel _helmPanel = null!;
-    private ShipStatusPanel _shipStatusPanel = null!;
+    // Windows 2 and 3 of the helm redesign (M47 follow-up) - replace the old fixed HelmPanel/
+    // ShipStatusPanel pair. Window 1 itself is _galaxyMapPanel, reused as-is (see the myIsAtHelm
+    // draw branch below) since its own schematic/fog-of-war rendering already was what was asked
+    // for, just not yet shown anywhere but the nav console.
+    private HelmButtonsWidget _helmButtonsWidget = null!;
+    private ShipSchematicPanel _shipSchematicPanel = null!;
+    // Window 2's own dragged position (Game1.PanelDrag.cs's UpdateHelmWidgetDrag) - not keyed
+    // through _panelPositions like the block-console panels, since this widget is visible whenever
+    // the player is at the helm rather than tied to _openBlock.
+    // Default position clears the permanent bottom HUD band (inventory hotbar/equip row/role box/
+    // health bar, Game1.cs's own HudBottom) - a helm diagnostic screenshot (M47 follow-up) caught
+    // the original bottom-right default sitting right on top of it.
+    private Vector2 _helmWidgetPosition = new(DesignWidth - HelmButtonsWidget.Size.X - 12, DesignHeight - HelmButtonsWidget.Size.Y - 70);
+    private bool _draggingHelmWidget;
+    private Vector2 _helmWidgetDragGrab;
+    private ButtonState _prevHelmWidgetDragButton = ButtonState.Released;
+    // Window 3's own state: which instrument overlay is showing, and the item-search box's typed
+    // text plus whether it currently has keyboard focus (Window.TextInput only reaches it while
+    // focused, so W/A/D/S/X/Z keep flying the ship the rest of the time).
+    private ShipSchematicCategory _shipSchematicCategory = ShipSchematicCategory.Hull;
+    private string _shipSearchQuery = "";
+    private bool _shipSearchFocused;
     private FieldRenderer _fieldRenderer = null!;
     private ExternalCameraPanel _externalCameraPanel = null!;
     private StationRenderer _stationRenderer = null!;
@@ -241,6 +261,7 @@ public partial class Game1 : Game
     private ShipKind? _pendingShipPurchase;
     private QuestKind? _pendingQuestKind; // same pattern, for the Administrator's job board
     private bool _pendingDock; // and for the helm's "Стыковка" button
+    private bool _pendingToggleControlMode; // window 2's own РСУ/ВИРАЖ button, same edge as the Z key
     private string? _pendingHireCandidateId; // and for the Recruiter's board
     private PinRef? _pendingPinInteract; // wire-laying (World.Wiring.cs), M19-M23
     private Vec2? _pendingWireBendAt; // LMB click mid-lay that missed every pin - fixes a bend there instead
@@ -251,7 +272,10 @@ public partial class Game1 : Game
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
     private string? _pendingWarpToSystemId; // clicked a system on GalaxyMapPanel's own list (World.StarSystems.cs)
     private CrewRole? _pendingSetOwnRoleTo; // clicked a role icon on the crew panel's own row
-    private bool _pendingClearOwnRole; // clicked the same icon a second time, or the "none" option
+    // Always false since the crew panel stopped being a role picker - the role is chosen once when a
+    // campaign starts and never cleared. The plumbing below it is left connected rather than torn out:
+    // it reaches into the client command shape, and the cost of that edit is not worth saving a bool.
+    private bool _pendingClearOwnRole;
     private PlayingCard? _pendingPlayCard; // clicked a card in CardGamePanel - own hand or a defend/перевод play
     private bool _pendingCardGameTake; // CardGamePanel's "Взять" button
     private bool _pendingCardGameEndRound; // CardGamePanel's "Бито" button
@@ -344,6 +368,7 @@ public partial class Game1 : Game
         UpdateRenderScale();
         Window.ClientSizeChanged += (_, _) => UpdateRenderScale();
         Window.TextInput += OnMenuTextInput; // typing the host's address on the join screen
+        Window.TextInput += OnShipSearchTextInput; // window 3's item search box, helm redesign (M47 follow-up)
         base.Initialize();
     }
 
@@ -404,8 +429,8 @@ public partial class Game1 : Game
         _galacticMapPanel = new GalacticMapPanel(GraphicsDevice, _font);
         _stationPanel = new StationPanel(_font);
         _cardGamePanel = new CardGamePanel(GraphicsDevice, _font);
-        _helmPanel = new HelmPanel(GraphicsDevice, _font);
-        _shipStatusPanel = new ShipStatusPanel(GraphicsDevice, _font);
+        _helmButtonsWidget = new HelmButtonsWidget(GraphicsDevice, _font);
+        _shipSchematicPanel = new ShipSchematicPanel(GraphicsDevice, _font);
         _fieldRenderer = new FieldRenderer(GraphicsDevice, _font);
         _externalCameraPanel = new ExternalCameraPanel(GraphicsDevice, _font, _fieldRenderer);
         _stationRenderer = new StationRenderer(_shipRenderer, GraphicsDevice, _font);
@@ -546,6 +571,10 @@ public partial class Game1 : Game
         var myCharacter = _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         var isAtHelm = myCharacter?.IsAtHelm ?? false;
         var isOutside = myCharacter?.IsOutside ?? false;
+        // Standing up from the helm drops window 3's own search focus - otherwise it would sit
+        // there invisibly holding onto typed characters with no panel left on screen to show them.
+        if (!isAtHelm)
+            _shipSearchFocused = false;
 
         // During a session: Esc closes whatever's open (a block/console, a top-bar panel, the
         // turret/helm) one thing at a time, same priority a second click on a console already has;
@@ -553,7 +582,14 @@ public partial class Game1 : Game
         // leaving the helm is server-side (World.Interact.cs's F handling, top-priority there too),
         // so that case is folded into this frame's interactPressed rather than duplicated here.
         var escapeSendsInteract = false;
-        if (escapePressed)
+        if (escapePressed && _shipSearchFocused)
+        {
+            // Cancels the search box first, same one-thing-at-a-time priority as everything else
+            // below - otherwise Esc would stand the captain up from the helm entirely just because
+            // they were mid-search, which is the one Escape a text field should never trigger.
+            _shipSearchFocused = false;
+        }
+        else if (escapePressed)
         {
             if (_pauseMenuOpen)
             {
@@ -604,7 +640,7 @@ public partial class Game1 : Game
         // Z swaps between Arc (banked turning, tied to speed) and Rcs (free rotation) at the helm
         // (World.ShipField.cs, M41) - edge-triggered like M above, or holding it down would flip
         // the mode every frame.
-        var toggleControlModePressed = isAtHelm && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
+        var toggleControlModeKeyPressed = isAtHelm && !_shipSearchFocused && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
 
         var interactDown = keyboard.IsKeyDown(Keys.E);
         var spaceDown = keyboard.IsKeyDown(Keys.Space);
@@ -612,6 +648,20 @@ public partial class Game1 : Game
         var spacePressed = spaceDown && !_prevFireDown;
         _prevInteractDown = interactDown;
         _prevFireDown = spaceDown;
+
+        // The scanner console opens on E like every other physical interaction (M47) rather than a
+        // mouse click on its housing - still sent to the server as an ordinary InteractPressed
+        // below (harmless: nothing server-side listens for it at this exact spot), just also
+        // intercepted here to flip the client-only _openBlock state. Only opens, never closes -
+        // Esc is the one way out (Game1.Input.cs's own CloseBlockIfWalkedAway explicitly excludes
+        // BlockKind.Navigation from its usual auto-close-on-distance sweep for the same reason).
+        if (interactPressed && myCharacter is not null && _openBlock.Kind != BlockKind.Navigation &&
+            (new Vec2(myCharacter.X, myCharacter.Y) - _client.LatestSnapshot!.NavigationConsole.Position).Length() < TurretInteractionRadius)
+        {
+            _openBlock = ClickTarget.Navigation;
+            _infoPanelOpen = false;
+            _shipEditorOpen = false;
+        }
 
         // Space means something different outside (push off toward the cursor) than manning a
         // turret (fire) - never both at once, since turrets are strictly indoors.
@@ -629,7 +679,11 @@ public partial class Game1 : Game
         // Galaxy map camera: right-drag to pan, scroll wheel to zoom - both harmless to read even
         // when the map isn't open (they just accumulate into fields nothing else looks at then).
         var mapOpen = _openBlock.Kind == BlockKind.Navigation;
-        if (mapOpen && mouse.RightButton == ButtonState.Pressed)
+        // Window 1 of the helm redesign (M47 follow-up) reuses this exact same schematic/camera -
+        // the pilot can pan and zoom it same as the scanner operator, just never drive the sweep
+        // beam or drop a marker from up there (those stay gated on mapOpen alone, below).
+        var schematicViewOpen = mapOpen || isAtHelm;
+        if (schematicViewOpen && mouse.RightButton == ButtonState.Pressed)
         {
             if (_mapPanLastMouse is { } lastMouse)
                 _mapPanOffset += new Vector2(mouse.Position.X - lastMouse.X, mouse.Position.Y - lastMouse.Y);
@@ -641,8 +695,27 @@ public partial class Game1 : Game
         }
         var scrollDelta = mouse.ScrollWheelValue - _prevScrollWheelValue;
         _prevScrollWheelValue = mouse.ScrollWheelValue;
-        if (mapOpen && scrollDelta != 0)
-            _mapZoom = Math.Clamp(_mapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.3f, 3f);
+        if (schematicViewOpen && scrollDelta != 0 && _client.LatestSnapshot is { } scrollSnapshot)
+        {
+            // Zooms toward wherever the cursor already is, not the panel's own corner - the world
+            // point currently under the cursor is computed at the OLD zoom/pan first, then panOffset
+            // is solved backward so that same point still lands under the cursor at the NEW zoom
+            // (GalaxyMapPanel.ComputeMapOrigin's own "panOffset - min corner * PixelsPerUnit * zoom"
+            // shifts nonlinearly with zoom on its own, so panOffset has to move to compensate or the
+            // view would drift while zooming instead of holding the cursor's own spot still).
+            var cursorScreen = new Vector2(_designMouse.X, _designMouse.Y);
+            var mapOriginBefore = GalaxyMapPanel.ComputeMapOrigin(GalaxyMapPanelOrigin, scrollSnapshot.GalaxyPoints, _mapZoom, _mapPanOffset);
+            var worldUnderCursor = GalaxyMapPanel.ScreenToField(cursorScreen, mapOriginBefore, _mapZoom);
+            // 0.04, not 0.3: sol's own stations now reach out toward WarpZoneRadius(1104) from the
+            // centre (M47's station-spread redesign) - the old floor could no longer show the whole
+            // system at once.
+            var newZoom = Math.Clamp(_mapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.04f, 3f);
+            var minCorner = scrollSnapshot.GalaxyPoints.Count > 0
+                ? new Vector2(scrollSnapshot.GalaxyPoints.Min(p => p.X), scrollSnapshot.GalaxyPoints.Min(p => p.Y))
+                : Vector2.Zero;
+            _mapPanOffset = cursorScreen - GalaxyMapPanelOrigin - (worldUnderCursor - minCorner) * GalaxyMapPanel.PixelsPerUnit * newZoom;
+            _mapZoom = newZoom;
+        }
 
         // Scanner sweep (World.Scanner.cs, M44): left-drag rotates the beam toward the cursor, the
         // same "read the current mouse angle" idea turret aim uses (ReadTurretAimTowardCursor),
@@ -733,12 +806,16 @@ public partial class Game1 : Game
         // rack must not also pick up whatever slot is nearest the cursor.
         UpdatePanelSounds(gameTime.TotalGameTime.TotalSeconds);
         var panelDragTookIt = _openBlock.Kind != BlockKind.None && UpdatePanelDrag(mouse, CurrentPanelKey, CurrentPanelSize);
-        if (panelDragTookIt)
+        // Window 2's own widget drag (M47 follow-up) - same first-refusal priority, checked
+        // whenever the player is at the helm regardless of _openBlock (this widget isn't one of
+        // its panels).
+        var helmWidgetDragTookIt = !panelDragTookIt && isAtHelm && UpdateHelmWidgetDrag(mouse);
+        if (panelDragTookIt || helmWidgetDragTookIt)
         {
             _prevLeftMouseButton = mouse.LeftButton;
             _prevDragButton = mouse.LeftButton;
         }
-        var (moveItemFrom, moveItemTo, dragTookTheClick) = panelDragTookIt
+        var (moveItemFrom, moveItemTo, dragTookTheClick) = panelDragTookIt || helmWidgetDragTookIt
             ? (null, null, true)
             : UpdateItemDrag(mouse, gameTime.TotalGameTime.TotalSeconds);
         if (dragTookTheClick)
@@ -765,9 +842,13 @@ public partial class Game1 : Game
         // Stabilization is a mode the pilot leaves on, not a one-frame pulse: the server takes it
         // as an instruction for this tick only, so the client latches it and keeps sending it until
         // the controls are touched again.
-        if (helmStabilizePressed || (isAtHelm && keyboard.IsKeyDown(Keys.S)))
+        // Window 3's search box eats W/A/D/S/X/Z as typed characters while focused (M47 follow-up) -
+        // the ship just coasts on whatever heading it already had, same as while any other console
+        // is open, rather than the pilot's own typing also steering it.
+        var flightControlsLive = isAtHelm && !_shipSearchFocused;
+        if (helmStabilizePressed || (flightControlsLive && keyboard.IsKeyDown(Keys.S)))
             _helmStabilizeLatched = true;
-        var (helmThrottle, helmTurn) = isAtHelm ? ReadHelmInput(keyboard) : (0f, 0f);
+        var (helmThrottle, helmTurn) = flightControlsLive ? ReadHelmInput(keyboard) : (0f, 0f);
         if (helmThrottle != 0f || helmTurn != 0f)
             _helmStabilizeLatched = false; // taking the controls back cancels the brake
         var stabilizeEngaged = isAtHelm && _helmStabilizeLatched;
@@ -793,10 +874,12 @@ public partial class Game1 : Game
         var questKind = _pendingQuestKind;
         var dockPressed = _pendingDock;
         var hireCandidateId = _pendingHireCandidateId;
+        var toggleControlModePressed = toggleControlModeKeyPressed || _pendingToggleControlMode;
         _pendingShipPurchase = null; // edge-triggered: sent exactly once per click
         _pendingQuestKind = null;
         _pendingDock = false;
         _pendingHireCandidateId = null;
+        _pendingToggleControlMode = false;
 
         var tankAttach = _pendingTankAttach;
         var tankDetach = _pendingTankDetach;
@@ -948,7 +1031,6 @@ public partial class Game1 : Game
         var crewRect = GetTopBarButtonRect(0);
         var managementRect = GetTopBarButtonRect(1);
         var infoRect = GetTopBarButtonRect(2);
-        var camerasRect = GetTopBarButtonRect(3);
 
         DrawTopBarButtonFrame(spriteBatch, crewRect);
         HudIcons.DrawCrewGlyph(spriteBatch, _pixel, RectCenter(crewRect), 0.85f, TopBarGold);
@@ -964,24 +1046,6 @@ public partial class Game1 : Game
         HudIcons.DrawBarsGlyph(spriteBatch, _pixel, RectCenter(infoRect), 0.85f, TopBarGold);
         if (_infoPanelOpen)
             DrawSlotHighlight(infoRect, Color.LightSkyBlue);
-
-        // Dim without power on the Secondary channel (game_design.md - the same "lamps/scanner/
-        // airlocks" slider ComputeShipPowerMood already reads) - same disabled-look convention as
-        // every other power-gated control, no new power model needed for this button.
-        var camerasPowered = snapshot is not null && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f;
-        DrawTopBarButtonFrame(spriteBatch, camerasRect);
-        DrawCameraGlyph(spriteBatch, RectCenter(camerasRect), camerasPowered ? TopBarGold : Color.DimGray);
-        if (_externalCameraMode)
-            DrawSlotHighlight(camerasRect, Color.LightSkyBlue);
-    }
-
-    // A plain camera body + lens - cheap enough that a dedicated HudIcons method isn't worth it for
-    // one button.
-    private void DrawCameraGlyph(SpriteBatch spriteBatch, Vector2 center, Color color)
-    {
-        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - 9, (int)center.Y - 5, 18, 10), color);
-        spriteBatch.Draw(_pixel, new Rectangle((int)center.X - 4, (int)center.Y - 8, 8, 3), color);
-        HudIcons.FillCircle(spriteBatch, _pixel, center + new Vector2(3, 0), 3.5f, new Color(20, 20, 20));
     }
 
     // A bevelled plate with a gold medallion behind the glyph, rather than a flat icon on a solid
@@ -1411,8 +1475,15 @@ public partial class Game1 : Game
                 _infoPanel.Draw(_spriteBatch, snapshot, _client.PlayerId, _infoPanelTab, InfoPanelOrigin);
             else if (myIsAtHelm)
             {
-                _helmPanel.Draw(_spriteBatch, snapshot, HelmPanelOrigin);
-                _shipStatusPanel.Draw(_spriteBatch, snapshot, HelmPanelOrigin + ShipStatusPanelOffset);
+                // The 3-window helm redesign (M47 follow-up): the pilot no longer sees the ship
+                // from outside at all - window 1 is the very same schematic/fog-of-war map the
+                // scanner console shows (reused wholesale, not a separate exterior render), window
+                // 3 is the Barotrauma-style status board, window 2 the small draggable button
+                // widget. Nothing here needs _shipInteriorOrigin - same as the Navigation/galactic-
+                // map/external-camera branches above, which leave it null too.
+                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, totalSeconds, pilotView: true);
+                _shipSchematicPanel.Draw(_spriteBatch, snapshot, ShipSchematicPanelOrigin, _shipSchematicCategory, _shipSearchQuery, _shipSearchFocused);
+                _helmButtonsWidget.Draw(_spriteBatch, snapshot, _helmWidgetPosition, ComputeShipPowerMood(snapshot).PowerFraction > 0.01f, _externalCameraMode);
             }
             else if (myCharacter?.OnEnemyShip == true)
                 _boardingRenderer.Draw(_spriteBatch, snapshot, ComputeStationCamera(myCharacter));

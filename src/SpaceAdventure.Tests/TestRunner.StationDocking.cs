@@ -83,12 +83,14 @@ internal static partial class TestRunner
         // away it still physically is.
         const float BerthTracksIntendedTargetSlack = 40f;
         var ambushesResolved = 0;
-        // 300s, not 120s: this loop caps speed at 1.5 (below) for the entire approach, not just
-        // the final crawl, so covering a longer bearing like outpost-gamma's (~180 units from
-        // home) at that capped rate alone eats nearly the whole of a 120s budget with zero slack
-        // left for turning time, an incidental ambush along the way, or the bang-bang cap's own
-        // stabilize/accelerate cycling knocking the average speed below its own ceiling.
-        for (var i = 0; i < 300 * 30; i++)
+        // 600s: this loop caps speed at 1.5 (below) for the entire approach, not just the final
+        // crawl, so covering a longer bearing like outpost-gamma's (~602 units from home as of the
+        // system's own M47 station-spread redesign, GalaxyMap.cs) at that capped rate alone eats
+        // most of a 400s budget - 600s keeps roughly the same ~200s of slack the original 300s
+        // budget left over its own, shorter ~180-unit bearing, for turning time, an incidental
+        // ambush along the way, or the bang-bang cap's own stabilize/accelerate cycling knocking
+        // the average speed below its own ceiling.
+        for (var i = 0; i < 600 * 30; i++)
         {
             if (world.IsInBattle)
             {
@@ -122,6 +124,17 @@ internal static partial class TestRunner
             }
             world.Step(RealtimeStep);
         }
+
+        // Engaged unconditionally before anything below, regardless of which branch the loop above
+        // last took - whatever thrust that last SteerToward call left commanded would otherwise
+        // stay frozen exactly as "the last commanded thrust is deliberately left as-is" once nobody
+        // is at the helm to override it (World.Interact.cs's own doc comment on standing up), and a
+        // caller that then waits around doing something else (World_Docking_ProximityAloneDoesNotDock
+        // sitting idle, ExitShipIntoVacuum going EVA) would find the ship had quietly drifted off
+        // the berth in the meantime - CanDockNow gone by the time anything checks it again, for a
+        // reason with nothing to do with what that caller was actually testing.
+        world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+        world.Step(RealtimeStep);
 
         // Most callers expect to walk character 1 off to do something else right after this (open
         // the airlock, take a tool, go EVA) - manning a console locks movement the same way

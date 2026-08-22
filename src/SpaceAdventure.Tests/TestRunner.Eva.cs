@@ -166,7 +166,8 @@ internal static partial class TestRunner
         for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
         MoveCharacterTo(world, 2, 3f, 3f);
-        MoveCharacterTo(world, 2, 3f, 4f); // helm console
+        var helmConsole = world.Ship.HelmConsole.Position;
+        MoveCharacterTo(world, 2, helmConsole.X, helmConsole.Y); // helm console
         world.ApplyCommand(2, new ClientCommand(2, InteractPressed: true)); // man it
         world.ApplyCommand(2, new ClientCommand(2, HelmThrottle: 1f)); // straight +X - no rotation involved
         for (var i = 0; i < 30; i++)

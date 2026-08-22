@@ -248,13 +248,17 @@ internal static partial class TestRunner
 
     // Walks the character to the helm console (the same two-leg route every test in this project
     // already used by hand: onto the shared y=3 spine first, then up into the console itself, so a
-    // diagonal move can never clip a corner) and mans it, unless already there.
+    // diagonal move can never clip a corner) and mans it, unless already there. Reads the console's
+    // own live position rather than a hardcoded (3,4) - M47's helm redesign moved it to the
+    // cockpit's forward bulkhead, and a stale coordinate here just walks past it and never sits
+    // down (the same drift bug TestRunner.Scanner.cs's own MoveToNavigationConsole hit first).
     private static void SitAtHelm(World world, int playerId = 1)
     {
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == playerId).IsAtHelm)
         {
+            var console = world.Ship.HelmConsole.Position;
             MoveCharacterTo(world, playerId, 3f, 3f); // corridor -> reactor -> cockpit, at the doors' shared height
-            MoveCharacterTo(world, playerId, 3f, 4f); // helm console
+            MoveCharacterTo(world, playerId, console.X, console.Y);
             world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
         }
 

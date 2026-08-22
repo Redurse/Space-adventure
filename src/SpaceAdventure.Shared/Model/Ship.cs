@@ -218,14 +218,18 @@ public sealed partial class Ship
         var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 9.5f, Y: 3f);
         var batteryBlock = new BatteryBlock("battery-block", "reactor", X: 9.5f, Y: 5f);
 
-        // Navigation console on the bridge (game_design.md section 5) — click it to bring up
-        // the galaxy map.
-        var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 1.5f, Y: 1.5f);
-
         // Helm console on the bridge (game_design.md Phase 3, M15) — stand here to take manual
-        // control of the ship in open space. Kept away from the bow turret's periscope (1.5, 3)
-        // and the laser rifle armory (3.5, 5) so their interaction radii don't overlap with this.
-        var helmConsole = new HelmConsole("helm-console", "cockpit", X: 3f, Y: 4f);
+        // control of the ship in open space. Moved to the cockpit's own forward bulkhead (low X,
+        // the nose side - GenerateOuterWallBlocks(rooms[0], left: true) marks X=0 as outer hull)
+        // rather than the mid-room spot it used to occupy, so the captain stands right up against
+        // the nose (M47 follow-up - "впередней части кокпита"). Kept clear of the bow turret's
+        // periscope (1.5, 3) and the card table (4, 1) by more than InteractionRadius (1.0).
+        var helmConsole = new HelmConsole("helm-console", "cockpit", X: 1.4f, Y: 1.3f);
+
+        // The scanner console (game_design.md section 5/M44) - right next to the helm (M47), both
+        // now at the cockpit's forward bulkhead so they read as one bridge station pair the
+        // captain and the scientist share, rather than one of them standing off on its own.
+        var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 2.8f, Y: 1.3f);
 
         // A quiet corner of the cockpit, clear of the nav console/helm/turret/mount above - two
         // crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).

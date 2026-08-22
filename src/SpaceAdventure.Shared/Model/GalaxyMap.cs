@@ -107,32 +107,52 @@ public sealed class GalaxyMap
 
     public static GalaxyMap CreateStarter()
     {
-        // Coordinates are real positions in this system's own local field (World.Voyage.cs), all
-        // shifted by AsteroidField.RecenterOffsetM40 from where they were originally authored in
-        // the old 300x300 field so the whole recognizable layout keeps sitting in the middle of
-        // the new 2400x2400 one (M40) - the same 60-220-ish band around the old centre (150,150),
-        // now around the new one (1200,1200), so every point below still sits in one of the open
-        // corners/edges instead of inside a rock, and the straight line from the ship's fixed
-        // departure spot (DockBerthPosition) still clears every asteroid by the same real margin
-        // it always did - a uniform shift changes no relative distances at all.
-        const float R = AsteroidField.RecenterOffsetM40;
+        // Real positions in this system's own local field (World.Voyage.cs), spread across the
+        // full 2400x2400 field (M40) rather than sitting in a small cluster near its centre - the
+        // field's own centre (1200,1200) is where the sun sits (GalaxyMapPanel's backdrop, anchored
+        // to AsteroidField.Center rather than any point average) and CanWarpNow already measures
+        // distance from exactly that point, so a system whose points actually reach out toward the
+        // WarpZoneRadius(1104) ring is what makes "fly clear of the system to jump" a real,
+        // felt journey instead of a formality that was already true two steps off the berth.
+        //
+        // home-station sits fairly close to the field's own centre (and to the asteroid belt's
+        // marker below, which can't move - see its own comment) - four routes out of here are
+        // flown for real by tests with a fixed tick budget and no (or limited) obstacle avoidance,
+        // and each one bounds how far its own destination can safely sit:
+        //  - trade-station: World_Docking_TooFastAtPort_ButtonStaysDisarmed flies there in a flat
+        //    60s at full uncapped throttle with zero peel/hazard-avoidance at all.
+        //  - outpost-gamma: every ApproachBerth-based test caps speed at 1.5 units/s for the whole
+        //    approach ("parked and slow enough to dock"), budgeted at 600s (TestRunner.
+        //    StationDocking.cs).
+        //  - sector-alpha: World_Voyage_FreeFormClickNearHostileSectorStillTriggersBattle flies
+        //    there for real at FlyToward's own default 120s budget (uncapped speed, no override).
+        //  - asteroid-field-epsilon: FlyNearAndStop (TestRunner.HelmAndHull.cs/Doors.cs) is the
+        //    same default-120s FlyToward underneath.
+        // Sector-beta/delta and the mining outpost are only ever reached via a direct teleport
+        // (World.DebugPlaceShip) or an explicit, generous budget, so nothing held those back from
+        // genuinely using the new size - pushed out toward the WarpZoneRadius(1104) ring instead,
+        // with margin to spare.
         var sol = new StarSystem("sol", "Солнечная система", new[]
         {
             // Faction ownership (game_design.md section 12): home stays neutral so a new crew
             // always has somewhere that treats them the same regardless of reputation; the other
             // two stations belong to the rival powers, as do the sectors their raiders patrol.
-            new GalaxyPoint("home-station", "Домашняя станция", 35f + R, 141f + R, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
-            new GalaxyPoint("sector-alpha", "Сектор Альфа", 52f + R, 97f + R, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
+            new GalaxyPoint("home-station", "Домашняя станция", 1050f, 1400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("sector-alpha", "Сектор Альфа", 1300f, 1700f, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
             // Beta is a picket of two and Delta a patrol of three - the map's difficulty gradient
             // is squadron size, not per-ship strength (game_design.md section 12).
-            new GalaxyPoint("sector-beta", "Сектор Бета", 42f + R, 187f + R, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 189f + R, 61f + R, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
-            new GalaxyPoint("sector-delta", "Сектор Дельта", 235f + R, 150f + R, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
-            new GalaxyPoint("trade-station", "Торговая станция", 151f + R, 257f + R, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
-            new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 150f + R, 150f + R, GalaxyPointKind.AsteroidField),
+            new GalaxyPoint("sector-beta", "Сектор Бета", 500f, 2000f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
+            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 1450f, 1050f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
+            new GalaxyPoint("sector-delta", "Сектор Дельта", 2050f, 700f, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
+            new GalaxyPoint("trade-station", "Торговая станция", 900f, 1550f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
+            // Left at the field's own centre, alongside the sun it orbits - AsteroidField.
+            // CreateDefault's own rocks/ore sit right here too (recentred there by
+            // RecenterOffsetM40), so moving just this marker without the physical field itself
+            // would point the label somewhere the belt no longer actually is.
+            new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 1200f, 1200f, GalaxyPointKind.AsteroidField),
             // The Miners' Guild (game_design.md section 12, Phase 4 - MinersGuild) sits right by
             // the belt it works, staying out of the Consortium/FreeFleet fight entirely.
-            new GalaxyPoint("mining-outpost", "Форпост старателей", 100f + R, 237f + R, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
+            new GalaxyPoint("mining-outpost", "Форпост старателей", 1500f, 900f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
             // No single faction actually owns this contested a home system outright - the crew's
             // own neutral turf sits alongside two rivals' sectors and a third guild's own outpost.
         }, AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null);

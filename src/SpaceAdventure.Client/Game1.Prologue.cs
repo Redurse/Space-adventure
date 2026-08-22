@@ -129,9 +129,10 @@ public partial class Game1
     private void FinishPrologue()
     {
         _prologueExiting = false;
-        var shipKind = _prologuePendingShipKind ?? ShipKind.Frigate;
-        _prologuePendingShipKind = null;
-        StartHostedSession(shipKind, loadFrom: null);
+        // The hull is kept, not consumed: the role screen is the one that starts the session now, and
+        // it needs to know which ship the campaign was begun in. Picking a crew role is the last
+        // thing that happens before boarding, which is the only moment it is ever asked.
+        _menuScreen = MenuScreen.Role;
     }
 
     private void DrawPrologueScreen(float totalSeconds)

@@ -38,11 +38,19 @@ public partial class Game1
     private const int RoleIconGap = 30;
     private const int RoleIconsY = 220;
 
-    // Nickname is remembered between launches (PlayerSettingsStore) and only needs asking once
-    // ever - starting straight at Role skips the now-redundant "what's your name" screen every
-    // launch; MainMenuAction.ChangeNick/Settings' own "ИЗМЕНИТЬ" button still reach MenuScreen.
-    // Nickname on demand for anyone who actually wants to change it.
-    private MenuScreen _menuScreen = MenuScreen.Role;
+    // Where a launch lands.
+    //
+    // The introductions are a first-run thing. Someone who has already told the game who they are is
+    // being asked a question they have answered, and the answer has not changed since they closed it
+    // five minutes ago - so they go straight to the menu, where the buttons for changing both the
+    // callsign and the role are sitting anyway.
+    //
+    // A saved nickname is the marker rather than the settings file existing: the file appears the
+    // moment anyone touches the graphics options, which is not the same thing as having introduced
+    // yourself. On a fresh machine there is no nickname, and the full Nickname -> Role -> Main chain
+    // runs exactly once.
+    private MenuScreen _menuScreen =
+        PlayerSettingsStore.LoadNickname() is null ? MenuScreen.Nickname : MenuScreen.Main;
     private float _screenChangedAt = -99f;
 
     // Where the button column ends and the art pane begins. One constant rather than the same
@@ -161,7 +169,7 @@ public partial class Game1
             _nickname = "Игрок";
 
         PlayerSettingsStore.SaveNickname(_nickname);
-        _menuScreen = MenuScreen.Role;
+        _menuScreen = MenuScreen.Main;
     }
 
     // Click one of the 5 roles to pick it, save it, and move on - or just press Enter to continue
@@ -175,21 +183,21 @@ public partial class Game1
         var mouse = Mouse.GetState();
         var clicked = mouse.LeftButton == ButtonState.Pressed && _prevMenuLeftMouseButton == ButtonState.Released;
         _prevMenuLeftMouseButton = mouse.LeftButton;
-        if (clicked)
-        {
-            for (var i = 0; i < RoleChoices.Length; i++)
-            {
-                if (!GetRoleChoiceRect(i).Contains(_designMouse))
-                    continue;
-                _selectedRole = RoleChoices[i];
-                PlayerSettingsStore.SaveRole(_selectedRole);
-                _menuScreen = MenuScreen.Main;
-                return;
-            }
-        }
+        if (!clicked)
+            return;
 
-        if (Pressed(keyboard, Keys.Enter))
-            _menuScreen = MenuScreen.Main;
+        for (var i = 0; i < RoleChoices.Length; i++)
+        {
+            if (!GetRoleChoiceRect(i).Contains(_designMouse))
+                continue;
+            _selectedRole = RoleChoices[i];
+            PlayerSettingsStore.SaveRole(_selectedRole);
+            // The campaign has been waiting on this since the prologue faded out.
+            var shipKind = _prologuePendingShipKind ?? ShipKind.Frigate;
+            _prologuePendingShipKind = null;
+            StartHostedSession(shipKind, loadFrom: null);
+            return;
+        }
     }
 
     private bool Pressed(KeyboardState keyboard, Keys key) => keyboard.IsKeyDown(key) && _prevMenuKeyboard.IsKeyUp(key);
@@ -207,6 +215,12 @@ public partial class Game1
         }
         if (_menuScreen == MenuScreen.ShipSelect)
         {
+            _menuScreen = MenuScreen.Main;
+            return true;
+        }
+        if (_menuScreen == MenuScreen.Role)
+        {
+            _prologuePendingShipKind = null;
             _menuScreen = MenuScreen.Main;
             return true;
         }
@@ -585,7 +599,7 @@ public partial class Game1
             var (section, box) = MainMenuSections[i];
             var plateProgress = MainMenuButtonProgress(sinceEnter, i);
             MenuSectionIcons.Draw(_spriteBatch, _pixel, section, box,
-                new Color(90, 220, 195) * (0.85f * plateProgress));
+                new Color(90, 220, 195) * (0.85f * plateProgress), totalSeconds);
         }
 
         var visibleIndex = 0;
@@ -1188,7 +1202,7 @@ public partial class Game1
     private void DrawRoleScreen()
     {
         _spriteBatch.DrawString(_font, "Выберите роль в экипаже", new Vector2(60, 60), Color.White, 0f, Vector2.Zero, 1.4f, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, "Это просто метка для остальных - не ограничивает, что вам разрешено делать на корабле.",
+        _spriteBatch.DrawString(_font, "Выбирается один раз на кампанию и потом не меняется. Ограничений на действия не даёт.",
             new Vector2(60, 140), Color.LightGray, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
 
         for (var i = 0; i < RoleChoices.Length; i++)
@@ -1206,7 +1220,7 @@ public partial class Game1
                 selected ? Color.Gold : Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
         }
 
-        _spriteBatch.DrawString(_font, "[Enter] продолжить", new Vector2(60, 380), Color.LightSteelBlue, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, "Нажмите на роль, чтобы начать", new Vector2(60, 380), Color.LightSteelBlue, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
     }
 
     private void DrawShipSelectScreen()

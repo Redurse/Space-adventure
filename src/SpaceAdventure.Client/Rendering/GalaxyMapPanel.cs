@@ -81,24 +81,36 @@ public sealed partial class GalaxyMapPanel
     private const float ScannerRangeUnits = 900f;
     private const float ScannerSweepHalfAngleDegrees = 12f;
 
+    // pilotView: reused wholesale as the helm's own window 1 (M47 follow-up), where sweeping the
+    // beam/dropping a marker isn't available (that stays the scanner operator's own job at the
+    // console) and window 3 sits in the same top-right corner the faction-standings box used to
+    // have to itself - both get dropped/shortened here rather than fought over with an offset.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin, float zoom, Vector2 panOffset,
-        int myPlayerId, float totalSeconds = 0f)
+        int myPlayerId, float totalSeconds = 0f, bool pilotView = false)
     {
         _starfield.Draw(spriteBatch, totalSeconds);
 
-        spriteBatch.DrawString(_font, $"Карта системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}» - ЛКМ тащить (луч сканера), клик по своей метке (поставить на общую карту), за кольцом — прыжок (M), ПКМ тащить (сдвиг), колесо (масштаб)",
-            panelOrigin + new Vector2(0, -24), Color.Yellow, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+        var hint = pilotView
+            ? $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}» - ПКМ тащить (сдвиг), колесо (масштаб)"
+            : $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}» - ЛКМ тащить (луч сканера), клик по своей метке (поставить на общую карту), за кольцом — прыжок (M), ПКМ тащить (сдвиг), колесо (масштаб), E/Esc - войти/выйти";
+        spriteBatch.DrawString(_font, hint, panelOrigin + new Vector2(0, -24), Color.Yellow, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
 
         var mapOrigin = ComputeMapOrigin(panelOrigin, snapshot.GalaxyPoints, zoom, panOffset);
-        DrawSystemBackdrop(spriteBatch, snapshot.GalaxyPoints, mapOrigin, zoom, totalSeconds);
+
+        // The field's own centre (StarSystemSummary.Width/Height), not the points' own bounding
+        // box - the sun sits exactly here (M47 - "солнце было в центре"), the same reference point
+        // CanWarpNow itself measures distance from, so the warp ring drawn around it below lines up
+        // with the same spot the server actually gates the jump on, rather than wherever this
+        // system's own points happen to average out to (which drifted off-centre once they were
+        // spread out to use the field's full size instead of huddling near its middle).
+        var currentSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
+        var fieldCenterScreen = mapOrigin + new Vector2(currentSystem.Width / 2f, currentSystem.Height / 2f) * PixelsPerUnit * zoom;
+        DrawSystemBackdrop(spriteBatch, fieldCenterScreen, zoom, totalSeconds);
 
         // The whole edge of the system, not one specific marker (game_design.md - "круг вокруг
         // системы, откуда можно прыгать"): any position past GalaxyMap.WarpZoneRadius from the
-        // field's own centre (StarSystemSummary.Width/Height, not the points' bounding box
-        // DrawSystemBackdrop uses for its purely decorative rings) arms the jump - colored gold
-        // once CanWarpNow actually agrees, dim purple otherwise.
-        var currentSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
-        var fieldCenterScreen = mapOrigin + new Vector2(currentSystem.Width / 2f, currentSystem.Height / 2f) * PixelsPerUnit * zoom;
+        // field's own centre arms the jump - colored gold once CanWarpNow actually agrees, dim
+        // purple otherwise.
         var warpZoneRadiusPixels = GalaxyMap.WarpZoneRadius * PixelsPerUnit * zoom;
         DrawWarpZoneRing(spriteBatch, fieldCenterScreen, warpZoneRadiusPixels, snapshot.CanWarpNow, totalSeconds);
 
@@ -181,9 +193,61 @@ public sealed partial class GalaxyMapPanel
                 Color.LimeGreen * 0.5f, 16, 2f);
         }
 
+        // Everything actually close enough to matter without a scan (M47 follow-up - "в полной
+        // близости с кораблем на расстоянии как было раньше"): the same trio HelmPanel's own local
+        // radar used to plot before this screen absorbed it, now drawn on the system-wide map
+        // instead of a separate small dial. Rocks are still capped to CloseRangeUnits - the belt can
+        // hold hundreds of them, and at any zoom level far enough out to see a third of the system
+        // they'd be indistinguishable clutter - but an already-engaged squadron or a shell in flight
+        // is exactly as visible here as it always was, not something a sweep has to find first.
+        DrawCloseRangeContacts(spriteBatch, snapshot, mapOrigin, shipCenter, zoom);
+
         spriteBatch.Draw(_pixel, new Rectangle((int)shipCenter.X - 4, (int)shipCenter.Y - 4, 8, 8), Color.White);
 
-        DrawFactionStandings(spriteBatch, snapshot.FactionStandings, panelOrigin + new Vector2(700, 0));
+        if (!pilotView)
+            DrawFactionStandings(spriteBatch, snapshot.FactionStandings, panelOrigin + new Vector2(700, 0));
+    }
+
+    // Matches the old HelmPanel.RadarRangeUnits exactly (M47 - "как было раньше") - the pilot's
+    // close-in situational awareness didn't get any better or worse when it moved onto this map,
+    // just bigger and shared with the long-range scanner picture.
+    private const float CloseRangeUnits = 50f;
+
+    private void DrawCloseRangeContacts(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 mapOrigin, Vector2 shipCenter, float zoom)
+    {
+        var shipWorldPos = new Vector2(snapshot.ShipField.X, snapshot.ShipField.Y);
+
+        foreach (var asteroid in snapshot.Field.Asteroids)
+        {
+            if ((new Vector2(asteroid.X, asteroid.Y) - shipWorldPos).Length() > CloseRangeUnits)
+                continue;
+
+            var outline = AsteroidShape.Outline(asteroid);
+            var points = new Vector2[outline.Length];
+            for (var i = 0; i < outline.Length; i++)
+                points[i] = mapOrigin + new Vector2(outline[i].X, outline[i].Y) * PixelsPerUnit * zoom;
+
+            var center = mapOrigin + new Vector2(asteroid.X, asteroid.Y) * PixelsPerUnit * zoom;
+            Primitives.FillPolygon(spriteBatch, _pixel, center, points, new Color(96, 74, 56));
+            Primitives.StrokePolygon(spriteBatch, _pixel, points, new Color(150, 120, 92));
+        }
+
+        // A squadron already fighting the player, or a shell already in flight, is not intel to be
+        // discovered - it exists because the player is right there, so it's drawn unconditionally
+        // rather than gated on CloseRangeUnits or a scan (same reasoning HelmPanel's old radar used).
+        foreach (var enemy in snapshot.EnemyShip.Ships)
+        {
+            var screen = mapOrigin + new Vector2(enemy.X, enemy.Y) * PixelsPerUnit * zoom;
+            var color = enemy.IsRetreating ? Color.Goldenrod : Color.OrangeRed;
+            HudIcons.FillCircle(spriteBatch, _pixel, screen, 5f, color * 0.9f);
+            HudIcons.DrawRingArc(spriteBatch, _pixel, screen, 8f, 0f, 360f, color, 16, 1.5f);
+        }
+
+        foreach (var shot in snapshot.Projectiles)
+        {
+            var screen = mapOrigin + new Vector2(shot.X, shot.Y) * PixelsPerUnit * zoom;
+            spriteBatch.Draw(_pixel, new Rectangle((int)screen.X - 1, (int)screen.Y - 1, 3, 3), shot.FromEnemy ? Color.Red : Color.Gold);
+        }
     }
 
     // Screen-space hit test for the local player's own scanner contacts (Game1.Input.cs's own
@@ -237,24 +301,34 @@ public sealed partial class GalaxyMapPanel
     // in-fiction sun any of this represents (GalaxyPoints are scattered points of interest, not
     // real orbits), purely there so the map reads as "a system" at a glance instead of a scatter
     // of markers on flat black.
-    private void DrawSystemBackdrop(SpriteBatch spriteBatch, IReadOnlyList<GalaxyPoint> points, Vector2 mapOrigin, float zoom, float totalSeconds)
+    // centerScreen: the field's own centre, already converted to screen space by the caller (M47 -
+    // "солнце было в центре") - not derived from the system's own points any more. A system whose
+    // points are deliberately spread out to use the field's full size (GalaxyMap.cs's sol layout)
+    // would otherwise pull this backdrop's sun off to wherever those points happen to average out
+    // to, rather than leaving it where the sun (and CanWarpNow's own distance check) actually is.
+    private void DrawSystemBackdrop(SpriteBatch spriteBatch, Vector2 centerScreen, float zoom, float totalSeconds)
     {
-        if (points.Count == 0)
-            return;
+        // A fixed span in world units rather than one sized to the system's own points - those can
+        // now sit anywhere from right next to the sun (the asteroid belt) to most of the way to the
+        // warp zone, and scaling the decorative rings to fit "however far the farthest point happens
+        // to be" would make them wildly different sizes from one system to the next for no reason
+        // tied to anything the player can see.
+        const float maxDistance = 700f;
 
-        var centerWorld = new Vector2(
-            (points.Min(p => p.X) + points.Max(p => p.X)) / 2f,
-            (points.Min(p => p.Y) + points.Max(p => p.Y)) / 2f);
-        var maxDistance = points.Max(p => Vector2.Distance(new Vector2(p.X, p.Y), centerWorld));
-        if (maxDistance < 1f)
-            maxDistance = 50f;
-
-        var centerScreen = mapOrigin + centerWorld * PixelsPerUnit * zoom;
-
-        foreach (var fraction in RingFractions)
+        // Purely decorative planets (M47 - "вокруг него вращались несколько планет, в реальном
+        // времени") orbiting the sun at real time, each on its own ring - not GalaxyPoints, not
+        // interactive, not the same thing as an AsteroidField's own physical rocks. angularSpeed is
+        // 2*pi/period, baked in rather than computed from a period field since nothing else ever
+        // needs the period itself. phaseOffset just keeps them from all starting lined up along the
+        // same ray from the sun.
+        foreach (var planet in Planets)
         {
-            var radius = maxDistance * fraction * PixelsPerUnit * zoom;
+            var radius = maxDistance * planet.OrbitFraction * PixelsPerUnit * zoom;
             HudIcons.DrawRingArc(spriteBatch, _pixel, centerScreen, radius, 0f, 360f, Color.SlateGray * 0.22f, 48, 1f);
+
+            var angle = totalSeconds * planet.AngularSpeed + planet.PhaseOffset;
+            var planetScreen = centerScreen + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
+            HudIcons.FillCircle(spriteBatch, _pixel, planetScreen, planet.SizePixels * zoom, planet.Color);
         }
 
         var pulse = 0.75f + 0.25f * MathF.Sin(totalSeconds * 1.3f);
@@ -263,7 +337,18 @@ public sealed partial class GalaxyMapPanel
         HudIcons.FillCircle(spriteBatch, _pixel, centerScreen, 4f, Color.LightYellow * 0.9f);
     }
 
-    private static readonly float[] RingFractions = { 0.35f, 0.65f, 1f };
+    private readonly record struct Planet(float OrbitFraction, float AngularSpeed, float PhaseOffset, float SizePixels, Color Color);
+
+    // Periods deliberately not proportional to distance (real orbital mechanics would make the
+    // outer rings crawl too slowly to ever notice moving) - close enough to "a planet" that the
+    // eye reads it as one without needing several real minutes of watching to see it move.
+    private static readonly Planet[] Planets =
+    {
+        new(0.15f, 2f * MathF.PI / 22f, 0.4f, 3.5f, new Color(178, 132, 94)),
+        new(0.35f, 2f * MathF.PI / 48f, 2.1f, 5f, new Color(150, 172, 201)),
+        new(0.65f, 2f * MathF.PI / 95f, 4.4f, 6.5f, new Color(203, 163, 112)),
+        new(1f, 2f * MathF.PI / 160f, 5.6f, 8f, new Color(181, 201, 191)),
+    };
 
     // A pair of ring arcs spinning opposite ways at the size of the whole warp zone - the same
     // "portal you could actually fall through" idea a single WarpPoint marker used to have, just

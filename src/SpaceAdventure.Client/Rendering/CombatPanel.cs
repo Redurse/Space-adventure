@@ -9,7 +9,7 @@ namespace SpaceAdventure.Client.Rendering;
 
 // Contextual hints for the turret (approach prompt / manned controls) plus the manned turret's own
 // ammo/charge. Enemy HP/shield used to live here too - moved off (enemy HP dropped entirely, the
-// ship's own shield moved to ShipStatusPanel, helm-only) so this corner only ever shows what's
+// ship's own shield moved to the helm's window 3, ShipSchematicPanel) so this corner only ever shows what's
 // actually relevant to whoever's reading it right now.
 public sealed class CombatPanel
 {

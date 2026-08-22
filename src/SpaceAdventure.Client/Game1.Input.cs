@@ -573,26 +573,6 @@ public partial class Game1
             }
             return (-1, -1, null, -1, false, false, null, false, null);
         }
-        // External cameras (M46) - gated on the Secondary power channel the same way
-        // ComputeShipPowerMood already reads it for the ship's own lamps; a click while unpowered
-        // is a no-op rather than opening onto a view that would just read as broken.
-        if (GetTopBarButtonRect(3).Contains(_designMouse))
-        {
-            if (snapshot is not null && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f)
-            {
-                _externalCameraMode = !_externalCameraMode;
-                _externalCameraFullscreenIndex = null;
-                _cameraLookOffsetDegrees = 0f;
-                _cameraLookLastMouse = null;
-                if (_externalCameraMode)
-                {
-                    _openBlock = ClickTarget.None;
-                    _infoPanelOpen = false;
-                    _shipEditorOpen = false;
-                }
-            }
-            return (-1, -1, null, -1, false, false, null, false, null);
-        }
         if (_externalCameraMode && _externalCameraFullscreenIndex is null)
         {
             var cameraArea = new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y);
@@ -629,24 +609,16 @@ public partial class Game1
         // it), clicking a different one sets it. Both just arm a pending flag Update() reads once
         // and forwards through SendInput; the server (World.cs ApplyCommand) is the actual source
         // of truth for character.Role, same as every other "set on click" field here.
+        // The own-role row on the crew panel used to be a picker. It is a readout now: the role is
+        // chosen once, at the start of the campaign, and clicking here does nothing. The clicks are
+        // still swallowed rather than falling through to the world underneath, so a stray click on
+        // the panel cannot walk the character somewhere.
         if (_crewPanelOpen)
         {
             for (var i = 0; i < CrewPanel.OptionCount; i++)
             {
-                if (!CrewPanel.GetOwnRoleIconRect(i, CrewPanelOrigin).Contains(_designMouse))
-                    continue;
-                var picked = CrewPanel.RoleAtOption(i);
-                if (picked is null || me?.Role == picked)
-                {
-                    _pendingClearOwnRole = true;
-                    _pendingSetOwnRoleTo = null;
-                }
-                else
-                {
-                    _pendingSetOwnRoleTo = picked;
-                    _pendingClearOwnRole = false;
-                }
-                return (-1, -1, null, -1, false, false, null, false, null);
+                if (CrewPanel.GetOwnRoleIconRect(i, CrewPanelOrigin).Contains(_designMouse))
+                    return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -685,17 +657,64 @@ public partial class Game1
         if (snapshot is null || me is null)
             return (-1, -1, null, -1, false, false, null, false, null);
 
-        if (me.IsAtHelm && HelmPanel.GetStabilizeButtonRect(HelmPanelOrigin).Contains(_designMouse))
-            return (-1, -1, null, -1, false, false, null, true, null);
-
-        // Armed either while the server says the ship is actually alongside the berth (docks) or
-        // while already sitting docked (casts off instead, same button - World.StationDocking.cs's
-        // HandleDockButtonPressed). Clicking a dimmed "distance to port" readout does nothing.
+        // Window 2 of the helm redesign (M47 follow-up) - dock/RCS-mode/cameras, at wherever the
+        // widget has been dragged to rather than a fixed HelmPanelOrigin. Stabilize is keyboard-
+        // only now (S) - it wasn't one of the three buttons the widget was asked to carry.
         if (me.IsAtHelm && (snapshot.CanDock || snapshot.Voyage.DockedPointId is not null) &&
-            HelmPanel.GetDockButtonRect(HelmPanelOrigin).Contains(_designMouse))
+            HelmButtonsWidget.GetDockButtonRect(_helmWidgetPosition).Contains(_designMouse))
         {
             _pendingDock = true;
             return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
+        if (me.IsAtHelm && HelmButtonsWidget.GetControlModeButtonRect(_helmWidgetPosition).Contains(_designMouse))
+        {
+            _pendingToggleControlMode = true;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
+        // External cameras (M46, still on the helm's own button widget) - gated on the Secondary
+        // power channel the same way ComputeShipPowerMood already reads it for the ship's own
+        // lamps; a click while unpowered is a no-op rather than opening onto a view that would
+        // just read as broken.
+        if (me.IsAtHelm && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f &&
+            HelmButtonsWidget.GetCamerasButtonRect(_helmWidgetPosition).Contains(_designMouse))
+        {
+            _externalCameraMode = !_externalCameraMode;
+            _externalCameraFullscreenIndex = null;
+            _cameraLookOffsetDegrees = 0f;
+            _cameraLookLastMouse = null;
+            if (_externalCameraMode)
+            {
+                _openBlock = ClickTarget.None;
+                _infoPanelOpen = false;
+                _shipEditorOpen = false;
+            }
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
+        // Window 3 (M47 follow-up): the 5 instrument-overlay tabs and the item search box. The
+        // search box only gets keyboard focus from an explicit click on it - clicking anything
+        // else on this panel (or the ship silhouette, or empty space) drops focus so W/A/D/S/X/Z
+        // go back to flying the ship instead of typing.
+        if (me.IsAtHelm)
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                if (!ShipSchematicPanel.GetCategoryIconRect(i, ShipSchematicPanelOrigin).Contains(_designMouse))
+                    continue;
+                _shipSchematicCategory = (ShipSchematicCategory)i;
+                _shipSearchFocused = false;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+
+            if (ShipSchematicPanel.GetSearchBoxRect(ShipSchematicPanelOrigin).Contains(_designMouse))
+            {
+                _shipSearchFocused = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+
+            _shipSearchFocused = false;
         }
 
         if (_openBlock.Kind == BlockKind.Reactor)
@@ -886,14 +905,10 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
-        if (NearEnough(snapshot.NavigationConsole.Position) &&
-            ShipRenderer.GetBlockRect(snapshot.NavigationConsole.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
-        {
-            _openBlock = _openBlock.Kind == BlockKind.Navigation ? ClickTarget.None : ClickTarget.Navigation;
-            _infoPanelOpen = false; // one full-viewport takeover at a time
-            _shipEditorOpen = false;
-            return (-1, -1, null, -1, false, false, null, false, null);
-        }
+        // No mouse interaction with the scanner console any more (M47) - entered with E near it,
+        // closed only with Esc (Game1.cs's own interactPressed check, and the escape-handling block
+        // in Update()), same asymmetric in/out as HelmConsole's own E-toggle would give it if that
+        // toggled both ways, but deliberately doesn't here.
 
         foreach (var rack in snapshot.StorageRacks)
         {
@@ -1112,6 +1127,29 @@ public partial class Game1
         return (-1, -1, null, -1, false, false, null, false, null);
     }
 
+    // Window 3's item search box (M47 follow-up) - only reaches the query while explicitly
+    // focused (a click on the box), so W/A/D/S/X/Z keep flying the ship the rest of the time
+    // instead of getting eaten as search text the moment the player is standing at the helm.
+    private void OnShipSearchTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (!_sessionStarted || !_shipSearchFocused)
+            return;
+
+        if (e.Character == '\b')
+        {
+            if (_shipSearchQuery.Length > 0)
+                _shipSearchQuery = _shipSearchQuery[..^1];
+            return;
+        }
+        if (e.Character is '\r' or (char)27)
+        {
+            _shipSearchFocused = false;
+            return;
+        }
+        if (!char.IsControl(e.Character) && _shipSearchQuery.Length < 30)
+            _shipSearchQuery += e.Character;
+    }
+
     // Flying the ship: W ahead, X astern, A/D swing the bow, S brakes. The mouse used to drag a
     // joystick that set a world-space thrust vector, which meant the pilot could aim the ship's
     // course but never its heading - and on a hull whose guns and airlock face particular
@@ -1139,6 +1177,12 @@ public partial class Game1
 
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         if (me is null)
+            return;
+
+        // The scanner (M44/M47) deliberately doesn't auto-close on walking away - entered with E,
+        // it's meant to stay open (map/scanner sweep/manual markers all keep working) while the
+        // Scientist walks around doing something else, closing only on a deliberate Esc.
+        if (_openBlock.Kind == BlockKind.Navigation)
             return;
 
         // Station dialogue closes as soon as you're not next to the NPC you were talking to (or

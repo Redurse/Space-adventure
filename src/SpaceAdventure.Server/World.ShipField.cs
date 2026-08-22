@@ -32,7 +32,13 @@ public sealed partial class World
     // place - that's what Z (Rcs) is for.
     private const float ArcMaxSpeed = 9f;
     private const float ArcThrustAccelerationPerSecond = 6.5f;
-    private const float ArcMaxYawRateDegreesPerSecond = 50f;
+    // Yaw rate scales linearly with current speed (below), which makes the turn radius at full
+    // throttle a fixed ArcMaxSpeed/(rate in rad/s) regardless of how fast that actually is - at the
+    // original 50deg/s that worked out to only ~10 units, tighter than the hull itself, so a U-turn
+    // finished within half of one lap around its own nose instead of reading as a real banked
+    // arc. 15deg/s widens that same-speed radius to ~34 units instead (game_design.md/M47 -
+    // "нужно чтобы это было реалистичнее").
+    private const float ArcMaxYawRateDegreesPerSecond = 15f;
     private const float ShipAutoStabilizeDecelerationPerSecond = 6f;
     private const float ShipEngineReferencePower = 10f; // same order of magnitude as the "10 power ~= 1 breach" oxygen constant
     // Backing up runs the manoeuvring thrusters, not the main engines - astern is for easing off a
