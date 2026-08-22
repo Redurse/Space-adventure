@@ -167,15 +167,27 @@ public static class TileTextures
     /// full 0..sourceSize square and scales that down (or up) to fill a destSize×destSize block, so
     /// every block is square and shows the complete design in miniature. The last block in a run
     /// can overhang `rect`'s far edge rather than being squeezed into a non-square remainder -
-    /// walls are cut in whole blocks, not fractional ones.</summary>
+    /// walls are cut in whole blocks, not fractional ones.
+    ///
+    /// Whichever side of a block faces the previous or next block in the same run drops that
+    /// side's frame from the sampled source, so the seam between two neighbours reads as one
+    /// continuous plate (the same material the middle of a block already shows) rather than each
+    /// block's own frame doubling up into a picture-frame grid. A side with nothing next to it -
+    /// the outer face of the run, or a block drawn alone - keeps its frame, since there nothing
+    /// else is there for it to blend into.</summary>
     public static void DrawSquares(SpriteBatch spriteBatch, Texture2D[] plates, int sourceSize, int destSize,
         Rectangle rect, Color tint, Point cellOrigin)
     {
-        var source = new Rectangle(0, 0, sourceSize, sourceSize);
         for (var y = rect.Y; y < rect.Bottom; y += destSize)
         {
+            var topGap = y > rect.Y ? HullFrameWidth : 0;
+            var bottomGap = y + destSize < rect.Bottom ? HullFrameWidth : 0;
             for (var x = rect.X; x < rect.Right; x += destSize)
             {
+                var leftGap = x > rect.X ? HullFrameWidth : 0;
+                var rightGap = x + destSize < rect.Right ? HullFrameWidth : 0;
+                var source = new Rectangle(leftGap, topGap, sourceSize - leftGap - rightGap, sourceSize - topGap - bottomGap);
+
                 var cellX = (int)MathF.Floor((x - cellOrigin.X) / (float)destSize);
                 var cellY = (int)MathF.Floor((y - cellOrigin.Y) / (float)destSize);
                 var plate = plates[HullPlateVariants.VariantAt(cellX, cellY) % plates.Length];
