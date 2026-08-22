@@ -6,15 +6,13 @@ namespace SpaceAdventure.Client.Rendering;
 
 // What makes a compartment look lived-in rather than like a rectangle with a label: a painted
 // walkway down the deck, a colour that says at a glance which compartment you are standing in,
-// rounded corners where the bulkheads meet, and a pool of light from the ceiling.
+// and a pool of light from the ceiling.
 //
 // None of it is collision - the walking and the sight lines still use the compartment's rectangle.
 // That separation is the whole trick: the room can be drawn as any shape at all as long as the
 // drawn shape stays inside the real one.
 public static partial class RoomDecor
 {
-    private const int FilletSegments = 7;
-
     // Compartments are colour-coded by what they are for, in the SS13 tradition of painting a
     // department's floor. Matched on the id so every hull class gets the same colours for the same
     // kind of room without a table per ship.
@@ -78,35 +76,6 @@ public static partial class RoomDecor
         // The fixture itself, so the light has a source on the ceiling above the deck.
         var lamp = new Rectangle(rect.Center.X - 9, rect.Center.Y - 3, 18, 6);
         spriteBatch.Draw(pixel, lamp, Color.Lerp(Color.White, accent, 0.3f) * 0.5f);
-    }
-
-    // Rounded inside corners. The compartment is a rectangle to everything that matters, but the
-    // eye reads a filled quarter-arc at each corner as a curved bulkhead - which is what the ship
-    // should look like, and what no amount of extra rectangles would achieve.
-    public static void DrawCornerFillets(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, Color color, float radiusPixels)
-    {
-        var radius = MathF.Min(radiusPixels, MathF.Min(rect.Width, rect.Height) / 3f);
-        if (radius < 2f)
-            return;
-
-        DrawFillet(spriteBatch, pixel, new Vector2(rect.X, rect.Y), radius, MathF.PI / 2f, color);
-        DrawFillet(spriteBatch, pixel, new Vector2(rect.Right, rect.Y), radius, MathF.PI, color);
-        DrawFillet(spriteBatch, pixel, new Vector2(rect.Right, rect.Bottom), radius * 1f, -MathF.PI / 2f, color);
-        DrawFillet(spriteBatch, pixel, new Vector2(rect.X, rect.Bottom), radius, 0f, color);
-    }
-
-    // Fans the wedge between a square corner and the arc that rounds it off. startAngle points at
-    // the first of the two edges meeting there; the sweep always runs a quarter turn from it.
-    private static void DrawFillet(SpriteBatch spriteBatch, Texture2D pixel, Vector2 corner, float radius, float startAngle, Color color)
-    {
-        var previous = corner + new Vector2(MathF.Cos(startAngle), MathF.Sin(startAngle)) * radius;
-        for (var i = 1; i <= FilletSegments; i++)
-        {
-            var angle = startAngle + i * (MathF.PI / 2f) / FilletSegments;
-            var point = corner + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
-            Primitives.FillTriangle(spriteBatch, pixel, corner, previous, point, color);
-            previous = point;
-        }
     }
 
     // Wall lamps: a bright sliver on the inside face of each bulkhead, with the glow it throws onto

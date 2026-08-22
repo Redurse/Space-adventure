@@ -1241,9 +1241,6 @@ public sealed class ShipRenderer
         var accent = accentOverride ?? RoomDecor.Accent(room.Id);
         const int half = WallThickness / 2;
 
-        // Rounded inside corners before the bulkheads themselves, so the wall slabs cover the seam
-        // where the arc meets them.
-        RoomDecor.DrawCornerFillets(spriteBatch, _pixel, rect, alarmed ? new Color(92, 60, 62) : new Color(70, 78, 90), 30f);
         RoomDecor.DrawWallLamps(spriteBatch, _pixel, rect, accent, alarmed);
 
         DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Y - half, rect.Width + WallThickness, WallThickness), true, alarmed, origin);
