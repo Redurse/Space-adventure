@@ -234,6 +234,12 @@ public static partial class HullSkin
             new Vector2(6f, 6f), SpriteEffects.None, 0f);
     }
 
+    // How long a room's own flank has to be, in world units, before it gets its own row of pods.
+    // Without this, a run of small rooms stepping diagonally (a staircase built in the ship editor
+    // to fake a slanted wall) gets a pod on every single step - a toothed row of little
+    // protrusions where the hull should just read as one wall.
+    private const float MinGreebleFlankUnits = 2f;
+
     // Sensor pods and tanks bolted to whichever flank faces away from the middle of the ship. They
     // cost nothing and they do most of the work of making a silhouette look built rather than
     // extruded - the hull stops being one unbroken outline.
@@ -246,6 +252,8 @@ public static partial class HullSkin
             return;
 
         var horizontal = MathF.Abs(outward.X) > MathF.Abs(outward.Y);
+        if ((horizontal ? room.Height : room.Width) < MinGreebleFlankUnits)
+            return;
         var sign = horizontal ? MathF.Sign(outward.X) : MathF.Sign(outward.Y);
         var margin = (int)(MarginUnits * ShipRenderer.PixelsPerUnit);
 
