@@ -57,10 +57,10 @@ public static partial class HullSkin
         foreach (var room in rooms)
         {
             var margins = ComputeMargins(room, rooms);
-            var plate = PlatePolygon(room, margins, origin);
+            var plate = PlatePolygon(room, rooms, margins, origin);
             var center = RoomCenter(room, origin);
             Primitives.FillPolygon(spriteBatch, pixel, center, plate, Plate);
-            DrawHullPlating(spriteBatch, pixel, hullPlates, room, margins, origin);
+            DrawHullPlating(spriteBatch, pixel, hullPlates, room, rooms, margins, origin);
             Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.6f, 2.5f);
             DrawPlateShading(spriteBatch, pixel, room, margins, origin);
             DrawFlankGreebles(spriteBatch, pixel, room, hullCenter, origin);
@@ -321,7 +321,7 @@ public static partial class HullSkin
     // exterior too so two open edges meet without a gap. Interior edges get nothing at all here
     // (the flat bezel from the base FillPolygon in Draw already covers them, unfaded, exactly as
     // before this whole texture pass existed).
-    private static void DrawHullPlating(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, Room room, RoomMargins margins, Vector2 origin)
+    private static void DrawHullPlating(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, Room room, IReadOnlyList<Room> rooms, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
         var sourceSize = TileTextures.HullTileSize;
@@ -349,7 +349,9 @@ public static partial class HullSkin
         // The bands above are plain rectangles and paint straight into the plate's own cut corners
         // on any exterior side; mask those back out with the same flat fill PlatePolygon's own
         // silhouette uses, reproducing the corner cut this would otherwise get for free from simply
-        // never drawing there.
+        // never drawing there. Skipped wherever PlatePolygon itself left that corner square (see
+        // HasDiagonalNeighbor) - masking a cut there would carve a notch out of a corner that is
+        // no longer cut.
         if (margins.TopExterior || margins.BottomExterior || margins.LeftExterior || margins.RightExterior)
         {
             var outerLeft = rect.X - margins.Left;
@@ -357,11 +359,42 @@ public static partial class HullSkin
             var outerWidth = rect.Width + margins.Left + margins.Right;
             var outerHeight = rect.Height + margins.Top + margins.Bottom;
             var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(outerWidth, outerHeight) / 3f);
-            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop), cut, mirrorX: false, mirrorY: false);
-            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop), cut, mirrorX: true, mirrorY: false);
-            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop + outerHeight), cut, mirrorX: false, mirrorY: true);
-            MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop + outerHeight), cut, mirrorX: true, mirrorY: true);
+            if (!HasDiagonalNeighbor(room, rooms, 0))
+                MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop), cut, mirrorX: false, mirrorY: false);
+            if (!HasDiagonalNeighbor(room, rooms, 1))
+                MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop), cut, mirrorX: true, mirrorY: false);
+            if (!HasDiagonalNeighbor(room, rooms, 3))
+                MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop + outerHeight), cut, mirrorX: false, mirrorY: true);
+            if (!HasDiagonalNeighbor(room, rooms, 2))
+                MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop + outerHeight), cut, mirrorX: true, mirrorY: true);
         }
+    }
+
+    // Whether another room's rectangle touches this one at exactly this corner point - a diagonal,
+    // single-point join - rather than along a shared edge run. IsExteriorEdge's span-overlap test
+    // only rules out edges that actually share a run; two rooms meeting only at a corner (an
+    // L-shaped layout) both still read every edge there as "exterior", so both independently cut
+    // that corner, and since the two rooms are rarely the same size the two cuts don't line up -
+    // leaving a sliver of bare background between them. Corners are numbered the same way as the
+    // vertices PlatePolygon builds: 0 top-left, 1 top-right, 2 bottom-right, 3 bottom-left.
+    private static bool HasDiagonalNeighbor(Room room, IReadOnlyList<Room> rooms, int corner)
+    {
+        const float epsilon = 0.02f;
+        foreach (var other in rooms)
+        {
+            if (ReferenceEquals(other, room))
+                continue;
+            var touches = corner switch
+            {
+                0 => MathF.Abs(other.Right - room.Left) < epsilon && MathF.Abs(other.Bottom - room.Top) < epsilon,
+                1 => MathF.Abs(other.Left - room.Right) < epsilon && MathF.Abs(other.Bottom - room.Top) < epsilon,
+                2 => MathF.Abs(other.Left - room.Right) < epsilon && MathF.Abs(other.Top - room.Bottom) < epsilon,
+                _ => MathF.Abs(other.Right - room.Left) < epsilon && MathF.Abs(other.Top - room.Bottom) < epsilon,
+            };
+            if (touches)
+                return true;
+        }
+        return false;
     }
 
     // One diagonal cut corner filled back in with the flat plate colour - `corner` is the plate's
@@ -374,8 +407,11 @@ public static partial class HullSkin
         Primitives.FillTriangle(spriteBatch, pixel, corner, corner + alongX, corner + alongY, Plate);
     }
 
-    // Rectangle with its corners taken off - eight points, filled as a fan from the middle.
-    private static Vector2[] PlatePolygon(Room room, RoomMargins margins, Vector2 origin)
+    // Rectangle with its corners taken off - eight points, filled as a fan from the middle. A
+    // corner that has a diagonal neighbour (HasDiagonalNeighbor) is left square instead - one
+    // point instead of two - so the two rooms' plates meet flush there rather than each carving an
+    // independent, differently-sized notch out of the same shared point.
+    private static Vector2[] PlatePolygon(Room room, IReadOnlyList<Room> rooms, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
         var left = rect.X - margins.Left;
@@ -384,13 +420,23 @@ public static partial class HullSkin
         var bottom = rect.Bottom + margins.Bottom;
         var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(right - left, bottom - top) / 3f);
 
-        return new[]
+        var points = new List<Vector2>(8);
+        AddCorner(points, HasDiagonalNeighbor(room, rooms, 0), new Vector2(left, top + cut), new Vector2(left + cut, top), new Vector2(left, top));
+        AddCorner(points, HasDiagonalNeighbor(room, rooms, 1), new Vector2(right - cut, top), new Vector2(right, top + cut), new Vector2(right, top));
+        AddCorner(points, HasDiagonalNeighbor(room, rooms, 2), new Vector2(right, bottom - cut), new Vector2(right - cut, bottom), new Vector2(right, bottom));
+        AddCorner(points, HasDiagonalNeighbor(room, rooms, 3), new Vector2(left + cut, bottom), new Vector2(left, bottom - cut), new Vector2(left, bottom));
+        return points.ToArray();
+    }
+
+    private static void AddCorner(List<Vector2> points, bool diagonalNeighbor, Vector2 incoming, Vector2 outgoing, Vector2 square)
+    {
+        if (diagonalNeighbor)
+            points.Add(square);
+        else
         {
-            new Vector2(left + cut, top), new Vector2(right - cut, top),
-            new Vector2(right, top + cut), new Vector2(right, bottom - cut),
-            new Vector2(right - cut, bottom), new Vector2(left + cut, bottom),
-            new Vector2(left, bottom - cut), new Vector2(left, top + cut),
-        };
+            points.Add(incoming);
+            points.Add(outgoing);
+        }
     }
 
     public static Vector2 Forward(float forwardDegrees)
