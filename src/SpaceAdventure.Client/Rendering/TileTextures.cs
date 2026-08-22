@@ -367,16 +367,21 @@ public static class TileTextures
     // inspection core, each its own tone, each boundary a real lit/shadow ledge rather than a line -
     // plus a real gunmetal colour baked into the tile itself instead of a grayscale height field
     // that only reads as metal once multiplied by an external tint.
-    private const int HullFrameWidth = 6;
+    // Frame widened and the whole palette pushed darker/higher-contrast than the first pass of
+    // this design - the tile is normally only ever seen cropped down to about its own frame width
+    // (HullSkin's slim plate margin, ShipRenderer's wall bands), so that is the one zone worth
+    // making read as heavy war-grade armour rather than a thin trim strip.
+    private const int HullFrameWidth = 10;
     private const int HullCoreLeft = 17, HullCoreTop = 17;
     private const int HullCoreRight = HullTileSize - 18, HullCoreBottom = HullTileSize - 18;
     private const int HullSeamX = HullTileSize / 2;
+    private const int HullSeamY = HullTileSize / 2;
 
-    private static readonly Color HullFrameColor = new(40, 46, 53);
-    private static readonly Color HullPlateColor = new(64, 71, 80);
+    private static readonly Color HullFrameColor = new(26, 30, 36);
+    private static readonly Color HullPlateColor = new(58, 64, 73);
     private static readonly Color HullCoreColor = new(78, 87, 97);
-    private static readonly Color HullHighlight = new(170, 178, 186);
-    private static readonly Color HullShadow = new(22, 26, 31);
+    private static readonly Color HullHighlight = new(184, 190, 196);
+    private static readonly Color HullShadow = new(12, 14, 18);
 
     // Which of the three slabs a pixel falls in, that slab's own tone, and the lit/shadow ledges at
     // whichever boundaries it sits on - the frame's outer and inner edges, or the plate's two steps
@@ -391,9 +396,9 @@ public static class TileTextures
         if (inFrame)
         {
             baseTone = HullFrameColor;
-            if (x == 0 || y == 0 || x == HullTileSize - 1 || y == HullTileSize - 1) layerShade += 0.11f;
+            if (x == 0 || y == 0 || x == HullTileSize - 1 || y == HullTileSize - 1) layerShade += 0.16f;
             if (x == HullFrameWidth - 1 || y == HullFrameWidth - 1 || x == HullTileSize - HullFrameWidth || y == HullTileSize - HullFrameWidth)
-                layerShade -= 0.13f;
+                layerShade -= 0.19f;
         }
         else if (inCore)
         {
@@ -404,29 +409,40 @@ public static class TileTextures
         else
         {
             baseTone = HullPlateColor;
-            if (x == HullFrameWidth || y == HullFrameWidth) layerShade += 0.10f;
-            if (x == HullTileSize - HullFrameWidth - 1 || y == HullTileSize - HullFrameWidth - 1) layerShade -= 0.07f;
-            if (x == HullCoreLeft - 1 || y == HullCoreTop - 1) layerShade += 0.07f;
-            if (x == HullCoreRight + 1 || y == HullCoreBottom + 1) layerShade -= 0.09f;
+            if (x == HullFrameWidth || y == HullFrameWidth) layerShade += 0.15f;
+            if (x == HullTileSize - HullFrameWidth - 1 || y == HullTileSize - HullFrameWidth - 1) layerShade -= 0.11f;
+            if (x == HullCoreLeft - 1 || y == HullCoreTop - 1) layerShade += 0.11f;
+            if (x == HullCoreRight + 1 || y == HullCoreBottom + 1) layerShade -= 0.14f;
             layerShade += HullWeldBead(x, y);
         }
     }
 
-    // The seam through the main plate as an actual weld bead - per-row irregular speckle along a
-    // 3px band, so it reads as overlapping weld-pool ripples instead of a ruled line. Only runs
-    // through the mid plate; it stops at the flange and the core rather than cutting through either.
+    // The seam through the main plate as an actual weld bead - irregular speckle along a wide band
+    // so it reads as overlapping weld-pool ripples instead of a ruled line, cut heavy and deep for
+    // a properly brutal seam rather than a scored trim line. Runs both ways - a vertical bead down
+    // the plate (the original) and a horizontal one across it - so a room's cropped vertical wall
+    // bands (which only ever show a slice next to x=0/x=63, never x=HullSeamX) still cross a weld
+    // joint every tile repeat, the same way the horizontal bands already did. Only runs through the
+    // mid plate; it stops at the flange and the core rather than cutting through either.
     private static float HullWeldBead(int x, int y)
     {
-        var offset = x - HullSeamX;
-        if (offset < -1 || offset > 2)
+        return WeldBeadAt(x - HullSeamX, Hash(y, HullSeamX, 77))
+             + WeldBeadAt(y - HullSeamY, Hash(x, HullSeamY, 83));
+    }
+
+    private static float WeldBeadAt(int offset, float brightHash)
+    {
+        if (offset < -2 || offset > 3)
             return 0f;
-        var bright = Hash(y, HullSeamX, 77) > 0.55f;
+        var bright = brightHash > 0.5f;
         return offset switch
         {
-            -1 => -0.03f,
-            0 => bright ? 0.05f : -0.06f,
-            1 => bright ? 0.07f : -0.02f,
-            _ => 0.02f,
+            -2 => -0.04f,
+            -1 => -0.08f,
+            0 => bright ? 0.09f : -0.12f,
+            1 => bright ? 0.13f : -0.09f,
+            2 => bright ? 0.06f : -0.04f,
+            _ => 0.03f,
         };
     }
 
@@ -483,14 +499,14 @@ public static class TileTextures
         if (y < visibleDepth || y >= HullTileSize - visibleDepth)
         {
             var alongX = Wrap(x, period);
-            if (alongX == 0) value -= 0.035f;
-            else if (alongX == 1) value += 0.02f;
+            if (alongX == 0) value -= 0.05f;
+            else if (alongX == 1) value += 0.03f;
         }
         if (x < visibleDepth || x >= HullTileSize - visibleDepth)
         {
             var alongY = Wrap(y, period);
-            if (alongY == 0) value -= 0.035f;
-            else if (alongY == 1) value += 0.02f;
+            if (alongY == 0) value -= 0.05f;
+            else if (alongY == 1) value += 0.03f;
         }
         return value;
     }
@@ -509,8 +525,8 @@ public static class TileTextures
         var distance = MathF.Sqrt(dx * dx + dy * dy);
         if (distance > 2.2f)
             return 0f;
-        var rim = MathHelper.Clamp((-dx - dy) / 3f, 0f, 0.1f);
-        return distance > 1.3f ? rim : -0.09f;
+        var rim = MathHelper.Clamp((-dx - dy) / 3f, 0f, 0.12f);
+        return distance > 1.3f ? rim : -0.13f;
     }
 
     // Two independent scratch fields rather than one - real wear is not a single noise sample. Kept
@@ -520,12 +536,12 @@ public static class TileTextures
     {
         var scratchA = Noise(x * 11f / HullTileSize, y * 3f / HullTileSize, 11, seed: 41);
         var scratch = 0f;
-        if (scratchA > 0.96f) scratch = -0.042f;
-        else if (scratchA < 0.02f) scratch = 0.035f;
+        if (scratchA > 0.96f) scratch = -0.055f;
+        else if (scratchA < 0.02f) scratch = 0.045f;
 
         var scratchB = Noise(x * 19f / HullTileSize, y * 5f / HullTileSize, 19, seed: 97);
-        if (scratchB > 0.972f) scratch += 0.045f;
-        else if (scratchB < 0.02f) scratch -= 0.02f;
+        if (scratchB > 0.972f) scratch += 0.06f;
+        else if (scratchB < 0.02f) scratch -= 0.03f;
         return scratch;
     }
 
@@ -536,8 +552,8 @@ public static class TileTextures
     {
         HullZone(x, y, out baseTone, out var layerShade, out var inPlateZone);
 
-        var grain = (Fbm(x, y, HullTileSize, 4, 10) - 0.5f) * 0.05f;
-        grain += (Noise(x * 16f / HullTileSize, y * 1f / HullTileSize, 16, seed: 5) - 0.5f) * 0.022f;
+        var grain = (Fbm(x, y, HullTileSize, 4, 10) - 0.5f) * 0.065f;
+        grain += (Noise(x * 16f / HullTileSize, y * 1f / HullTileSize, 16, seed: 5) - 0.5f) * 0.03f;
         grain += HullMicroDents(x, y);
         grain += HullBorderJoints(x, y);
 
