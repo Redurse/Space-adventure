@@ -124,7 +124,7 @@ public sealed class ShipRenderer
         foreach (var room in snapshot.Rooms)
             DrawRoomFloor(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
         foreach (var room in snapshot.Rooms)
-            DrawRoomWalls(spriteBatch, room, snapshot.Rooms, RoomOxygen(snapshot, room.Id), origin);
+            DrawRoomWalls(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
 
         // A frame over the metal plus a plain unpainted pane, only for the crew station that
         // actually faces open space - deliberately left blank rather than filled with any painted
@@ -1229,13 +1229,12 @@ public sealed class ShipRenderer
     // and bolted plates over the corners. VisibilityMask raycasts against that same boundary line,
     // so what blocks sight is exactly what's drawn here.
     //
-    // `allRooms` lets each of the room's four bands ask HullSkin.IsExteriorEdge whether it faces
-    // open space or another compartment - a band that faces open space is the inside face of the
-    // very same hull plate HullSkin paints on the outside of that edge, so it carries the same
-    // tile rather than the plain interior wall pattern. That is the one place this texture is
-    // reliably seen during normal play: HullSkin's own plate sits outside the lit/visible room
-    // polygon entirely, while this band sits half inside it.
-    internal void DrawRoomWalls(SpriteBatch spriteBatch, Room room, IReadOnlyList<Room> allRooms, float oxygen, Vector2 origin, Color? accentOverride = null)
+    // Every band carries the same hull-plate tile HullSkin paints on the true exterior of the
+    // ship, on every side of every room - not just the sides that happen to face open space. Only
+    // texturing the genuinely exterior sides once read as inconsistent (interior corridors kept
+    // the plain, flatter wall pattern right next to compartments that got the heavier plate look),
+    // so the one texture that actually reads well wins everywhere a wall is drawn.
+    internal void DrawRoomWalls(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin, Color? accentOverride = null)
     {
         var rect = GetRoomRect(room, origin);
         var alarmed = oxygen < 70f;
@@ -1247,38 +1246,25 @@ public sealed class ShipRenderer
         RoomDecor.DrawCornerFillets(spriteBatch, _pixel, rect, alarmed ? new Color(92, 60, 62) : new Color(70, 78, 90), 30f);
         RoomDecor.DrawWallLamps(spriteBatch, _pixel, rect, accent, alarmed);
 
-        var top = HullSkin.IsExteriorEdge(room, allRooms, 0);
-        var bottom = HullSkin.IsExteriorEdge(room, allRooms, 1);
-        var left = HullSkin.IsExteriorEdge(room, allRooms, 2);
-        var right = HullSkin.IsExteriorEdge(room, allRooms, 3);
+        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Y - half, rect.Width + WallThickness, WallThickness), true, alarmed, origin);
+        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Bottom - half, rect.Width + WallThickness, WallThickness), true, alarmed, origin);
+        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Y - half, WallThickness, rect.Height + WallThickness), false, alarmed, origin);
+        DrawWallBand(spriteBatch, new Rectangle(rect.Right - half, rect.Y - half, WallThickness, rect.Height + WallThickness), false, alarmed, origin);
 
-        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Y - half, rect.Width + WallThickness, WallThickness), true, alarmed, top, origin);
-        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Bottom - half, rect.Width + WallThickness, WallThickness), true, alarmed, bottom, origin);
-        DrawWallBand(spriteBatch, new Rectangle(rect.X - half, rect.Y - half, WallThickness, rect.Height + WallThickness), false, alarmed, left, origin);
-        DrawWallBand(spriteBatch, new Rectangle(rect.Right - half, rect.Y - half, WallThickness, rect.Height + WallThickness), false, alarmed, right, origin);
-
-        DrawCornerPlate(spriteBatch, rect.X, rect.Y, alarmed);
-        DrawCornerPlate(spriteBatch, rect.Right, rect.Y, alarmed);
-        DrawCornerPlate(spriteBatch, rect.X, rect.Bottom, alarmed);
-        DrawCornerPlate(spriteBatch, rect.Right, rect.Bottom, alarmed);
+        DrawCornerPlate(spriteBatch, rect.X, rect.Y);
+        DrawCornerPlate(spriteBatch, rect.Right, rect.Y);
+        DrawCornerPlate(spriteBatch, rect.X, rect.Bottom);
+        DrawCornerPlate(spriteBatch, rect.Right, rect.Bottom);
     }
 
-    private void DrawWallBand(SpriteBatch spriteBatch, Rectangle band, bool horizontal, bool alarmed, bool exterior, Vector2 origin)
+    private void DrawWallBand(SpriteBatch spriteBatch, Rectangle band, bool horizontal, bool alarmed, Vector2 origin)
     {
-        if (exterior)
-        {
-            // Untinted, same as HullSkin's own use of this texture - it already bakes its real
-            // gunmetal colour in, so multiplying it by the alarmed/normal wall tint would just
-            // darken it towards black instead of recolouring it. The alarmed conduit/rib overlay
-            // drawn below still carries the alarm state on this band.
-            var cellOrigin = new Point((int)origin.X, (int)origin.Y);
-            TileTextures.DrawTiled(spriteBatch, _hullPlates, TileTextures.HullTileSize, band, Color.White, cellOrigin);
-        }
-        else
-        {
-            TileTextures.DrawTiled(spriteBatch, _wallPlate, TileTextures.WallTileSize, band,
-                alarmed ? new Color(92, 60, 62) : new Color(70, 78, 90));
-        }
+        // Untinted, same as HullSkin's own use of this texture - it already bakes its real
+        // gunmetal colour in, so multiplying it by an alarmed/normal wall tint would just darken
+        // it towards black instead of recolouring it. The alarmed conduit/rib overlay drawn below
+        // still carries the alarm state on this band.
+        var cellOrigin = new Point((int)origin.X, (int)origin.Y);
+        TileTextures.DrawTiled(spriteBatch, _hullPlates, TileTextures.HullTileSize, band, Color.White, cellOrigin);
         var conduit = (alarmed ? Color.OrangeRed : Color.SteelBlue) * 0.45f;
 
         if (horizontal)
@@ -1305,12 +1291,11 @@ public sealed class ShipRenderer
         }
     }
 
-    private void DrawCornerPlate(SpriteBatch spriteBatch, int x, int y, bool alarmed)
+    private void DrawCornerPlate(SpriteBatch spriteBatch, int x, int y)
     {
         const int size = WallThickness + 6;
         var rect = new Rectangle(x - size / 2, y - size / 2, size, size);
-        TileTextures.DrawTiled(spriteBatch, _wallPlate, TileTextures.WallTileSize, rect,
-            alarmed ? new Color(110, 70, 72) : new Color(88, 96, 110));
+        TileTextures.DrawTiled(spriteBatch, _hullPlates, TileTextures.HullTileSize, rect, Color.White, new Point(x, y));
         DrawRectOutline(spriteBatch, rect, Color.Black * 0.45f, 1);
         DrawRivets(spriteBatch, rect);
     }

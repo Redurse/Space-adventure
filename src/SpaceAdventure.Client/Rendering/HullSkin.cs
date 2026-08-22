@@ -285,10 +285,10 @@ public static partial class HullSkin
     // against every other room for any overlapping run along the shared coordinate. Rooms in every
     // ship built so far touch edge-to-edge with no gap (see Ship.*.cs), so "shares this coordinate
     // and overlaps the span" is a reliable stand-in for "there is a neighbour here" without needing
-    // an actual adjacency graph. Internal, not private: ShipRenderer reuses this same check to
-    // decide which of a room's own wall bands should carry the hull-plate texture rather than the
-    // plain interior wall tile, so the two surfaces agree on what counts as "outside".
-    internal static bool IsExteriorEdge(Room room, IReadOnlyList<Room> rooms, int edge)
+    // an actual adjacency graph. Only used for HullSkin's own margin now - ShipRenderer's room
+    // walls stopped distinguishing exterior from interior and carry this same plate texture on
+    // every side, since that read better than mixing it with the plainer interior wall pattern.
+    private static bool IsExteriorEdge(Room room, IReadOnlyList<Room> rooms, int edge)
     {
         const float epsilon = 0.02f;
         foreach (var other in rooms)
