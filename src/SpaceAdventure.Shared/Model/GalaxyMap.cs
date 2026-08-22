@@ -30,13 +30,14 @@ public sealed class GalaxyMap
     // How far (in a system's own LOCAL field-space units, AsteroidField.Center-relative) the ship
     // has to fly from the field's centre before a jump is possible at all - the "edge of the solar
     // system", a plain ring around the whole system rather than one specific point to hunt down and
-    // park on. Every system shares one 2400x2400 field (AsteroidField.CreateDefault/the shared
-    // empty stub, M40), whose cardinal edges sit exactly 1200 units from centre - kept comfortably
-    // under that so the full ring stays reachable in every direction, not just along the diagonals.
-    // Scaled ×8 alongside the field itself (was 138 for the old 300x300 field) - otherwise the ring
-    // would sit at barely a tenth of the way out, letting a ship warp away just moments after
-    // undocking instead of the manually-flown crossing this milestone is actually about.
-    public const float WarpZoneRadius = 1104f;
+    // park on. Every system shares one 4800x4800 field (AsteroidField.CreateDefault/the shared
+    // empty stub, M48 doubling M40's own 2400x2400), whose cardinal edges sit exactly 2400 units
+    // from centre - kept comfortably under that so the full ring stays reachable in every
+    // direction, not just along the diagonals. Scaled ×2 alongside the field's own M48 doubling
+    // (was 1104 for the 2400x2400 field, 138 before that for the original 300x300 one) - otherwise
+    // the ring would sit at barely half the way out, letting a ship warp away far short of the
+    // manually-flown crossing this milestone is actually about.
+    public const float WarpZoneRadius = 2208f;
 
     private readonly List<StarSystem> _systems;
     private readonly List<GalaxyPoint> _points;
@@ -108,12 +109,17 @@ public sealed class GalaxyMap
     public static GalaxyMap CreateStarter()
     {
         // Real positions in this system's own local field (World.Voyage.cs), spread across the
-        // full 2400x2400 field (M40) rather than sitting in a small cluster near its centre - the
-        // field's own centre (1200,1200) is where the sun sits (GalaxyMapPanel's backdrop, anchored
-        // to AsteroidField.Center rather than any point average) and CanWarpNow already measures
-        // distance from exactly that point, so a system whose points actually reach out toward the
-        // WarpZoneRadius(1104) ring is what makes "fly clear of the system to jump" a real,
-        // felt journey instead of a formality that was already true two steps off the berth.
+        // full 4800x4800 field (M48, doubling M40's own 2400x2400) rather than sitting in a small
+        // cluster near its centre - the field's own centre (2400,2400) is where the sun sits
+        // (GalaxyMapPanel's backdrop, anchored to AsteroidField.Center rather than any point
+        // average) and CanWarpNow already measures distance from exactly that point, so a system
+        // whose points actually reach out toward the WarpZoneRadius(2208) ring is what makes "fly
+        // clear of the system to jump" a real, felt journey instead of a formality that was already
+        // true two steps off the berth. Every original M47 point is simply doubled in place (its
+        // bearing and relative distance from centre are unchanged, only the scale) so the layout
+        // everyone already knows just grew, rather than being redrawn from scratch; three new
+        // points (sector-zeta, frontier-outpost, independent-relay) fill the space that opened up
+        // in between.
         //
         // home-station sits fairly close to the field's own centre (and to the asteroid belt's
         // marker below, which can't move - see its own comment) - four routes out of here are
@@ -122,48 +128,54 @@ public sealed class GalaxyMap
         //  - trade-station: World_Docking_TooFastAtPort_ButtonStaysDisarmed flies there in a flat
         //    60s at full uncapped throttle with zero peel/hazard-avoidance at all.
         //  - outpost-gamma: every ApproachBerth-based test caps speed at 1.5 units/s for the whole
-        //    approach ("parked and slow enough to dock"), budgeted at 600s (TestRunner.
-        //    StationDocking.cs).
+        //    approach ("parked and slow enough to dock"), budgeted at 1000s (TestRunner.
+        //    StationDocking.cs, M48 - doubling the distance roughly doubled the required budget).
         //  - sector-alpha: World_Voyage_FreeFormClickNearHostileSectorStillTriggersBattle flies
         //    there for real at FlyToward's own default 120s budget (uncapped speed, no override).
         //  - asteroid-field-epsilon: FlyNearAndStop (TestRunner.HelmAndHull.cs/Doors.cs) is the
         //    same default-120s FlyToward underneath.
-        // Sector-beta/delta and the mining outpost are only ever reached via a direct teleport
-        // (World.DebugPlaceShip) or an explicit, generous budget, so nothing held those back from
-        // genuinely using the new size - pushed out toward the WarpZoneRadius(1104) ring instead,
-        // with margin to spare.
+        // Sector-beta/delta/zeta and the mining outpost/frontier-outpost/independent-relay are only
+        // ever reached via a direct teleport (World.DebugPlaceShip) or an explicit, generous
+        // budget, so nothing held those back from genuinely using the new size - pushed out toward
+        // the WarpZoneRadius(2208) ring instead, with margin to spare.
         var sol = new StarSystem("sol", "Солнечная система", new[]
         {
             // Faction ownership (game_design.md section 12): home stays neutral so a new crew
             // always has somewhere that treats them the same regardless of reputation; the other
             // two stations belong to the rival powers, as do the sectors their raiders patrol.
-            new GalaxyPoint("home-station", "Домашняя станция", 1050f, 1400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
-            new GalaxyPoint("sector-alpha", "Сектор Альфа", 1300f, 1700f, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
+            new GalaxyPoint("home-station", "Домашняя станция", 2100f, 2800f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("sector-alpha", "Сектор Альфа", 2600f, 3400f, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
             // Beta is a picket of two and Delta a patrol of three - the map's difficulty gradient
             // is squadron size, not per-ship strength (game_design.md section 12).
-            new GalaxyPoint("sector-beta", "Сектор Бета", 500f, 2000f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 1450f, 1050f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
-            new GalaxyPoint("sector-delta", "Сектор Дельта", 2050f, 700f, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
-            new GalaxyPoint("trade-station", "Торговая станция", 900f, 1550f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
+            new GalaxyPoint("sector-beta", "Сектор Бета", 1000f, 4000f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
+            new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 2900f, 2100f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
+            new GalaxyPoint("sector-delta", "Сектор Дельта", 4100f, 1400f, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
+            new GalaxyPoint("trade-station", "Торговая станция", 1800f, 3100f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
             // Left at the field's own centre, alongside the sun it orbits - AsteroidField.
             // CreateDefault's own rocks/ore sit right here too (recentred there by
-            // RecenterOffsetM40), so moving just this marker without the physical field itself
+            // RecenterOffsetM48), so moving just this marker without the physical field itself
             // would point the label somewhere the belt no longer actually is.
-            new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 1200f, 1200f, GalaxyPointKind.AsteroidField),
+            new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 2400f, 2400f, GalaxyPointKind.AsteroidField),
             // The Miners' Guild (game_design.md section 12, Phase 4 - MinersGuild) sits right by
             // the belt it works, staying out of the Consortium/FreeFleet fight entirely.
-            new GalaxyPoint("mining-outpost", "Форпост старателей", 1500f, 900f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
+            new GalaxyPoint("mining-outpost", "Форпост старателей", 3000f, 1800f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
+            // M48's three new points, filling the space the doubled field opened up in the gaps
+            // between the M47 layout's own bearings (all of which cluster between roughly "east"
+            // and "south" of the sun) - due west, due east, and due north respectively.
+            new GalaxyPoint("sector-zeta", "Сектор Дзета", 900f, 1300f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
+            new GalaxyPoint("frontier-outpost", "Пограничный аванпост", 3900f, 2400f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Outpost),
+            new GalaxyPoint("independent-relay", "Независимая станция-ретранслятор", 2400f, 900f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Trade),
             // No single faction actually owns this contested a home system outright - the crew's
             // own neutral turf sits alongside two rivals' sectors and a third guild's own outpost.
         }, AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null);
 
-        var proceduralField = new AsteroidField(2400f, 2400f, Array.Empty<Asteroid>(), Array.Empty<OreDeposit>());
+        var proceduralField = new AsteroidField(4800f, 4800f, Array.Empty<Asteroid>(), Array.Empty<OreDeposit>());
 
         // Every hand-authored stub below is controlled by whichever faction its own single point
         // already belongs to - simplest reading of "who actually runs this place".
         var alphaCentauri = new StarSystem("alpha-centauri", "Альфа Центавра", new[]
         {
-            new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 1200f, 1200f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
         }, proceduralField, galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
 
         // The rest of the chain (game_design.md - "куча систем"): each new system is a light stub,
@@ -176,22 +188,22 @@ public sealed class GalaxyMap
         // one hop at a time despite there being no explicit edge list anymore.
         var sirius = new StarSystem("sirius", "Сириус", new[]
         {
-            new GalaxyPoint("sirius-trade-post", "Торговый пост Сириуса", 1200f, 1200f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
+            new GalaxyPoint("sirius-trade-post", "Торговый пост Сириуса", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
         }, proceduralField, galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium);
 
         var vega = new StarSystem("vega", "Вега", new[]
         {
-            new GalaxyPoint("vega-outpost", "Аванпост Веги", 1200f, 1200f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("vega-outpost", "Аванпост Веги", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
         }, proceduralField, galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
 
         var tauCeti = new StarSystem("tau-ceti", "Тау Кита", new[]
         {
-            new GalaxyPoint("tau-ceti-sector", "Сектор Тау Кита", 1200f, 1200f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
+            new GalaxyPoint("tau-ceti-sector", "Сектор Тау Кита", 2400f, 2400f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
         }, proceduralField, galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet);
 
         var barnardsStar = new StarSystem("barnards-star", "Звезда Барнарда", new[]
         {
-            new GalaxyPoint("barnard-mining-outpost", "Форпост старателей Барнарда", 1200f, 1200f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
+            new GalaxyPoint("barnard-mining-outpost", "Форпост старателей Барнарда", 2400f, 2400f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
         }, proceduralField, galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild);
 
         var handAuthoredSystems = new[] { sol, alphaCentauri, sirius, vega, tauCeti, barnardsStar };
@@ -348,9 +360,9 @@ public sealed class GalaxyMap
             var hostileSectorChance = isControlled ? ControlledSystemHostileSectorChance : ContestedSystemHostileSectorChance;
 
             var poi = random.NextDouble() >= hostileSectorChance
-                ? new GalaxyPoint($"{id}-poi", $"База {name}", 1200f, 1200f, GalaxyPointKind.Station, pointFaction,
+                ? new GalaxyPoint($"{id}-poi", $"База {name}", 2400f, 2400f, GalaxyPointKind.Station, pointFaction,
                     (StationKind)random.Next(Enum.GetValues<StationKind>().Length))
-                : new GalaxyPoint($"{id}-poi", $"Сектор {name}", 1200f, 1200f, GalaxyPointKind.HostileSector, pointFaction,
+                : new GalaxyPoint($"{id}-poi", $"Сектор {name}", 2400f, 2400f, GalaxyPointKind.HostileSector, pointFaction,
                     SquadronSize: random.Next(1, 4));
 
             var system = new StarSystem(id, name, new[] { poi }, _proceduralField, galaxyX: x, galaxyY: y, controllingFaction: controllingFaction);

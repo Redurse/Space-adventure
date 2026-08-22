@@ -59,6 +59,10 @@ public static partial class HullSkin
             var plate = PlatePolygon(room, origin);
             var center = RoomCenter(room, origin);
             Primitives.FillPolygon(spriteBatch, pixel, center, plate, Plate);
+            // Outside the thin margin band below - a full, uncropped block wherever this room's
+            // own edge actually faces open space, so the plate design reads as the single tile it
+            // is instead of the sliver the margin bezel alone can show.
+            DrawHullArmorSkirt(spriteBatch, hullPlates, room, rooms, origin);
             DrawHullMarginBand(spriteBatch, pixel, hullPlates, RoomRect(room, origin), origin);
             Primitives.StrokePolygon(spriteBatch, pixel, plate, Edge * 0.6f, 2.5f);
             DrawPlateShading(spriteBatch, pixel, room, origin);
@@ -257,6 +261,73 @@ public static partial class HullSkin
 
             spriteBatch.Draw(pixel, pod, PlateLit);
             spriteBatch.Draw(pixel, new Rectangle(pod.X, pod.Y, pod.Width, 2), Edge * 0.5f);
+        }
+    }
+
+    // Whether this edge of the room faces open space rather than another compartment - checked
+    // against every other room for any overlapping run along the shared coordinate. Rooms in every
+    // ship built so far touch edge-to-edge with no gap (see Ship.*.cs), so "shares this coordinate
+    // and overlaps the span" is a reliable stand-in for "there is a neighbour here" without needing
+    // an actual adjacency graph.
+    private static bool IsExteriorEdge(Room room, IReadOnlyList<Room> rooms, int edge)
+    {
+        const float epsilon = 0.02f;
+        foreach (var other in rooms)
+        {
+            if (ReferenceEquals(other, room))
+                continue;
+            var sharesEdge = edge switch
+            {
+                0 => MathF.Abs(other.Bottom - room.Top) < epsilon,
+                1 => MathF.Abs(other.Top - room.Bottom) < epsilon,
+                2 => MathF.Abs(other.Right - room.Left) < epsilon,
+                _ => MathF.Abs(other.Left - room.Right) < epsilon,
+            };
+            if (!sharesEdge)
+                continue;
+            var overlapsSpan = edge is 0 or 1
+                ? other.Left < room.Right - epsilon && other.Right > room.Left + epsilon
+                : other.Top < room.Bottom - epsilon && other.Bottom > room.Top + epsilon;
+            if (overlapsSpan)
+                return false;
+        }
+        return true;
+    }
+
+    // A full, uncropped hull plate - not the sliver the margin bezel below can ever show - stacked
+    // just outside it on whichever of a room's four edges genuinely face open space. Extends into a
+    // shared corner whenever the adjoining edge is exterior too, so two open edges meet without a
+    // gap; stops flush at the room's own corner otherwise, so it never bleeds along a side that is
+    // actually a shared wall with a neighbour.
+    private static void DrawHullArmorSkirt(SpriteBatch spriteBatch, Texture2D[] hullPlates, Room room, IReadOnlyList<Room> rooms, Vector2 origin)
+    {
+        var rect = RoomRect(room, origin);
+        var margin = (int)(MarginUnits * ShipRenderer.PixelsPerUnit);
+        var block = TileTextures.HullTileSize;
+        var cellOrigin = new Point((int)origin.X, (int)origin.Y);
+
+        var top = IsExteriorEdge(room, rooms, 0);
+        var bottom = IsExteriorEdge(room, rooms, 1);
+        var left = IsExteriorEdge(room, rooms, 2);
+        var right = IsExteriorEdge(room, rooms, 3);
+
+        if (top || bottom)
+        {
+            var x = rect.X - (left ? block : 0);
+            var width = rect.Width + (left ? block : 0) + (right ? block : 0);
+            if (top)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, rect.Y - margin - block, width, block), Color.White, cellOrigin);
+            if (bottom)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(x, rect.Bottom + margin, width, block), Color.White, cellOrigin);
+        }
+        if (left || right)
+        {
+            var y = rect.Y - (top ? block : 0);
+            var height = rect.Height + (top ? block : 0) + (bottom ? block : 0);
+            if (left)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(rect.X - margin - block, y, block, height), Color.White, cellOrigin);
+            if (right)
+                TileTextures.DrawTiled(spriteBatch, hullPlates, block, new Rectangle(rect.Right + margin, y, block, height), Color.White, cellOrigin);
         }
     }
 

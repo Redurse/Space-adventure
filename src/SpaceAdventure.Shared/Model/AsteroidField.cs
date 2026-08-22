@@ -30,6 +30,10 @@ public sealed class AsteroidField
     // in the middle of the system, with the newly opened-up space radiating outward on every side,
     // rather than getting stranded in one corner of a much bigger field.
     public const float RecenterOffsetM40 = 1050f;
+    // The field doubled again on top of that (M48 - "в 2 раза больше по длине и ширине"), so the
+    // cluster needs to shift the extra distance from the old centre (1200,1200) to the new one
+    // (2400,2400) as well: RecenterOffsetM40 + (2400-1200) = 2250.
+    public const float RecenterOffsetM48 = RecenterOffsetM40 + 1200f;
 
     public static AsteroidField CreateDefault()
     {
@@ -40,7 +44,7 @@ public sealed class AsteroidField
             new Asteroid("asteroid-3", 60f, 220f, 4f),
             new Asteroid("asteroid-4", 220f, 100f, 6f),
             new Asteroid("asteroid-5", 150f, 40f, 4f),
-        }.Select(a => a with { X = a.X + RecenterOffsetM40, Y = a.Y + RecenterOffsetM40 }).ToArray();
+        }.Select(a => a with { X = a.X + RecenterOffsetM48, Y = a.Y + RecenterOffsetM48 }).ToArray();
 
         // Two or three blocks of ore per asteroid, sitting on its surface (game_design.md Phase 3,
         // M18). Each is cut apart on its own and drops one item, so a rock is worth a couple of
@@ -61,7 +65,7 @@ public sealed class AsteroidField
             new OreDeposit("ore-4c", "asteroid-4", 214f, 100f, 110f),
             new OreDeposit("ore-5a", "asteroid-5", 154f, 40f, 90f),
             new OreDeposit("ore-5b", "asteroid-5", 148f, 36f, 90f),
-        }.Select(d => d with { X = d.X + RecenterOffsetM40, Y = d.Y + RecenterOffsetM40 }).ToArray();
+        }.Select(d => d with { X = d.X + RecenterOffsetM48, Y = d.Y + RecenterOffsetM48 }).ToArray();
 
         // Veins are written down as points on the nominal circle, then pulled onto the rock's real
         // outline (AsteroidShape) - otherwise a deposit sits buried inside a spur or floating off a
@@ -73,11 +77,12 @@ public sealed class AsteroidField
             return deposit with { X = surface.X, Y = surface.Y };
         }).ToArray();
 
-        // 2400x2400 (M40, game_design.md - 8 minutes edge-to-edge under manual flight at
-        // ShipMaxSpeed(5) rather than the ~1 minute a 300x300 field gave) - the cluster above is
-        // already recentred (RecenterOffsetM40), so it sits in the middle of the newly opened-up
-        // space rather than being redistributed across it; M43's persistent NPC traffic and M44's
-        // scanner-revealed contacts are what populate the rest.
-        return new AsteroidField(width: 2400f, height: 2400f, asteroids, onTheSurface);
+        // 4800x4800 (M48 - "в 2 раза больше по длине и ширине", doubling M40's own 2400x2400 -
+        // 16 minutes edge-to-edge under manual flight at ShipMaxSpeed(5) rather than the ~1 minute
+        // a 300x300 field gave) - the cluster above is already recentred (RecenterOffsetM48), so it
+        // sits in the middle of the newly opened-up space rather than being redistributed across
+        // it; M43's persistent NPC traffic and M44's scanner-revealed contacts are what populate
+        // the rest.
+        return new AsteroidField(width: 4800f, height: 4800f, asteroids, onTheSurface);
     }
 }

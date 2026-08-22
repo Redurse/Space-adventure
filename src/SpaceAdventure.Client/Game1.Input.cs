@@ -189,6 +189,18 @@ public partial class Game1
                 return new DropTarget(new SlotRef(ItemSlotKind.Main, ts), true, (from.Index, ts));
         }
 
+        // The worn suit takes a tank the same way a held cutter does, and now by the same gesture.
+        // It needs its own branch because a worn item is not in the row: its icon lives in the equip
+        // strip and its socket is keyed to Inventory.WornSuitSlot rather than to a row index.
+        //
+        // Deliberately not gated on the tank being in hand, even though clicking the socket is
+        // (QueueSocketClick). Dragging a tank into a cutter was never gated either, and two gestures
+        // that do the same thing should not disagree about when they are allowed.
+        if (from.Kind == ItemSlotKind.Main && TankSockets.IsTank(draggedItem) &&
+            HoveredWornSocketItem(inventory) is { } wornOwner &&
+            TankSockets.AcceptedTank(wornOwner) == draggedItem && inventory.WornSuitTank is null)
+            return new DropTarget(new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.Suit), true, (from.Index, -1));
+
         if (HitTestItemSlot(snapshot) is not { } to || to == from)
             return null;
 
@@ -236,6 +248,24 @@ public partial class Game1
     // the slot itself or the socket band that then appears above it (InventoryPanel.GetSocketRect
     // with above: true). Both count as "hovering this slot" so the socket doesn't wink out the
     // moment the cursor reaches for it.
+    // The worn item whose tank socket the cursor is over, if any. Mirrors the equip-strip loop the
+    // socket click uses, so a drag and a click agree on where the socket is - and accepts the icon
+    // itself as well as the socket band above it, which is what anyone dragging a tank aims at.
+    private ItemType? HoveredWornSocketItem(InventoryState inventory)
+    {
+        for (var i = 0; i < InventoryPanel.EquipSlots.Length; i++)
+        {
+            var worn = inventory.Equipped.TryGetValue(InventoryPanel.EquipSlots[i].Id, out var e) ? e : null;
+            if (worn is not { } wornItem || !TankSockets.HasSocket(wornItem))
+                continue;
+            var slotRect = InventoryPanel.GetSlotRect(i, EquipSlotsOrigin);
+            if (slotRect.Contains(_designMouse) ||
+                InventoryPanel.GetSocketRect(slotRect, above: true).Contains(_designMouse))
+                return wornItem;
+        }
+        return null;
+    }
+
     private int? HoveredToolSlotIndex(InventoryState inventory, Vector2 rowOrigin)
     {
         for (var i = 0; i < inventory.MainSlots.Count; i++)

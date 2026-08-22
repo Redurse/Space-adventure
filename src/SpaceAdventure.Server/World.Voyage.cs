@@ -25,16 +25,17 @@ public sealed partial class World
     // enemy ships - a squadron's formation AI tracks the ship's own position closely
     // (World.EnemyFleet.cs's SteerEnemy), so distance to them barely opens even during a real
     // retreat; every battle starts within the marker's own small CaptureRadius(8) by construction,
-    // so reaching this takes a real, sustained retreat either way. Scaled ×8 alongside the field
-    // itself (M40, was 35 for the old 300x300 field) - every marker now sits comfortably far from
-    // any wall after recentring (AsteroidField.RecenterOffsetM40), so this is purely about matching
-    // the field's own new scale, not squeezing past a nearby edge any more.
-    private const float BattleFleeDistance = 280f;
+    // so reaching this takes a real, sustained retreat either way. Scaled ×2 alongside the field's
+    // own M48 doubling (was 280 for the 2400x2400 field, 35 before that for the original 300x300
+    // one) - every marker now sits comfortably far from any wall after recentring
+    // (AsteroidField.RecenterOffsetM48), so this is purely about matching the field's own new
+    // scale, not squeezing past a nearby edge any more.
+    private const float BattleFleeDistance = 560f;
     // However a fight is left, the ship should land somewhere flyable, not pinned to the system's
     // own outer boundary - NudgeAwayFromFieldEdge is the safety net underneath BattleFleeDistance,
     // in case a future system's own layout ever puts a marker's escape route that close to the wall.
-    // Scaled ×8 alongside the field (M40, was 12).
-    private const float FieldEdgeSafetyMargin = 96f;
+    // Scaled ×2 alongside the field's own M48 doubling (was 96, 12 before the original M40 scaling).
+    private const float FieldEdgeSafetyMargin = 192f;
 
     public GalaxyMap GalaxyMap { get; } = GalaxyMap.CreateStarter();
 
