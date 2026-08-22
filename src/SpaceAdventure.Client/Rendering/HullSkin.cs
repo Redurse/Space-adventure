@@ -314,18 +314,17 @@ public static partial class HullSkin
     }
 
     // The hull plate's own texture, drawn flush against the room on every exterior edge - no gap,
-    // no separate flat band first, this *is* the plate now. The band is only as thick as the
-    // plate's own slim margin, so DrawTiled's per-cell clipping shows just the outer slice of each
-    // 64px tile (its frame and the start of its plate zone) rather than the whole block - the same
-    // crop a plate this narrow would always show, not a scaled-down copy of the tile. Extended
-    // into a shared corner whenever the adjoining edge is exterior too so two open edges meet
-    // without a gap. Interior edges get nothing at all here (the flat bezel from the base
-    // FillPolygon in Draw already covers them, unfaded, exactly as before this whole texture pass
-    // existed).
+    // no separate flat band first, this *is* the plate now. DrawSquares tiles it as a run of whole
+    // square blocks exactly as thick as the plate's own slim margin, each one the complete 64px
+    // design scaled down to fit rather than a crop of it - the whole plate in miniature, repeating,
+    // not a sliver of just its frame. Extended into a shared corner whenever the adjoining edge is
+    // exterior too so two open edges meet without a gap. Interior edges get nothing at all here
+    // (the flat bezel from the base FillPolygon in Draw already covers them, unfaded, exactly as
+    // before this whole texture pass existed).
     private static void DrawHullPlating(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, Room room, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
-        var pitch = TileTextures.HullTileSize;
+        var sourceSize = TileTextures.HullTileSize;
         var cellOrigin = new Point((int)origin.X, (int)origin.Y);
 
         if (margins.TopExterior || margins.BottomExterior)
@@ -333,18 +332,18 @@ public static partial class HullSkin
             var x = rect.X - (margins.LeftExterior ? (int)margins.Left : 0);
             var width = rect.Width + (margins.LeftExterior ? (int)margins.Left : 0) + (margins.RightExterior ? (int)margins.Right : 0);
             if (margins.TopExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle(x, (int)(rect.Y - margins.Top), width, (int)margins.Top), Color.White, cellOrigin);
+                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Top, new Rectangle(x, (int)(rect.Y - margins.Top), width, (int)margins.Top), Color.White, cellOrigin);
             if (margins.BottomExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle(x, rect.Bottom, width, (int)margins.Bottom), Color.White, cellOrigin);
+                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Bottom, new Rectangle(x, rect.Bottom, width, (int)margins.Bottom), Color.White, cellOrigin);
         }
         if (margins.LeftExterior || margins.RightExterior)
         {
             var y = rect.Y - (margins.TopExterior ? (int)margins.Top : 0);
             var height = rect.Height + (margins.TopExterior ? (int)margins.Top : 0) + (margins.BottomExterior ? (int)margins.Bottom : 0);
             if (margins.LeftExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle((int)(rect.X - margins.Left), y, (int)margins.Left, height), Color.White, cellOrigin);
+                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Left, new Rectangle((int)(rect.X - margins.Left), y, (int)margins.Left, height), Color.White, cellOrigin);
             if (margins.RightExterior)
-                TileTextures.DrawTiled(spriteBatch, hullPlates, pitch, new Rectangle(rect.Right, y, (int)margins.Right, height), Color.White, cellOrigin);
+                TileTextures.DrawSquares(spriteBatch, hullPlates, sourceSize, (int)margins.Right, new Rectangle(rect.Right, y, (int)margins.Right, height), Color.White, cellOrigin);
         }
 
         // The bands above are plain rectangles and paint straight into the plate's own cut corners

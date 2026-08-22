@@ -1264,7 +1264,7 @@ public sealed class ShipRenderer
         // it towards black instead of recolouring it. The alarmed conduit/rib overlay drawn below
         // still carries the alarm state on this band.
         var cellOrigin = new Point((int)origin.X, (int)origin.Y);
-        TileTextures.DrawTiled(spriteBatch, _hullPlates, TileTextures.HullTileSize, band, Color.White, cellOrigin);
+        TileTextures.DrawSquares(spriteBatch, _hullPlates, TileTextures.HullTileSize, WallThickness, band, Color.White, cellOrigin);
         var conduit = (alarmed ? Color.OrangeRed : Color.SteelBlue) * 0.45f;
 
         if (horizontal)
@@ -1295,7 +1295,7 @@ public sealed class ShipRenderer
     {
         const int size = WallThickness + 6;
         var rect = new Rectangle(x - size / 2, y - size / 2, size, size);
-        TileTextures.DrawTiled(spriteBatch, _hullPlates, TileTextures.HullTileSize, rect, Color.White, new Point(x, y));
+        TileTextures.DrawSquares(spriteBatch, _hullPlates, TileTextures.HullTileSize, size, rect, Color.White, new Point(x, y));
         DrawRectOutline(spriteBatch, rect, Color.Black * 0.45f, 1);
         DrawRivets(spriteBatch, rect);
     }

@@ -160,6 +160,32 @@ public static class TileTextures
         }
     }
 
+    /// <summary>Ship walls built out of the hull plate as a run of whole square blocks - each one
+    /// the entire tile, compressed to whatever size the wall actually needs, rather than a crop of
+    /// it at native resolution. DrawTiled above always samples the tile 1:1 and lets the wall's own
+    /// thickness decide how much of it survives the crop; this instead always samples the tile's
+    /// full 0..sourceSize square and scales that down (or up) to fill a destSize×destSize block, so
+    /// every block is square and shows the complete design in miniature. The last block in a run
+    /// can overhang `rect`'s far edge rather than being squeezed into a non-square remainder -
+    /// walls are cut in whole blocks, not fractional ones.</summary>
+    public static void DrawSquares(SpriteBatch spriteBatch, Texture2D[] plates, int sourceSize, int destSize,
+        Rectangle rect, Color tint, Point cellOrigin)
+    {
+        var source = new Rectangle(0, 0, sourceSize, sourceSize);
+        for (var y = rect.Y; y < rect.Bottom; y += destSize)
+        {
+            for (var x = rect.X; x < rect.Right; x += destSize)
+            {
+                var cellX = (int)MathF.Floor((x - cellOrigin.X) / (float)destSize);
+                var cellY = (int)MathF.Floor((y - cellOrigin.Y) / (float)destSize);
+                var plate = plates[HullPlateVariants.VariantAt(cellX, cellY) % plates.Length];
+                var tone = HullPlateVariants.ToneAt(cellX, cellY);
+                var shaded = new Color((int)(tint.R * tone), (int)(tint.G * tone), (int)(tint.B * tone), tint.A);
+                spriteBatch.Draw(plate, new Rectangle(x, y, destSize, destSize), source, shaded);
+            }
+        }
+    }
+
     public static void DrawTiled(SpriteBatch spriteBatch, Texture2D texture, int tileSize, Rectangle rect, Color tint)
     {
         for (var y = rect.Y; y < rect.Bottom; y += tileSize)
