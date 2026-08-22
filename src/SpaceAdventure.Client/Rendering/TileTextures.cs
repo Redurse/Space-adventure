@@ -305,16 +305,48 @@ public static class TileTextures
     }
 
     // Vertical brushed streaks rather than the floor's diagonal tread - a bulkhead panel is rolled
-    // sheet, not tread plate - plus the seam where one rolled panel meets the next.
+    // sheet, not tread plate - plus a bevel, two corner rivets and a proper weld bead where one
+    // rolled panel meets the next, the same fabricated-plating language HullPixel uses on the
+    // armour. This is the one tile that is actually inside the lit interior a player walks
+    // through (DrawRoomWalls straddles the room edge, half in, half out - unlike the hull's own
+    // margin bezel, which sits entirely outside the room's own light/visibility polygon and never
+    // reads as more than a flat tone), so it is worth more detail than a bare brushed-noise field.
     private static float WallPixel(int x, int y)
     {
         // Fine across, almost uniform along: that anisotropy is the whole look of brushed metal.
-        var brushed = (Noise(x * 8f / WallTileSize, y * 0.5f / WallTileSize, 8, 5) - 0.5f) * 0.11f;
-        var mottle = (Fbm(x, y, WallTileSize, 3, 2, seed: 11) - 0.5f) * 0.05f;
+        var brushed = (Noise(x * 8f / WallTileSize, y * 0.5f / WallTileSize, 8, 5) - 0.5f) * 0.09f;
+        var mottle = (Fbm(x, y, WallTileSize, 3, 4, seed: 11) - 0.5f) * 0.045f;
         var value = 0.89f + brushed + mottle;
 
-        if (y == 0) value -= 0.09f;                // seam
-        else if (y == 1) value += 0.05f;           // and the lit lip below it
+        // A bevel round the whole tile, same lit-top-left/dark-bottom-right convention as the hull
+        // plate - a wall panel reads as bolted-on rather than painted flat.
+        const int bevel = 2;
+        if (x < bevel || y < bevel) value += 0.045f;
+        if (x >= WallTileSize - bevel || y >= WallTileSize - bevel) value -= 0.05f;
+
+        // The panel seam as a short weld bead - per-column speckle across a 3px band - instead of
+        // one flat row, the same idea as HullWeldBead just scaled to this tile's own size.
+        var seamY = WallTileSize / 2;
+        var rowOffset = y - seamY;
+        if (rowOffset is >= -1 and <= 1)
+        {
+            var bright = Hash(x, seamY, 71) > 0.5f;
+            value += rowOffset switch
+            {
+                -1 => -0.025f,
+                0 => bright ? 0.045f : -0.055f,
+                _ => 0.03f,
+            };
+        }
+
+        // Two corner rivets rather than four - a wall panel this size does not need to look
+        // armoured, just fabricated.
+        value += Rivet(x, y, 4, 4);
+        value += Rivet(x, y, WallTileSize - 5, WallTileSize - 5);
+
+        // A rare scratch - sparingly, this is a corridor bulkhead, not a hull that has taken fire.
+        if (Noise(x * 9f / WallTileSize, y * 2f / WallTileSize, 9, seed: 61) > 0.965f)
+            value -= 0.035f;
 
         return value;
     }

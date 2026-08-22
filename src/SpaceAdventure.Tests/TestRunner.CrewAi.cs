@@ -238,6 +238,16 @@ internal static partial class TestRunner
         for (var i = 0; i < 5 * 30; i++)
             world.Step(RealtimeStep);
 
+        // And drain Oxygen to nothing, which is the precondition this case is actually about. It used
+        // to arrive at zero for free, because a world came up with every slider down; a run now starts
+        // with the reactor split evenly, and an Oxygen already sitting on the bot own target gives it
+        // nothing to do. Stating the precondition beats inheriting it - the case reads as what it
+        // tests either way, and now it stays true whatever the boot-time split becomes.
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: (int)PowerSystemId.Oxygen, PowerDirection: -1f));
+        for (var i = 0; i < 5 * 30; i++)
+            world.Step(RealtimeStep);
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: (int)PowerSystemId.Oxygen, PowerDirection: 0f));
+
         var before = world.CreateSnapshot().Power.Allocated[PowerSystemId.Oxygen];
         world.ApplyCommand(1, new ClientCommand(1, HireCandidateId: engineerCandidate.Id));
 
