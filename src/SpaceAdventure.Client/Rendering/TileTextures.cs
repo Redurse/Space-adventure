@@ -511,32 +511,6 @@ public static class TileTextures
         return value;
     }
 
-    // A welded patch plate - a dark frame with a few proud, brighter weld-puddle spots along it,
-    // otherwise the darkest thing on the tile. HullPlateVariants already had this exact motif, but
-    // only on a rare one-plate-in-thirty variant - fine when the whole tile is seen at once (a
-    // ship-editor preview), but the game never shows the whole tile, only a narrow crop of it (a
-    // margin bezel or a wall band), so "rare across the tile" mostly meant "not in this particular
-    // crop": one wall happened to land on that variant and got the patch, its neighbour a few
-    // plates over did not, and the two read as differently detailed by pure chance. Baked into
-    // every tile instead, in the corner where every one of those crops overlaps (top, bottom, left
-    // and right all show x<28 or y<28), so every wall shows it the same way.
-    private const int HullWeldPatchLeft = 8, HullWeldPatchTop = 8, HullWeldPatchSize = 18;
-
-    private static float HullWeldPatch(int x, int y)
-    {
-        var lx = x - HullWeldPatchLeft;
-        var ly = y - HullWeldPatchTop;
-        if (lx < 0 || lx >= HullWeldPatchSize || ly < 0 || ly >= HullWeldPatchSize)
-            return 0f;
-
-        if (lx == 0 || ly == 0 || lx == HullWeldPatchSize - 1 || ly == HullWeldPatchSize - 1)
-        {
-            var along = lx == 0 || lx == HullWeldPatchSize - 1 ? ly : lx;
-            return along % 3 == 0 ? 0.07f : -0.16f;
-        }
-        return -0.05f;
-    }
-
     // Sparse round dimples, distinct from the elongated scratches below - a dent has a dark cup and
     // a small bright rim catching the light on the side the blow came from, not a scraped streak.
     private static float HullMicroDents(int x, int y)
@@ -582,7 +556,6 @@ public static class TileTextures
         grain += (Noise(x * 16f / HullTileSize, y * 1f / HullTileSize, 16, seed: 5) - 0.5f) * 0.03f;
         grain += HullMicroDents(x, y);
         grain += HullBorderJoints(x, y);
-        grain += HullWeldPatch(x, y);
 
         var rivets = HullCoreAndSeamRivets(x, y, inPlateZone) + HullFrameCornerRivets(x, y) + HullBorderRivets(x, y);
         return grain + layerShade + rivets;
