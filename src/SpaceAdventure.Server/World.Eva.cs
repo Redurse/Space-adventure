@@ -22,6 +22,9 @@ public sealed partial class World
     // Same margin as the ship's own hull - a station's plating is no less solid, and boots that
     // grab a ship's own outer wall on contact should grab any other station's for the same reason.
     private const float StationAttachZoneMargin = 0.5f;
+    // Same margin again, for the currently boardable enemy hull - it's just as solid a surface as
+    // any of the others, the only difference is that it also moves and turns under you.
+    private const float EnemyShipAttachZoneMargin = 0.5f;
     // Half the character's own width, so a magnetized suit's boots touch the hull rather than
     // hovering off it: magnetized movement is constrained to the *surface*, not to a thick shell
     // around it (which used to let you wander a couple of metres off the plating, and even across
@@ -55,6 +58,13 @@ public sealed partial class World
         // _shipFieldPosition/_shipRotationDegrees pair), so its own local offset needs no rotation
         // step back out to world space.
         EvaAttachment.Station => Station.WorldOffset + character.EvaLocalOffset,
+        // Same shape as Ship above, just against whichever enemy is currently boardable - if it's
+        // gone (destroyed, or the fight ended) this degrades to treating the stale offset as an
+        // absolute world position rather than throwing, same spirit as every other "structure
+        // vanished out from under a character" edge case in this file.
+        EvaAttachment.EnemyShip => BoardableEnemy is { } enemy
+            ? enemy.Position + RotateLocalToWorld(character.EvaLocalOffset, enemy.RotationDegrees)
+            : character.EvaLocalOffset,
         _ => character.EvaLocalOffset, // None: this field just holds the world position directly
     };
 
@@ -242,6 +252,46 @@ public sealed partial class World
         character.EvaLocalOffset = Vec2.Zero;
     }
 
+    // Same as StepShipAttachedWalk above, just against the currently boardable enemy hull: sliding
+    // along its plating, and crossing inside the moment you step toward a hatch or wall panel that's
+    // actually been cut open (EnemyShipRuntime's own per-hull Hp) rather than merely open - these
+    // hatches are locked, there's no handle to open one from outside, only a torch.
+    private void StepEnemyShipAttachedWalk(Character character, Vec2 moveDelta)
+    {
+        if (BoardableEnemy is not { } enemy)
+            return; // the hull it was attached to is gone - nothing left to walk on
+
+        var localCenter = EnemyHullLocalCenter(enemy.Layout);
+        var localDelta = RotateWorldToLocal(moveDelta, enemy.RotationDegrees);
+        var candidateOffset = character.EvaLocalOffset + localDelta;
+        var absoluteLocalPos = localCenter + candidateOffset;
+
+        var steppingInward = EnemyHullSurfaceDistance(candidateOffset, enemy) <
+                             EnemyHullSurfaceDistance(character.EvaLocalOffset, enemy) - 0.0001f;
+        var outerDoor = steppingInward
+            ? enemy.Layout.AirlockOuterDoors.FirstOrDefault(d => enemy.IsAirlockBreached(d.Id) && d.Contains(absoluteLocalPos))
+            : null;
+        var breachBlock = steppingInward && outerDoor is null
+            ? enemy.Layout.WallBlocks.FirstOrDefault(b => !b.IsInterior && enemy.IsWallBlockBreached(b.Id) &&
+                (b.Position - absoluteLocalPos).Length() <= RoomLayout.BreachCrossingRadius)
+            : null;
+        if (outerDoor is null && breachBlock is null)
+        {
+            character.EvaLocalOffset = SnapToEnemyHullSurface(candidateOffset, enemy);
+            return;
+        }
+
+        var entryRoomId = outerDoor?.RoomId ?? breachBlock!.RoomId;
+        var entryPosition = outerDoor?.Position ?? breachBlock!.Position;
+        var towardHull = (localCenter - entryPosition).Normalized();
+        character.IsOutside = false;
+        character.OnEnemyShip = true;
+        character.RoomId = entryRoomId;
+        character.Position = absoluteLocalPos + towardHull * EvaEntryNudge;
+        character.EvaAttachedTo = EvaAttachment.None;
+        character.EvaLocalOffset = Vec2.Zero;
+    }
+
     // Magnetized movement is movement *along the plating*: the offset is projected onto the hull's
     // outline (its footprint rectangle, pushed out by the character's own half-width) rather than
     // merely clamped inside a zone around it. Walking into the hull keeps you pinned to the face
@@ -272,6 +322,17 @@ public sealed partial class World
     // Station.Rooms and with no hullCenter/rotation step either side of it (see GetEvaWorldPosition).
     private Vec2 SnapToStationSurface(Vec2 localOffset) =>
         HullSilhouette.SnapToSurface(Station.Rooms, localOffset, HullWalkClearance);
+
+    // Same rule again on the currently boardable enemy hull - hull-centre-relative, matching
+    // EvaLocalOffset's own convention for EnemyShip attachment (see GetEvaWorldPosition).
+    private static float EnemyHullSurfaceDistance(Vec2 localOffset, EnemyShipRuntime enemy) =>
+        HullSilhouette.DistanceOutside(enemy.Layout.Rooms, EnemyHullLocalCenter(enemy.Layout) + localOffset);
+
+    private static Vec2 SnapToEnemyHullSurface(Vec2 localOffset, EnemyShipRuntime enemy)
+    {
+        var center = EnemyHullLocalCenter(enemy.Layout);
+        return HullSilhouette.SnapToSurface(enemy.Layout.Rooms, center + localOffset, HullWalkClearance) - center;
+    }
 
     // moveInputDirection is Vec2.Zero when the player isn't holding a direction this tick - free
     // floating characters still need to be stepped every tick regardless (drifting on momentum),
@@ -310,6 +371,12 @@ public sealed partial class World
         if (character.EvaAttachedTo == EvaAttachment.Ship)
         {
             StepShipAttachedWalk(character, delta);
+            return;
+        }
+
+        if (character.EvaAttachedTo == EvaAttachment.EnemyShip)
+        {
+            StepEnemyShipAttachedWalk(character, delta);
             return;
         }
 
@@ -443,6 +510,40 @@ public sealed partial class World
             return true;
         }
 
+        // The currently boardable enemy hull, exactly the same shape of check as the ship's own
+        // just above - only meaningful during a battle, and against whichever ship is actually the
+        // one you'd board (World.Boarding.cs's BoardableEnemy). Rotates with the hull it belongs to
+        // instead of staying fixed, which is the whole reason this needs the hull's own
+        // Position/RotationDegrees rather than the player's own _shipFieldPosition/_shipRotationDegrees.
+        if (IsInBattle && BoardableEnemy is { } enemy)
+        {
+            var enemyLocalCenter = EnemyHullLocalCenter(enemy.Layout);
+            var localToEnemy = RotateWorldToLocal(worldPos - enemy.Position, enemy.RotationDegrees);
+            if (HullSilhouette.DistanceOutside(enemy.Layout.Rooms, enemyLocalCenter + localToEnemy) <= EnemyShipAttachZoneMargin)
+            {
+                if (!character.MagneticBootsOn)
+                {
+                    if (character.BouncedOffFrom == PushOffOrigin.EnemyShip || character.PushedOffFrom == PushOffOrigin.EnemyShip)
+                        return false;
+
+                    character.EvaLocalOffset = worldPos;
+                    character.EvaVelocity = character.EvaVelocity * -BounceSpeedFactor;
+                    character.BouncedOffFrom = PushOffOrigin.EnemyShip;
+                    return true;
+                }
+
+                if (character.PushedOffFrom == PushOffOrigin.EnemyShip)
+                    return false;
+
+                character.EvaAttachedTo = EvaAttachment.EnemyShip;
+                character.EvaLocalOffset = SnapToEnemyHullSurface(localToEnemy, enemy);
+                character.EvaVelocity = Vec2.Zero;
+                character.PushedOffFrom = PushOffOrigin.None;
+                character.BouncedOffFrom = PushOffOrigin.None;
+                return true;
+            }
+        }
+
         // The station's hull, exactly the same shape of check as the ship's own just above -
         // only meaningful while undocked, same guard as StepFreeFloating's own station check
         // above: Station.Position/WorldOffset only tracks the nearest station while undocked
@@ -572,14 +673,27 @@ public sealed partial class World
     // making a test spend jetpack fuel (JetpackFuelPerSecond=10, only 10 seconds of thrust total)
     // and dozens of simulated seconds flying there for real. A test that's actually about EVA flight
     // itself still flies for real and never calls this.
-    public void DebugPlaceEvaCharacter(int playerId, Vec2 worldPosition)
+    // attachToEnemyShip lets a test drop the character already magnetized to the currently
+    // boardable hull (World.Eva.cs's own attach model, EvaLocalOffset relative to that hull's own
+    // moving/turning frame) instead of free-floating nearby - boarding now only ever crosses in
+    // while attached and walking (StepEnemyShipAttachedWalk), the same way it always has for the
+    // player's own ship.
+    public void DebugPlaceEvaCharacter(int playerId, Vec2 worldPosition, bool attachToEnemyShip = false)
     {
         var character = _characters[playerId];
         character.IsOutside = true;
-        character.EvaAttachedTo = EvaAttachment.None;
         character.EvaAttachedAsteroidId = null;
-        character.EvaLocalOffset = worldPosition;
         character.EvaVelocity = Vec2.Zero;
+        if (attachToEnemyShip && BoardableEnemy is { } enemy)
+        {
+            character.EvaAttachedTo = EvaAttachment.EnemyShip;
+            character.EvaLocalOffset = RotateWorldToLocal(worldPosition - enemy.Position, enemy.RotationDegrees);
+        }
+        else
+        {
+            character.EvaAttachedTo = EvaAttachment.None;
+            character.EvaLocalOffset = worldPosition;
+        }
     }
 
     private void HandlePushOff(Character character, Vec2 direction)

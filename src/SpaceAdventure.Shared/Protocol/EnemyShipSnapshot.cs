@@ -12,7 +12,7 @@ namespace SpaceAdventure.Shared.Protocol;
 public sealed record EnemyShipSnapshot(
     IReadOnlyList<Room> Rooms,
     IReadOnlyList<Door> Doors,
-    AirlockOuterDoor BoardingHatch,
+    IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors,
     string ClassName,
     IReadOnlyList<RoomOxygenState> RoomOxygen,
     Vec2 Position,
@@ -22,4 +22,8 @@ public sealed record EnemyShipSnapshot(
     // (a pure function of ClassName/the boardable ship's Kind), only the per-instance Hp/Breached
     // state actually needs to cross the wire, same split Station/Ship's own wall blocks already use.
     IReadOnlyList<WallBlock> WallBlocks,
-    IReadOnlyList<WallBlockState> WallBlockStates);
+    IReadOnlyList<WallBlockState> WallBlockStates,
+    // The hull's own two locked hatches - same per-instance Hp split as WallBlockStates above
+    // (EnemyShipRuntime's own dictionary), reusing WallBlockState's shape since a hatch takes
+    // damage/reports Breached exactly the same way a wall panel does.
+    IReadOnlyList<WallBlockState> AirlockStates);

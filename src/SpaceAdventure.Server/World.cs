@@ -124,10 +124,12 @@ public sealed partial class World
         foreach (var layout in EnemyShipLayout.All)
         {
             // Closed: a crew that has just been boarded seals its compartments, and opening one is
-            // a decision with a cost now that the hull leaks air (World.EnemyAtmosphere.cs).
+            // a decision with a cost now that the hull leaks air (World.EnemyAtmosphere.cs). The
+            // hull's own AirlockOuterDoors are locked hatches now too - cutting one open (or a wall
+            // panel instead) is tracked per hull instance (EnemyShipRuntime), not in this shared
+            // dictionary, so they get no entry here at all.
             foreach (var door in layout.Doors)
                 _doorOpen[door.Id] = false;
-            _doorOpen[layout.BoardingHatch.Id] = true; // it's a hull breach, not a working door
         }
         ResetEnemyCrew();
         foreach (var deposit in AsteroidField.OreDeposits)
@@ -465,14 +467,15 @@ public sealed partial class World
         new EnemyShipSnapshot(
             EnemyShipLayout.Rooms,
             EnemyShipLayout.Doors,
-            EnemyShipLayout.BoardingHatch,
+            EnemyShipLayout.AirlockOuterDoors,
             EnemyShipLayout.Name,
             CreateEnemyRoomOxygenStates(),
             EnemyShipFieldPosition,
             CreateEnemyShipStates(),
             CreateEnemyCrewStates(),
             BoardableEnemy?.Layout.WallBlocks ?? Array.Empty<WallBlock>(),
-            CreateEnemyHullWallBlockStates()),
+            CreateEnemyHullWallBlockStates(),
+            CreateEnemyAirlockStates()),
         CreateProjectileStates(),
         CreatePersonalShotStates(),
         CreateFactionStandings(),

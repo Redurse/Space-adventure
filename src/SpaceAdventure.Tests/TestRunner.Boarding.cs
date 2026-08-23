@@ -5,42 +5,55 @@ using SpaceAdventure.Shared.Protocol;
 
 internal static partial class TestRunner
 {
-    // weapon, suit up, EVA out and fly across to the enemy hull. Reuses M18's exact
-    // fly-toward-a-target pattern - boarding is the same "drift to a point in field space" move,
-    // just aimed at the enemy ship instead of an ore deposit.
-    private static void BoardEnemyShip(World world, ItemType weapon)
+    // weapon, suit up, and get aboard - a precondition for tests about what happens once boarded,
+    // not about the journey there (World_Boarding_MagneticBootsAttachToEnemyHull/
+    // CuttingEnemyHullDamagesIt/CrossingACutHullBreachBoardsIntoThatRoom cover that mechanism
+    // itself), so this uses the debug precondition setters (DebugBreachEnemyWallBlock,
+    // DebugPlaceEvaCharacter's attachToEnemyShip) to get there directly rather than simulating a
+    // real cutting job and flight in - lands in EnemyShipLayout.BoardingRoomId, same compartment the
+    // old fixed-hatch entry always used, so every existing test built against that room still holds.
+    // withCutter/withWelder: grabbed from the rack and tanked up alongside the weapon, while still
+    // indoors on the player's own ship - TakeFromRack walks there via WalkAcrossShipTo, which only
+    // makes sense before crossing over, so a test that wants to cut/weld aboard the enemy hull has
+    // to ask for the tool here rather than trying to fetch it afterward.
+    private static void BoardEnemyShip(World world, ItemType weapon, bool withCutter = false, bool withWelder = false)
     {
         EnterBattle(world);
 
         var slot = TakeFromRack(world, weapon);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: slot));
-
         EquipSuit(world, 1);
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
-        MoveCharacterTo(world, 1, 23f, 3f);
-        WalkFixedDirection(world, 1, 1f, 0f); // exit into vacuum, boots off by default so not attached yet
-        // Boots on and one settling step, so the push-off below actually has something to push
-        // off from (World.Eva.cs's HandlePushOff is a no-op while not attached).
-        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
-        world.Step(RealtimeStep);
 
-        var target = world.CreateSnapshot().EnemyShip.Position;
-        var exitPos = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        var pushDirection = new Vec2(target.X - exitPos.X, target.Y - exitPos.Y).Normalized();
-        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: pushDirection.X, PushOffDirectionY: pushDirection.Y));
-        world.Step(RealtimeStep);
-
-        // The target is re-read every tick: enemy hulls fly now (World.EnemyFleet.cs), so steering
-        // at where one was when the boarder left the airlock would only ever reach empty space.
-        for (var i = 0; i < 60 * 30; i++)
+        if (withCutter)
         {
-            var snapshot = world.CreateSnapshot();
-            var me = snapshot.Characters.Single(c => c.PlayerId == 1);
-            if (me.OnEnemyShip)
-                break;
-            var current = snapshot.EnemyShip.Position;
-            var dir = new Vec2(current.X - me.X, current.Y - me.Y).Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+            var cutterSlot = TakeFromRack(world, ItemType.Cutter);
+            world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: cutterSlot));
+            TakeTankFromRack(world);
+            AttachTankTo(world, cutterSlot);
+        }
+        if (withWelder)
+        {
+            var welderSlot = TakeFromRack(world, ItemType.WeldingTool);
+            world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: welderSlot));
+            TakeTankFromRack(world, ItemType.WeldingTank);
+            AttachTankTo(world, welderSlot, ItemType.WeldingTank);
+        }
+
+        var localCenter = world.EnemyShipLayout.GetLocalBounds().Center;
+        var block = world.EnemyShipLayout.WallBlocks.First(b => b.RoomId == world.EnemyShipLayout.BoardingRoomId);
+        world.DebugBreachEnemyWallBlock(block.Id);
+        var localOffset = block.Position - localCenter;
+        world.DebugPlaceEvaCharacter(1, EnemyHullBlockWorldPosition(world, localOffset), attachToEnemyShip: true);
+
+        // Walking straight toward the hull's own centre from right at the breach is "stepping
+        // inward" by definition (World.Eva.cs's StepEnemyShipAttachedWalk) - re-rotated to world
+        // space every tick since the hull keeps turning under the character's boots.
+        var inwardLocalDir = (localCenter - block.Position).Normalized();
+        for (var i = 0; i < 30 && !world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip; i++)
+        {
+            var enemy = world.CreateSnapshot().EnemyShip.Ships.First(s => s.IsBoardable);
+            var worldDir = RotateLocalToWorld(inwardLocalDir, enemy.RotationDegrees);
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: worldDir.X, MoveY: worldDir.Y));
             world.Step(RealtimeStep);
         }
 
@@ -120,10 +133,14 @@ internal static partial class TestRunner
         return healthAfter < healthBefore;
     }
 
-    // The other half of the same feature: once a wall is actually breached, drifting up to it boards
-    // the player into the room right behind THAT block - not the hull's fixed hatch (World.
-    // DebugBreachEnemyWallBlock is the test-only precondition setter, same convention as the
-    // player's own World.DebugBreachWallBlock, standing in for a finished cutting job).
+    // The other half of the same feature: once a wall is actually breached, walking through it while
+    // magnetized to the hull (World.Eva.cs's StepEnemyShipAttachedWalk) boards the player into the
+    // room right behind THAT block, not the hull's fixed hatch. DebugBreachEnemyWallBlock is the
+    // test-only precondition setter, same convention as the player's own World.DebugBreachWallBlock,
+    // standing in for a finished cutting job; DebugPlaceEvaCharacter's attachToEnemyShip drops the
+    // character already magnetized right at the hole instead of needing a real flight there first
+    // (boarding only ever crosses in while attached and walking now, the same as the player's own
+    // ship always has).
     private static bool World_Boarding_CrossingACutHullBreachBoardsIntoThatRoom()
     {
         var world = new World();
@@ -139,23 +156,121 @@ internal static partial class TestRunner
         var localOffset = block.Position - localCenter;
         if (!world.DebugBreachEnemyWallBlock(block.Id))
             return false;
-        world.DebugPlaceEvaCharacter(1, EnemyHullBlockWorldPosition(world, localOffset));
+        world.DebugPlaceEvaCharacter(1, EnemyHullBlockWorldPosition(world, localOffset), attachToEnemyShip: true);
 
-        // Already sitting right on the breach - one tick of any nonzero movement input is enough to
-        // trigger TryBoardEnemyShip's proximity check (World.Movement.cs only calls it at all when
-        // there's move input), rather than needing a real multi-second flight there.
+        // Walking straight toward the hull's own centre from right at the breach is "stepping
+        // inward" by definition - re-rotated out to world space every tick since the hull keeps
+        // turning under the character's boots.
+        var inwardLocalDir = (localCenter - block.Position).Normalized();
         for (var i = 0; i < 30 && !world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip; i++)
         {
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var toBlock = EnemyHullBlockWorldPosition(world, localOffset) - new Vec2(me.X, me.Y);
-            var dir = toBlock.Length() > 0.001f ? toBlock.Normalized() : new Vec2(1f, 0f);
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+            var enemy = world.CreateSnapshot().EnemyShip.Ships.First(s => s.IsBoardable);
+            var worldDir = RotateLocalToWorld(inwardLocalDir, enemy.RotationDegrees);
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: worldDir.X, MoveY: worldDir.Y));
             world.Step(RealtimeStep);
         }
 
         var final = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var finalRoom = world.EnemyShipLayout.Rooms.FirstOrDefault(r => r.Contains(new Vec2(final.X, final.Y)));
         return final.OnEnemyShip && finalRoom?.Id == block.RoomId;
+    }
+
+    // Step 1 of the new flow ("игрок примагничивается к вражескому кораблю при помощи ботинок"):
+    // drifting into the hull with boots on grabs on (World.Eva.cs's TryAutoAttach, EnemyShip branch)
+    // exactly like it always has for the player's own ship - IsEvaAttached is the one bit the
+    // snapshot exposes for "attached to something", which is enough to prove the branch fired
+    // without needing to distinguish which structure from outside the server.
+    private static bool World_Boarding_MagneticBootsAttachToEnemyHull()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.DebugForceEnemyClass(EnemyShipClass.Frigate);
+        EnterBattle(world);
+        // Suits up while still indoors (EquipSuit's suit locker is at ship-interior coordinates,
+        // same order BoardEnemyShip uses) - DebugPlaceEvaCharacter below does the actual "step
+        // outside" itself, so there's no real ExitShipIntoVacuum crossing to sequence around.
+        EquipSuit(world, 1);
+
+        // The nearest-to-centre block, not the farthest corner: a raider's hull turns fast
+        // (EnemyTurnDegreesPerSecond=120 in World.EnemyFleet.cs) and a point far from the rotation
+        // axis sweeps many units per second under it - a free-floating chase of a distant corner
+        // would need to out-fly that sweep with only the jetpack's own weak thrust, the same trap
+        // World_Boarding_CuttingEnemyHullDamagesIt's own comment warns about. TryAutoAttach reacts
+        // to proximity every tick regardless of movement input (StepFreeFloating runs
+        // unconditionally), so placing the character already just inside the attach margin
+        // (EnemyShipAttachZoneMargin=0.5) and taking a single step is enough to prove the magnetic-
+        // boots hookup itself without needing a realistic approach flight.
+        var localCenter = world.EnemyShipLayout.GetLocalBounds().Center;
+        var block = world.EnemyShipLayout.WallBlocks.OrderBy(b => (b.Position - localCenter).Length()).First();
+        var localOffset = block.Position - localCenter;
+        var outward = localOffset.Normalized();
+        world.DebugPlaceEvaCharacter(1, EnemyHullBlockWorldPosition(world, localOffset + outward * 0.2f));
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // boots on
+        world.Step(RealtimeStep);
+
+        return world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsEvaAttached;
+    }
+
+    // "резак и сварка работали корректно внутри вражеского корабля" - once aboard, the cutter has
+    // to reach the enemy's own interior fittings (FindAimedEnemyIndoorTarget/
+    // CutIndoorAlongFlameOnEnemyShip in World.Cutting.cs), not just the outer hull it cut through
+    // to get in. Every hull class has exactly one interior door off its boarding room (confirmed by
+    // inspection across all four EnemyShipLayout.Classes.cs hulls), so this doesn't need to force a
+    // specific class the way the outer-hull tests do.
+    private static bool World_Boarding_IndoorCuttingDamagesEnemyDoor()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        BoardEnemyShip(world, ItemType.Knife, withCutter: true);
+
+        var door = world.EnemyShipLayout.Doors.First(d => d.Connects(world.EnemyShipLayout.BoardingRoomId));
+        MoveCharacterTo(world, 1, door.Position.X, door.Position.Y);
+
+        // WallCutDamagePerSecond=34 against DoorMaxHp=100 takes just under 3 real seconds of
+        // continuous flame - well under 100 ticks at RealtimeStep, with margin for the cut not
+        // landing every single tick.
+        for (var i = 0; i < 120 && !world.IsDoorDestroyed(door.Id); i++)
+        {
+            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+            var toDoor = door.Position - new Vec2(me.X, me.Y);
+            var dir = toDoor.Length() > 0.001f ? toDoor.Normalized() : new Vec2(1f, 0f);
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: dir.X, LookY: dir.Y));
+            world.Step(RealtimeStep);
+        }
+
+        return world.IsDoorDestroyed(door.Id);
+    }
+
+    // The welder's own counterpart, sealing shut the very hole the boarder just cut through
+    // (WeldIndoorAlongFlameOnEnemyShip) - BoardEnemyShip's entry block is already breached to zero
+    // Hp by the time this lands inside, exactly the "already-damaged panel" the welder needs to
+    // prove it can repair from the corridor side, same as it already does on the player's own ship.
+    private static bool World_Boarding_IndoorWeldingRepairsBreachedEnemyWallBlock()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        BoardEnemyShip(world, ItemType.Knife, withWelder: true);
+
+        var boardingRoomId = world.EnemyShipLayout.BoardingRoomId;
+        var entryBlock = world.EnemyShipLayout.WallBlocks.First(b => b.RoomId == boardingRoomId);
+        // No MoveCharacterTo here: the entry block is the breach itself, still passable while
+        // unwelded, so bang-bang homing straight at its exact centre would just walk the character
+        // back out through the hole into vacuum. BoardEnemyShip already stops the character right
+        // beside it (the inward walk halts the instant OnEnemyShip flips true), well within
+        // WelderReachUnits - close the hole from right where boarding actually lands.
+        var hpBefore = world.CreateSnapshot().EnemyShip.WallBlockStates.First(s => s.Id == entryBlock.Id).Hp;
+
+        for (var i = 0; i < 20; i++)
+        {
+            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+            var toBlock = entryBlock.Position - new Vec2(me.X, me.Y);
+            var dir = toBlock.Length() > 0.001f ? toBlock.Normalized() : new Vec2(1f, 0f);
+            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: dir.X, LookY: dir.Y));
+            world.Step(RealtimeStep);
+        }
+
+        var hpAfter = world.CreateSnapshot().EnemyShip.WallBlockStates.First(s => s.Id == entryBlock.Id).Hp;
+        return hpBefore <= 0f && hpAfter > hpBefore;
     }
 
     private static bool World_Boarding_EvaDuringBattle_ReachesEnemyShip()
@@ -287,7 +402,7 @@ internal static partial class TestRunner
             return false;
 
         var roomIds = layouts.SelectMany(l => l.Rooms.Select(r => r.Id)).ToList();
-        var doorIds = layouts.SelectMany(l => l.Doors.Select(d => d.Id).Append(l.BoardingHatch.Id)).ToList();
+        var doorIds = layouts.SelectMany(l => l.Doors.Select(d => d.Id).Concat(l.AirlockOuterDoors.Select(d => d.Id))).ToList();
         var crewIds = layouts.SelectMany(l => l.CrewSpawns.Select(c => c.Id)).ToList();
 
         // Every class also has to be walkable end to end: a breach compartment that is actually one

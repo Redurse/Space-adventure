@@ -8,6 +8,11 @@ public enum EvaAttachment
     Ship,
     Asteroid,
     Station,
+    // The currently boardable enemy hull (World.Boarding.cs's BoardableEnemy) - same "magnetized,
+    // walk the plating" model as Ship, just against a hull that moves and turns on its own
+    // (World.EnemyFleet.cs), so EvaLocalOffset is read back out via that hull's own
+    // Position/RotationDegrees each tick rather than the player's own fixed ones.
+    EnemyShip,
 }
 
 // Which body a drifter just kicked off from, so its boots don't immediately grab them back while
@@ -18,4 +23,5 @@ public enum PushOffOrigin
     Ship,
     Asteroid,
     Station,
+    EnemyShip,
 }

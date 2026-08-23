@@ -14,11 +14,16 @@ public sealed partial class EnemyShipLayout
     public string Name { get; }
     public IReadOnlyList<Room> Rooms { get; }
     public IReadOnlyList<Door> Doors { get; }
-    // The hull breach the boarding party climbs through - the same "one side is a real room, the
-    // other is outside this structure" shape as Ship.AirlockOuterDoors and Station.ShipConnector.
-    // It is also a hole: the compartment behind it is in vacuum and stays that way.
-    public AirlockOuterDoor BoardingHatch { get; }
+    // Two locked hatches, same "one side is a real room, the other is outside this structure" shape
+    // as Ship.AirlockOuterDoors - closed by default, same as a real airlock, not a standing-open
+    // hole. Getting in means cutting one open (World.Cutting.cs) or cutting straight through a
+    // WallBlock instead; either way, the compartment behind whichever one gave way is in vacuum and
+    // stays that way.
+    public IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors { get; }
     public IReadOnlyList<EnemyCrewSpawn> CrewSpawns { get; }
+    // Which compartment a boarding party is nominally headed for - AirlockOuterDoors[0]'s own room.
+    // With two real hatches (plus any wall panel) there's no single fixed way in any more; this only
+    // still matters for generic tests/atmosphere checks that just need *a* valid interior room.
     public string BoardingRoomId { get; }
     // The hull's own fixed turret loadout (e.g. Frigate's 2 magnetic + 1 laser), or null to keep the
     // older behavior of one weapon per hull picked by squadron slot (World.EnemyFleet.cs's
@@ -32,18 +37,18 @@ public sealed partial class EnemyShipLayout
     public IReadOnlyList<WallBlock> WallBlocks { get; }
 
     public EnemyShipLayout(EnemyShipClass kind, string name, IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors,
-        AirlockOuterDoor boardingHatch, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId,
+        IReadOnlyList<AirlockOuterDoor> airlockOuterDoors, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId,
         IReadOnlyList<TurretWeaponType>? weaponLoadout = null)
     {
         Kind = kind;
         Name = name;
         Rooms = rooms;
         Doors = doors;
-        BoardingHatch = boardingHatch;
+        AirlockOuterDoors = airlockOuterDoors;
         CrewSpawns = crewSpawns;
         BoardingRoomId = boardingRoomId;
         WeaponLoadout = weaponLoadout;
-        WallBlocks = Station.BuildWallBlocks(rooms, doors, boardingHatch);
+        WallBlocks = Station.BuildWallBlocks(rooms, doors, airlockOuterDoors);
     }
 
     // Bounding box of the hull's own Rooms in its local frame - the same "centre + rotate" anchor

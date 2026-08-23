@@ -36,10 +36,10 @@ public sealed partial class World
             // skipped when there's no input to react to.
             if (character.IsOutside)
             {
-                // Drifting close enough to the enemy hull during a battle boards it, exactly like
-                // walking into an open airlock crosses into vacuum (World.Boarding.cs).
-                if (hasInput && TryBoardEnemyShip(character, character.FacingDirection * MoveSpeed * (float)deltaSeconds))
-                    continue;
+                // Boarding an enemy hull works exactly like the player's own ship now: magnetize to
+                // it (TryAutoAttach), then walk into a cut-open hatch or wall panel while attached
+                // (StepEvaCharacter's EnemyShip branch) - there's no separate "drift close enough and
+                // phase in" check any more, the same way there never was one for your own ship.
                 StepEvaCharacter(character, hasInput ? character.FacingDirection : Vec2.Zero, deltaSeconds);
                 continue;
             }

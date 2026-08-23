@@ -45,8 +45,15 @@ public sealed partial class EnemyShipLayout
             new EnemyCrewSpawn("raider-crew-3", "Капитан", "raider-bridge", 12.5f, 3f, ItemType.LaserRifle),
         };
 
-        return new EnemyShipLayout(EnemyShipClass.Raider, "Рейдер", rooms, doors,
-            new AirlockOuterDoor("raider-hatch", "raider-breach", 0, 3, 1.0f, Door.StandardSpanUnits), crew, "raider-breach");
+        // Two locked hatches, bow and stern - a boarding party has to cut its way in through one of
+        // them (or straight through a wall panel), not just fly up and phase through.
+        var airlocks = new[]
+        {
+            new AirlockOuterDoor("raider-hatch-1", "raider-breach", 0, 3, 1.0f, Door.StandardSpanUnits),
+            new AirlockOuterDoor("raider-hatch-2", "raider-bridge", 15, 3, 1.0f, Door.StandardSpanUnits),
+        };
+
+        return new EnemyShipLayout(EnemyShipClass.Raider, "Рейдер", rooms, doors, airlocks, crew, "raider-breach");
     }
 
     // A hauler: a long hold with a crew berth hung off it, four defenders but only one of them
@@ -77,8 +84,13 @@ public sealed partial class EnemyShipLayout
             new EnemyCrewSpawn("freighter-crew-4", "Капитан", "freighter-bridge", 14.5f, 3f, ItemType.Rifle),
         };
 
-        return new EnemyShipLayout(EnemyShipClass.Freighter, "Грузовик", rooms, doors,
-            new AirlockOuterDoor("freighter-hatch", "freighter-breach", 0, 3, 1.0f, Door.StandardSpanUnits), crew, "freighter-breach");
+        var airlocks = new[]
+        {
+            new AirlockOuterDoor("freighter-hatch-1", "freighter-breach", 0, 3, 1.0f, Door.StandardSpanUnits),
+            new AirlockOuterDoor("freighter-hatch-2", "freighter-bridge", 17, 3, 1.0f, Door.StandardSpanUnits),
+        };
+
+        return new EnemyShipLayout(EnemyShipClass.Freighter, "Грузовик", rooms, doors, airlocks, crew, "freighter-breach");
     }
 
     // A warship: a gun deck to cross under fire, an engine room off it, and a bridge at the far end.
@@ -111,8 +123,13 @@ public sealed partial class EnemyShipLayout
             new EnemyCrewSpawn("gunship-crew-4", "Командир", "gunship-bridge", 12.5f, 3f, ItemType.LaserRifle, Suited: true),
         };
 
-        return new EnemyShipLayout(EnemyShipClass.Gunship, "Канонерка", rooms, doors,
-            new AirlockOuterDoor("gunship-hatch", "gunship-breach", 0, 3, 1.0f, Door.StandardSpanUnits), crew, "gunship-breach");
+        var airlocks = new[]
+        {
+            new AirlockOuterDoor("gunship-hatch-1", "gunship-breach", 0, 3, 1.0f, Door.StandardSpanUnits),
+            new AirlockOuterDoor("gunship-hatch-2", "gunship-bridge", 15, 3, 1.0f, Door.StandardSpanUnits),
+        };
+
+        return new EnemyShipLayout(EnemyShipClass.Gunship, "Канонерка", rooms, doors, airlocks, crew, "gunship-breach");
     }
 
     // Same 5-compartment footprint as the player's own Corvette (Ship.Corvette.cs) - a frigate that
@@ -150,8 +167,13 @@ public sealed partial class EnemyShipLayout
             new EnemyCrewSpawn("frigate-crew-5", "Командир", "frigate-bridge", 6.75f, 2f, ItemType.LaserRifle, Suited: true),
         };
 
-        return new EnemyShipLayout(EnemyShipClass.Frigate, "Фрегат", rooms, doors,
-            new AirlockOuterDoor("frigate-hatch", "frigate-portbay", 0, 13f, 1.0f, Door.StandardSpanUnits), crew, "frigate-portbay",
+        var airlocks = new[]
+        {
+            new AirlockOuterDoor("frigate-hatch-1", "frigate-portbay", 0, 13f, 1.0f, Door.StandardSpanUnits),
+            new AirlockOuterDoor("frigate-hatch-2", "frigate-starboardbay", 13.5f, 13f, 1.0f, Door.StandardSpanUnits),
+        };
+
+        return new EnemyShipLayout(EnemyShipClass.Frigate, "Фрегат", rooms, doors, airlocks, crew, "frigate-portbay",
             weaponLoadout: new[] { TurretWeaponType.Magnetic, TurretWeaponType.Magnetic, TurretWeaponType.Laser });
     }
 }

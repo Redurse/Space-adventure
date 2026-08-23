@@ -47,8 +47,15 @@ public sealed class BoardingRenderer
             _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen, origin);
         }
 
-        var hatch = snapshot.EnemyShip.BoardingHatch;
-        _shipRenderer.DrawDoor(spriteBatch, hatch.Left, hatch.Top, hatch.Width, hatch.Height, isOpen: true, origin, leadsToVacuum: true);
+        // Locked hatches, not standing-open holes: each only reads as passable once actually cut
+        // through (EnemyShipRuntime's own per-hull Hp, World.Cutting.cs), same "destroyed reads as
+        // open" convention the player's own airlocks use.
+        foreach (var airlock in snapshot.EnemyShip.AirlockOuterDoors)
+        {
+            var breached = snapshot.EnemyShip.AirlockStates.FirstOrDefault(s => s.Id == airlock.Id)?.Breached ?? false;
+            _shipRenderer.DrawDoor(spriteBatch, airlock.Left, airlock.Top, airlock.Width, airlock.Height,
+                isOpen: breached, origin, leadsToVacuum: true, destroyed: breached);
+        }
 
         // Which hull this is: the classes differ in how many defenders hold them and whether those
         // defenders can be suffocated, so naming it is naming the plan of attack.

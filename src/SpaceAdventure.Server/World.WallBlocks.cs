@@ -94,6 +94,22 @@ public sealed partial class World
             ? Array.Empty<WallBlockState>()
             : enemy.Layout.WallBlocks.Select(b => new WallBlockState(b.Id, enemy.GetWallBlockHp(b.Id), WallBlockMaxHp)).ToArray();
 
+    // Same per-instance split, for the hull's own two locked airlocks (EnemyShipLayout.AirlockOuterDoors).
+    private IReadOnlyList<WallBlockState> CreateEnemyAirlockStates() =>
+        BoardableEnemy is not { } enemy
+            ? Array.Empty<WallBlockState>()
+            : enemy.Layout.AirlockOuterDoors.Select(d => new WallBlockState(d.Id, enemy.GetAirlockHp(d.Id), WallBlockMaxHp)).ToArray();
+
+    // Test-only precondition setter, same convention as DebugBreachEnemyWallBlock above, for the
+    // hull's own two airlocks instead of a wall panel.
+    public bool DebugBreachEnemyAirlock(string airlockId)
+    {
+        if (BoardableEnemy is not { } enemy || enemy.Layout.AirlockOuterDoors.All(d => d.Id != airlockId))
+            return false;
+        enemy.DamageAirlock(airlockId, WallBlockMaxHp);
+        return true;
+    }
+
     // Shared by the welder and the indoor cutter (both burn a short aimed flame against the ship's
     // own wall blocks, just to opposite effect) and by the snapshot query that tells the client
     // which block to show the health bar over - one sampling routine so all three can never

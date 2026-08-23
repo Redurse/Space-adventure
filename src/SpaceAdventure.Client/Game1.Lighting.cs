@@ -56,7 +56,8 @@ public partial class Game1
         {
             foreach (var door in snapshot.EnemyShip.Doors)
                 gaps.Add(Occluders.ToGap(door));
-            gaps.Add(Occluders.ToGap(snapshot.EnemyShip.BoardingHatch));
+            foreach (var airlock in snapshot.EnemyShip.AirlockOuterDoors)
+                gaps.Add(Occluders.ToGap(airlock));
             walls = Occluders.Build(snapshot.EnemyShip.Rooms, gaps);
             origin = ComputeStationCamera(me);
             eye = new Vector2(me.X, me.Y);

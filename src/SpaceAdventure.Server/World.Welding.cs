@@ -31,7 +31,7 @@ public sealed partial class World
     public bool IsWelding(int playerId) =>
         _weldInput.GetValueOrDefault(playerId) &&
         _characters.TryGetValue(playerId, out var character) &&
-        character.Health > 0 && !character.OnEnemyShip &&
+        character.Health > 0 &&
         CanWeld(character);
 
     // Holding a welding tool is not enough: it needs a tank with something left in it, same as the
@@ -57,14 +57,16 @@ public sealed partial class World
 
             // The torch lights anywhere the tool is held and lit, exactly like the cutter - a hull
             // breach can be welded from either side of the plating it's in, on a spacewalk patching
-            // it from outside same as from the corridor it opened onto, or even standing in a
-            // station's own corridors (FindAimedWallBlock just never finds anything of the player's
-            // ship to aim at from there). Only a boarded enemy hull has no breach of your own ship
-            // to reach at all.
-            if (character.OnEnemyShip)
-                continue;
-
-            WeldAlongFlame(character, deltaSeconds);
+            // it from outside same as from the corridor it opened onto, on a boarded enemy hull the
+            // same way (WeldIndoorAlongFlameOnEnemyShip), or even standing in a station's own
+            // corridors (FindAimedWallBlock just never finds anything of the player's ship to aim at
+            // from there).
+            if (character.IsOutside)
+                WeldAlongFlame(character, deltaSeconds);
+            else if (character.OnEnemyShip)
+                WeldIndoorAlongFlameOnEnemyShip(character, deltaSeconds);
+            else
+                WeldAlongFlame(character, deltaSeconds);
         }
     }
 
@@ -72,12 +74,43 @@ public sealed partial class World
     // a block the instant the flame grazes it - patching a hull is work you watch happen, the same
     // way the cutter's damage is, not a free instant fix. Aiming at an already-healthy block is
     // harmless: FindAimedWallBlock still reports it (for the client's Hp bar - GetWallToolTargetId)
-    // but there's nothing to add to a block already at WallBlockMaxHp.
+    // but there's nothing to add to a block already at WallBlockMaxHp. Outside, also tries the
+    // currently boardable enemy hull once nothing of the player's own ship is in reach - same
+    // "cutter and welder reach exactly the same things" symmetry World.Cutting.cs's CutAlongFlame
+    // already has.
     private void WeldAlongFlame(Character character, double deltaSeconds)
     {
         var block = FindAimedWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius);
-        if (block is null)
+        if (block is not null)
+        {
+            RepairWallBlock(block.Id, WelderRepairPerSecond * (float)deltaSeconds);
             return;
-        RepairWallBlock(block.Id, WelderRepairPerSecond * (float)deltaSeconds);
+        }
+
+        if (!character.IsOutside)
+            return;
+
+        var enemyTarget = FindAimedEnemyOuterTarget(character, WelderReachUnits, WelderSamples, WeldPointRadius);
+        if (enemyTarget is not { } target)
+            return;
+        if (target.AirlockId is { } airlockId)
+            target.Enemy.RepairAirlock(airlockId, WelderRepairPerSecond * (float)deltaSeconds);
+        else if (target.WallBlockId is { } blockId)
+            target.Enemy.RepairWallBlock(blockId, WelderRepairPerSecond * (float)deltaSeconds);
+    }
+
+    // The boarded hull's own counterpart to WeldAlongFlame above - sealing a defended door, hatch or
+    // wall panel shut from the inside works exactly like patching the player's own ship.
+    private void WeldIndoorAlongFlameOnEnemyShip(Character character, double deltaSeconds)
+    {
+        if (BoardableEnemy is not { } enemy)
+            return;
+        var target = FindAimedEnemyIndoorTarget(character, WelderReachUnits, WelderSamples, WeldPointRadius);
+        if (target.AirlockId is { } airlockId)
+            enemy.RepairAirlock(airlockId, WelderRepairPerSecond * (float)deltaSeconds);
+        else if (target.WallBlockId is { } blockId)
+            enemy.RepairWallBlock(blockId, WelderRepairPerSecond * (float)deltaSeconds);
+        // Doors aboard an enemy hull aren't repaired by the welder (same as the player's own ship -
+        // System-repair's E-key minigame is how a destroyed door gets fixed, World.Doors.cs).
     }
 }

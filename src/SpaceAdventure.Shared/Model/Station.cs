@@ -58,7 +58,7 @@ public sealed partial class Station
         Rooms = rooms;
         Doors = doors;
         ShipConnector = shipConnector;
-        WallBlocks = BuildWallBlocks(rooms, doors, shipConnector);
+        WallBlocks = BuildWallBlocks(rooms, doors, new[] { shipConnector });
         Npcs = npcs;
         Crates = crates;
         DockRoomId = dockRoomId;

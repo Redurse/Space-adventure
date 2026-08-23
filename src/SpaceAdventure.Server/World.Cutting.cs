@@ -46,17 +46,19 @@ public sealed partial class World
             character.Inventory.DrainTank(slot, OxygenTankDefinitions.CutterDrainPerSecond * (float)deltaSeconds);
 
             // The torch lights anywhere and burns its tank while it does. Outside, it bites into
-            // ore first and the player's own hull second if nothing's out there to mine
-            // (CutAlongFlame - breaching it from the outside in, same as WeldAlongFlame already
-            // patches it from either side); indoors, aboard your own ship, it bites into a closed
-            // door or the ship's own wall blocks instead (CutIndoorAlongFlame below). It lights the
-            // same way standing in a station's own corridors, but neither a door nor a wall block
-            // there ever matches (AllShipDoors/Ship.WallBlocks are keyed to the ship's own ids,
-            // never a station's), so there's nothing there for it to actually cut into. A boarded
-            // enemy hull has none of those or ore, so there's nothing for it to do there either.
+            // ore first, then the player's own hull, then the currently boardable enemy's hull if
+            // nothing else is out there to mine (CutAlongFlame - breaching it from the outside in,
+            // same as WeldAlongFlame already patches it from either side); indoors, it bites into a
+            // closed door or wall block belonging to whichever hull the character is actually
+            // standing in - their own ship (CutIndoorAlongFlame) or a boarded enemy one
+            // (CutIndoorAlongFlameOnEnemyShip). It lights the same way standing in a station's own
+            // corridors, but nothing there ever matches (FindAimedWallBlock/AllShipDoors are keyed
+            // to the ship's own ids, never a station's), so there's nothing there for it to cut.
             if (character.IsOutside)
                 CutAlongFlame(character, deltaSeconds);
-            else if (!character.OnEnemyShip)
+            else if (character.OnEnemyShip)
+                CutIndoorAlongFlameOnEnemyShip(character, deltaSeconds);
+            else
                 CutIndoorAlongFlame(character, deltaSeconds);
         }
     }
@@ -102,6 +104,65 @@ public sealed partial class World
             ChopDoor(doorId, WallCutDamagePerSecond * (float)deltaSeconds);
         else if (target.WallBlockId is { } blockId)
             DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
+    }
+
+    // Same shape as AimedCutTarget above, plus an AirlockId slot - a boarded hull's own two hatches
+    // are reachable from the inside too (World.Boarding.cs's EnemyShipLayout.AirlockOuterDoors), so
+    // a boarding party can cut one open (or weld one shut) from either side, not just from EVA.
+    // Doesn't discriminate already-breached targets the way the cutting-only lookups elsewhere do -
+    // shared by both tools, and repairing something back from 0 Hp is the one case where "already
+    // breached" is exactly what you're aiming for.
+    private readonly record struct EnemyToolTarget(string? DoorId, string? WallBlockId, string? AirlockId);
+
+    // Mirrors FindAimedCutTarget, just against whichever enemy hull is currently boarded
+    // (character.RoomId is meaningless against the player's own Ship.Doors/WallBlocks while
+    // OnEnemyShip) - the interior Doors still go through the same World._doorHp/ChopDoor as the
+    // player's own (door ids are globally unique per class, World.cs's own constructor comment), only
+    // the hull's exterior (WallBlocks, AirlockOuterDoors) needs EnemyShipRuntime's per-instance Hp.
+    private EnemyToolTarget FindAimedEnemyIndoorTarget(Character character, float reachUnits, int samples, float pointRadius)
+    {
+        if (BoardableEnemy is not { } enemy)
+            return default;
+        var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection.Normalized() : character.FacingDirection;
+        if (aim.Length() < 0.01f)
+            return default;
+
+        for (var i = 1; i <= samples; i++)
+        {
+            var point = character.Position + aim * (reachUnits * i / samples);
+
+            var door = enemy.Layout.Doors.FirstOrDefault(d => d.Connects(character.RoomId) && !IsDoorOpen(d.Id) &&
+                !IsDoorDestroyed(d.Id) && (d.Position - point).Length() <= pointRadius);
+            if (door is not null)
+                return new EnemyToolTarget(door.Id, null, null);
+
+            var airlock = enemy.Layout.AirlockOuterDoors.FirstOrDefault(d =>
+                d.RoomId == character.RoomId && (d.Position - point).Length() <= pointRadius);
+            if (airlock is not null)
+                return new EnemyToolTarget(null, null, airlock.Id);
+
+            var block = enemy.Layout.WallBlocks.FirstOrDefault(b =>
+                b.RoomId == character.RoomId && (b.Position - point).Length() <= pointRadius);
+            if (block is not null)
+                return new EnemyToolTarget(null, block.Id, null);
+        }
+        return default;
+    }
+
+    // The boarded hull's own counterpart to CutIndoorAlongFlame above - cutting a defended door open
+    // from behind it, or a wall panel/hatch, works exactly the same way it does on the player's own
+    // ship, just aimed at whichever enemy is actually being boarded.
+    private void CutIndoorAlongFlameOnEnemyShip(Character character, double deltaSeconds)
+    {
+        if (BoardableEnemy is not { } enemy)
+            return;
+        var target = FindAimedEnemyIndoorTarget(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
+        if (target.DoorId is { } doorId)
+            ChopDoor(doorId, WallCutDamagePerSecond * (float)deltaSeconds);
+        else if (target.AirlockId is { } airlockId)
+            enemy.DamageAirlock(airlockId, WallCutDamagePerSecond * (float)deltaSeconds);
+        else if (target.WallBlockId is { } blockId)
+            enemy.DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
     }
 
     // Shared by CutAlongFlame and the snapshot query that tells the client which target to show a
@@ -155,9 +216,14 @@ public sealed partial class World
         // Still nothing - try the currently boardable enemy hull, same reach/rate again: cutting an
         // enemy raider open works exactly like cutting your own ship's hull, not a separate tool or
         // timing ("резак работает так же, как обшивка корабля игрока").
-        var enemyTarget = FindAimedEnemyHullBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
+        var enemyTarget = FindAimedEnemyOuterTarget(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
         if (enemyTarget is { } target)
-            target.Enemy.DamageWallBlock(target.Block.Id, WallCutDamagePerSecond * (float)deltaSeconds);
+        {
+            if (target.AirlockId is { } airlockId)
+                target.Enemy.DamageAirlock(airlockId, WallCutDamagePerSecond * (float)deltaSeconds);
+            else if (target.WallBlockId is { } blockId)
+                target.Enemy.DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
+        }
     }
 
     // Local-frame bounding-box centre of an enemy hull's own Rooms - the anchor a WallBlock's local
@@ -165,11 +231,13 @@ public sealed partial class World
     // uses for the player's own ship (EnemyShipLayout.GetLocalBounds is the shared-model twin of it).
     private static Vec2 EnemyHullLocalCenter(EnemyShipLayout layout) => layout.GetLocalBounds().Center;
 
-    // Mirrors FindAimedWallBlock's outside branch exactly, just against whichever enemy hull is
-    // currently boardable (BoardableEnemy) instead of the player's own Ship - an already-breached
-    // block is skipped so the flame reaches past it to whatever's still intact, the same "a hole
-    // isn't a wall anymore" rule combat fire already follows (World.EnemyAi.cs).
-    private (EnemyShipRuntime Enemy, WallBlock Block)? FindAimedEnemyHullBlock(Character character, float reachUnits, int samples, float pointRadius)
+    // Mirrors FindAimedWallBlock's outside branch, just against whichever enemy hull is currently
+    // boardable (BoardableEnemy) instead of the player's own Ship, and checking both of its locked
+    // AirlockOuterDoors alongside its wall panels - a hatch is just as cuttable (or weldable) as any
+    // other bit of plating, it's simply the one the game calls out by name. Shared by cutting and
+    // welding alike (EnemyToolTarget's own doc comment), so it doesn't discriminate on Hp itself.
+    private (EnemyShipRuntime Enemy, string? AirlockId, string? WallBlockId)? FindAimedEnemyOuterTarget(
+        Character character, float reachUnits, int samples, float pointRadius)
     {
         if (BoardableEnemy is not { } enemy)
             return null;
@@ -179,14 +247,19 @@ public sealed partial class World
 
         var origin = GetEvaWorldPosition(character);
         var localCenter = EnemyHullLocalCenter(enemy.Layout);
+        Vec2 ToWorld(Vec2 local) => enemy.Position + RotateLocalToWorld(local - localCenter, enemy.RotationDegrees);
 
         for (var i = 1; i <= samples; i++)
         {
             var point = origin + aim * (reachUnits * i / samples);
-            var block = enemy.Layout.WallBlocks.FirstOrDefault(b => !enemy.IsWallBlockBreached(b.Id) &&
-                (enemy.Position + RotateLocalToWorld(b.Position - localCenter, enemy.RotationDegrees) - point).Length() <= pointRadius);
+
+            var airlock = enemy.Layout.AirlockOuterDoors.FirstOrDefault(d => (ToWorld(d.Position) - point).Length() <= pointRadius);
+            if (airlock is not null)
+                return (enemy, airlock.Id, null);
+
+            var block = enemy.Layout.WallBlocks.FirstOrDefault(b => (ToWorld(b.Position) - point).Length() <= pointRadius);
             if (block is not null)
-                return (enemy, block);
+                return (enemy, null, block.Id);
         }
         return null;
     }

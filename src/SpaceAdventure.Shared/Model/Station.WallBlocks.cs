@@ -10,8 +10,8 @@ public sealed partial class Station
 {
     // internal rather than private: EnemyShipLayout.cs reuses this verbatim for its own hull's
     // cuttable wall blocks - same "derive purely from room geometry" rule, just a different
-    // structure's Rooms/Doors/single-hatch triple.
-    internal static List<WallBlock> BuildWallBlocks(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, AirlockOuterDoor shipConnector)
+    // structure's Rooms/Doors/connectors triple.
+    internal static List<WallBlock> BuildWallBlocks(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, IReadOnlyList<AirlockOuterDoor> shipConnectors)
     {
         var blocks = new List<WallBlock>();
         foreach (var room in rooms)
@@ -31,7 +31,7 @@ public sealed partial class Station
                     blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, room.Right, y + 0.5f));
         }
         return blocks
-            .Where(b => !doors.Any(d => d.Contains(b.Position)) && !shipConnector.Contains(b.Position))
+            .Where(b => !doors.Any(d => d.Contains(b.Position)) && !shipConnectors.Any(c => c.Contains(b.Position)))
             .ToList();
     }
 

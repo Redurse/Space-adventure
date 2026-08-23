@@ -14,10 +14,8 @@ namespace SpaceAdventure.Server;
 // new mechanic is person-to-person combat, which lives here.
 public sealed partial class World
 {
-    private const float BoardingEntryX = 1.5f; // just inside enemy-breach, past the hatch rect
-    private const float ShipAirlockReturnX = 25f; // matches World.StationDocking.cs's own re-entry nudge
-    private const float BoardingRowY = 3f;
     private const float CrewAttackIntervalSeconds = 2.5f;
+    private const float EjectClearRadius = 6f; // clear of the hull entirely, not just past the plating
 
     private readonly Dictionary<string, EnemyCrewRuntime> _enemyCrew = new();
     private readonly Dictionary<int, float> _weaponCooldowns = new();
@@ -49,6 +47,17 @@ public sealed partial class World
     {
         foreach (var character in _characters.Values.Where(c => c.OnEnemyShip).ToList())
             EjectFromEnemyShip(character);
+
+        // Standing on the hull (magnetized, not yet through a hatch) when it goes down leaves you
+        // clinging to a surface that no longer exists - same fix, just for the outside-only case.
+        foreach (var character in _characters.Values.Where(c => c.EvaAttachedTo == EvaAttachment.EnemyShip))
+        {
+            character.EvaAttachedTo = EvaAttachment.None;
+            character.EvaLocalOffset = EnemyShipFieldPosition - new Vec2(EjectClearRadius, 0);
+            character.EvaVelocity = Vec2.Zero;
+            character.PushedOffFrom = PushOffOrigin.None;
+            character.BouncedOffFrom = PushOffOrigin.None;
+        }
     }
 
     private void EjectFromEnemyShip(Character character)
@@ -57,7 +66,7 @@ public sealed partial class World
         character.IsOutside = true;
         character.EvaAttachedTo = EvaAttachment.None;
         character.EvaAttachedAsteroidId = null;
-        character.EvaLocalOffset = EnemyShipFieldPosition - new Vec2(BoardingReachRadius, 0);
+        character.EvaLocalOffset = EnemyShipFieldPosition - new Vec2(EjectClearRadius, 0);
         character.EvaVelocity = Vec2.Zero;
         character.PushedOffFrom = PushOffOrigin.None;
         character.RoomId = Ship.AirlockOuterDoors.First().RoomId; // meaningless while outside, but valid for the trip home
@@ -127,96 +136,35 @@ public sealed partial class World
         }
     }
 
-    // Ship -> enemy ship. Mirrors TryCrossIntoStation, but requires a suit (you cross open vacuum
-    // to get there, unlike a station's sealed connector) and only during a battle. Two ways in: the
-    // hull's own fixed breach (BoardingRoomId, reachable from anywhere within BoardingReachRadius of
-    // the ship - the original, always-open way in) or any exterior wall block the player has since
-    // cut through with the cutter (TryBoardThroughCutHullBreach) - "резак работает так же, как
-    // обшивка корабля игрока": cut a hole anywhere on the hull and climb through it there instead.
-    private bool TryBoardEnemyShip(Character character, Vec2 moveDelta)
-    {
-        if (character.OnEnemyShip || !character.IsOutside || !IsInBattle)
-            return false;
+    // Ship -> enemy ship now works exactly like ship -> vacuum on the player's own hull: magnetize
+    // to it (World.Eva.cs's TryAutoAttach, EnemyShip branch), walk across the plating, and step
+    // into a hatch or wall panel that's actually been cut open (StepEnemyShipAttachedWalk) - there's
+    // no separate proximity-radius phase-in any more (that's TryBoardEnemyShip and
+    // TryBoardThroughCutHullBreach, both removed; see World.Movement.cs and World.Eva.cs).
 
-        if (TryBoardThroughCutHullBreach(character, moveDelta))
-            return true;
-
-        var worldPos = GetEvaWorldPosition(character) + moveDelta;
-        if ((EnemyShipFieldPosition - worldPos).Length() > BoardingReachRadius)
-            return false;
-
-        character.IsOutside = false;
-        character.EvaAttachedTo = EvaAttachment.None;
-        character.EvaAttachedAsteroidId = null;
-        character.EvaVelocity = Vec2.Zero;
-        character.OnEnemyShip = true;
-        character.RoomId = EnemyShipLayout.BoardingRoomId;
-        character.Position = new Vec2(BoardingEntryX, BoardingRowY);
-        return true;
-    }
-
-    private const float BoardingReachRadius = 6f; // how close the EVA character has to drift to the enemy hull
-    private const float CutHullBreachEntryRadius = 1.2f; // has to actually be at the hole, not just somewhere on the hull
-    private const float CutHullBreachInwardNudge = 1f; // steps just past the wall into the room behind it
-
-    // A cut-open exterior wall block is a second, player-made way in - same idea as the player's own
-    // ship's passable breaches (RoomLayout.MoveAlongAxis's isPassableBreach), just crossed from EVA
-    // into a named room instead of between two already-connected rooms.
-    private bool TryBoardThroughCutHullBreach(Character character, Vec2 moveDelta)
-    {
-        if (BoardableEnemy is not { } enemy)
-            return false;
-
-        var worldPos = GetEvaWorldPosition(character) + moveDelta;
-        var localCenter = EnemyHullLocalCenter(enemy.Layout);
-
-        foreach (var block in enemy.Layout.WallBlocks)
-        {
-            if (!enemy.IsWallBlockBreached(block.Id))
-                continue;
-            var blockWorld = enemy.Position + RotateLocalToWorld(block.Position - localCenter, enemy.RotationDegrees);
-            if ((blockWorld - worldPos).Length() > CutHullBreachEntryRadius)
-                continue;
-
-            var room = enemy.Layout.Rooms.First(r => r.Id == block.RoomId);
-            character.IsOutside = false;
-            character.EvaAttachedTo = EvaAttachment.None;
-            character.EvaAttachedAsteroidId = null;
-            character.EvaVelocity = Vec2.Zero;
-            character.OnEnemyShip = true;
-            character.RoomId = block.RoomId;
-            character.Position = InwardOfEnemyHullBlock(room, block);
-            return true;
-        }
-        return false;
-    }
-
-    // Steps a fixed distance in from whichever edge of the room the block actually sits on - blocks
-    // land exactly on Room.Left/Right/Top/Bottom by construction (Station.BuildWallBlocks), so this
-    // is just "which side is it" rather than any real geometry.
-    private static Vec2 InwardOfEnemyHullBlock(Room room, WallBlock block)
-    {
-        if (Math.Abs(block.Y - room.Top) < 0.01f) return new Vec2(block.X, block.Y + CutHullBreachInwardNudge);
-        if (Math.Abs(block.Y - room.Bottom) < 0.01f) return new Vec2(block.X, block.Y - CutHullBreachInwardNudge);
-        return Math.Abs(block.X - room.Left) < 0.01f
-            ? new Vec2(block.X + CutHullBreachInwardNudge, block.Y)
-            : new Vec2(block.X - CutHullBreachInwardNudge, block.Y);
-    }
-
-    // Enemy ship -> back outside, through the same breach. Puts the character back in EVA
-    // free-flight (not straight into their own ship) - they still have to fly home.
+    // Enemy ship -> back outside, through whichever cut-open hatch or wall panel the character is
+    // actually standing at - generalizes the old single-fixed-hatch check to any of the hull's two
+    // AirlockOuterDoors or any breached WallBlock in the room being left, matching how many ways in
+    // there now are. Puts the character back in free EVA flight (not attached to the hull) - they
+    // still have to fly home, same as leaving used to work.
     private bool TryLeaveEnemyShip(Character character, Vec2 moveDelta)
     {
-        if (!character.OnEnemyShip || character.RoomId != EnemyShipLayout.BoardingRoomId)
+        if (!character.OnEnemyShip || BoardableEnemy is not { } enemy)
             return false;
 
         var next = character.Position + moveDelta;
-        if (!EnemyShipLayout.BoardingHatch.Contains(next))
+        var outerDoor = EnemyShipLayout.AirlockOuterDoors.FirstOrDefault(d =>
+            d.RoomId == character.RoomId && enemy.IsAirlockBreached(d.Id) && d.Contains(next));
+        var breachBlock = outerDoor is null
+            ? EnemyShipLayout.WallBlocks.FirstOrDefault(b => b.RoomId == character.RoomId && !b.IsInterior &&
+                enemy.IsWallBlockBreached(b.Id) && (b.Position - next).Length() <= RoomLayout.BreachCrossingRadius)
+            : null;
+        if (outerDoor is null && breachBlock is null)
             return false;
 
-        // Climbing out of the enemy's breach leaves you floating beside a hull that isn't
-        // magnetizable anyway, so nothing has to be held off - the boots only ever catch on your
-        // own ship or a rock (World.Eva.cs).
+        // Climbing out through a hole leaves you floating beside a hull that isn't magnetizable
+        // anyway, so nothing has to be held off - the boots only ever catch on your own ship or a
+        // rock (World.Eva.cs).
         EjectFromEnemyShip(character);
         return true;
     }
