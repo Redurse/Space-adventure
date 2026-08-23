@@ -567,6 +567,21 @@ public sealed partial class World
         }
     }
 
+    // Test-only teleport, same convention as World.ShipField.cs's DebugPlaceShip - drops an already-
+    // suited character free-floating at an exact world position with zero velocity, instead of
+    // making a test spend jetpack fuel (JetpackFuelPerSecond=10, only 10 seconds of thrust total)
+    // and dozens of simulated seconds flying there for real. A test that's actually about EVA flight
+    // itself still flies for real and never calls this.
+    public void DebugPlaceEvaCharacter(int playerId, Vec2 worldPosition)
+    {
+        var character = _characters[playerId];
+        character.IsOutside = true;
+        character.EvaAttachedTo = EvaAttachment.None;
+        character.EvaAttachedAsteroidId = null;
+        character.EvaLocalOffset = worldPosition;
+        character.EvaVelocity = Vec2.Zero;
+    }
+
     private void HandlePushOff(Character character, Vec2 direction)
     {
         if (!character.IsOutside || character.EvaAttachedTo == EvaAttachment.None || direction == Vec2.Zero)

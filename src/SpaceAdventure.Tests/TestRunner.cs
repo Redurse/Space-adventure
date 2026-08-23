@@ -210,6 +210,8 @@ internal static partial class TestRunner
         ("EnemyShipClasses_AreDistinctStructures", EnemyShipClasses_AreDistinctStructures),
         ("EnemyShipClasses_FrigateMatchesCorvetteFootprintAndCarriesItsFixedGuns", EnemyShipClasses_FrigateMatchesCorvetteFootprintAndCarriesItsFixedGuns),
         ("World_Boarding_SectorAlwaysFieldsTheSameHull", World_Boarding_SectorAlwaysFieldsTheSameHull),
+        ("World_Boarding_CuttingEnemyHullDamagesIt", World_Boarding_CuttingEnemyHullDamagesIt),
+        ("World_Boarding_CrossingACutHullBreachBoardsIntoThatRoom", World_Boarding_CrossingACutHullBreachBoardsIntoThatRoom),
         ("World_Boarding_OpeningDoors_VentsTheHullAndSuffocatesUnsuitedCrew", World_Boarding_OpeningDoors_VentsTheHullAndSuffocatesUnsuitedCrew),
         ("World_Boarding_HullDestroyedUnderneath_EjectsTheBoardingParty", World_Boarding_HullDestroyedUnderneath_EjectsTheBoardingParty),
         ("World_Faction_DestroyingShip_LowersOwnerRaisesRival", World_Faction_DestroyingShip_LowersOwnerRaisesRival),

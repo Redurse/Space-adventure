@@ -17,4 +17,9 @@ public sealed record EnemyShipSnapshot(
     IReadOnlyList<RoomOxygenState> RoomOxygen,
     Vec2 Position,
     IReadOnlyList<EnemyShipFieldState> Ships,
-    IReadOnlyList<EnemyCrewState> Crew);
+    IReadOnlyList<EnemyCrewState> Crew,
+    // The boardable hull's own cuttable exterior - positions come from EnemyShipLayout.WallBlocks
+    // (a pure function of ClassName/the boardable ship's Kind), only the per-instance Hp/Breached
+    // state actually needs to cross the wire, same split Station/Ship's own wall blocks already use.
+    IReadOnlyList<WallBlock> WallBlocks,
+    IReadOnlyList<WallBlockState> WallBlockStates);

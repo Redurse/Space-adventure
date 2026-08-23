@@ -143,8 +143,17 @@ public sealed partial class World
     // in the formation, so a given sector always fields the same opposition - travelling back to a
     // fight you ran from must not roll it again - while different sectors differ. The lead ship is
     // never the freighter: the one you meet first should be the one that shoots back.
+    // Test-only override (same "precondition setter" convention as World.WallBlocks.cs's
+    // DebugBreachWallBlock) - lets a test force which hull a battle fields instead of hunting
+    // through the galaxy for a sector id that happens to hash to the one it needs.
+    private EnemyShipClass? _debugForcedEnemyClass;
+    public void DebugForceEnemyClass(EnemyShipClass? kind) => _debugForcedEnemyClass = kind;
+
     private EnemyShipLayout EnemyClassFor(int index)
     {
+        if (_debugForcedEnemyClass is { } forced)
+            return EnemyShipLayout.Of(forced);
+
         // _battleSectorPointId is which sector/station the current fight is at (M39's VoyagePhase
         // removal dropped the old _travelTargetPointId this used to read) - falls back to
         // _dockedPointId (rare: a resolved fight can still be ticking down while the ship is

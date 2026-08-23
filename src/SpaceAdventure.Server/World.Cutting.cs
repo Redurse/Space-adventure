@@ -147,7 +147,48 @@ public sealed partial class World
         // space), so this reuses it rather than re-deriving the same geometry a second time.
         var hullBlock = FindAimedWallBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
         if (hullBlock is not null)
+        {
             DamageWallBlock(hullBlock.Id, WallCutDamagePerSecond * (float)deltaSeconds);
+            return;
+        }
+
+        // Still nothing - try the currently boardable enemy hull, same reach/rate again: cutting an
+        // enemy raider open works exactly like cutting your own ship's hull, not a separate tool or
+        // timing ("резак работает так же, как обшивка корабля игрока").
+        var enemyTarget = FindAimedEnemyHullBlock(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
+        if (enemyTarget is { } target)
+            target.Enemy.DamageWallBlock(target.Block.Id, WallCutDamagePerSecond * (float)deltaSeconds);
+    }
+
+    // Local-frame bounding-box centre of an enemy hull's own Rooms - the anchor a WallBlock's local
+    // position rotates around to reach world space, same convention World.GetHullLocalBounds already
+    // uses for the player's own ship (EnemyShipLayout.GetLocalBounds is the shared-model twin of it).
+    private static Vec2 EnemyHullLocalCenter(EnemyShipLayout layout) => layout.GetLocalBounds().Center;
+
+    // Mirrors FindAimedWallBlock's outside branch exactly, just against whichever enemy hull is
+    // currently boardable (BoardableEnemy) instead of the player's own Ship - an already-breached
+    // block is skipped so the flame reaches past it to whatever's still intact, the same "a hole
+    // isn't a wall anymore" rule combat fire already follows (World.EnemyAi.cs).
+    private (EnemyShipRuntime Enemy, WallBlock Block)? FindAimedEnemyHullBlock(Character character, float reachUnits, int samples, float pointRadius)
+    {
+        if (BoardableEnemy is not { } enemy)
+            return null;
+        var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection.Normalized() : character.FacingDirection;
+        if (aim.Length() < 0.01f)
+            return null;
+
+        var origin = GetEvaWorldPosition(character);
+        var localCenter = EnemyHullLocalCenter(enemy.Layout);
+
+        for (var i = 1; i <= samples; i++)
+        {
+            var point = origin + aim * (reachUnits * i / samples);
+            var block = enemy.Layout.WallBlocks.FirstOrDefault(b => !enemy.IsWallBlockBreached(b.Id) &&
+                (enemy.Position + RotateLocalToWorld(b.Position - localCenter, enemy.RotationDegrees) - point).Length() <= pointRadius);
+            if (block is not null)
+                return (enemy, block);
+        }
+        return null;
     }
 
     private IReadOnlyList<OreDepositState> CreateOreDepositStates() =>

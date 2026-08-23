@@ -43,6 +43,17 @@ public sealed class EnemyShipRuntime
     // doesn't all sweep the same direction in lockstep.
     public float OrbitDirection { get; init; } = 1f;
 
+    // This hull's own exterior Hp, one entry per Layout.WallBlocks id, own instance per ship so two
+    // raiders of the same class don't share a wall's damage (World.Cutting.cs's FindAimedEnemyHullBlock
+    // damages these once cut open, World.Boarding.cs lets a boarder climb through a breached one same
+    // as the player's own hull).
+    private readonly Dictionary<string, float> _wallBlockHp = new();
+
+    public float GetWallBlockHp(string blockId) => _wallBlockHp.GetValueOrDefault(blockId, World.WallBlockMaxHp);
+    public bool IsWallBlockBreached(string blockId) => GetWallBlockHp(blockId) <= 0f;
+    public void DamageWallBlock(string blockId, float amount) =>
+        _wallBlockHp[blockId] = Math.Max(0f, GetWallBlockHp(blockId) - amount);
+
     public EnemyShipRuntime(string id, float maxHp, Vec2 position, EnemyShipLayout layout, IReadOnlyList<TurretWeaponType> weaponLoadout)
     {
         Id = id;

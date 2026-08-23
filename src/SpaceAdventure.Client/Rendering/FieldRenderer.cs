@@ -139,6 +139,26 @@ public sealed class FieldRenderer
                 rotation + (enemy.RotationDegrees * MathF.PI / 180f), totalSeconds);
             DrawOffScreenMarker(spriteBatch, enemyScreen, viewportOrigin, viewportSize,
                 enemy.IsBoardable ? "Враг" : "Рейдер", Color.OrangeRed);
+
+            // Any wall the player has already cut through on the currently boardable hull - the
+            // enemy-ship counterpart of ShipRenderer.DrawBreachedWallBlock, just placed by rotating
+            // the block's local position out to world space (World.Cutting.cs uses the identical
+            // maths server-side) instead of drawing straight into a room-local origin.
+            if (enemy.IsBoardable && snapshot.EnemyShip.WallBlockStates.Count > 0)
+            {
+                var enemyLocalCenter = ShipLocalFrame.GetHullCenter(snapshot.EnemyShip.Rooms);
+                foreach (var state in snapshot.EnemyShip.WallBlockStates)
+                {
+                    if (!state.Breached)
+                        continue;
+                    var block = snapshot.EnemyShip.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
+                    if (block is null)
+                        continue;
+                    var blockWorld = new Vec2(enemy.X, enemy.Y) +
+                        ShipLocalFrame.ToWorldDirection(new Vec2(block.X, block.Y) - enemyLocalCenter, enemy.RotationDegrees);
+                    DrawEnemyHullBreach(spriteBatch, WorldToScreen(blockWorld), totalSeconds);
+                }
+            }
         }
 
         // Ambient traffic (World.NpcShips.cs, M43) - present and flying whether or not the player
@@ -455,6 +475,20 @@ public sealed class FieldRenderer
             var label = crewAlive > 0 ? $"Враг (экипаж: {crewAlive})" : "Враг (зачищен)";
             spriteBatch.DrawString(_font, label, screenCenter + new Vector2(-40, -sizePx / 2 - 16), Color.OrangeRed, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
         }
+    }
+
+    // A player-cut hole in the hull, distinct from the always-open green-diamond breach above
+    // (DrawEnemyShipExterior) - this one only appears once World.Cutting.cs actually reports the
+    // block as breached, at the exact world position the cutting/boarding logic itself uses, same
+    // "black square + flickering hazard outline" language ShipRenderer.DrawBreachedWallBlock uses
+    // for the player's own hull.
+    private void DrawEnemyHullBreach(SpriteBatch spriteBatch, Vector2 screenCenter, float totalSeconds)
+    {
+        const int size = 22;
+        var rect = new Rectangle((int)screenCenter.X - size / 2, (int)screenCenter.Y - size / 2, size, size);
+        spriteBatch.Draw(_pixel, rect, Color.Black);
+        var flicker = 0.5f + 0.5f * MathF.Sin(totalSeconds * 6f);
+        ShipRenderer.DrawRectOutline(spriteBatch, _pixel, rect, Color.OrangeRed * flicker, 2);
     }
 
     private void DrawEnemyHealthBar(SpriteBatch spriteBatch, Vector2 screenCenter, float sizePx, EnemyShipFieldState enemy)

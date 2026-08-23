@@ -47,6 +47,117 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0)); // see WalkFixedDirection's own note
     }
 
+    // Same rotation World.Eva.cs's RotateLocalToWorld/ShipLocalFrame.ToWorldDirection use, kept local
+    // to the test file since it's server-internal there and there's no third caller to share it with.
+    private static Vec2 RotateLocalToWorld(Vec2 local, float rotationDegrees)
+    {
+        var radians = rotationDegrees * (MathF.PI / 180f);
+        var cos = MathF.Cos(radians);
+        var sin = MathF.Sin(radians);
+        return new Vec2(local.X * cos - local.Y * sin, local.X * sin + local.Y * cos);
+    }
+
+    // The boardable enemy's current world position of a WallBlock that started life at localOffset
+    // from the hull's own centre - re-read every tick since the hull moves and turns mid-fight
+    // (World.EnemyFleet.cs), exactly mirroring the maths World.Cutting.cs/World.Boarding.cs use
+    // server-side to test the same aim.
+    private static Vec2 EnemyHullBlockWorldPosition(World world, Vec2 localOffset)
+    {
+        var enemy = world.CreateSnapshot().EnemyShip.Ships.First(s => s.IsBoardable);
+        return new Vec2(enemy.X, enemy.Y) + RotateLocalToWorld(localOffset, enemy.RotationDegrees);
+    }
+
+    // The always-open fixed hatch (World.Boarding.cs's BoardingReachRadius=6, measured from the
+    // hull's own centre) already covers most of a small hull - Gunship's own farthest corner is
+    // only ~8.75 out, not enough clearance for an approach to reliably reach it without boarding via
+    // the old path first by accident. Frigate is the one class with real margin (~11.45 at its far
+    // corners) and, being 5 rooms rather than a single breach compartment, also has a far corner
+    // that ISN'T the boarding room - the only way these two tests can actually tell "boarded via the
+    // new cut hole" apart from "boarded via the always-open hatch and just happened to land nearby".
+    // Cutting an enemy hull works exactly like the player's own ship (World.Cutting.cs reuses the
+    // same reach/rate/samples): suit up with a cutter instead of a weapon, get right up on a wall
+    // block instead of the fixed hatch, and hold the flame on it. Forces Frigate (World.
+    // DebugForceEnemyClass) rather than relying on whatever a sector's own id happens to hash to -
+    // it's the one class with enough clearance beyond the always-open fixed hatch's
+    // BoardingReachRadius to prove this is really the new cut-hole path and not the old one.
+    // Teleports there (World.DebugPlaceEvaCharacter) instead of flying for real: the target orbits
+    // fast enough (EnemyOrbitDegreesPerSecond) that a realistic approach chews through the whole
+    // 10-second jetpack fuel budget (JetpackFuelPerSecond) just correcting course, which is a fuel-
+    // management problem this test isn't about.
+    private static bool World_Boarding_CuttingEnemyHullDamagesIt()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.DebugForceEnemyClass(EnemyShipClass.Frigate);
+        EnterBattle(world);
+        ExitShipIntoVacuum(world);
+
+        var localCenter = world.EnemyShipLayout.GetLocalBounds().Center;
+        var boardingRoomId = world.EnemyShipLayout.BoardingRoomId;
+        var block = world.EnemyShipLayout.WallBlocks.Where(b => b.RoomId != boardingRoomId)
+            .OrderByDescending(b => (b.Position - localCenter).Length()).First();
+        var localOffset = block.Position - localCenter;
+        world.DebugPlaceEvaCharacter(1, EnemyHullBlockWorldPosition(world, localOffset));
+
+        // Re-aims every tick (the hull keeps drifting/turning under it) but never moves - aiming is
+        // free, thrust costs jetpack fuel, and the block starts at zero distance so a few ticks of
+        // gradual drift is nowhere near enough to carry it out of the flame's reach. Standing right
+        // on top of one block's exact position also puts its immediate neighbours within the same
+        // sampled reach, so this checks whether cutting damaged *any* of the hull's blocks rather
+        // than insisting on this exact one - which specific panel the flame catches first is the
+        // aiming algorithm's own tie-break, not something this test needs to dictate.
+        var healthBefore = world.CreateSnapshot().EnemyShip.WallBlockStates.Sum(s => s.Hp);
+        for (var i = 0; i < 10; i++)
+        {
+            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+            var toBlock = EnemyHullBlockWorldPosition(world, localOffset) - new Vec2(me.X, me.Y);
+            var dir = toBlock.Length() > 0.001f ? toBlock.Normalized() : new Vec2(1f, 0f);
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: dir.X, LookY: dir.Y));
+            world.Step(RealtimeStep);
+        }
+
+        var healthAfter = world.CreateSnapshot().EnemyShip.WallBlockStates.Sum(s => s.Hp);
+        return healthAfter < healthBefore;
+    }
+
+    // The other half of the same feature: once a wall is actually breached, drifting up to it boards
+    // the player into the room right behind THAT block - not the hull's fixed hatch (World.
+    // DebugBreachEnemyWallBlock is the test-only precondition setter, same convention as the
+    // player's own World.DebugBreachWallBlock, standing in for a finished cutting job).
+    private static bool World_Boarding_CrossingACutHullBreachBoardsIntoThatRoom()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.DebugForceEnemyClass(EnemyShipClass.Frigate);
+        EnterBattle(world);
+        ExitShipIntoVacuum(world);
+
+        var localCenter = world.EnemyShipLayout.GetLocalBounds().Center;
+        var boardingRoomId = world.EnemyShipLayout.BoardingRoomId;
+        var block = world.EnemyShipLayout.WallBlocks.Where(b => b.RoomId != boardingRoomId)
+            .OrderByDescending(b => (b.Position - localCenter).Length()).First();
+        var localOffset = block.Position - localCenter;
+        if (!world.DebugBreachEnemyWallBlock(block.Id))
+            return false;
+        world.DebugPlaceEvaCharacter(1, EnemyHullBlockWorldPosition(world, localOffset));
+
+        // Already sitting right on the breach - one tick of any nonzero movement input is enough to
+        // trigger TryBoardEnemyShip's proximity check (World.Movement.cs only calls it at all when
+        // there's move input), rather than needing a real multi-second flight there.
+        for (var i = 0; i < 30 && !world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip; i++)
+        {
+            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+            var toBlock = EnemyHullBlockWorldPosition(world, localOffset) - new Vec2(me.X, me.Y);
+            var dir = toBlock.Length() > 0.001f ? toBlock.Normalized() : new Vec2(1f, 0f);
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+            world.Step(RealtimeStep);
+        }
+
+        var final = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var finalRoom = world.EnemyShipLayout.Rooms.FirstOrDefault(r => r.Contains(new Vec2(final.X, final.Y)));
+        return final.OnEnemyShip && finalRoom?.Id == block.RoomId;
+    }
+
     private static bool World_Boarding_EvaDuringBattle_ReachesEnemyShip()
     {
         var world = new World();

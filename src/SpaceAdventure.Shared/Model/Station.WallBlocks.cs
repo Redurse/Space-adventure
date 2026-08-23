@@ -8,7 +8,10 @@ namespace SpaceAdventure.Shared.Model;
 // dropped afterward, same as Ship.cs's constructor does for its own wall blocks.
 public sealed partial class Station
 {
-    private static List<WallBlock> BuildWallBlocks(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, AirlockOuterDoor shipConnector)
+    // internal rather than private: EnemyShipLayout.cs reuses this verbatim for its own hull's
+    // cuttable wall blocks - same "derive purely from room geometry" rule, just a different
+    // structure's Rooms/Doors/single-hatch triple.
+    internal static List<WallBlock> BuildWallBlocks(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, AirlockOuterDoor shipConnector)
     {
         var blocks = new List<WallBlock>();
         foreach (var room in rooms)
@@ -32,7 +35,7 @@ public sealed partial class Station
             .ToList();
     }
 
-    private static bool IsUnitCovered(IReadOnlyList<Room> rooms, Room room, EdgeSide side, float unitStart)
+    internal static bool IsUnitCovered(IReadOnlyList<Room> rooms, Room room, EdgeSide side, float unitStart)
     {
         foreach (var other in rooms)
         {

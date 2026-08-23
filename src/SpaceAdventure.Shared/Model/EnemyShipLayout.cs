@@ -25,6 +25,11 @@ public sealed partial class EnemyShipLayout
     // EnemyWeaponFor) - a class only needs this when its weapons are a defining trait of the hull
     // itself rather than whatever the squadron formation happens to hand it.
     public IReadOnlyList<TurretWeaponType>? WeaponLoadout { get; }
+    // The hull's own cuttable exterior, derived purely from Rooms/Doors the same way a station's is
+    // (Station.WallBlocks.cs's BuildWallBlocks, reused verbatim) - so a raider is a real boardable
+    // structure with a real hull, not just a hatch you fly up to: any exterior wall can be cut open
+    // from EVA (World.Cutting.cs) exactly like the player's own ship, and climbed through once open.
+    public IReadOnlyList<WallBlock> WallBlocks { get; }
 
     public EnemyShipLayout(EnemyShipClass kind, string name, IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors,
         AirlockOuterDoor boardingHatch, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId,
@@ -38,6 +43,20 @@ public sealed partial class EnemyShipLayout
         CrewSpawns = crewSpawns;
         BoardingRoomId = boardingRoomId;
         WeaponLoadout = weaponLoadout;
+        WallBlocks = Station.BuildWallBlocks(rooms, doors, boardingHatch);
+    }
+
+    // Bounding box of the hull's own Rooms in its local frame - the same "centre + rotate" anchor
+    // World.GetHullLocalBounds/ShipLocalFrame.GetHullCenter already use for the player's own ship,
+    // so a WallBlock's local position can be turned into a world position via
+    // EnemyShipRuntime.Position/RotationDegrees the identical way.
+    public (Vec2 Center, Vec2 HalfExtents) GetLocalBounds()
+    {
+        var minX = Rooms.Min(r => r.Left);
+        var maxX = Rooms.Max(r => r.Right);
+        var minY = Rooms.Min(r => r.Top);
+        var maxY = Rooms.Max(r => r.Bottom);
+        return (new Vec2((minX + maxX) / 2, (minY + maxY) / 2), new Vec2((maxX - minX) / 2, (maxY - minY) / 2));
     }
 
     public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen) =>

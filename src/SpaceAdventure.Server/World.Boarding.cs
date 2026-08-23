@@ -128,11 +128,18 @@ public sealed partial class World
     }
 
     // Ship -> enemy ship. Mirrors TryCrossIntoStation, but requires a suit (you cross open vacuum
-    // to get there, unlike a station's sealed connector) and only during a battle.
+    // to get there, unlike a station's sealed connector) and only during a battle. Two ways in: the
+    // hull's own fixed breach (BoardingRoomId, reachable from anywhere within BoardingReachRadius of
+    // the ship - the original, always-open way in) or any exterior wall block the player has since
+    // cut through with the cutter (TryBoardThroughCutHullBreach) - "резак работает так же, как
+    // обшивка корабля игрока": cut a hole anywhere on the hull and climb through it there instead.
     private bool TryBoardEnemyShip(Character character, Vec2 moveDelta)
     {
         if (character.OnEnemyShip || !character.IsOutside || !IsInBattle)
             return false;
+
+        if (TryBoardThroughCutHullBreach(character, moveDelta))
+            return true;
 
         var worldPos = GetEvaWorldPosition(character) + moveDelta;
         if ((EnemyShipFieldPosition - worldPos).Length() > BoardingReachRadius)
@@ -149,6 +156,52 @@ public sealed partial class World
     }
 
     private const float BoardingReachRadius = 6f; // how close the EVA character has to drift to the enemy hull
+    private const float CutHullBreachEntryRadius = 1.2f; // has to actually be at the hole, not just somewhere on the hull
+    private const float CutHullBreachInwardNudge = 1f; // steps just past the wall into the room behind it
+
+    // A cut-open exterior wall block is a second, player-made way in - same idea as the player's own
+    // ship's passable breaches (RoomLayout.MoveAlongAxis's isPassableBreach), just crossed from EVA
+    // into a named room instead of between two already-connected rooms.
+    private bool TryBoardThroughCutHullBreach(Character character, Vec2 moveDelta)
+    {
+        if (BoardableEnemy is not { } enemy)
+            return false;
+
+        var worldPos = GetEvaWorldPosition(character) + moveDelta;
+        var localCenter = EnemyHullLocalCenter(enemy.Layout);
+
+        foreach (var block in enemy.Layout.WallBlocks)
+        {
+            if (!enemy.IsWallBlockBreached(block.Id))
+                continue;
+            var blockWorld = enemy.Position + RotateLocalToWorld(block.Position - localCenter, enemy.RotationDegrees);
+            if ((blockWorld - worldPos).Length() > CutHullBreachEntryRadius)
+                continue;
+
+            var room = enemy.Layout.Rooms.First(r => r.Id == block.RoomId);
+            character.IsOutside = false;
+            character.EvaAttachedTo = EvaAttachment.None;
+            character.EvaAttachedAsteroidId = null;
+            character.EvaVelocity = Vec2.Zero;
+            character.OnEnemyShip = true;
+            character.RoomId = block.RoomId;
+            character.Position = InwardOfEnemyHullBlock(room, block);
+            return true;
+        }
+        return false;
+    }
+
+    // Steps a fixed distance in from whichever edge of the room the block actually sits on - blocks
+    // land exactly on Room.Left/Right/Top/Bottom by construction (Station.BuildWallBlocks), so this
+    // is just "which side is it" rather than any real geometry.
+    private static Vec2 InwardOfEnemyHullBlock(Room room, WallBlock block)
+    {
+        if (Math.Abs(block.Y - room.Top) < 0.01f) return new Vec2(block.X, block.Y + CutHullBreachInwardNudge);
+        if (Math.Abs(block.Y - room.Bottom) < 0.01f) return new Vec2(block.X, block.Y - CutHullBreachInwardNudge);
+        return Math.Abs(block.X - room.Left) < 0.01f
+            ? new Vec2(block.X + CutHullBreachInwardNudge, block.Y)
+            : new Vec2(block.X - CutHullBreachInwardNudge, block.Y);
+    }
 
     // Enemy ship -> back outside, through the same breach. Puts the character back in EVA
     // free-flight (not straight into their own ship) - they still have to fly home.

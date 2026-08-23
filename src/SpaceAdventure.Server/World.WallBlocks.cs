@@ -56,6 +56,20 @@ public sealed partial class World
             DamageWallBlock(block.Id, WallBlockMaxHp);
     }
 
+    // Same test-only precondition setter as DebugBreachWallBlock above, just against whichever enemy
+    // hull is currently boardable - a test that only cares "there's a hole in the enemy's hull, does
+    // crossing it board correctly" doesn't need to actually simulate a cutter burning through it.
+    // Takes the exact block id rather than a room id (unlike DebugBreachWallBlock) since a room's
+    // exterior is several blocks wide and the caller usually already picked one specific block to
+    // both breach and steer toward - "the first block in this room" would often be a different one.
+    public bool DebugBreachEnemyWallBlock(string blockId)
+    {
+        if (BoardableEnemy is not { } enemy || enemy.Layout.WallBlocks.All(b => b.Id != blockId))
+            return false;
+        enemy.DamageWallBlock(blockId, WallBlockMaxHp);
+        return true;
+    }
+
     // A hole wide enough to fit through, not just a pinhole to see space through: this block AND
     // at least one other fully-broken block right beside it on the same wall.
     private bool IsPassableBreach(WallBlock block) =>
@@ -72,6 +86,13 @@ public sealed partial class World
     // simply always reported at full health.
     private IReadOnlyList<WallBlockState> CreateStationWallBlockStates() =>
         Station.WallBlocks.Select(b => new WallBlockState(b.Id, WallBlockMaxHp, WallBlockMaxHp)).ToArray();
+
+    // The boardable enemy hull's own exterior Hp (EnemyShipRuntime's own dictionary, not this
+    // World's _wallBlockHp - a squadron of raiders each has their own hull to cut through).
+    private IReadOnlyList<WallBlockState> CreateEnemyHullWallBlockStates() =>
+        BoardableEnemy is not { } enemy
+            ? Array.Empty<WallBlockState>()
+            : enemy.Layout.WallBlocks.Select(b => new WallBlockState(b.Id, enemy.GetWallBlockHp(b.Id), WallBlockMaxHp)).ToArray();
 
     // Shared by the welder and the indoor cutter (both burn a short aimed flame against the ship's
     // own wall blocks, just to opposite effect) and by the snapshot query that tells the client
