@@ -5,28 +5,22 @@ using SpaceAdventure.Shared.Protocol;
 
 internal static partial class TestRunner
 {
-    // individual outer-hull wall blocks (spread unevenly across all rooms) — 600 simulated
-    // seconds gives enough draws that every room ends up with at least one breach with very low
-    // residual flake risk.
+    // Used to wait out a long random fight until the enemy AI happened to hit every room - enemy
+    // fire now aims at fixed priority targets instead (World.EnemyFleet.cs's EnemyTargetPriority),
+    // so a specific room is no longer something a long-enough wait reliably lands on by chance.
+    // These are test setup, not the thing under test for any of their callers (they all just need
+    // "there's a breach here" as a precondition) - World.DebugBreachWallBlock sets that up directly.
     private static void BreachEveryRoom(World world)
     {
         EnterBattle(world);
-
-        for (var i = 0; i < 600 * 30; i++)
-            world.Step(RealtimeStep);
+        foreach (var room in world.Ship.Rooms)
+            world.DebugBreachWallBlock(room.Id);
     }
 
-    // Stops the moment the given room gets its first breach, rather than running the full
-    // BreachEveryRoom sweep (which deliberately keeps going long enough to hit every room at least
-    // once) - a character standing in the target room the whole time would otherwise rack up
-    // several minutes of unsuited decompression exposure and could die of it before a test ever
-    // gets to use the breach for anything.
     private static void BreachRoom(World world, string roomId)
     {
         EnterBattle(world);
-
-        for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), roomId); i++)
-            world.Step(RealtimeStep);
+        world.DebugBreachWallBlock(roomId);
     }
 
     private static bool RoomHasBreach(WorldSnapshot snapshot, string roomId) =>
@@ -35,15 +29,25 @@ internal static partial class TestRunner
     private static int CountBreaches(WorldSnapshot snapshot, string roomId) =>
         snapshot.WallBlockStates.Count(s => s.Breached && snapshot.WallBlocks.First(b => b.Id == s.Id).RoomId == roomId);
 
-    private static bool World_EnemyAi_EventuallyBreachesEveryRoom()
+    // Enemy fire now aims at a fixed priority order rather than a uniform random hit anywhere on
+    // the hull (World.EnemyFleet.cs's EnemyTargetPriority: Engines, Weapons, Reactor, Bridge,
+    // Oxygen) - a long fight should still work its way through the categories that have a real
+    // "disabled" state (Engines/Weapons) rather than getting stuck on the first one forever.
+    private static bool World_EnemyAi_PriorityTargetingDisablesEnginesAndWeapons()
     {
         var world = new World();
         world.SpawnCharacter(1); // position doesn't matter for this test
+        EnterBattle(world);
 
-        BreachEveryRoom(world);
+        for (var i = 0; i < 600 * 30; i++)
+            world.Step(RealtimeStep);
 
-        var snapshot = world.CreateSnapshot();
-        return world.Ship.Rooms.All(r => RoomHasBreach(snapshot, r.Id));
+        var enginesDisabled = world.Ship.SystemDevices
+            .Where(d => d.System == PowerSystemId.Engine)
+            .All(d => !world.IsDeviceConnected(d.Id));
+        var weaponsDisabled = world.CreateSnapshot().TurretStates.All(t => t.Damaged);
+
+        return enginesDisabled && weaponsDisabled;
     }
 
     private static bool World_Decompression_DrainsHealthInBreachedRoom()
@@ -51,16 +55,9 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1); // pilot — only sends commands, its health is never checked
 
-        // Enemy AI only attacks once in Battle — get there first via the galaxy map.
-        EnterBattle(world);
-
-        // A single breach only leaks oxygen slowly — wait for an actual breach, then keep
-        // stepping until oxygen has actually dropped clearly (not just barely, which could
-        // flicker back above 50 for a tick from diffusion) under the safe threshold. This search
-        // can take a long time in the worst case, so nobody should be sitting in the room while
-        // it runs (see below).
-        for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "corridor"); i++)
-            world.Step(RealtimeStep);
+        BreachRoom(world, "corridor");
+        if (!RoomHasBreach(world.CreateSnapshot(), "corridor"))
+            return false;
 
         for (var i = 0; i < 300 * 30; i++)
         {
@@ -84,46 +81,27 @@ internal static partial class TestRunner
     }
 
     // The generator physically sits in the corridor (Ship.cs: "system-oxygen" is in "corridor")
-    // and only produces oxygen there in proportion to power routed to it (World.Atmosphere.cs).
-    // Waiting for a corridor-specific breach via the normal long random fight (like
-    // World_Decompression_DrainsHealthInBreachedRoom does) doesn't work as a "stays healthy when
-    // powered" check: by the time corridor takes its own hit, other rooms have likely also taken
-    // several unrelated breaches and sit far below FullOxygen — and since only the corridor has a
-    // generator, heavily depleted neighbors can diffusion-drain it faster than one generator can
-    // keep up, independent of whether the power question this test cares about is even true. So
-    // instead: retry fresh, short (single attack-cycle) encounters until one lands exactly one
-    // ship-wide breach in the corridor while every other room is still untouched (fresh spawn, so
-    // everything else is still at FullOxygen) — an isolated scenario where full power should
-    // trivially keep up with just its own room's single 3/sec leak. A single attack has only
-    // ~7% odds of landing exactly this (most of its own outcomes are turret/system damage or a
-    // wall breach elsewhere on the ship), so the retry budget needs a wide enough margin that
-    // exhausting it is negligible, not just "usually enough".
+    // and only produces oxygen there in proportion to power routed to it (World.Atmosphere.cs). An
+    // isolated single leak there, nothing else touched, is what actually isolates the question this
+    // test cares about (does full power keep up with just this room's own leak) - forced directly
+    // via DebugBreachWallBlock rather than waiting on the enemy AI to land it (which now aims at
+    // fixed priority targets, Oxygen last of all - World.EnemyFleet.cs's EnemyTargetPriority).
     private static bool World_Oxygen_GeneratorRestoresRoomOxygenWhenPowered()
     {
-        for (var attempt = 0; attempt < 300; attempt++)
-        {
-            var world = new World();
-            world.SpawnCharacter(1); // pilot — only sends commands
+        var world = new World();
+        world.SpawnCharacter(1); // pilot — only sends commands
 
-            // PowerSystemId order: Oxygen(0), Engine, Shields, WeaponCharger, Secondary.
-            world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f));
-            EnterBattle(world);
+        // PowerSystemId order: Oxygen(0), Engine, Shields, WeaponCharger, Secondary.
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 0, PowerDirection: 1f));
+        for (var i = 0; i < 60; i++) // let the slider actually ramp up before the leak starts
+            world.Step(RealtimeStep);
 
-            for (var i = 0; i < 7 * 30; i++) // just past the first 6s attack-cooldown tick
-                world.Step(RealtimeStep);
+        world.DebugBreachWallBlock("corridor");
 
-            var snapshot = world.CreateSnapshot();
-            var totalBreaches = snapshot.WallBlockStates.Count(s => s.Breached);
-            if (totalBreaches != 1 || !RoomHasBreach(snapshot, "corridor"))
-                continue; // this attempt's single attack didn't land the isolated scenario we want
+        for (var i = 0; i < 10 * 30; i++) // let it settle under full power
+            world.Step(RealtimeStep);
 
-            for (var i = 0; i < 10 * 30; i++) // let it settle under full power
-                world.Step(RealtimeStep);
-
-            return world.CreateSnapshot().RoomOxygen.First(o => o.RoomId == "corridor").Oxygen > 70f;
-        }
-
-        return false; // never landed the isolated single-breach scenario within the attempt budget
+        return world.CreateSnapshot().RoomOxygen.First(o => o.RoomId == "corridor").Oxygen > 70f;
     }
 
     private static bool World_RepairBreach_ClearsItViaInteract()

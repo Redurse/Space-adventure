@@ -193,6 +193,65 @@ internal static partial class TestRunner
         return markers.Count == before + 1 && markers.Any(m => m.X == 42f && m.Y == 99f);
     }
 
+    // M48 follow-up - "круговой... но он просвечивает область в 2 раза меньше, но зато по кругу":
+    // aimed dead west (bearing 0, a Directional pulse's own default and a miss for a target due
+    // south) but fired in Circular mode, it must find the target anyway - the whole point of
+    // trading range for coverage is that bearing stops mattering.
+    private static bool World_Scanner_CircularModeFindsShipRegardlessOfBearing()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.Step(RealtimeStep);
+        MoveToNavigationConsole(world);
+
+        var npc = world.CreateSnapshot().NpcShips.First();
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        world.Step(RealtimeStep);
+        // Due south (bearing 90) of the ship, well inside the circular mode's own halved range
+        // (300 units, under World.Scanner.cs's CircularScannerRangeUnits of 450).
+        world.DebugPlaceShip(new Vec2(npc.X, npc.Y - 300f));
+
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 0f,
+            RequestedScannerMode: ScannerMode.Circular, ScannerPingPressed: true));
+        world.Step(RealtimeStep);
+
+        var found = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
+        return found is not null && found.Any(c => c.Id == npc.Id);
+    }
+
+    // The other half of the trade: a target well inside Directional's own full range (900) but
+    // past Circular's halved one (450) must be missed while circular is armed, even aimed dead-on -
+    // then found once the very same press switches back to Directional, isolating the halved range
+    // itself as the reason for the miss rather than some other setup mistake.
+    private static bool World_Scanner_CircularModeHasHalfTheDirectionalRange()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.Step(RealtimeStep);
+        MoveToNavigationConsole(world);
+
+        var npc = world.CreateSnapshot().NpcShips.First();
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        world.Step(RealtimeStep);
+        world.DebugPlaceShip(new Vec2(npc.X, npc.Y - 600f)); // bearing 90, past Circular's own 450
+
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f,
+            RequestedScannerMode: ScannerMode.Circular, ScannerPingPressed: true));
+        world.Step(RealtimeStep);
+        var missedCircular = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
+        if (missedCircular is not null && missedCircular.Any(c => c.Id == npc.Id))
+            return false; // found it past the circular mode's own halved range
+
+        WaitOutScannerCooldown(world);
+        var npcNow = world.CreateSnapshot().NpcShips.First(n => n.Id == npc.Id);
+        world.DebugPlaceShip(new Vec2(npcNow.X, npcNow.Y - 600f));
+        world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 90f,
+            RequestedScannerMode: ScannerMode.Directional, ScannerPingPressed: true));
+        world.Step(RealtimeStep);
+        var foundDirectional = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).ScannerContacts;
+        return foundDirectional is not null && foundDirectional.Any(c => c.Id == npc.Id);
+    }
+
     // Save/load (game_design.md section 5) must not quietly drop a marker the crew already placed.
     private static bool World_Scanner_ManualMarkerSurvivesSaveAndLoad()
     {

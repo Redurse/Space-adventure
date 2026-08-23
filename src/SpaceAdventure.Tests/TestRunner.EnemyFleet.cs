@@ -36,12 +36,12 @@ internal static partial class TestRunner
         for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
 
-        // BattleFleeDistance is 280 now (M40, ×8 alongside the field) - reverse-thrust tops out at
-        // the same ShipMaxSpeed(5) forward flight does, just slower to ramp up
-        // (ShipReverseThrustFraction), so clearing it takes noticeably longer than the old 35-unit
-        // version did; 100s is comfortably more than the ~56s minimum at full reverse speed.
+        // BattleFleeDistance is 560 now (M48, ×2 alongside the field's own doubling) - reverse-
+        // thrust tops out at the same ShipMaxSpeed(5) forward flight does, just slower to ramp up
+        // (ShipReverseThrustFraction), so clearing it takes noticeably longer than the old
+        // 280-unit version did; 200s is comfortably more than the ~112s minimum at full reverse speed.
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: -1f)); // straight astern, away from the marker
-        for (var i = 0; i < 100 * 30 && world.IsInBattle; i++)
+        for (var i = 0; i < 200 * 30 && world.IsInBattle; i++)
             world.Step(RealtimeStep);
 
         return !world.IsInBattle && world.CreateSnapshot().Enemy.RemainingShips > 0;

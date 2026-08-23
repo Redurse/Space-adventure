@@ -204,3 +204,153 @@
 /processor:SongProcessor
 /processorParam:Quality=Best
 /build:Music/deep_space.mp3
+
+#begin Music/Jukebox/jukebox_01_imperium_of_man.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_01_imperium_of_man.mp3
+
+#begin Music/Jukebox/jukebox_02_true_hymn_of_the_imperium.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_02_true_hymn_of_the_imperium.mp3
+
+#begin Music/Jukebox/jukebox_03_voices_of_the_void_main_menu.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_03_voices_of_the_void_main_menu.mp3
+
+#begin Music/Jukebox/jukebox_04_sweden.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_04_sweden.mp3
+
+#begin Music/Jukebox/jukebox_05_accordion_irish_remix.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_05_accordion_irish_remix.mp3
+
+#begin Music/Jukebox/jukebox_06_all_but_systematic_chaos.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_06_all_but_systematic_chaos.mp3
+
+#begin Music/Jukebox/jukebox_07_wartrauma.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_07_wartrauma.mp3
+
+#begin Music/Jukebox/jukebox_08_barotrauma_main_menu.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_08_barotrauma_main_menu.mp3
+
+#begin Music/Jukebox/jukebox_09_crazy_dave_intro.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_09_crazy_dave_intro.mp3
+
+#begin Music/Jukebox/jukebox_10_one_day_of_thunder.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_10_one_day_of_thunder.mp3
+
+#begin Music/Jukebox/jukebox_11_the_great_patriotic_war.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_11_the_great_patriotic_war.mp3
+
+#begin Music/Jukebox/jukebox_12_comintern_theme.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_12_comintern_theme.mp3
+
+#begin Music/Jukebox/jukebox_13_operation_barbarossa.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_13_operation_barbarossa.mp3
+
+#begin Music/Jukebox/jukebox_14_the_red_army.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_14_the_red_army.mp3
+
+#begin Music/Jukebox/jukebox_15_soviet_march.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_15_soviet_march.mp3
+
+#begin Music/Jukebox/jukebox_16_super_earth_national_anthem.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_16_super_earth_national_anthem.mp3
+
+#begin Music/Jukebox/jukebox_17_the_automaton_legion.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_17_the_automaton_legion.mp3
+
+#begin Music/Jukebox/jukebox_18_a_cup_of_liber_tea.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_18_a_cup_of_liber_tea.mp3
+
+#begin Music/Jukebox/jukebox_19_decisions_and_consequences.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_19_decisions_and_consequences.mp3
+
+#begin Music/Jukebox/jukebox_20_colonial_anthem.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_20_colonial_anthem.mp3
+
+#begin Music/Jukebox/jukebox_21_warden_anthem.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_21_warden_anthem.mp3
+
+#begin Music/Jukebox/jukebox_22_install_loop.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_22_install_loop.mp3
+
+#begin Music/Jukebox/jukebox_23_terran_one.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_23_terran_one.mp3
+
+#begin Music/Jukebox/jukebox_24_factorio_trailer.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_24_factorio_trailer.mp3
+
+#begin Music/Jukebox/jukebox_25_glory_to_arstotzka.mp3
+/importer:Mp3Importer
+/processor:SongProcessor
+/processorParam:Quality=Best
+/build:Music/Jukebox/jukebox_25_glory_to_arstotzka.mp3

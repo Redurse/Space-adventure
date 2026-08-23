@@ -90,6 +90,29 @@ internal static partial class TestRunner
             for (var i = 0; i < 30 * 30 && !world.IsDeviceConnected(device.Id); i++) // 30s - comfortably past the passive-only repair time
                 world.Step(RealtimeStep);
         }
+
+        // The reactor and its two sibling "boxes" (enemy/weapon overhaul - "реактор и коробки
+        // могли быть сломаны") are hittable now too, same minigame as everything else above - a
+        // caller that only walked the wire-based SystemDevices would leave one of these broken
+        // (most importantly the reactor itself, which zeros the whole ship's power) forever.
+        RepairBlockIfBroken(world, playerId, world.Ship.ReactorBlock.Position, () => world.PowerGrid.Reactor.Broken);
+        RepairBlockIfBroken(world, playerId, world.Ship.DistributionBlock.Position, () => world.PowerGrid.DistributionBroken);
+        RepairBlockIfBroken(world, playerId, world.Ship.BatteryBlock.Position, () => world.PowerGrid.Battery.Broken);
+        // The helm and scanner console (enemy/weapon overhaul - "штурвал, сонар можно было
+        // сломать") - a caller that skipped these could otherwise leave the ship un-pilotable.
+        RepairBlockIfBroken(world, playerId, world.Ship.HelmConsole.Position, () => world.HelmConsoleBroken);
+        RepairBlockIfBroken(world, playerId, world.Ship.NavigationConsole.Position, () => world.NavigationConsoleBroken);
+    }
+
+    private static void RepairBlockIfBroken(World world, int playerId, Vec2 position, Func<bool> isBroken)
+    {
+        if (!isBroken())
+            return;
+
+        MoveCharacterTo(world, playerId, position.X, position.Y);
+        world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true)); // starts the repair minigame
+        for (var i = 0; i < 30 * 30 && isBroken(); i++) // 30s - comfortably past the passive-only repair time
+            world.Step(RealtimeStep);
     }
 
     private static bool World_Faction_DestroyingShip_LowersOwnerRaisesRival()

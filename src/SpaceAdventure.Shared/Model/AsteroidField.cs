@@ -82,7 +82,61 @@ public sealed class AsteroidField
         // a 300x300 field gave) - the cluster above is already recentred (RecenterOffsetM48), so it
         // sits in the middle of the newly opened-up space rather than being redistributed across
         // it; M43's persistent NPC traffic and M44's scanner-revealed contacts are what populate
-        // the rest.
-        return new AsteroidField(width: 4800f, height: 4800f, asteroids, onTheSurface);
+        // the rest. sol's own SystemOrbits-driven belts (M48) are layered in on top, exactly the
+        // same way any other system's are - this hand-placed cluster just keeps existing alongside
+        // them rather than being replaced.
+        var belts = GenerateBeltAsteroids("sol");
+        return new AsteroidField(width: 4800f, height: 4800f,
+            asteroids.Concat(belts).ToArray(), onTheSurface);
+    }
+
+    // Every OTHER system (the 5 hand-authored stubs and the 194 procedural ones, GalaxyMap.cs) -
+    // no hand-placed cluster of its own, just whatever SystemOrbits.Generate rolled for it. Each
+    // system gets its OWN distinct AsteroidField instance (not a shared one) so its own belt
+    // content can't leak into any other system's.
+    public static AsteroidField CreateForSystem(string systemId) =>
+        new(width: 4800f, height: 4800f, GenerateBeltAsteroids(systemId).ToArray(), Array.Empty<OreDeposit>());
+
+    // M48 - "с шансом в 25 процентов между любыми 2 орбитами спанвился пояс астероидов... очень
+    // много астероидов разного размера, но не слишком плотно чтобы можно было пролететь". No ore
+    // (World.cs's _oreDepositHp is only ever seeded from whichever system is current at world
+    // construction/ship-purchase time, never re-seeded on warp - a deposit in a system that isn't
+    // the starting one would silently read as already-mined-out forever) - these belts are a
+    // flight hazard/visual feature, not new mining content.
+    private const int BeltAsteroidsMin = 40;
+    private const int BeltAsteroidsMax = 70;
+    private const float BeltAsteroidRadiusMin = 5f;
+    private const float BeltAsteroidRadiusMax = 35f;
+
+    private static List<Asteroid> GenerateBeltAsteroids(string systemId)
+    {
+        var layout = SystemOrbits.Generate(systemId);
+        var center = new Vec2(4800f / 2f, 4800f / 2f);
+        var result = new List<Asteroid>();
+
+        for (var gap = 0; gap < layout.BeltAfterOrbit.Count; gap++)
+        {
+            if (!layout.BeltAfterOrbit[gap])
+                continue;
+
+            // A belt's own random stream, independent of the orbit-layout roll above and of every
+            // other belt/system - AsteroidShape.StableHash again, just salted with the gap index
+            // so two belts in the same system don't draw identical rocks.
+            var random = new Random(AsteroidShape.StableHash($"{systemId}-belt-{gap}"));
+            var innerRadius = layout.OrbitRadii[gap];
+            var outerRadius = layout.OrbitRadii[gap + 1];
+            var count = random.Next(BeltAsteroidsMin, BeltAsteroidsMax + 1);
+
+            for (var i = 0; i < count; i++)
+            {
+                var angle = (float)(random.NextDouble() * 2 * Math.PI);
+                var radius = innerRadius + (float)random.NextDouble() * (outerRadius - innerRadius);
+                var size = BeltAsteroidRadiusMin + (float)random.NextDouble() * (BeltAsteroidRadiusMax - BeltAsteroidRadiusMin);
+                var position = center + new Vec2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
+                result.Add(new Asteroid($"belt-{systemId}-{gap}-{i}", position.X, position.Y, size));
+            }
+        }
+
+        return result;
     }
 }

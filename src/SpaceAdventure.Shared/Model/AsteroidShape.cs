@@ -92,7 +92,10 @@ public static class AsteroidShape
         return asteroid.Position + direction * (RadiusAt(asteroid, offset) + clearance);
     }
 
-    private static int StableHash(string text)
+    // Internal rather than private - SystemOrbits.cs (M48's planet/belt generation) reuses this
+    // exact same "same string always hashes the same way, even across processes/.NET versions"
+    // property for its own per-system seeding, rather than keeping a second copy in sync.
+    internal static int StableHash(string text)
     {
         unchecked
         {

@@ -23,11 +23,13 @@ public sealed record Turret(
     float DamagePerShot,
     float CooldownSeconds,
     TurretWeaponType WeaponType,
-    int MagazineCapacity = 0,              // ballistic only
-    float MaxCharge = 0f,                  // laser only
-    float ChargePerShot = 0f,              // laser only
-    float RechargePerPowerUnitPerSecond = 0f, // laser only — scales with WeaponCharger allocation
-    TurretMountSide MountSide = TurretMountSide.Aft)
+    int MagazineCapacity = 0,              // Magnetic/MachineGun only
+    float MaxCharge = 0f,                  // laser only — full coolant headroom
+    float ChargePerShot = 0f,              // laser only — heat drained per firing tick (CooldownSeconds apart)
+    float RechargePerPowerUnitPerSecond = 0f, // laser only — cooling rate, scales with WeaponCharger allocation
+    TurretMountSide MountSide = TurretMountSide.Aft,
+    int PelletsPerBurst = 1,               // MachineGun only — how many individually-traced pellets one trigger-pull fires
+    float PelletSpreadDegrees = 0f)        // MachineGun only — random aim jitter applied to each pellet
 {
     public Vec2 PeriscopePosition => new(PeriscopeX, PeriscopeY);
 }

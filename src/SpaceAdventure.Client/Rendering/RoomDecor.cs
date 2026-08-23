@@ -28,35 +28,6 @@ public static partial class RoomDecor
         _ => new Color(126, 138, 156),
     };
 
-    // A painted walkway down the compartment's long axis, edged in the department colour. Deck
-    // markings are how a real ship tells you where to walk, and they give the floor a direction -
-    // an unmarked floor reads as empty space no matter how much grating is drawn on it.
-    public static void DrawDeckMarkings(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, Color accent)
-    {
-        var horizontal = rect.Width >= rect.Height;
-        var band = horizontal
-            ? new Rectangle(rect.X + 8, rect.Center.Y - rect.Height / 6, rect.Width - 16, rect.Height / 3)
-            : new Rectangle(rect.Center.X - rect.Width / 6, rect.Y + 8, rect.Width / 3, rect.Height - 16);
-        if (band.Width <= 4 || band.Height <= 4)
-            return;
-
-        spriteBatch.Draw(pixel, band, Color.White * 0.035f);
-        if (horizontal)
-        {
-            spriteBatch.Draw(pixel, new Rectangle(band.X, band.Y, band.Width, 2), accent * 0.36f);
-            spriteBatch.Draw(pixel, new Rectangle(band.X, band.Bottom - 2, band.Width, 2), accent * 0.36f);
-            for (var x = band.X + 14; x < band.Right - 6; x += 34)
-                spriteBatch.Draw(pixel, new Rectangle(x, band.Center.Y - 1, 16, 2), accent * 0.28f);
-        }
-        else
-        {
-            spriteBatch.Draw(pixel, new Rectangle(band.X, band.Y, 2, band.Height), accent * 0.36f);
-            spriteBatch.Draw(pixel, new Rectangle(band.Right - 2, band.Y, 2, band.Height), accent * 0.36f);
-            for (var y = band.Y + 14; y < band.Bottom - 6; y += 34)
-                spriteBatch.Draw(pixel, new Rectangle(band.Center.X - 1, y, 2, 16), accent * 0.28f);
-        }
-    }
-
     // Ceiling light: concentric translucent rectangles, brightest in the middle. Flat rooms lit
     // evenly to the corners look like diagrams; a pool of light with darker edges looks like a
     // place, and it costs a handful of quads.

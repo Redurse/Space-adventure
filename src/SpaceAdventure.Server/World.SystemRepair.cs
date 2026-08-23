@@ -35,11 +35,36 @@ public sealed partial class World
         foreach (var device in Ship.SystemDevices)
             StepSystemRepairFor(device.Id, r => r == device.RoomId, device.Position, IsDeviceConnected(device.Id), deltaSeconds);
 
+        // Hull cameras aren't ShipSystemDevices (WireGraphFactory's own comment explains why), but
+        // they're wired into the same graph and damaged/repaired exactly the same way, so they need
+        // the identical passive-trickle-plus-sweep treatment or a cut camera would just stay dark
+        // forever with no way to work the repair bar at all.
+        foreach (var camera in Ship.Cameras)
+            StepSystemRepairFor(camera.Id, r => r == camera.RoomId, camera.InteriorPosition, IsDeviceConnected(camera.Id), deltaSeconds);
+
         foreach (var junction in _components.Where(c => c.Kind == ComponentKind.Junction))
             StepSystemRepairFor(junction.Id, r => r == junction.RoomId, junction.Position, !IsJunctionDamaged(junction.Id), deltaSeconds);
 
         foreach (var (doorId, connects, position) in AllShipDoors())
             StepSystemRepairFor(doorId, connects, position, !IsDoorDestroyed(doorId), deltaSeconds);
+
+        // The reactor and its two sibling "boxes" (enemy/weapon overhaul - "реактор и коробки
+        // могли быть сломаны") - each a single physical fixture with a plain bool Damaged state
+        // (Reactor.Broken/PowerGrid.DistributionBroken/Battery.Broken), same minigame as everything
+        // else above.
+        StepSystemRepairFor(Ship.ReactorBlock.Id, r => r == Ship.ReactorBlock.RoomId, Ship.ReactorBlock.Position,
+            !PowerGrid.Reactor.Broken, deltaSeconds);
+        StepSystemRepairFor(Ship.DistributionBlock.Id, r => r == Ship.DistributionBlock.RoomId, Ship.DistributionBlock.Position,
+            !PowerGrid.DistributionBroken, deltaSeconds);
+        StepSystemRepairFor(Ship.BatteryBlock.Id, r => r == Ship.BatteryBlock.RoomId, Ship.BatteryBlock.Position,
+            !PowerGrid.Battery.Broken, deltaSeconds);
+
+        // The helm and the scanner console (enemy/weapon overhaul - "штурвал, сонар можно было
+        // сломать") - same plain bool Damaged state, same minigame.
+        StepSystemRepairFor(Ship.HelmConsole.Id, r => r == Ship.HelmConsole.RoomId, Ship.HelmConsole.Position,
+            !HelmConsoleBroken, deltaSeconds);
+        StepSystemRepairFor(Ship.NavigationConsole.Id, r => r == Ship.NavigationConsole.RoomId, Ship.NavigationConsole.Position,
+            !NavigationConsoleBroken, deltaSeconds);
     }
 
     // matchesRoom is a predicate rather than a plain room id because a door (unlike a SystemDevice/
@@ -110,6 +135,16 @@ public sealed partial class World
     {
         if (_doorHp.ContainsKey(id))
             _doorHp[id] = DoorMaxHp;
+        else if (id == Ship.ReactorBlock.Id)
+            PowerGrid.Reactor.Broken = false;
+        else if (id == Ship.DistributionBlock.Id)
+            PowerGrid.DistributionBroken = false;
+        else if (id == Ship.BatteryBlock.Id)
+            PowerGrid.Battery.Broken = false;
+        else if (id == Ship.HelmConsole.Id)
+            HelmConsoleBroken = false;
+        else if (id == Ship.NavigationConsole.Id)
+            NavigationConsoleBroken = false;
         else
             RepairDeviceWiring(id);
         _systemRepairProgress.Remove(id);

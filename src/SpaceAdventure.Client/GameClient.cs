@@ -82,8 +82,16 @@ public sealed class GameClient
         float scannerSweepDegrees = 0f,
         float? placeScannerMarkerAtX = null,
         float? placeScannerMarkerAtY = null,
-        bool scannerPingPressed = false) =>
-        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, clearOwnRolePressed, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed, scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed));
+        bool scannerPingPressed = false,
+        ScannerMode requestedScannerMode = ScannerMode.Directional,
+        bool jukeboxTogglePressed = false,
+        bool jukeboxNextTrackPressed = false,
+        bool jukeboxPrevTrackPressed = false,
+        bool jukeboxVolumeUpPressed = false,
+        bool jukeboxVolumeDownPressed = false,
+        bool fireHeld = false,
+        bool debugSpawnEnemyPressed = false) =>
+        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, clearOwnRolePressed, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed, scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode, jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed, fireHeld, debugSpawnEnemyPressed));
 
     public void PollSnapshots()
     {

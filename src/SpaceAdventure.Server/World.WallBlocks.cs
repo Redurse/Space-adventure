@@ -43,6 +43,19 @@ public sealed partial class World
     private void RepairWallBlock(string blockId, float amount) =>
         _wallBlockHp[blockId] = Math.Min(WallBlockMaxHp, WallBlockHp(blockId) + amount);
 
+    // Test-only direct breach, same convention as World.ShipField.cs's DebugPlaceShip - a
+    // precondition setter, not a gameplay action. Enemy fire aims at fixed priority targets now
+    // (World.EnemyFleet.cs's EnemyTargetPriority) rather than a uniform random hit anywhere on the
+    // hull, so waiting for combat to eventually breach some arbitrary room by chance is no longer a
+    // reliable way for a test to set one up - this lets a test that just needs "there's a breach
+    // here" say so directly instead.
+    public void DebugBreachWallBlock(string roomId)
+    {
+        var block = Ship.WallBlocks.FirstOrDefault(b => b.RoomId == roomId);
+        if (block is not null)
+            DamageWallBlock(block.Id, WallBlockMaxHp);
+    }
+
     // A hole wide enough to fit through, not just a pinhole to see space through: this block AND
     // at least one other fully-broken block right beside it on the same wall.
     private bool IsPassableBreach(WallBlock block) =>

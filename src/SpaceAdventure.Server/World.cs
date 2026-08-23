@@ -84,6 +84,12 @@ public sealed partial class World
     public bool LightsOn { get; private set; } = true;
     public bool DoorsLocked { get; private set; } = false;
 
+    // The jukebox's on/off + selected track + volume - meaningless while Ship.Jukebox is null
+    // (no such device on this hull), same as every other block-specific state above.
+    public bool JukeboxOn { get; private set; } = false;
+    public int JukeboxTrackIndex { get; private set; } = 0;
+    public int JukeboxVolume { get; private set; } = 50;
+
     // Retained only so CreateSave() can round-trip a Custom hull - null whenever flying a fixed
     // class. Set here and in ApplySave, the only two places CurrentShipKind can become Custom.
     private CustomShipDefinition? _customShipDefinition;
@@ -235,6 +241,31 @@ public sealed partial class World
                 DoorsLocked = !DoorsLocked;
         }
 
+        // Dev cheat panel (Ё key, Game1.cs's CheatPanel) - no proximity/role gate, it's a testing
+        // tool for hit resolution, not a game action.
+        if (command.DebugSpawnEnemyPressed)
+            DebugSpawnEnemyNearby();
+
+        // The jukebox's checkbox and two steppers (JukeboxPanel) - same physical, proximity-checked
+        // treatment as the reactor levers above, gated on Ship.Jukebox actually existing since a
+        // hull built without one in the Ship Editor has nothing here to walk up to.
+        if (Ship.Jukebox is { } jukeboxBlock &&
+            (command.JukeboxTogglePressed || command.JukeboxNextTrackPressed || command.JukeboxPrevTrackPressed ||
+             command.JukeboxVolumeUpPressed || command.JukeboxVolumeDownPressed) &&
+            (jukeboxBlock.Position - character.Position).Length() < InteractionRadius)
+        {
+            if (command.JukeboxTogglePressed)
+                JukeboxOn = !JukeboxOn;
+            if (command.JukeboxNextTrackPressed)
+                JukeboxTrackIndex = (JukeboxTrackIndex + 1) % JukeboxCatalog.TrackCount;
+            if (command.JukeboxPrevTrackPressed)
+                JukeboxTrackIndex = (JukeboxTrackIndex - 1 + JukeboxCatalog.TrackCount) % JukeboxCatalog.TrackCount;
+            if (command.JukeboxVolumeUpPressed)
+                JukeboxVolume = Math.Min(100, JukeboxVolume + 5);
+            if (command.JukeboxVolumeDownPressed)
+                JukeboxVolume = Math.Max(0, JukeboxVolume - 5);
+        }
+
         if (command.BuyItemType is { } buyItemType)
             TryBuyItem(character, buyItemType);
 
@@ -297,7 +328,7 @@ public sealed partial class World
 
         HandleScannerInput(character, command);
 
-        if (character.IsAtHelm)
+        if (character.IsAtHelm && !HelmConsoleBroken)
         {
             if (command.HelmStabilizePressed)
                 EngageAutoStabilize();
@@ -323,7 +354,13 @@ public sealed partial class World
         if (character.ManningTurretId is { } turretId)
         {
             _turretAimInput[turretId] = command.TurretAimDirection;
-            if (command.FirePressed)
+            // FireHeld is additive to FirePressed, not a replacement - TryFire's own
+            // CooldownRemaining already makes calling it redundantly on the same tick harmless, and
+            // keeping FirePressed live here means a single edge-triggered press still fires exactly
+            // one shot (existing tests rely on that). FireHeld is what lets holding the trigger down
+            // rip through the magnetic cannon's magazine, sustain the laser's beam, or keep the
+            // machine gun bursting (World.Combat.cs, TurretBalance) instead of needing one press per shot.
+            if (command.FirePressed || command.FireHeld)
                 TryFire(_turretRuntimes[turretId]);
         }
     }
@@ -385,7 +422,17 @@ public sealed partial class World
         {
             var (percent, tickPosition) = GetSystemRepairDisplay(d.Id);
             return new ShipSystemState(d.Id, d.System, !IsDeviceConnected(d.Id), percent, tickPosition);
-        }).ToArray(),
+        })
+        // Hull cameras reuse ShipSystemState's exact shape for the same reason Junctions do
+        // (World.Wiring.cs's CreateJunctionStates) - "device id / system / damaged / repair
+        // progress" is exactly what a camera needs too, and the client's ExternalCameraPanel reads
+        // this list by DeviceId to know which camera tiles are dark, same as any other device.
+        .Concat(Ship.Cameras.Select(c =>
+        {
+            var (percent, tickPosition) = GetSystemRepairDisplay(c.Id);
+            return new ShipSystemState(c.Id, PowerSystemId.Secondary, !IsDeviceConnected(c.Id), percent, tickPosition);
+        }))
+        .ToArray(),
         CreateJunctionStates(),
         Ship.ReactorBlock,
         Ship.DistributionBlock,
@@ -472,19 +519,15 @@ public sealed partial class World
                 c.MagneticBootsOn,
                 c.ScannerSweepDegrees,
                 CreateScannerContacts(c.PlayerId),
-                c.ScannerCooldownRemaining);
+                c.ScannerCooldownRemaining,
+                c.ScannerMode);
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(ShipMapPosition, _dockedPointId, IsInBattle, IsDocked || _nearestStationPointId is not null),
         Credits,
         ActiveQuest,
         new Dictionary<ShipUpgradeTrack, int>(UpgradeLevels),
-        Components,
-        CreateComponentStates(),
-        Wires,
-        CreateWireStates(),
-        Ship.ComponentMounts,
-        CreateComponentMountStates(),
+        new WiringSnapshot(Components, CreateComponentStates(), Wires, CreateWireStates(), Ship.ComponentMounts, CreateComponentMountStates()),
         new AsteroidFieldSnapshot(AsteroidField.Asteroids, AsteroidField.OreDeposits, CreateOreDepositStates()),
         _droppedItems.ToArray(),
         new ShipFieldState(
@@ -503,5 +546,7 @@ public sealed partial class World
         StoryLog,
         GetTutorialObjective(),
         CreateNpcShipStates(),
-        _manualScannerMarkers.ToArray());
+        _manualScannerMarkers.ToArray(),
+        Ship.Cameras,
+        Ship.Jukebox is { } jukeboxBlock ? new JukeboxState(jukeboxBlock, JukeboxOn, JukeboxTrackIndex, JukeboxVolume) : null);
 }

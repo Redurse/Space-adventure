@@ -155,4 +155,37 @@ public partial class Game1
             MathHelper.Clamp(wanted.Y, 0, DesignHeight - HelmButtonsWidget.Size.Y));
         return true;
     }
+
+    // The scanner console's own toggle-switch widget (M48 follow-up) - same drag mechanics as
+    // window 2's button widget above, just its own independent position/state since it's shown
+    // only to whoever is actually operating the console (BlockKind.Navigation), not at the helm.
+    private bool UpdateScannerWidgetDrag(MouseState mouse)
+    {
+        var pressed = mouse.LeftButton == ButtonState.Pressed;
+        var justPressed = pressed && _prevScannerWidgetDragButton == ButtonState.Released;
+        _prevScannerWidgetDragButton = mouse.LeftButton;
+
+        if (!pressed)
+        {
+            _draggingScannerWidget = false;
+            return false;
+        }
+
+        if (justPressed && !_draggingScannerWidget)
+        {
+            if (!ScannerModeWidget.GetTitleBarRect(_scannerWidgetPosition).Contains(_designMouse))
+                return false;
+            _draggingScannerWidget = true;
+            _scannerWidgetDragGrab = new Vector2(_designMouse.X, _designMouse.Y) - _scannerWidgetPosition;
+        }
+
+        if (!_draggingScannerWidget)
+            return false;
+
+        var wanted = new Vector2(_designMouse.X, _designMouse.Y) - _scannerWidgetDragGrab;
+        _scannerWidgetPosition = new Vector2(
+            MathHelper.Clamp(wanted.X, 0, DesignWidth - ScannerModeWidget.Size.X),
+            MathHelper.Clamp(wanted.Y, 0, DesignHeight - ScannerModeWidget.Size.Y));
+        return true;
+    }
 }

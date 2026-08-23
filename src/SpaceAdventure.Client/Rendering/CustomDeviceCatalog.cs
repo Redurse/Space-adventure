@@ -15,14 +15,14 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.Engine, CustomDeviceKind.SuitLocker,
         CustomDeviceKind.Shields, CustomDeviceKind.WeaponCharger, CustomDeviceKind.Oxygen, CustomDeviceKind.Secondary,
         CustomDeviceKind.TurretBallistic, CustomDeviceKind.TurretLaser, CustomDeviceKind.AmmoStorage,
-        CustomDeviceKind.StorageRack, CustomDeviceKind.CardTable,
+        CustomDeviceKind.StorageRack, CustomDeviceKind.CardTable, CustomDeviceKind.Jukebox,
     };
 
     // At most one of these may exist in a definition - placing a new one silently replaces the old
     // (CustomShipValidator would only reject the duplicate anyway; the editor just never creates one).
     public static bool IsSingleton(CustomDeviceKind kind) => kind is
         CustomDeviceKind.Reactor or CustomDeviceKind.Distribution or CustomDeviceKind.Helm
-        or CustomDeviceKind.Navigation or CustomDeviceKind.CardTable;
+        or CustomDeviceKind.Navigation or CustomDeviceKind.CardTable or CustomDeviceKind.Jukebox;
 
     public static string Name(CustomDeviceKind kind) => kind switch
     {
@@ -41,6 +41,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.SuitLocker => "Шкаф скафандра",
         CustomDeviceKind.StorageRack => "Стеллаж",
         CustomDeviceKind.CardTable => "Карточный стол",
+        CustomDeviceKind.Jukebox => "Музыкальный автомат",
         _ => kind.ToString(),
     };
 
@@ -61,6 +62,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.SuitLocker => "U",
         CustomDeviceKind.StorageRack => "C",
         CustomDeviceKind.CardTable => "K",
+        CustomDeviceKind.Jukebox => "J",
         _ => "?",
     };
 
@@ -81,6 +83,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.SuitLocker => new Color(90, 130, 210),
         CustomDeviceKind.StorageRack => new Color(160, 140, 110),
         CustomDeviceKind.CardTable => new Color(140, 100, 190),
+        CustomDeviceKind.Jukebox => new Color(224, 196, 120),
         _ => Color.White,
     };
 }

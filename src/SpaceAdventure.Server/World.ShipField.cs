@@ -73,6 +73,13 @@ public sealed partial class World
     // current heading (Ship.ForwardDegrees).
     private Vec2 ShipNoseDirection => TurretMount.FromDegrees(_shipRotationDegrees + Ship.ForwardDegrees);
 
+    // Combat damage (World.EnemyAi.cs's ApplyEnemyAttack, enemy/weapon overhaul - "штурвал... можно
+    // было сломать") - a wrecked helm answers to nobody until repaired (World.SystemRepair.cs):
+    // World.cs's own IsAtHelm block skips SetHelmInput/EngageAutoStabilize entirely while this is
+    // true, freezing whatever thrust/turn was last commanded exactly like a pilot letting go, and
+    // World.Interact.cs refuses to seat anyone new at it.
+    public bool HelmConsoleBroken { get; set; }
+
     private void SetHelmInput(float throttle, float turn)
     {
         _helmThrottle = Math.Clamp(throttle, -1f, 1f);

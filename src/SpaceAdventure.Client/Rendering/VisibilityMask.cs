@@ -26,6 +26,18 @@ public sealed class VisibilityMask : IDisposable
     };
 
     private const float FalloffStart = 0.72f; // fraction of the radius where the light starts fading
+    private float _falloffStart = FalloffStart;
+    private Color _floor = Color.Black;
+    // How much of each side of the cone is spent fading out, as a fraction of its half-angle. Zero
+    // is the old behaviour: brightness holds right up to the last ray and then stops, which draws
+    // two straight edges meeting at a point - a shape, not a light. Nothing that emits light has a
+    // hard boundary; what it has is a rim you cannot find the end of.
+    private float _edgeFade;
+    private float _coneSpan = MathF.PI * 2f;
+    // What colour the cone lights things. The mask multiplies the scene, so this is not decoration:
+    // a warm tint here means surfaces the lamp finds come back warm, which is what a torch does and
+    // what a neutral grey mask never can.
+    private Vector3 _tint = Vector3.One;
 
     // The ambient pool reads as poor, uniform visibility right around the character - not a second
     // good-visibility cone - so unlike the cone's own bright-centre-fading-to-black it's one flat, dim
@@ -58,17 +70,39 @@ public sealed class VisibilityMask : IDisposable
     // ambientRadius adds a second, all-round pool of light around the character on top of the cone -
     // what spills off the helmet lamp onto whatever is right next to you. Zero disables it (an
     // all-round light needs no companion).
+    /// <param name="falloffStart">Where the light starts dying, as a fraction of its reach. A room
+    /// lamp really does fill a room fairly evenly, so indoors this stays high; a helmet lamp does
+    /// not, and a cone held at full brightness for three quarters of its length is what makes it read
+    /// as a grey slab drawn over the screen rather than as light.</param>
+    /// <param name="floor">What the mask holds where no light reaches. Black hides everything
+    /// equally, which is wrong outside: the mask multiplies the whole picture, stars included, and a
+    /// star is a light source at infinity - a lamp on your helmet has no say in whether you can see
+    /// one. A small floor keeps the pinpricks and still swallows plating, because the difference
+    /// between them is a factor of twenty in brightness.</param>
     public bool Build(IReadOnlyList<WallSegment> walls, Vector2 eye, Vector2 facing, float radius,
-        float coneHalfAngleDegrees, float ambientRadius, Vector2 origin, Matrix renderScale)
+        float coneHalfAngleDegrees, float ambientRadius, Vector2 origin, Matrix renderScale,
+        float? falloffStart = null, Color? floor = null, float edgeFade = 0f, Vector3? coneTint = null)
     {
         if (!EnsureTarget())
             return false;
+
+        _falloffStart = falloffStart ?? FalloffStart;
+        _floor = floor ?? Color.Black;
+        _edgeFade = edgeFade;
+        _tint = coneTint ?? Vector3.One;
 
         var baseAngle = facing.LengthSquared() > 1e-6f ? MathF.Atan2(facing.Y, facing.X) : 0f;
         _vertexCount = 0;
         AddLightPolygon(walls, eye, baseAngle, coneHalfAngleDegrees, radius, origin, flatBrightness: null);
         if (ambientRadius > 0f && coneHalfAngleDegrees < 179.9f)
+        {
+            // The halo is not the lamp - it is what being close to something gets you - so it is not
+            // tinted with the lamp's colour, and the cold floor underneath shows through it.
+            var lampTint = _tint;
+            _tint = Vector3.One;
             AddLightPolygon(walls, eye, 0f, 180f, ambientRadius, origin, AmbientBrightness);
+            _tint = lampTint;
+        }
         Rasterize(renderScale);
         return true;
     }
@@ -82,6 +116,8 @@ public sealed class VisibilityMask : IDisposable
         var full = halfAngleDegrees >= 179.9f;
         var span = full ? MathF.PI * 2f : halfAngleDegrees * 2f * MathF.PI / 180f;
         var start = full ? 0f : baseAngle - span / 2f;
+        // A full circle has no sides to fade, so the angular term is only ever applied to a cone.
+        _coneSpan = full ? 0f : span;
 
         ShadowCast.CollectRayOffsets(_offsets, walls, eye, start, span, full);
         BuildTriangles(walls, eye, start, radius, origin, full, flatBrightness);
@@ -120,7 +156,7 @@ public sealed class VisibilityMask : IDisposable
 
         var centerShade = flatBrightness ?? 1f;
         var center = new VertexPositionColor(
-            new Vector3(origin + eye * ShipRenderer.PixelsPerUnit, 0f), new Color(centerShade, centerShade, centerShade));
+            new Vector3(origin + eye * ShipRenderer.PixelsPerUnit, 0f), Shade(centerShade));
 
         var previous = RimVertex(_offsets[0], walls, eye, start, radius, origin, flatBrightness);
         for (var i = 1; i <= edgeCount; i++)
@@ -141,26 +177,40 @@ public sealed class VisibilityMask : IDisposable
         var distance = ShadowCast.Cast(eye, direction, walls, radius);
         var point = eye + direction * distance;
 
-        var shade = flatBrightness ?? Falloff(distance / radius);
+        var shade = flatBrightness ?? Falloff(distance / radius) * EdgeFade(offset);
         return new VertexPositionColor(
-            new Vector3(origin + point * ShipRenderer.PixelsPerUnit, 0f),
-            new Color(shade, shade, shade));
+            new Vector3(origin + point * ShipRenderer.PixelsPerUnit, 0f), Shade(shade));
     }
 
     // Fades near the edge of the light's reach instead of ending on a hard circle; a wall lit at
     // point-blank range stays fully bright.
-    private static float Falloff(float t)
+    // Fades a ray by how close it lies to the edge of the cone. Squared, so the middle of the beam
+    // keeps its brightness and only the last part of the sweep gives way - a linear fade across the
+    // whole span would flatten the beam into a smear with no direction to it.
+    private Color Shade(float value) => new(value * _tint.X, value * _tint.Y, value * _tint.Z);
+
+    private float EdgeFade(float offset)
     {
-        if (t <= FalloffStart)
+        if (_edgeFade <= 0f || _coneSpan <= 0f)
             return 1f;
-        var fade = 1f - MathHelper.Clamp((t - FalloffStart) / (1f - FalloffStart), 0f, 1f);
+        var across = MathF.Abs(offset / _coneSpan - 0.5f) * 2f;   // 0 down the middle, 1 at either edge
+        var into = MathHelper.Clamp((across - (1f - _edgeFade)) / _edgeFade, 0f, 1f);
+        var fade = 1f - into;
+        return fade * fade;
+    }
+
+    private float Falloff(float t)
+    {
+        if (t <= _falloffStart)
+            return 1f;
+        var fade = 1f - MathHelper.Clamp((t - _falloffStart) / (1f - _falloffStart), 0f, 1f);
         return fade * fade;
     }
 
     private void Rasterize(Matrix renderScale)
     {
         _device.SetRenderTarget(_target);
-        _device.Clear(Color.Black);
+        _device.Clear(_floor);
 
         if (_vertexCount >= 3)
         {

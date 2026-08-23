@@ -18,6 +18,11 @@ public sealed partial class World
     private const float DockCaptureRadius = 4f; // how close to the berth counts as "alongside"
     private const float DockMaxSpeed = 2f; // must be crawling, not ramming, for the button to arm
     private const float HullClearance = 0.1f; // shrinks the hull for the collision test, so mating flush isn't a crash
+    // M48 follow-up - "при отстыковке корабль медленно и плавно немного уходил от станции влево":
+    // a gentle one-time push-off, not a sustained thruster burn - this game's own ship physics has
+    // no passive drag anywhere (World.ShipField.cs), so a small velocity here coasts at that same
+    // slow speed indefinitely on its own until the pilot actually takes the stick.
+    private const float UndockDriftSpeed = 0.6f;
 
     // Where the hull's centre has to end up for the ship's own outer airlock door to sit exactly on
     // top of the station's connector. Both structures are laid out in the same interior frame
@@ -78,6 +83,16 @@ public sealed partial class World
         PullCrewOffStation();
         _dockedPointId = null;
         _justCastOffStation = true; // World.ShipField.cs's StepShipFieldPhysics clears this itself
+
+        // Otherwise the ship would just sit dead still exactly where it was (TryDockAtStation
+        // zeroed velocity, and docking's own auto-stabilize hold - still true from that same call -
+        // would instantly cancel out anything short of a real thruster burn). Releasing that hold
+        // and giving one small push lets ordinary inertia carry it clear on its own. -X is screen
+        // "left" in the same world/field frame GalaxyMapPanel draws directly (no flip) - the same
+        // side the map's own docked-offset fix (GalaxyMapPanel.cs) never draws the station on, so
+        // this always drifts away from wherever the station just appeared, not into it.
+        _shipAutoStabilize = false;
+        _shipVelocity = new Vec2(-UndockDriftSpeed, 0f);
     }
 
     // Casting off (either through this button or by walking away from the docked layout entirely)

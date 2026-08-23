@@ -1,9 +1,12 @@
 namespace SpaceAdventure.Shared.Model;
 
-// game_design.md section 2: ballistic is the default (magazine + ammo crate); the laser turret
-// is the sole exception, drawing from a capacitor charged by the WeaponCharger power slider.
+// game_design.md section 2 (enemy/weapon overhaul) - three turrets, each a real tradeoff rather
+// than a strict upgrade: Magnetic is fast and cheap per shot off a big magazine but hits soft;
+// Laser trades ammo for a capacitor that overheats on a sustained burn; MachineGun trades hull
+// damage for a wide spray of individually-traced pellets, good against small/soft targets.
 public enum TurretWeaponType
 {
-    Ballistic,
+    Magnetic,
     Laser,
+    MachineGun,
 }

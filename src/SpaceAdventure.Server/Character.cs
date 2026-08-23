@@ -44,6 +44,10 @@ public sealed class Character
     // перезарядкой... 15 секунд") - 0 means ready. Counts down regardless of where the character
     // currently is, the same "just a personal timer" treatment SuitActionRemaining already gets.
     public float ScannerCooldownRemaining { get; set; }
+    // The console's own toggle switch (World.Scanner.cs, M48 follow-up) - Directional is the
+    // original narrow cone, Circular trades range for all-around coverage. Same "holds its last
+    // value" treatment as ScannerSweepDegrees.
+    public ScannerMode ScannerMode { get; set; }
     public Inventory Inventory { get; } = new();
     public bool CarryingAmmoCrate => Inventory.Has(ItemType.AmmoCrate);
     public float Health { get; set; } = MaxHealth;

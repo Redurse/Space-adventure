@@ -63,15 +63,53 @@ public sealed partial class World
 
         if (shot.FromEnemy)
         {
-            var (_, halfExtents) = GetHullLocalBounds();
-            // Generous circle over the player's hull rather than its oriented box: the hull is a
-            // long thin thing and a shell clipping its nose should still count.
-            var hullRadius = Math.Max(halfExtents.X, halfExtents.Y);
+            var (hullLocalCenter, halfExtents) = GetHullLocalBounds();
+            // Circle over the player's hull rather than its oriented box - has to be the actual
+            // diagonal (the true minimal circle enclosing the whole rectangle), not just the
+            // longer of the two half-extents: a shot aimed at a wall block near a corner (the
+            // bottom/top edge close to the bow or stern) sits outside a max(X,Y)-radius circle by
+            // a small but real margin and would silently miss this broad-phase check before ever
+            // reaching the wall-block trace, even though it's a perfectly aimed shot.
+            var hullRadius = MathF.Sqrt(halfExtents.X * halfExtents.X + halfExtents.Y * halfExtents.Y);
             if (!SegmentHitsCircle(from, to, _shipFieldPosition, hullRadius))
+            {
+                shot.LocalEntryPoint = null; // clear of the hull - a later re-entry (rare) starts fresh
                 return false;
+            }
 
-            ApplyEnemyAttack();
-            return true;
+            // The shield gets exactly one chance per shot, taken the instant it first reaches the
+            // hull's broad circle - not once per tick it spends crossing the ship afterward
+            // (ApplyEnemyAttack can now be called several ticks in a row for the same shot as it
+            // travels through breaches toward the far side, see its own doc comment).
+            if (!shot.ShieldChecked)
+            {
+                shot.ShieldChecked = true;
+                if (Shield.TryAbsorbHit())
+                    return true;
+            }
+
+            // WallBlock/Turret/ShipSystemDevice/door positions all live in the same ship-local
+            // ("layout") frame TurretMount.For and World.Combat.cs's TryFire already convert
+            // through - inverting that exact transform here is what lets ApplyEnemyAttack compare
+            // this shot's path directly against them.
+            //
+            // localFrom deliberately reuses the PREVIOUS tick's converted endpoint rather than
+            // reconverting this tick's own "from" world point fresh - the ship can be actively
+            // turning (Arc-mode piloting) while a shot spends several ticks crossing it, and
+            // reconverting "from" under this tick's own rotation would only coincide with last
+            // tick's "to" (converted under last tick's rotation) if the rotation hadn't changed in
+            // between. Any real difference opens a gap between the two ticks' local segments that a
+            // wall block sitting right in it would fall through, unnoticed by either tick's check -
+            // exactly the "shots occasionally pass straight through" symptom this fixes. Chaining
+            // local endpoints tick to tick keeps the traversed path continuous in local space no
+            // matter how fast the ship turns underneath it, at the cost of the path no longer being
+            // a perfectly straight line in that rotating frame - a curve here is a fully rendered
+            // shot, not a skipped one.
+            var localFrom = shot.LocalEntryPoint ?? RotateWorldToLocal(from - _shipFieldPosition, _shipRotationDegrees) + hullLocalCenter;
+            var localTo = RotateWorldToLocal(to - _shipFieldPosition, _shipRotationDegrees) + hullLocalCenter;
+            var hitSomething = ApplyEnemyAttack(localFrom, localTo, shot.Damage);
+            shot.LocalEntryPoint = hitSomething ? null : localTo;
+            return hitSomething;
         }
 
         foreach (var enemy in _enemyShips.Where(e => e.Alive))
@@ -102,4 +140,10 @@ internal sealed class ProjectileRuntime
     public bool FromEnemy { get; init; }
     public bool IsLaser { get; init; }
     public float LifeRemaining { get; set; }
+    public bool ShieldChecked { get; set; }
+    // Ship-local ("layout") point this shot last resolved to, chained tick to tick so an actively
+    // turning ship can't open a gap between two ticks' local segments (World.Projectiles.cs's own
+    // doc comment on ResolveProjectileHit's localFrom). Null before the shot ever reaches the hull
+    // and again once it's clear of it or has hit something.
+    public Vec2? LocalEntryPoint { get; set; }
 }

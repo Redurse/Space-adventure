@@ -61,12 +61,25 @@ public sealed partial class Ship
         var turrets = new[]
         {
             new Turret("turret-starboard", "armory", PeriscopeX: 8.5f, PeriscopeY: 6f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 10f, CooldownSeconds: 0.5f,
-                WeaponType: TurretWeaponType.Ballistic, MagazineCapacity: 6, MountSide: TurretMountSide.Starboard),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.MagneticDamage,
+                CooldownSeconds: TurretBalance.MagneticCooldownSeconds, WeaponType: TurretWeaponType.Magnetic,
+                MagazineCapacity: TurretBalance.MagneticMagazineCapacity, MountSide: TurretMountSide.Starboard),
             new Turret("turret-port", "armory", PeriscopeX: 5f, PeriscopeY: 6f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 8f, CooldownSeconds: 0.4f,
-                WeaponType: TurretWeaponType.Laser, MaxCharge: 30f, ChargePerShot: 10f,
-                RechargePerPowerUnitPerSecond: 0.5f, MountSide: TurretMountSide.Port),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.LaserDamagePerTick,
+                CooldownSeconds: TurretBalance.LaserTickIntervalSeconds, WeaponType: TurretWeaponType.Laser,
+                MaxCharge: TurretBalance.LaserMaxCharge, ChargePerShot: TurretBalance.LaserChargePerTick,
+                RechargePerPowerUnitPerSecond: TurretBalance.LaserRechargePerPowerUnitPerSecond, MountSide: TurretMountSide.Port),
+        };
+
+        // Port and starboard cameras on the gun deck's own flanks (M48) - the same room the guns
+        // themselves mount on, since it's the only compartment on this hull whose left/right walls
+        // are real exposed plating rather than an interior bulkhead (TurretMount reads MountSide
+        // the identical way). Kept clear of the turret periscopes (5, 6)/(8.5, 6) and the weapon
+        // charger (6.75, 6.1) by sitting further aft in the room.
+        var cameras = new[]
+        {
+            new HullCamera("camera-port", "armory", X: 5f, Y: 7.5f, CameraMountSide.Port),
+            new HullCamera("camera-starboard", "armory", X: 8.5f, Y: 7.5f, CameraMountSide.Starboard),
         };
 
         var ammoStorages = new[]
@@ -110,6 +123,8 @@ public sealed partial class Ship
         var helmConsole = new HelmConsole("helm-console", "cockpit", X: 6.75f, Y: 0.9f);
         // Two crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).
         var cardTable = new CardTable("card-table", "cockpit", X: 8.4f, Y: 2.1f);
+        // On the cockpit's own centreline, aft of the helm (6.75, 0.9).
+        var jukebox = new Jukebox("jukebox", "cockpit", X: 6.75f, Y: 3.3f);
         var storageRacks = new[]
         {
             // Mirrored across the reactor hall's own centreline (x=6.75): 8.7 and 4.8 sit the same
@@ -126,6 +141,7 @@ public sealed partial class Ship
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[2], top: false, bottom: true, left: false, right: false)); // reactor hall (flanked, open aft)
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[3], top: true, bottom: true, left: true, right: false));   // shields bay
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[4], top: true, bottom: true, left: false, right: true));   // life support
+        wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
 
         var componentMounts = new[]
         {
@@ -138,10 +154,10 @@ public sealed partial class Ship
         };
 
         var cockpit = rooms[0];
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, cockpit.Center, cockpit.Id,
             cardTable,
             forwardDegrees: ShipCatalog.ForwardDegrees(ShipKind.Corvette), // bow up the plan: this hull flies nose-first, not broadside
-            componentMounts: componentMounts);
+            componentMounts: componentMounts, jukebox: jukebox);
     }
 }

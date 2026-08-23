@@ -57,14 +57,12 @@ public sealed class GalaxyMap
     // one left off), which is what actually matters here: exploring in a different order/pace must
     // still eventually reveal the same galaxy.
     private readonly Random _proceduralRandom = new(2000_02_00);
-    private readonly AsteroidField _proceduralField;
 
-    private GalaxyMap(IReadOnlyList<StarSystem> handAuthoredSystems, AsteroidField proceduralField, string homePointId)
+    private GalaxyMap(IReadOnlyList<StarSystem> handAuthoredSystems, string homePointId)
     {
         _systems = handAuthoredSystems.ToList();
         _points = _systems.SelectMany(s => s.Points).ToList();
         HomePointId = homePointId;
-        _proceduralField = proceduralField;
     }
 
     public GalaxyPoint GetPoint(string id) => Points.First(p => p.Id == id);
@@ -150,7 +148,13 @@ public sealed class GalaxyMap
             new GalaxyPoint("sector-beta", "Сектор Бета", 1000f, 4000f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
             new GalaxyPoint("outpost-gamma", "Аванпост Гамма", 2900f, 2100f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Shipyard),
             new GalaxyPoint("sector-delta", "Сектор Дельта", 4100f, 1400f, GalaxyPointKind.HostileSector, FactionId.Consortium, SquadronSize: 3),
-            new GalaxyPoint("trade-station", "Торговая станция", 1800f, 3100f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
+            // CaptureRadius widened past the default 8 (M48) - World_Station_HostileStandingTriggersDefensiveSquadronOnApproach
+            // flies here with a plain straight-line pilot (no berth-alignment logic), which stalls
+            // against the station's own solid hull a good deal short of the bare 8-unit default
+            // once the field's own bigger scale changed the exact approach angle/collision point;
+            // a station's own CaptureRadius is explicitly meant to be more forgiving than a bare
+            // warp marker's (GalaxyPoint.cs's own doc comment).
+            new GalaxyPoint("trade-station", "Торговая станция", 1800f, 3100f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade, CaptureRadius: 40f),
             // Left at the field's own centre, alongside the sun it orbits - AsteroidField.
             // CreateDefault's own rocks/ore sit right here too (recentred there by
             // RecenterOffsetM48), so moving just this marker without the physical field itself
@@ -169,14 +173,14 @@ public sealed class GalaxyMap
             // own neutral turf sits alongside two rivals' sectors and a third guild's own outpost.
         }, AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null);
 
-        var proceduralField = new AsteroidField(4800f, 4800f, Array.Empty<Asteroid>(), Array.Empty<OreDeposit>());
-
         // Every hand-authored stub below is controlled by whichever faction its own single point
-        // already belongs to - simplest reading of "who actually runs this place".
+        // already belongs to - simplest reading of "who actually runs this place". Each gets its
+        // own SystemOrbits-driven AsteroidField (M48), not a shared empty stub any more - real
+        // planets/belts everywhere, not just sol.
         var alphaCentauri = new StarSystem("alpha-centauri", "Альфа Центавра", new[]
         {
             new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
-        }, proceduralField, galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
+        }, AsteroidField.CreateForSystem("alpha-centauri"), galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
 
         // The rest of the chain (game_design.md - "куча систем"): each new system is a light stub,
         // the same shape alpha-centauri already was - a single point of interest, no dedicated warp
@@ -189,25 +193,25 @@ public sealed class GalaxyMap
         var sirius = new StarSystem("sirius", "Сириус", new[]
         {
             new GalaxyPoint("sirius-trade-post", "Торговый пост Сириуса", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
-        }, proceduralField, galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium);
+        }, AsteroidField.CreateForSystem("sirius"), galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium);
 
         var vega = new StarSystem("vega", "Вега", new[]
         {
             new GalaxyPoint("vega-outpost", "Аванпост Веги", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
-        }, proceduralField, galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
+        }, AsteroidField.CreateForSystem("vega"), galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
 
         var tauCeti = new StarSystem("tau-ceti", "Тау Кита", new[]
         {
             new GalaxyPoint("tau-ceti-sector", "Сектор Тау Кита", 2400f, 2400f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-        }, proceduralField, galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet);
+        }, AsteroidField.CreateForSystem("tau-ceti"), galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet);
 
         var barnardsStar = new StarSystem("barnards-star", "Звезда Барнарда", new[]
         {
             new GalaxyPoint("barnard-mining-outpost", "Форпост старателей Барнарда", 2400f, 2400f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
-        }, proceduralField, galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild);
+        }, AsteroidField.CreateForSystem("barnards-star"), galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild);
 
         var handAuthoredSystems = new[] { sol, alphaCentauri, sirius, vega, tauCeti, barnardsStar };
-        var map = new GalaxyMap(handAuthoredSystems, proceduralField, "home-station");
+        var map = new GalaxyMap(handAuthoredSystems, "home-station");
         // Seeds just enough of the procedural tail for each hand-authored system to have a handful
         // of real jump targets from the very start - not the whole 194-system galaxy, which now
         // only fills in as the crew actually explores (EnsureGenerated, called from
@@ -365,7 +369,7 @@ public sealed class GalaxyMap
                 : new GalaxyPoint($"{id}-poi", $"Сектор {name}", 2400f, 2400f, GalaxyPointKind.HostileSector, pointFaction,
                     SquadronSize: random.Next(1, 4));
 
-            var system = new StarSystem(id, name, new[] { poi }, _proceduralField, galaxyX: x, galaxyY: y, controllingFaction: controllingFaction);
+            var system = new StarSystem(id, name, new[] { poi }, AsteroidField.CreateForSystem(id), galaxyX: x, galaxyY: y, controllingFaction: controllingFaction);
             _systems.Add(system);
             _points.AddRange(system.Points);
             placed.Add((x, y));

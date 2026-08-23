@@ -38,7 +38,7 @@ public sealed class ConnectionsPanel
 
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, string componentId, Rectangle bounds, float totalSeconds)
     {
-        var component = snapshot.Components.FirstOrDefault(c => c.Id == componentId);
+        var component = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == componentId);
         if (component is null)
             return;
 
@@ -79,8 +79,8 @@ public sealed class ConnectionsPanel
         (string PinId, PinKind Kind) pin, Vector2 dotPosition, bool isInput)
     {
         var pinRef = new PinRef(componentId, pin.PinId);
-        var wires = snapshot.Wires.Where(w => w.FromPin == pinRef || w.ToPin == pinRef).ToList();
-        var damaged = wires.Any(w => snapshot.WireStates.FirstOrDefault(s => s.WireId == w.Id)?.Damaged == true);
+        var wires = snapshot.Wiring.Wires.Where(w => w.FromPin == pinRef || w.ToPin == pinRef).ToList();
+        var damaged = wires.Any(w => snapshot.Wiring.WireStates.FirstOrDefault(s => s.WireId == w.Id)?.Damaged == true);
         var dotColor = wires.Count == 0 ? Color.DimGray : damaged ? Color.OrangeRed : Color.LimeGreen;
 
         spriteBatch.Draw(_pixel, new Rectangle((int)dotPosition.X - (isInput ? 0 : DotSize), (int)dotPosition.Y, DotSize, DotSize), dotColor);

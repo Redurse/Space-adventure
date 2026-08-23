@@ -18,6 +18,7 @@ public sealed partial class Ship
         var doors = BuildDoors(def);
         var airlockOuterDoors = BuildAirlockOuterDoors(def);
         var wallBlocks = BuildWallBlocks(def);
+        wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
 
         var reactorDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Reactor);
         var distributionDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Distribution);
@@ -46,9 +47,20 @@ public sealed partial class Ship
             ? new CardTable("card-table", RoomIdAt(rooms, cardTableDevice), cardTableDevice.X, cardTableDevice.Y)
             : new CardTable("card-table-auto", rooms[0].Id, rooms[0].Center.X, rooms[0].Center.Y);
 
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+        // No CustomDeviceKind for a camera yet - the Ship Editor doesn't offer placing one (M48
+        // only wires up the hand-authored classes), so a player-built hull simply has none.
+        var cameras = Array.Empty<HullCamera>();
+
+        // Unlike CardTable, genuinely optional - a hull the player never dropped one onto simply
+        // has no jukebox at all rather than an auto-placed fallback.
+        var jukeboxDevice = def.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.Jukebox);
+        var jukebox = jukeboxDevice is not null
+            ? new Jukebox("jukebox", RoomIdAt(rooms, jukeboxDevice), jukeboxDevice.X, jukeboxDevice.Y)
+            : null;
+
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks,
-            helmConsole.Position, helmConsole.RoomId, cardTable, def.ForwardDegrees);
+            helmConsole.Position, helmConsole.RoomId, cardTable, def.ForwardDegrees, jukebox: jukebox);
     }
 
     private static string RoomIdAt(List<Room> rooms, CustomDeviceDef device) =>
@@ -183,13 +195,19 @@ public sealed partial class Ship
         foreach (var device in def.Devices.Where(d => d.Kind is CustomDeviceKind.TurretBallistic or CustomDeviceKind.TurretLaser))
         {
             var roomId = RoomIdAt(rooms, device);
+            // The editor's own placeable catalog (CustomDeviceKind) still only offers these two slots
+            // - the Magnetic cannon just sits behind the same "ballistic" icon it always has, MachineGun
+            // isn't a placeable option here (it's the Cruiser's own hand-authored 3rd turret for now).
             turrets.Add(device.Kind == CustomDeviceKind.TurretBallistic
                 ? new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
-                    DamagePerShot: 10f, CooldownSeconds: 0.5f, WeaponType: TurretWeaponType.Ballistic,
-                    MagazineCapacity: 6, MountSide: device.MountSide)
+                    DamagePerShot: TurretBalance.MagneticDamage, CooldownSeconds: TurretBalance.MagneticCooldownSeconds,
+                    WeaponType: TurretWeaponType.Magnetic, MagazineCapacity: TurretBalance.MagneticMagazineCapacity,
+                    MountSide: device.MountSide)
                 : new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
-                    DamagePerShot: 8f, CooldownSeconds: 0.4f, WeaponType: TurretWeaponType.Laser,
-                    MaxCharge: 30f, ChargePerShot: 10f, RechargePerPowerUnitPerSecond: 0.5f, MountSide: device.MountSide));
+                    DamagePerShot: TurretBalance.LaserDamagePerTick, CooldownSeconds: TurretBalance.LaserTickIntervalSeconds,
+                    WeaponType: TurretWeaponType.Laser, MaxCharge: TurretBalance.LaserMaxCharge,
+                    ChargePerShot: TurretBalance.LaserChargePerTick,
+                    RechargePerPowerUnitPerSecond: TurretBalance.LaserRechargePerPowerUnitPerSecond, MountSide: device.MountSide));
         }
         return turrets;
     }

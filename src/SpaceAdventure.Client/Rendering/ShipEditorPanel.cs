@@ -50,7 +50,7 @@ public sealed class ShipEditorPanel
 
         var rightX = panelRect.X + ListWidth + 20;
         var rightWidth = panelRect.Width - ListWidth - 30;
-        if (selectedComponentId is null || snapshot.Components.All(c => c.Id != selectedComponentId))
+        if (selectedComponentId is null || snapshot.Wiring.Components.All(c => c.Id != selectedComponentId))
         {
             spriteBatch.DrawString(_font, "Выберите компонент слева.", new Vector2(rightX, panelRect.Y + HeaderHeight + 16),
                 Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
@@ -65,9 +65,9 @@ public sealed class ShipEditorPanel
 
     private void DrawComponentList(SpriteBatch spriteBatch, WorldSnapshot snapshot, string? selectedComponentId, Vector2 panelOrigin)
     {
-        for (var i = 0; i < snapshot.Components.Count; i++)
+        for (var i = 0; i < snapshot.Wiring.Components.Count; i++)
         {
-            var component = snapshot.Components[i];
+            var component = snapshot.Wiring.Components[i];
             var rect = GetRowRect(i, panelOrigin);
             var selected = component.Id == selectedComponentId;
             if (selected)
@@ -79,7 +79,7 @@ public sealed class ShipEditorPanel
 
     private float DrawInspector(SpriteBatch spriteBatch, WorldSnapshot snapshot, string componentId, Vector2 origin)
     {
-        var component = snapshot.Components.First(c => c.Id == componentId);
+        var component = snapshot.Wiring.Components.First(c => c.Id == componentId);
         spriteBatch.DrawString(_font, ComponentRenderer.ComponentLabel(snapshot, componentId), origin, Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
 
         var lines = new List<string>
@@ -93,7 +93,7 @@ public sealed class ShipEditorPanel
             lines.Add($"Цель: {component.TargetId}");
         if (component.Kind == ComponentKind.Timer)
             lines.Add($"Таймер: {component.TimerSeconds:0.0} с");
-        var signal = snapshot.ComponentStates.FirstOrDefault(s => s.ComponentId == componentId);
+        var signal = snapshot.Wiring.ComponentStates.FirstOrDefault(s => s.ComponentId == componentId);
         if (signal is not null)
             lines.Add($"Сигнал: {(signal.SignalValue ? "включён" : "выключен")}");
 

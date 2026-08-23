@@ -36,7 +36,7 @@ public static class ComponentRenderer
     // would, instead of always looking intact.
     private static void DrawJunctions(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, WorldSnapshot snapshot, Vector2 origin)
     {
-        foreach (var junction in snapshot.Components.Where(c => c.Kind == ComponentKind.Junction))
+        foreach (var junction in snapshot.Wiring.Components.Where(c => c.Kind == ComponentKind.Junction))
         {
             var damaged = snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == junction.Id)?.Damaged ?? false;
             var rect = ShipRenderer.GetBlockRect(junction.Position, ShipRenderer.NormalBlockSize, origin);
@@ -51,7 +51,7 @@ public static class ComponentRenderer
     // connector squares wire-laying actually targets.
     private static void DrawPowerPins(SpriteBatch spriteBatch, Texture2D pixel, WorldSnapshot snapshot, Vector2 origin)
     {
-        foreach (var component in snapshot.Components.Where(c => c.Kind is ComponentKind.Distribution or ComponentKind.Junction or ComponentKind.Device))
+        foreach (var component in snapshot.Wiring.Components.Where(c => c.Kind is ComponentKind.Distribution or ComponentKind.Junction or ComponentKind.Device))
         {
             var size = FootprintSize(component, snapshot);
             var rect = ShipRenderer.GetBlockRect(component.Position, size, origin);
@@ -100,11 +100,11 @@ public static class ComponentRenderer
     // elsewhere in this HUD, e.g. "O2" on the oxygen tank).
     private static void DrawMounts(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, WorldSnapshot snapshot, Vector2 origin)
     {
-        foreach (var mount in snapshot.ComponentMounts)
+        foreach (var mount in snapshot.Wiring.ComponentMounts)
         {
             var rect = ShipRenderer.GetBlockRect(mount.Position, MountSize, origin);
-            var installedId = snapshot.ComponentMountStates.FirstOrDefault(s => s.MountId == mount.Id)?.InstalledComponentId;
-            var installed = installedId is null ? null : snapshot.Components.FirstOrDefault(c => c.Id == installedId);
+            var installedId = snapshot.Wiring.ComponentMountStates.FirstOrDefault(s => s.MountId == mount.Id)?.InstalledComponentId;
+            var installed = installedId is null ? null : snapshot.Wiring.Components.FirstOrDefault(c => c.Id == installedId);
 
             if (installed is null)
             {
@@ -177,7 +177,7 @@ public static class ComponentRenderer
     // containing the cursor rather than re-deriving pin layout itself.
     public static IEnumerable<(PinRef Pin, Rectangle Rect)> AllPinHitRects(WorldSnapshot snapshot, Vector2 origin)
     {
-        foreach (var component in snapshot.Components)
+        foreach (var component in snapshot.Wiring.Components)
         {
             foreach (var (pinId, _) in PinsFor(component, snapshot))
             {
@@ -201,7 +201,7 @@ public static class ComponentRenderer
     // everywhere it's named.
     internal static string PinLabel(WorldSnapshot snapshot, PinRef pin)
     {
-        var owner = snapshot.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
+        var owner = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
         if (owner is null)
             return pin.PinId;
         var name = owner.Kind switch
@@ -219,7 +219,7 @@ public static class ComponentRenderer
     // for a Device rather than just saying "устройство".
     internal static string ComponentLabel(WorldSnapshot snapshot, string componentId)
     {
-        var component = snapshot.Components.FirstOrDefault(c => c.Id == componentId);
+        var component = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == componentId);
         if (component is null)
             return componentId;
         return component.Kind switch
@@ -228,7 +228,9 @@ public static class ComponentRenderer
             ComponentKind.Junction => "Распределительная коробка",
             ComponentKind.Device => snapshot.SystemDevices.FirstOrDefault(d => d.Id == componentId) is { } device
                 ? $"Устройство: {SystemLabel(device.System)}"
-                : "Устройство",
+                : snapshot.Cameras.Any(c => c.Id == componentId)
+                    ? "Устройство: Камера"
+                    : "Устройство",
             _ => ComponentDefinitions.DisplayName(component.Kind),
         };
     }
@@ -249,7 +251,7 @@ public static class ComponentRenderer
     // for a purchased one (its footprint is MountSize) or through the power layout for the backbone.
     private static Vector2? ResolvePinScreenPosition(WorldSnapshot snapshot, PinRef pin, Vector2 origin)
     {
-        var component = snapshot.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
+        var component = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
         if (component is null)
             return null;
 
@@ -267,15 +269,15 @@ public static class ComponentRenderer
 
     private static void DrawWires(SpriteBatch spriteBatch, Texture2D pixel, WorldSnapshot snapshot, Vector2 origin)
     {
-        foreach (var wire in snapshot.Wires)
+        foreach (var wire in snapshot.Wiring.Wires)
         {
             var from = ResolvePinScreenPosition(snapshot, wire.FromPin, origin);
             var to = ResolvePinScreenPosition(snapshot, wire.ToPin, origin);
             if (from is null || to is null)
                 continue;
 
-            var state = snapshot.WireStates.FirstOrDefault(s => s.WireId == wire.Id);
-            var live = snapshot.ComponentStates.FirstOrDefault(s => s.ComponentId == wire.FromPin.ComponentId)?.SignalValue ?? true;
+            var state = snapshot.Wiring.WireStates.FirstOrDefault(s => s.WireId == wire.Id);
+            var live = snapshot.Wiring.ComponentStates.FirstOrDefault(s => s.ComponentId == wire.FromPin.ComponentId)?.SignalValue ?? true;
             var color = state?.Damaged == true ? Color.OrangeRed : live ? Color.LimeGreen : Color.DimGray;
             DrawWirePath(spriteBatch, pixel, from.Value, wire.Bends, to.Value, origin, color, 2);
         }

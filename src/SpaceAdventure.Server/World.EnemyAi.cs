@@ -4,67 +4,170 @@ namespace SpaceAdventure.Server;
 
 public sealed partial class World
 {
-    private const double TurretDamageChance = 0.35; // vs damaging a system or breaching a room
-    private const double SystemDamageChance = 0.35; // rolled only if the turret roll misses
-    private const double DoorDamageChance = 0.2; // rolled only if the turret and system rolls both miss
-
-    // The only randomness in the simulation, and it used to be seeded from the clock - which made
-    // every fight, and therefore every test that flew through one, a different run: the suite
-    // drifted between 177 and 180 passing with nothing changed at all.
-    //
     // Seeded from a counter rather than a constant, so both properties hold: a whole run of the
     // suite is reproducible (Worlds are built in a fixed order), while two Worlds built in a row
     // still roll differently - which is what the tests that retry a scenario until it lands are
     // relying on. A real session builds exactly one World, so its fights are as varied as the
-    // sequence of rolls within them.
+    // sequence of rolls within them. Nothing here still rolls a hit location (that's positional
+    // now, see ApplyEnemyAttack below) - this stays for whatever else in combat still wants a die
+    // roll (dodge decisions, World.EnemyFleet.cs).
     private static int _seedCounter;
     private readonly Random _random = new(Interlocked.Increment(ref _seedCounter) * 104729);
 
-    // What an enemy shell does once it actually reaches the hull (World.Projectiles.cs). Every hit
-    // goes at the shield first (game_design.md section 1) — only once that's depleted does one
-    // disable a turret, knock out a ship system block ("повреждена локальная коробка"), or breach a
-    // single outer-hull wall block (several breaches can pile up in the same room).
-    //
-    // This used to fire on a timer with no projectile at all, because the enemy had no position;
-    // the consequences are unchanged, but now something had to cross the gap to cause them, which
-    // means cover and maneuvering are worth something.
-    private void ApplyEnemyAttack()
+    // How wide a target box each kind of hittable fixture presents to an incoming shot - all in the
+    // same ship-local ("layout") frame as WallBlock.Position/Turret.PeriscopePosition/
+    // ShipSystemDevice.Position/door positions themselves, since that's the frame
+    // World.Projectiles.cs converts an enemy shot's world-space travel segment into before calling
+    // ApplyEnemyAttack.
+    private const float WallHitRadius = 0.6f;
+    private const float DeviceHitRadius = 0.6f;
+
+    private enum HitCandidateKind { WallBlock, Turret, SystemDevice, Door, ReactorBlock, DistributionBlock, BatteryBlock, HelmConsole, NavigationConsole }
+    private readonly record struct HitCandidate(Vec2 LocalPosition, float Radius, HitCandidateKind Kind, string Id);
+
+    // Every physical thing an enemy shell can run into once it's past the shield, in one flat list:
+    // outer hull, turret mounts, system-device boxes, doors, and the reactor's own trio of "boxes"
+    // (Reactor/Distribution/Battery). Rebuilt each call rather than cached - there are only a few
+    // dozen of these per ship, cheap enough to walk fresh every tick a shot is still crossing the
+    // hull (World.Projectiles.cs steps a live shot's segment once per tick).
+    private IEnumerable<HitCandidate> CollectHitCandidates()
     {
-        if (Shield.TryAbsorbHit())
-            return;
+        foreach (var block in Ship.WallBlocks)
+            yield return new HitCandidate(block.Position, WallHitRadius, HitCandidateKind.WallBlock, block.Id);
 
-        var undamagedTurrets = _turretRuntimes.Values.Where(t => !t.Damaged).ToList();
-        if (undamagedTurrets.Count > 0 && _random.NextDouble() < TurretDamageChance)
+        foreach (var turret in Ship.Turrets)
         {
-            undamagedTurrets[_random.Next(undamagedTurrets.Count)].Damaged = true;
-            return;
+            var mount = TurretMount.For(Ship.Rooms, Ship.Turrets, turret);
+            yield return new HitCandidate(mount.Position, DeviceHitRadius, HitCandidateKind.Turret, turret.Id);
         }
 
-        // A "system hit" severs one currently-intact wire (game_design.md section 1, M14) rather
-        // than flipping one flat per-system flag — could be a trunk or a drop, and could land on a
-        // wire that's reinforcing an already-covered input (in which case the other, still-intact
-        // wire into that same pin keeps it powered - see IsPinPowered).
-        var liveWires = _wires.Where(w => !_wireDamaged[w.Id]).ToList();
-        if (liveWires.Count > 0 && _random.NextDouble() < SystemDamageChance)
+        foreach (var device in Ship.SystemDevices)
+            yield return new HitCandidate(device.Position, DeviceHitRadius, HitCandidateKind.SystemDevice, device.Id);
+
+        foreach (var door in AllShipDoors())
+            yield return new HitCandidate(door.Position, DeviceHitRadius, HitCandidateKind.Door, door.Id);
+
+        yield return new HitCandidate(Ship.ReactorBlock.Position, DeviceHitRadius, HitCandidateKind.ReactorBlock, Ship.ReactorBlock.Id);
+        yield return new HitCandidate(Ship.DistributionBlock.Position, DeviceHitRadius, HitCandidateKind.DistributionBlock, Ship.DistributionBlock.Id);
+        yield return new HitCandidate(Ship.BatteryBlock.Position, DeviceHitRadius, HitCandidateKind.BatteryBlock, Ship.BatteryBlock.Id);
+        yield return new HitCandidate(Ship.HelmConsole.Position, DeviceHitRadius, HitCandidateKind.HelmConsole, Ship.HelmConsole.Id);
+        yield return new HitCandidate(Ship.NavigationConsole.Position, DeviceHitRadius, HitCandidateKind.NavigationConsole, Ship.NavigationConsole.Id);
+    }
+
+    // What an enemy shell does once it's past the shield (World.Projectiles.cs) - resolved by where
+    // it actually crossed the hull, not a random lottery anymore: an intact wall block stops the
+    // shot and takes exactly damage worth of Hp off that one block (each weapon its own number,
+    // TurretBalance) rather than an instant full breach - a magnetic cannon's quick weak hits chew
+    // through a wall over several shots, a laser's single heavy hit can punch clean through; a wall
+    // block already breached is a hole, not a wall, so the shot keeps flying straight through it
+    // into the interior. The first still-intact turret mount, system device, door or reactor-room
+    // box it comes close to after that takes the hit outright (one shell, no partial damage - those
+    // are all plain on/off fixtures, not Hp pools). Same "already broken is a hole, not an obstacle"
+    // rule as the wall blocks applies to all of those too - a wrecked turret is debris, a
+    // disconnected device has nothing left to cut, a forced-open door is a gap, an already-broken
+    // reactor/distribution/battery box is just dead weight - so a shot that keeps hitting an
+    // already-dead fixture on the way to something behind it isn't stuck wasting itself there
+    // forever, it keeps going and can still reach whatever's deeper in.
+    //
+    // localFrom/localTo are this tick's short travel segment, not the shot's whole flight - a
+    // projectile is stepped as a from-to segment once per tick (World.Projectiles.cs's
+    // StepProjectiles), already converted into the same ship-local frame every fixture above is
+    // laid out in. This gets called again on the following tick's segment if nothing stopped the
+    // shot this tick (an already-open breach, empty space between fixtures), which is what lets a
+    // shell travel all the way through the ship over several ticks and either wreck something deep
+    // inside or reach the far hull and either breach that or - if that wall's already open too -
+    // sail on out the other side and keep flying in open space.
+    private bool ApplyEnemyAttack(Vec2 localFrom, Vec2 localTo, float damage)
+    {
+        var segment = localTo - localFrom;
+        var lengthSquared = segment.X * segment.X + segment.Y * segment.Y;
+        if (lengthSquared < 1e-6f)
+            return false;
+
+        var ordered = CollectHitCandidates()
+            .Select(c => (Candidate: c,
+                T: ((c.LocalPosition.X - localFrom.X) * segment.X + (c.LocalPosition.Y - localFrom.Y) * segment.Y) / lengthSquared))
+            .Where(x => x.T >= 0f && x.T <= 1f)
+            .Where(x => (localFrom + segment * x.T - x.Candidate.LocalPosition).Length() <= x.Candidate.Radius)
+            .OrderBy(x => x.T);
+
+        foreach (var (candidate, _) in ordered)
         {
-            CutWire(liveWires[_random.Next(liveWires.Count)].Id);
-            return;
+            switch (candidate.Kind)
+            {
+                case HitCandidateKind.WallBlock:
+                    if (IsWallBlockBreached(candidate.Id))
+                        continue; // already open - the shot passes straight through
+                    DamageWallBlock(candidate.Id, damage);
+                    return true;
+
+                case HitCandidateKind.Turret:
+                    if (_turretRuntimes.TryGetValue(candidate.Id, out var turret) && !turret.Damaged)
+                    {
+                        turret.Damaged = true;
+                        return true;
+                    }
+                    continue; // already wrecked - debris, not a wall; the shot passes through it
+
+                case HitCandidateKind.SystemDevice:
+                    var dropWire = _wires.FirstOrDefault(w => w.ToPin.ComponentId == candidate.Id);
+                    if (dropWire is not null && !_wireDamaged[dropWire.Id])
+                    {
+                        CutWire(dropWire.Id);
+                        return true;
+                    }
+                    continue; // already disconnected - nothing left here to stop it
+
+                case HitCandidateKind.Door:
+                    if (!IsDoorDestroyed(candidate.Id))
+                    {
+                        DamageDoor(candidate.Id);
+                        return true;
+                    }
+                    continue; // forced open already - a gap, not an obstacle
+
+                case HitCandidateKind.ReactorBlock:
+                    if (!PowerGrid.Reactor.Broken)
+                    {
+                        PowerGrid.Reactor.Broken = true;
+                        return true;
+                    }
+                    continue;
+
+                case HitCandidateKind.DistributionBlock:
+                    if (!PowerGrid.DistributionBroken)
+                    {
+                        PowerGrid.DistributionBroken = true;
+                        return true;
+                    }
+                    continue;
+
+                case HitCandidateKind.BatteryBlock:
+                    if (!PowerGrid.Battery.Broken)
+                    {
+                        PowerGrid.Battery.Broken = true;
+                        return true;
+                    }
+                    continue;
+
+                case HitCandidateKind.HelmConsole:
+                    if (!HelmConsoleBroken)
+                    {
+                        HelmConsoleBroken = true;
+                        return true;
+                    }
+                    continue;
+
+                case HitCandidateKind.NavigationConsole:
+                    if (!NavigationConsoleBroken)
+                    {
+                        NavigationConsoleBroken = true;
+                        return true;
+                    }
+                    continue;
+            }
         }
 
-        // A door jammed open ("нельзя было закрыть") is the same kind of hit as a severed wire or a
-        // knocked-out turret - one shot, no partial damage, straight to needing the same E-key
-        // repair minigame (World.SystemRepair.cs).
-        var intactDoors = AllShipDoors().Where(d => !IsDoorDestroyed(d.Id)).ToList();
-        if (intactDoors.Count > 0 && _random.NextDouble() < DoorDamageChance)
-        {
-            DamageDoor(intactDoors[_random.Next(intactDoors.Count)].Id);
-            return;
-        }
-
-        var candidates = Ship.WallBlocks.Where(b => !IsWallBlockBreached(b.Id)).ToList();
-        if (candidates.Count == 0)
-            return; // every wall block already breached
-
-        DamageWallBlock(candidates[_random.Next(candidates.Count)].Id, WallBlockMaxHp);
+        return false; // nothing in this tick's slice stopped it - still in flight
     }
 }

@@ -60,8 +60,8 @@ public sealed partial class World
 
         if (character.CarryingAmmoCrate)
         {
-            if (nearbyTurret is null || nearbyTurret.WeaponType != TurretWeaponType.Ballistic)
-                return; // laser turrets don't take ammo crates
+            if (nearbyTurret is null || nearbyTurret.WeaponType == TurretWeaponType.Laser)
+                return; // laser turrets draw from the reactor, not a crate - Magnetic/MachineGun both do
 
             var runtime = _turretRuntimes[nearbyTurret.Id];
             runtime.AmmoRemaining = runtime.Definition.MagazineCapacity;
@@ -114,6 +114,41 @@ public sealed partial class World
             return;
         }
 
+        // The reactor and its sibling "boxes" plus the helm/scanner consoles (enemy/weapon overhaul -
+        // "реактор и коробки могли быть сломаны", "штурвал, сонар можно было сломать") - same
+        // minigame, same plain bool Damaged state as a turret rather than a wire (World.SystemRepair.cs
+        // already steps/finishes all five via PowerGrid/HelmConsoleBroken/NavigationConsoleBroken).
+        var nearbyBrokenBlock = new[]
+        {
+            (Ship.ReactorBlock.Id, Ship.ReactorBlock.Position, (Func<bool>)(() => PowerGrid.Reactor.Broken)),
+            (Ship.DistributionBlock.Id, Ship.DistributionBlock.Position, (Func<bool>)(() => PowerGrid.DistributionBroken)),
+            (Ship.BatteryBlock.Id, Ship.BatteryBlock.Position, (Func<bool>)(() => PowerGrid.Battery.Broken)),
+            (Ship.HelmConsole.Id, Ship.HelmConsole.Position, (Func<bool>)(() => HelmConsoleBroken)),
+            (Ship.NavigationConsole.Id, Ship.NavigationConsole.Position, (Func<bool>)(() => NavigationConsoleBroken)),
+        }.FirstOrDefault(b => b.Item3() && (b.Position - character.Position).Length() < InteractionRadius);
+
+        if (nearbyBrokenBlock.Id is not null)
+        {
+            if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
+                AttemptSystemRepair(nearbyBrokenBlock.Id);
+            return;
+        }
+
+        // A hull camera's own junction box (M48) - not a ShipSystemDevice (WireGraphFactory's own
+        // comment explains why), so it needs this separate lookup, but the repair itself is the
+        // exact same minigame every other device above uses.
+        var nearbyDamagedCamera = Ship.Cameras.FirstOrDefault(c =>
+            c.RoomId == character.RoomId &&
+            (c.InteriorPosition - character.Position).Length() < InteractionRadius &&
+            !IsDeviceConnected(c.Id));
+
+        if (nearbyDamagedCamera is not null)
+        {
+            if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
+                AttemptSystemRepair(nearbyDamagedCamera.Id);
+            return;
+        }
+
         // Junction boxes ("щитки") are their own breakable device (game_design.md) - a damaged one
         // repairs the same way a SystemDevice does (wrench/screwdriver drives the minigame above,
         // at its own trunk wire this time - IsJunctionDamaged/RepairDeviceWiring both already
@@ -144,7 +179,7 @@ public sealed partial class World
             return;
         }
 
-        if (Ship.HelmConsole.RoomId == character.RoomId &&
+        if (!HelmConsoleBroken && Ship.HelmConsole.RoomId == character.RoomId &&
             (Ship.HelmConsole.Position - character.Position).Length() < InteractionRadius)
         {
             character.IsAtHelm = true;

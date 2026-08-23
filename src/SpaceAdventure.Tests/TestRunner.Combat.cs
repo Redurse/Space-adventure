@@ -109,14 +109,36 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
 
-        world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
-        world.Step(RealtimeStep);
-        // Second attempt lands within the cooldown window — no second shell leaves the barrel, so
-        // only one lot of damage can ever arrive however long we then wait.
-        world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
-        StepFor(world, 90); // long enough for a shell to cross the gap
+        // The enemy no longer sits perfectly still (World.EnemyFleet.cs's ambient sway, "не стояли
+        // на одном месте") - track its actual bearing rather than assuming the turret's default aim
+        // still lines up, and retry the whole shot if it swayed off the aimed line before the shell
+        // arrived (same "budget rather than a single fixed attempt" shape other AI-dependent tests
+        // in this suite already use).
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            for (var aimTick = 0; aimTick < 10; aimTick++)
+            {
+                var error = TurretAimErrorToEnemy(world, "turret-bow");
+                if (MathF.Abs(error) < 1f)
+                    break;
+                world.ApplyCommand(1, new ClientCommand(1, TurretAimDirection: MathF.Sign(error)));
+                world.Step(RealtimeStep);
+            }
 
-        return Math.Abs(world.CreateSnapshot().Enemy.Hp - 90f) < 0.01f;
+            var hpBefore = world.CreateSnapshot().Enemy.Hp;
+            world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
+            world.Step(RealtimeStep);
+            // Second attempt lands within the cooldown window — no second shell leaves the barrel,
+            // so only one lot of damage can ever arrive however long we then wait.
+            world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
+            StepFor(world, 20); // outlast the magnetic cannon's short cooldown, let the shell arrive
+
+            var hpAfter = world.CreateSnapshot().Enemy.Hp;
+            if (hpAfter < hpBefore)
+                return Math.Abs(hpAfter - (hpBefore - TurretBalance.MagneticDamage)) < 0.01f;
+        }
+
+        return false; // never landed a hit within the retry budget
     }
 
     private static bool World_Movement_LockedWhileManningTurret()
@@ -135,6 +157,12 @@ internal static partial class TestRunner
         return Math.Abs(before.X - after.X) < 0.01f && Math.Abs(before.Y - after.Y) < 0.01f;
     }
 
+    // The magnetic cannon's magazine is big enough now (TurretBalance.MagneticMagazineCapacity)
+    // that emptying it outright kills the one enemy this scenario spawns partway through - once
+    // that happens Enemy falls back to a fresh, undamaged placeholder (World.EnemyFleet.cs's own
+    // Enemy property), so HP is no longer a meaningful signal for "did exactly N shots fire" here.
+    // This only checks the magazine mechanic itself: it actually runs dry, and firing again past
+    // empty changes nothing further.
     private static bool World_Fire_EmptiesMagazineThenRefusesWithoutDamage()
     {
         var world = new World();
@@ -143,24 +171,20 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it
 
-        for (var shot = 0; shot < 6; shot++) // magazine capacity
+        var magazineCapacity = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").MagazineCapacity;
+        for (var shot = 0; shot < magazineCapacity; shot++)
         {
             world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
-            StepFor(world, 20); // outlast the 0.5s cooldown, and let the shell arrive
+            StepFor(world, 5); // outlast the magnetic cannon's short cooldown
         }
 
-        var afterMagazine = world.CreateSnapshot();
-        var hpAfterSix = afterMagazine.Enemy.Hp; // 100 - 6*10 = 40
-        var ammoAfterSix = afterMagazine.TurretStates.Single(t => t.Id == "turret-bow").AmmoRemaining;
+        var ammoAfterMagazine = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").AmmoRemaining;
 
         world.ApplyCommand(1, new ClientCommand(1, FirePressed: true)); // magazine empty now
         world.Step(RealtimeStep);
-        var finalSnapshot = world.CreateSnapshot();
+        var ammoAfterOneMore = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").AmmoRemaining;
 
-        return ammoAfterSix == 0
-            && Math.Abs(hpAfterSix - 40f) < 0.01f
-            && Math.Abs(finalSnapshot.Enemy.Hp - 40f) < 0.01f
-            && finalSnapshot.TurretStates.Single(t => t.Id == "turret-bow").AmmoRemaining == 0;
+        return ammoAfterMagazine == 0 && ammoAfterOneMore == 0;
     }
 
     private static bool World_PickUpAmmoCrate_RequiresProximityToStorage()

@@ -40,14 +40,28 @@ public sealed partial class Ship
         var turrets = new[]
         {
             new Turret("turret-bow", "cockpit", PeriscopeX: 1.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 10f, CooldownSeconds: 0.5f,
-                WeaponType: TurretWeaponType.Ballistic, MagazineCapacity: 6),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.MagneticDamage,
+                CooldownSeconds: TurretBalance.MagneticCooldownSeconds, WeaponType: TurretWeaponType.Magnetic,
+                MagazineCapacity: TurretBalance.MagneticMagazineCapacity),
             new Turret("turret-laser", "reactor", PeriscopeX: 6.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 8f, CooldownSeconds: 0.4f,
-                WeaponType: TurretWeaponType.Laser, MaxCharge: 30f, ChargePerShot: 10f, RechargePerPowerUnitPerSecond: 0.5f),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.LaserDamagePerTick,
+                CooldownSeconds: TurretBalance.LaserTickIntervalSeconds, WeaponType: TurretWeaponType.Laser,
+                MaxCharge: TurretBalance.LaserMaxCharge, ChargePerShot: TurretBalance.LaserChargePerTick,
+                RechargePerPowerUnitPerSecond: TurretBalance.LaserRechargePerPowerUnitPerSecond),
             new Turret("turret-stern", "hold", PeriscopeX: 19.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 10f, CooldownSeconds: 0.5f,
-                WeaponType: TurretWeaponType.Ballistic, MagazineCapacity: 6),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.MachineGunDamagePerPellet,
+                CooldownSeconds: TurretBalance.MachineGunCooldownSeconds, WeaponType: TurretWeaponType.MachineGun,
+                MagazineCapacity: TurretBalance.MachineGunMagazineCapacity,
+                PelletsPerBurst: TurretBalance.MachineGunPelletsPerBurst,
+                PelletSpreadDegrees: TurretBalance.MachineGunPelletSpreadDegrees),
+        };
+
+        // Two hull cameras, bow and stern (M48) - same split as every other class, kept clear of
+        // the bow turret's periscope (1.5, 3).
+        var cameras = new[]
+        {
+            new HullCamera("camera-bow", "cockpit", X: 3.5f, Y: 5f, CameraMountSide.Fore),
+            new HullCamera("camera-stern", "airlock-chamber", X: 29f, Y: 1f, CameraMountSide.Aft),
         };
 
         var ammoStorages = new[]
@@ -84,10 +98,14 @@ public sealed partial class Ship
         var helmConsole = new HelmConsole("helm-console", "cockpit", X: 3f, Y: 4f);
         var cardTable = new CardTable("card-table", "cockpit", X: 4f, Y: 1f);
 
+        // Lower-left corner, clear of the nav console (1.5, 1.5) and the helm (3, 4).
+        var jukebox = new Jukebox("jukebox", "cockpit", X: 1.2f, Y: 4.7f);
+
         var wallBlocks = new List<WallBlock>();
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[0], top: true, bottom: true, left: true, right: false));
         for (var i = 1; i < rooms.Length; i++)
             wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[i], top: true, bottom: true, left: false, right: false));
+        wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
 
         var corridor = rooms.First(r => r.Id == "corridor");
         // The cruiser has an actual hold - one shelf belongs there, the other in the crew quarters.
@@ -112,8 +130,8 @@ public sealed partial class Ship
             new ComponentMount("mount-engine-door", "engine", X: 27f, Y: 4f, TargetDoorId: "door-engine-airlock"),
         };
 
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
-            cardTable, componentMounts: componentMounts);
+            cardTable, componentMounts: componentMounts, jukebox: jukebox);
     }
 }

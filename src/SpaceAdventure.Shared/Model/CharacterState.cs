@@ -77,6 +77,10 @@ public sealed record CharacterState(
     // markers (game_design.md/M44). Empty for a character who has never operated the scanner.
     IReadOnlyList<ScannerContactState>? ScannerContacts = null,
     // Seconds left before this character's next scanner pulse can fire, 0 = ready (World.Scanner.cs,
-    // M47 follow-up). Shown as a countdown/disabled state on the "Скан" button regardless of
-    // whether this player is even at the console right now.
-    float ScannerCooldownRemaining = 0f);
+    // M47 follow-up). Shown as a countdown/disabled state on the console's toggle-switch widget
+    // regardless of whether this player is even at the console right now.
+    float ScannerCooldownRemaining = 0f,
+    // Which toggle-switch position this character last selected (World.Scanner.cs, M48 follow-up) -
+    // echoed back from the server rather than trusting the client's own unconfirmed guess, the same
+    // reasoning ScannerSweepDegrees already gets.
+    ScannerMode ScannerMode = ScannerMode.Directional);

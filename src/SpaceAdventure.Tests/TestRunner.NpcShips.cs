@@ -15,7 +15,7 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
 
         var npcShips = world.CreateSnapshot().NpcShips;
-        return npcShips.Count > 0 && npcShips.Count <= 8; // World.NpcShips.cs's NpcFleetMaxPerSystem
+        return npcShips.Count > 0 && npcShips.Count <= 10; // World.NpcShips.cs's NpcFleetMaxPerSystem (M48: 10)
     }
 
     // Sol has several stations (home/trade/outpost-gamma/mining-outpost), so a Cargo hull's fixed
@@ -37,8 +37,10 @@ internal static partial class TestRunner
         var visitedStations = new HashSet<int>();
 
         // A full round trip between two of sol's stations comfortably fits in a few real minutes
-        // at NpcCargoSpeed(4) - 20 simulated minutes is generous slack, not a tight budget.
-        for (var i = 0; i < 20 * 60 * 30 && visitedStations.Count < 2; i++)
+        // at NpcCargoSpeed(4) - 60 simulated minutes is generous slack (doubled from M47's own 20,
+        // M48's field-doubling also roughly doubled the largest ring-adjacent station gap now that
+        // sol has 6 station-kind points instead of 4), not a tight budget.
+        for (var i = 0; i < 60 * 60 * 30 && visitedStations.Count < 2; i++)
         {
             world.Step(RealtimeStep);
             var cargo = world.CreateSnapshot().NpcShips.FirstOrDefault(n => n.Id == cargoId);

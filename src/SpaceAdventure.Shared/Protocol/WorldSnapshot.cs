@@ -65,12 +65,10 @@ public sealed record WorldSnapshot(
     int Credits,
     Quest? ActiveQuest,
     IReadOnlyDictionary<ShipUpgradeTrack, int> ShipUpgradeLevels,
-    IReadOnlyList<Component> Components,
-    IReadOnlyList<ComponentState> ComponentStates,
-    IReadOnlyList<Wire> Wires,
-    IReadOnlyList<WireState> WireStates,
-    IReadOnlyList<ComponentMount> ComponentMounts,
-    IReadOnlyList<ComponentMountState> ComponentMountStates,
+    // The Component/Pin/Wire graph (WiringSnapshot.cs) - grouped the same way Station/EnemyShip/
+    // AsteroidField below are, since ComponentRenderer/ConnectionsPanel/the ship editor always
+    // want the whole graph together.
+    WiringSnapshot Wiring,
     // The asteroid field's own rocks/ore veins (AsteroidFieldSnapshot.cs) - grouped the same way
     // Station's fields are, since FieldRenderer/HelmPanel's radar/EffectTracker always want all
     // three together.
@@ -124,4 +122,12 @@ public sealed record WorldSnapshot(
     // поставить") - unlike ScannerContacts these are the same for every player, plain field-space
     // points with no further identity (the discovery itself is what mattered; the marker is just a
     // pin left behind for the rest of the crew).
-    IReadOnlyList<Vec2> ManualScannerMarkers);
+    IReadOnlyList<Vec2> ManualScannerMarkers,
+    // Every hull camera this ship class actually has (M48 - "камеры как устройства корабля, а не
+    // отдельный виртуальный режим") - static layout, resent every tick like Turrets/SystemDevices
+    // above; per-camera Damaged/repair-progress rides along in SystemStates instead of a parallel
+    // dynamic record, the same way a Junction box already shares ShipSystemState's shape.
+    IReadOnlyList<HullCamera> Cameras,
+    // The jukebox's block + on/off/track/volume (World.cs) - null when this hull has no jukebox
+    // device at all (Ship.Jukebox), the same "device may not exist" shape ActiveQuest already uses.
+    JukeboxState? Jukebox);

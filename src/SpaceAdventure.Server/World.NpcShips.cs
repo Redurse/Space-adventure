@@ -11,7 +11,9 @@ namespace SpaceAdventure.Server;
 // same individual hulls survive a trip to another system".
 public sealed partial class World
 {
-    private const int NpcFleetMaxPerSystem = 8;
+    // Raised from 8 (M48 - sol went from 4 station-kind points to 6, one cargo run per station,
+    // so the old cap would've silently squeezed out a faction's own military patrol or the scout).
+    private const int NpcFleetMaxPerSystem = 10;
     private const float NpcCargoSpeed = 4f;
     private const float NpcMilitarySpeed = 3f;
     private const float NpcScoutSpeed = 5f;

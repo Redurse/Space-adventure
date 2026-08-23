@@ -22,6 +22,8 @@ public sealed class FieldRenderer
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
     private readonly GraphicsDevice _graphicsDevice;
+    private readonly CrewSkin _crewSkin;
+    private readonly EnemyHullSkin _enemyHulls;
     // One baked surface per rock (AsteroidTexture), kept for the life of the client - the same five
     // ids come back every time a field is entered, so this is built once and never again.
     private readonly Dictionary<string, AsteroidTexture.Skin> _asteroidSkins = new();
@@ -40,6 +42,8 @@ public sealed class FieldRenderer
     public FieldRenderer(GraphicsDevice graphicsDevice, SpriteFont font)
     {
         _graphicsDevice = graphicsDevice;
+        _crewSkin = new CrewSkin(graphicsDevice);
+        _enemyHulls = new EnemyHullSkin(graphicsDevice);
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
         _font = font;
@@ -408,7 +412,14 @@ public sealed class FieldRenderer
     {
         const float enemyVisualRadius = 3.5f; // matches World.EnemyHullRadius - what a shell has to hit
         var sizePx = enemyVisualRadius * 2 * ShipRenderer.PixelsPerUnit;
-        var hullColor = enemy.IsRetreating ? new Color(70, 58, 46) : new Color(92, 46, 50);
+
+        // A baked hull per class rather than a filled polygon. What made the old one read as a
+        // marker was not its outline - it was that a ship is panels, parts and lit windows, and a
+        // single flat shape has none of those.
+        var hull = _enemyHulls.Get(enemy.Kind, enemy.IsRetreating);
+        spriteBatch.Draw(hull, screenCenter, null, Color.White, rotation, EnemyHullSkin.Origin,
+            sizePx / EnemyHullSkin.CanvasSize, SpriteEffects.None, 0f);
+
         var cos = MathF.Cos(rotation);
         var sin = MathF.Sin(rotation);
         Vector2 Local(float x, float y)
@@ -417,29 +428,12 @@ public sealed class FieldRenderer
             return screenCenter + new Vector2(s.X * cos - s.Y * sin, s.X * sin + s.Y * cos);
         }
 
-        // An arrowhead bow, a blunt asymmetric aft, and a notch out of one flank - a raider looks
-        // scavenged together, not machined.
-        var hull = new[]
-        {
-            Local(0.5f, 0f), Local(0.18f, -0.30f), Local(-0.1f, -0.34f), Local(-0.42f, -0.20f),
-            Local(-0.5f, -0.06f), Local(-0.5f, 0.10f), Local(-0.38f, 0.24f), Local(0.05f, 0.32f), Local(0.2f, 0.16f),
-        };
-        Primitives.FillPolygon(spriteBatch, _pixel, screenCenter, hull, hullColor * 0.95f);
-        Primitives.StrokePolygon(spriteBatch, _pixel, hull, Color.Black * 0.5f, 2f);
-
-        // Rust/weathering patches, seeded off the ship's own id so they stay put frame to frame.
-        var weather = new Random(enemy.Id.GetHashCode());
-        for (var i = 0; i < 3; i++)
-        {
-            var patch = Local(-0.3f + (float)weather.NextDouble() * 0.5f, -0.22f + (float)weather.NextDouble() * 0.44f);
-            HudIcons.FillCircle(spriteBatch, _pixel, patch, sizePx * (0.05f + (float)weather.NextDouble() * 0.05f), Color.Black * 0.18f);
-        }
-
-        // The engine, always lit (a derelict that can still manoeuvre is one that can still fight),
-        // dimmer while retreating rather than out entirely.
+        // The engine flare pulses, so it stays live rather than being baked into the hull: a
+        // derelict that can still manoeuvre is one that can still fight.
         var enginePulse = 0.7f + 0.3f * MathF.Sin(totalSeconds * 3f + enemy.Id.GetHashCode());
         var engineColor = enemy.IsRetreating ? new Color(200, 120, 40) : new Color(255, 90, 40);
-        HudIcons.FillCircle(spriteBatch, _pixel, Local(-0.46f, 0.02f), sizePx * 0.09f * enginePulse, engineColor * 0.8f);
+        HudIcons.FillCircle(spriteBatch, _pixel, Local(-0.46f, 0.02f), sizePx * 0.06f * enginePulse,
+            engineColor * 0.75f);
 
         // Scorch marks that accumulate as the hull loses health - none at full health, several
         // near death, so the fight's progress is visible on the ship itself, not just its bar.
@@ -749,13 +743,16 @@ public sealed class FieldRenderer
         // The same body as indoors (ShipRenderer.CharacterDiameter). It used to be a 10px dot, so a
         // crewman shrank to a third of their size the moment they stepped through the airlock -
         // inside and outside are one continuous space at one scale, and the person has to be too.
-        var size = (int)(0.7f * ShipRenderer.PixelsPerUnit);
+        // Read from ShipRenderer rather than repeated here, so inside and outside cannot drift.
+        var size = (int)(ShipRenderer.CharacterDiameter * ShipRenderer.PixelsPerUnit);
 
         if (facing.LengthSquared() > 0.01f)
             facing.Normalize();
         else
             facing = new Vector2(1f, 0f);
-        ShipRenderer.DrawHumanBody(spriteBatch, _pixel, screenCenter, size, Color.OrangeRed * 0.9f, Color.CadetBlue, facing);
+        _crewSkin.Draw(spriteBatch, new Vector2(screenCenter.X, screenCenter.Y + size * 0.30f),
+            ShipRenderer.CharacterHeight * ShipRenderer.PixelsPerUnit,
+            new Color(196, 78, 44), new Color(226, 186, 70), true, facing);
 
         // Same held-item chip as indoors (ShipRenderer.DrawHeldItems) - a suited EVA crewmate holding
         // a cutter still reads as holding something, not just glowing from an invisible tool.

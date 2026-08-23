@@ -1,3 +1,5 @@
+using SpaceAdventure.Shared.Model;
+
 namespace SpaceAdventure.Shared.Protocol;
 
 // One hostile hull as a thing with a place in the world: where it is, which way it's pointing and
@@ -14,4 +16,8 @@ public sealed record EnemyShipFieldState(
     bool IsRetreating,
     // The one whose interior the boarding party would climb into (World.Boarding.cs) - only ever
     // true for a single ship at a time.
-    bool IsBoardable);
+    bool IsBoardable,
+    // Which hull this is. The field renderer draws a different ship for each, and a boarding party
+    // finds the matching interior - so this has to be the real class rather than something derived
+    // from the id, or the outside would promise a freighter and the inside deliver a gunship.
+    EnemyShipClass Kind = EnemyShipClass.Raider);

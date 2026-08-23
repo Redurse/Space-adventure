@@ -299,10 +299,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1); // pilot, sends commands
 
-        EnterBattle(world);
-
-        for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "corridor"); i++)
-            world.Step(RealtimeStep);
+        BreachRoom(world, "corridor");
         if (!RoomHasBreach(world.CreateSnapshot(), "corridor"))
             return false;
 
@@ -429,11 +426,30 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man the bow turret
 
-        world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
-        StepFor(world, 60);
+        // The enemy no longer sits perfectly still (World.EnemyFleet.cs's ambient sway) - track its
+        // actual bearing and retry the shot if it swayed off the aimed line before the shell arrived.
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            for (var aimTick = 0; aimTick < 10; aimTick++)
+            {
+                var error = TurretAimErrorToEnemy(world, "turret-bow");
+                if (MathF.Abs(error) < 1f)
+                    break;
+                world.ApplyCommand(1, new ClientCommand(1, TurretAimDirection: MathF.Sign(error)));
+                world.Step(RealtimeStep);
+            }
 
-        // Base shot damage is 10 (Ship.cs turret-bow) - with the upgrade it should deal more.
-        return world.CreateSnapshot().Enemy.Hp < 90f;
+            var hpBefore = world.CreateSnapshot().Enemy.Hp;
+            world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
+            StepFor(world, 20);
+
+            // Base shot damage is TurretBalance.MagneticDamage - with the upgrade it should deal more.
+            var hpAfter = world.CreateSnapshot().Enemy.Hp;
+            if (hpAfter < hpBefore)
+                return hpAfter < hpBefore - TurretBalance.MagneticDamage;
+        }
+
+        return false; // never landed a hit within the retry budget
     }
 
     // The generic Component/Wire graph (World.Wiring.cs) replaces the old fixed WireNetwork/

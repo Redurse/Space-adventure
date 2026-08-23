@@ -1,29 +1,30 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using SpaceAdventure.Shared.Model;
 using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Client.Rendering;
 
-// External hull cameras (game_design.md, M46) - 4 fixed directions around the hull, each just the
-// existing FieldRenderer view from a different angle. Deliberately reuses FieldRenderer.Draw as-is
-// rather than adding any new object-drawing logic: a rotated copy of the snapshot's own ShipField
-// (RotationDegrees offset by the camera's own bearing, plus however far the viewer has panned
-// within it) makes FieldRenderer believe the ship is simply facing a different way, which is all a
-// "different point of view" actually needs - ShipLocalFrame.ToLocal already rotates every world
-// point by -ShipField.RotationDegrees to place it on screen, so adding to that value rotates the
-// apparent view by exactly that much. Purely client state throughout (Game1.cs's own
-// _externalCameraMode/_cameraLookOffsetDegrees) - a camera's own look direction isn't a physical
-// thing other players or the server need to know about, unlike a manned turret's aim.
+// External hull cameras (game_design.md, M46; rebuilt as real devices in M48 - "камеры как
+// устройства корабля, как и любая другая система"). Each tile is one HullCamera (Ship.Cameras/
+// WorldSnapshot.Cameras) - a fixed junction box wired into the power grid like any other device
+// (WireGraphFactory), so a cut wire or a dead Secondary channel actually darkens its own feed
+// (SystemStates, matched by DeviceId) rather than the whole mode being a single on/off toggle.
+//
+// The view itself is static (M48 follow-up - "статичный вид... сектор камеры широкий сам по
+// себе"): no mouse-look, a fixed wide framing anchored on the camera's own physical mount position
+// (HullCameraMount) rather than the ship's hull centre, so nearby objects passing close to that
+// specific point of the hull show real parallax as the ship moves/turns - the same trick
+// Game1.ComputeCamera already uses to anchor a manned turret's view on its own muzzle instead of
+// the ship's centre. Reuses FieldRenderer.Draw as-is: a rotated copy of the snapshot's own
+// ShipField (RotationDegrees offset by the mount's own fixed outward bearing) makes FieldRenderer
+// believe the ship is simply facing a different way, which is all a "different point of view"
+// needs on top of the position shift.
 public sealed class ExternalCameraPanel
 {
-    // Bow, starboard, stern, port - the 4 fixed 90-degree sectors game_design.md calls for.
-    public static readonly float[] CameraBaseBearings = { 0f, 90f, 180f, 270f };
-    public static readonly string[] CameraLabels = { "Камера 1: Нос", "Камера 2: Правый борт", "Камера 3: Корма", "Камера 4: Левый борт" };
-    // How far a viewer can pan within one camera's own sector once inside it fullscreen - each
-    // camera's own quarter of the full circle, not the turret's much narrower firing arc.
-    public const float MaxLookOffsetDegrees = 45f;
-
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
     private readonly FieldRenderer _fieldRenderer;
@@ -40,6 +41,34 @@ public sealed class ExternalCameraPanel
     // what's approaching from a distance, not read as the same close-in cockpit/turret scale.
     private const float CameraZoomOut = 0.35f;
 
+    // Roughly square: 1 camera fills the area, 2 sit side by side, 3-4 make a 2x2, 5-6 a 3x2, and
+    // so on - whatever count this particular hull's Ship.Cameras actually has (M48 - fixed per
+    // ship class, not a hardcoded 4).
+    public static (int Cols, int Rows) GridDimensions(int count)
+    {
+        var cols = Math.Max(1, (int)MathF.Ceiling(MathF.Sqrt(count)));
+        var rows = Math.Max(1, (int)MathF.Ceiling(count / (float)cols));
+        return (cols, rows);
+    }
+
+    public static Rectangle QuadrantAt(Rectangle area, int index, int count)
+    {
+        var (cols, rows) = GridDimensions(count);
+        var cellWidth = area.Width / cols;
+        var cellHeight = area.Height / rows;
+        var col = index % cols;
+        var row = index / cols;
+        return new Rectangle(area.X + col * cellWidth, area.Y + row * cellHeight, cellWidth, cellHeight);
+    }
+
+    public static int? QuadrantHitTest(Rectangle area, Point point, int count)
+    {
+        for (var i = 0; i < count; i++)
+            if (QuadrantAt(area, i, count).Contains(point))
+                return i;
+        return null;
+    }
+
     // outerTransform: whatever transform the caller's own batch was already using (Game1's
     // _renderScale, mapping design-space pixels to the real backbuffer) - needed twice over: the
     // scissor rectangle has to be set in real device pixels regardless of window size/letterboxing,
@@ -49,27 +78,55 @@ public sealed class ExternalCameraPanel
     public void DrawGrid(SpriteBatch spriteBatch, GraphicsDevice device, WorldSnapshot snapshot, Rectangle area,
         Matrix outerTransform, float totalSeconds)
     {
-        var halfWidth = area.Width / 2;
-        var halfHeight = area.Height / 2;
-        for (var i = 0; i < 4; i++)
+        var cameras = snapshot.Cameras;
+        if (cameras.Count == 0)
         {
-            var quadrant = new Rectangle(
-                area.X + (i % 2) * halfWidth, area.Y + (i / 2) * halfHeight, halfWidth, halfHeight);
-            DrawOneCamera(spriteBatch, device, snapshot, quadrant, outerTransform, CameraBaseBearings[i], 0f, totalSeconds, CameraLabels[i], drawFrame: false);
+            DrawNoCamerasInstalled(spriteBatch, area);
+            return;
         }
+
+        for (var i = 0; i < cameras.Count; i++)
+            DrawOneCamera(spriteBatch, device, snapshot, QuadrantAt(area, i, cameras.Count), outerTransform,
+                cameras[i], totalSeconds, Label(cameras, i), drawFrame: false);
     }
 
     public void DrawFullscreen(SpriteBatch spriteBatch, GraphicsDevice device, WorldSnapshot snapshot, Rectangle area,
-        Matrix outerTransform, int cameraIndex, float lookOffsetDegrees, float totalSeconds) =>
-        DrawOneCamera(spriteBatch, device, snapshot, area, outerTransform, CameraBaseBearings[cameraIndex], lookOffsetDegrees, totalSeconds,
-            CameraLabels[cameraIndex], drawFrame: true);
+        Matrix outerTransform, int cameraIndex, float totalSeconds)
+    {
+        var cameras = snapshot.Cameras;
+        if (cameraIndex < 0 || cameraIndex >= cameras.Count)
+            return;
+        DrawOneCamera(spriteBatch, device, snapshot, area, outerTransform, cameras[cameraIndex], totalSeconds,
+            Label(cameras, cameraIndex), drawFrame: true);
+    }
+
+    // "Камера (Нос)" for a lone camera on that side, "Камера (Нос) 2" once a second one shares it -
+    // read straight off MountSide rather than a fixed per-index array, since a hull can carry any
+    // number of cameras on any side (Ship.Scout.cs/Ship.cs/Ship.Cruiser.cs/Ship.Corvette.cs).
+    private static string Label(IReadOnlyList<HullCamera> cameras, int index)
+    {
+        var camera = cameras[index];
+        var sideName = camera.MountSide switch
+        {
+            CameraMountSide.Fore => "Нос",
+            CameraMountSide.Aft => "Корма",
+            CameraMountSide.Port => "Левый борт",
+            _ => "Правый борт",
+        };
+        var sharingTheSide = cameras.Where(c => c.MountSide == camera.MountSide).ToList();
+        var slot = sharingTheSide.FindIndex(c => c.Id == camera.Id) + 1;
+        return sharingTheSide.Count > 1 ? $"Камера ({sideName}) {slot}" : $"Камера ({sideName})";
+    }
 
     private void DrawOneCamera(SpriteBatch spriteBatch, GraphicsDevice device, WorldSnapshot snapshot, Rectangle area,
-        Matrix outerTransform, float baseBearing, float lookOffsetDegrees, float totalSeconds, string label, bool drawFrame)
+        Matrix outerTransform, HullCamera camera, float totalSeconds, string label, bool drawFrame)
     {
+        var mount = HullCameraMount.For(snapshot.Rooms, snapshot.Cameras, camera);
+        var damaged = snapshot.SystemStates.FirstOrDefault(s => s.DeviceId == camera.Id)?.Damaged ?? false;
+
         var rotatedSnapshot = snapshot with
         {
-            ShipField = snapshot.ShipField with { RotationDegrees = snapshot.ShipField.RotationDegrees + baseBearing + lookOffsetDegrees },
+            ShipField = snapshot.ShipField with { RotationDegrees = snapshot.ShipField.RotationDegrees + mount.OutwardDegrees },
         };
         var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);
         var center = new Vector2(area.Center.X, area.Center.Y);
@@ -77,20 +134,89 @@ public sealed class ExternalCameraPanel
             Matrix.CreateTranslation(-center.X, -center.Y, 0f) * Matrix.CreateScale(CameraZoomOut, CameraZoomOut, 1f) *
             Matrix.CreateTranslation(center.X, center.Y, 0f) * outerTransform;
 
+        // Anchored on the mount's own physical position, not the hull centre (ExternalCameraPanel's
+        // own doc comment) - real parallax, same formula Game1.ComputeCamera uses for a manned
+        // turret's muzzle-anchored view.
+        var origin = center - new Vector2(mount.Position.X, mount.Position.Y) * ShipRenderer.PixelsPerUnit;
+
         var previousScissor = device.ScissorRectangle;
         device.ScissorRectangle = DeviceSpaceRect(area, outerTransform, device.Viewport);
         spriteBatch.End();
         spriteBatch.Begin(rasterizerState: new RasterizerState { ScissorTestEnable = true }, transformMatrix: cameraTransform);
 
         spriteBatch.Draw(_pixel, area, new Color(4, 6, 10));
-        _fieldRenderer.Draw(spriteBatch, rotatedSnapshot, center, hullCenter,
-            new Vector2(area.X, area.Y), new Vector2(area.Width, area.Height), totalSeconds);
+        if (!damaged)
+            _fieldRenderer.Draw(spriteBatch, rotatedSnapshot, origin, hullCenter,
+                new Vector2(area.X, area.Y), new Vector2(area.Width, area.Height), totalSeconds);
 
         spriteBatch.End();
         device.ScissorRectangle = previousScissor;
         spriteBatch.Begin(transformMatrix: outerTransform);
 
-        DrawFrame(spriteBatch, area, label, drawFrame);
+        if (damaged)
+            DrawNoSignal(spriteBatch, area, totalSeconds);
+        DrawHullSliver(spriteBatch, area, camera);
+        DrawFrame(spriteBatch, area, label, drawFrame, damaged);
+    }
+
+    // Everything below draws in the caller's own unscaled/unrotated batch (outerTransform only) -
+    // rigidly attached to the camera's own housing rather than part of the simulated scene, so it
+    // never pans or zooms with what the lens is looking at (M48 - "показывает саму себя... в самом
+    // боку экрана").
+
+    // A dark plating strip down one SIDE of the frame, with the lens housing itself overlapping in
+    // from that edge (M48 follow-up - "видно часть корпуса корабля и саму камеру сбоку экрана") -
+    // reads as "this camera is bolted to the hull right here, looking out past its own housing",
+    // without needing to render an actual 3D-consistent slice of the real hull model. Which side
+    // mirrors the camera's own MountSide (Port/Fore hug the left edge, Starboard/Aft the right) so
+    // a grid of several cameras doesn't all lean the same way.
+    private void DrawHullSliver(SpriteBatch spriteBatch, Rectangle area, HullCamera camera)
+    {
+        var onLeft = camera.MountSide is CameraMountSide.Port or CameraMountSide.Fore;
+        var stripWidth = Math.Max(28, area.Width / 7);
+        var strip = new Rectangle(onLeft ? area.X : area.Right - stripWidth, area.Y, stripWidth, area.Height);
+
+        spriteBatch.Draw(_pixel, strip, new Color(22, 24, 28));
+        // A couple of horizontal seams so the strip reads as plating, not a flat panel.
+        for (var i = 1; i < 4; i++)
+        {
+            var y = area.Y + area.Height * i / 4;
+            spriteBatch.Draw(_pixel, new Rectangle(strip.X, y, strip.Width, 2), new Color(46, 50, 56));
+        }
+        var innerEdgeX = onLeft ? strip.Right - 2 : strip.X;
+        spriteBatch.Draw(_pixel, new Rectangle(innerEdgeX, area.Y, 2, area.Height), new Color(70, 76, 84));
+
+        // The camera's own dome, overlapping the strip's inner edge at roughly mid-height - part
+        // hull, part housing, the same silhouette a hull-mounted security camera would actually cast.
+        var lensSize = Math.Max(36, stripWidth);
+        var lensX = onLeft ? strip.Right - lensSize / 3 : strip.X - lensSize * 2 / 3;
+        var lensY = area.Y + area.Height / 2 - lensSize / 2;
+        var lens = new Rectangle(lensX, lensY, lensSize, lensSize);
+        spriteBatch.Draw(_pixel, lens, new Color(14, 15, 17));
+        var glass = new Rectangle(lens.X + 4, lens.Y + 4, lens.Width - 8, lens.Height - 8);
+        spriteBatch.Draw(_pixel, glass, new Color(38, 78, 64));
+        var highlight = new Rectangle(glass.X + 3, glass.Y + 3, Math.Max(2, glass.Width / 3), Math.Max(2, glass.Height / 3));
+        spriteBatch.Draw(_pixel, highlight, new Color(130, 210, 180) * 0.65f);
+    }
+
+    private void DrawNoSignal(SpriteBatch spriteBatch, Rectangle area, float totalSeconds)
+    {
+        spriteBatch.Draw(_pixel, area, Color.Black);
+        // A slow flicker rather than a static fill - reads as "dead", not just "black".
+        var flicker = 0.5f + 0.5f * MathF.Sin(totalSeconds * 6f);
+        var text = "НЕТ СИГНАЛА";
+        var size = _font.MeasureString(text) * 0.6f;
+        spriteBatch.DrawString(_font, text, new Vector2(area.Center.X - size.X / 2, area.Center.Y - size.Y / 2),
+            Color.DarkRed * (0.4f + 0.4f * flicker), 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+    }
+
+    private void DrawNoCamerasInstalled(SpriteBatch spriteBatch, Rectangle area)
+    {
+        spriteBatch.Draw(_pixel, area, new Color(10, 10, 12));
+        var text = "НА ЭТОМ КОРПУСЕ НЕТ КАМЕР";
+        var size = _font.MeasureString(text) * 0.55f;
+        spriteBatch.DrawString(_font, text, new Vector2(area.Center.X - size.X / 2, area.Center.Y - size.Y / 2),
+            Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
     }
 
     // ScissorRectangle is always in real backbuffer pixels, unlike every other coordinate this
@@ -109,29 +235,15 @@ public sealed class ExternalCameraPanel
         return new Rectangle(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
     }
 
-    private void DrawFrame(SpriteBatch spriteBatch, Rectangle area, string label, bool thick)
+    private void DrawFrame(SpriteBatch spriteBatch, Rectangle area, string label, bool thick, bool damaged)
     {
         var thickness = thick ? 4 : 2;
-        var color = Color.DarkSlateGray;
+        var color = damaged ? Color.DarkRed : Color.DarkSlateGray;
         spriteBatch.Draw(_pixel, new Rectangle(area.X, area.Y, area.Width, thickness), color);
         spriteBatch.Draw(_pixel, new Rectangle(area.X, area.Bottom - thickness, area.Width, thickness), color);
         spriteBatch.Draw(_pixel, new Rectangle(area.X, area.Y, thickness, area.Height), color);
         spriteBatch.Draw(_pixel, new Rectangle(area.Right - thickness, area.Y, thickness, area.Height), color);
-        spriteBatch.DrawString(_font, label, new Vector2(area.X + 6, area.Y + 4), Color.LimeGreen, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-    }
-
-    public static Rectangle QuadrantAt(Rectangle area, int index)
-    {
-        var halfWidth = area.Width / 2;
-        var halfHeight = area.Height / 2;
-        return new Rectangle(area.X + (index % 2) * halfWidth, area.Y + (index / 2) * halfHeight, halfWidth, halfHeight);
-    }
-
-    public static int? QuadrantHitTest(Rectangle area, Point point)
-    {
-        for (var i = 0; i < 4; i++)
-            if (QuadrantAt(area, i).Contains(point))
-                return i;
-        return null;
+        spriteBatch.DrawString(_font, label, new Vector2(area.X + 6, area.Y + 4),
+            damaged ? Color.OrangeRed : Color.LimeGreen, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
     }
 }

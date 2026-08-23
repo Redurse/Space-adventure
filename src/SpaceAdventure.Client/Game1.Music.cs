@@ -8,14 +8,17 @@ public partial class Game1
 {
     private GameMusic? _music;
 
-    private void UpdateGameMusic(double nowSeconds)
+    // suppressed is true whenever the ship's jukebox (Game1.Jukebox.cs) is actually on - the
+    // ambient bag simply stays stopped rather than trying to duck under or interleave with it,
+    // since MediaPlayer is one global channel and the jukebox is the thing the crew asked for.
+    private void UpdateGameMusic(double nowSeconds, bool suppressed)
     {
         if (_music is null)
             return;
 
         // The menu keeps its quiet. Stop is idempotent, so calling it every frame out here costs a
         // branch and saves having to find every path back to the main menu.
-        if (!_sessionStarted)
+        if (!_sessionStarted || suppressed)
         {
             _music.Stop();
             return;

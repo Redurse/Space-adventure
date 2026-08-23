@@ -62,8 +62,10 @@ public sealed partial class World
         {
             // Scales with how badly each block is actually hurt, not just whether it's fully
             // breached - a wall dented but not yet through leaks a little, one punched clean
-            // through leaks the full rate, and everything in between is a straight ramp.
-            var leak = Ship.WallBlocks.Where(b => b.RoomId == room.Id)
+            // through leaks the full rate, and everything in between is a straight ramp. Interior
+            // bulkheads (WallBlock.IsInterior) are excluded - both sides are already pressurized,
+            // there's nothing to decompress into.
+            var leak = Ship.WallBlocks.Where(b => b.RoomId == room.Id && !b.IsInterior)
                 .Sum(b => OxygenLeakPerBreachPerSecond * (1f - WallBlockHp(b.Id) / WallBlockMaxHp));
             var oxygen = _roomOxygen[room.Id] - leak * (float)deltaSeconds;
             _roomOxygen[room.Id] = Math.Clamp(oxygen, 0f, FullOxygen);

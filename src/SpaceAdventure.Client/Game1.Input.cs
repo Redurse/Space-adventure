@@ -547,6 +547,16 @@ public partial class Game1
         if (!clicked)
             return (-1, -1, null, -1, false, false, null, false, null);
 
+        // The dev cheat panel (Ё key) sits over everything else too, same reasoning as the pause
+        // menu right below - its one button is read via a side-effect field (Game1.cs's Update)
+        // rather than this tuple, since it's not part of the game's own action set.
+        if (_cheatPanelOpen)
+        {
+            if (CheatPanel.GetSpawnEnemyButtonRect(CheatPanelOrigin).Contains(_designMouse))
+                _debugSpawnEnemyClickedThisFrame = true;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
         // The pause menu (Game1.Update's Esc handling) sits over literally everything else, so its
         // own 4 buttons are checked before even the turret early-return below. "Главное меню" only
         // sets a flag here rather than tearing the session down on the spot - this method runs in
@@ -605,13 +615,11 @@ public partial class Game1
         }
         if (_externalCameraMode && _externalCameraFullscreenIndex is null)
         {
-            var cameraArea = new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y);
-            if (ExternalCameraPanel.QuadrantHitTest(cameraArea, _designMouse) is { } quadrant)
-            {
+            // Must match Game1.cs's own cameraArea (the full design canvas, M48 follow-up) or a
+            // click would hit-test against a rect smaller than what's actually drawn on screen.
+            var cameraArea = new Rectangle(0, 0, DesignWidth, DesignHeight);
+            if (ExternalCameraPanel.QuadrantHitTest(cameraArea, _designMouse, snapshot?.Cameras.Count ?? 0) is { } quadrant)
                 _externalCameraFullscreenIndex = quadrant;
-                _cameraLookOffsetDegrees = 0f;
-                _cameraLookLastMouse = null;
-            }
             return (-1, -1, null, -1, false, false, null, false, null);
         }
         if (_infoPanelOpen)
@@ -626,11 +634,11 @@ public partial class Game1
         }
         if (_shipEditorOpen && snapshot is not null)
         {
-            for (var i = 0; i < snapshot.Components.Count; i++)
+            for (var i = 0; i < snapshot.Wiring.Components.Count; i++)
             {
                 if (!ShipEditorPanel.GetRowRect(i, ShipEditorPanelOrigin).Contains(_designMouse))
                     continue;
-                _shipEditorSelectedComponentId = snapshot.Components[i].Id;
+                _shipEditorSelectedComponentId = snapshot.Wiring.Components[i].Id;
                 return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
@@ -707,13 +715,11 @@ public partial class Game1
         // power channel the same way ComputeShipPowerMood already reads it for the ship's own
         // lamps; a click while unpowered is a no-op rather than opening onto a view that would
         // just read as broken.
-        if (me.IsAtHelm && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f &&
+        if (me.IsAtHelm && snapshot.Cameras.Count > 0 && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f &&
             HelmButtonsWidget.GetCamerasButtonRect(_helmWidgetPosition).Contains(_designMouse))
         {
             _externalCameraMode = !_externalCameraMode;
             _externalCameraFullscreenIndex = null;
-            _cameraLookOffsetDegrees = 0f;
-            _cameraLookLastMouse = null;
             if (_externalCameraMode)
             {
                 _openBlock = ClickTarget.None;
@@ -747,14 +753,25 @@ public partial class Game1
             _shipSearchFocused = false;
         }
 
-        // The scanner's own "Скан" button (M47 follow-up) - console-operator only, same as the
-        // button's own drawing gate (GalaxyMapPanel.Draw's pilotView check never even shows it at
-        // the helm), and a no-op click while still on cooldown.
-        if (_openBlock.Kind == BlockKind.Navigation && me.ScannerCooldownRemaining <= 0f &&
-            GalaxyMapPanel.GetScanButtonRect(GalaxyMapPanelOrigin).Contains(_designMouse))
+        // The scanner console's own toggle switch (M48 follow-up - "радар приводится в действие
+        // переключением рычажка") - console-operator only, replaces the old separate "Скан" button:
+        // clicking either half both selects that mode (sent every frame as
+        // ClientCommand.RequestedScannerMode below) and fires the pulse in it, a no-op server-side
+        // while still on cooldown (World.Scanner.cs) same as the old button already was.
+        if (_openBlock.Kind == BlockKind.Navigation)
         {
-            _pendingScannerPing = true;
-            return (-1, -1, null, -1, false, false, null, false, null);
+            if (ScannerModeWidget.GetDirectionalRowRect(_scannerWidgetPosition).Contains(_designMouse))
+            {
+                _requestedScannerMode = ScannerMode.Directional;
+                _pendingScannerPing = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+            if (ScannerModeWidget.GetCircularRowRect(_scannerWidgetPosition).Contains(_designMouse))
+            {
+                _requestedScannerMode = ScannerMode.Circular;
+                _pendingScannerPing = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
         }
 
         if (_openBlock.Kind == BlockKind.Reactor)
@@ -763,6 +780,35 @@ public partial class Game1
             {
                 if (ReactorPanel.GetSlotRect(i, PowerPanelOrigin).Contains(_designMouse))
                     return (-1, i, null, -1, false, false, null, false, null);
+            }
+        }
+
+        if (_openBlock.Kind == BlockKind.Jukebox)
+        {
+            if (JukeboxPanel.GetCheckboxRect(PowerPanelOrigin).Contains(_designMouse))
+            {
+                _pendingJukeboxToggle = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+            if (JukeboxPanel.GetTrackPrevRect(PowerPanelOrigin).Contains(_designMouse))
+            {
+                _pendingJukeboxPrevTrack = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+            if (JukeboxPanel.GetTrackNextRect(PowerPanelOrigin).Contains(_designMouse))
+            {
+                _pendingJukeboxNextTrack = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+            if (JukeboxPanel.GetVolumeDownRect(PowerPanelOrigin).Contains(_designMouse))
+            {
+                _pendingJukeboxVolumeDown = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+            if (JukeboxPanel.GetVolumeUpRect(PowerPanelOrigin).Contains(_designMouse))
+            {
+                _pendingJukeboxVolumeUp = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
 
@@ -928,10 +974,17 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
+        if (snapshot.Jukebox is { } jukebox && NearEnough(jukebox.Block.Position) &&
+            ShipRenderer.GetBlockRect(jukebox.Block.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
+        {
+            _openBlock = _openBlock.Kind == BlockKind.Jukebox ? ClickTarget.None : ClickTarget.Jukebox;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
         if (NearEnough(snapshot.DistributionBlock.Position) &&
             ShipRenderer.GetBlockRect(snapshot.DistributionBlock.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
         {
-            if (HoldingScrewdriver() && snapshot.Components.FirstOrDefault(c => c.Kind == ComponentKind.Distribution) is { } distribution)
+            if (HoldingScrewdriver() && snapshot.Wiring.Components.FirstOrDefault(c => c.Kind == ComponentKind.Distribution) is { } distribution)
                 _openBlock = ToggleConnections(distribution.Id);
             else
                 _openBlock = _openBlock.Kind == BlockKind.Distribution ? ClickTarget.None : ClickTarget.Distribution;
@@ -1000,7 +1053,7 @@ public partial class Game1
         // normal panel otherwise.
         if (HoldingScrewdriver())
         {
-            foreach (var junction in snapshot.Components.Where(c => c.Kind == ComponentKind.Junction))
+            foreach (var junction in snapshot.Wiring.Components.Where(c => c.Kind == ComponentKind.Junction))
             {
                 if (!NearEnough(junction.Position) || !ShipRenderer.GetBlockRect(junction.Position, ShipRenderer.NormalBlockSize, origin).Contains(_designMouse))
                     continue;
@@ -1050,7 +1103,7 @@ public partial class Game1
             {
                 if (!rect.Contains(_designMouse))
                     continue;
-                var owner = snapshot.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
+                var owner = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
                 if (owner is null || !NearEnough(owner.Position))
                     continue;
                 _pendingPinInteract = pin;
@@ -1059,7 +1112,7 @@ public partial class Game1
         }
         else
         {
-            foreach (var mount in snapshot.ComponentMounts)
+            foreach (var mount in snapshot.Wiring.ComponentMounts)
             {
                 if (!NearEnough(mount.Position) || !ComponentRenderer.GetMountBodyRect(mount, origin).Contains(_designMouse))
                     continue;
@@ -1067,7 +1120,7 @@ public partial class Game1
                 // Screwdriver on an occupied mount opens Connections locally instead of sending the
                 // interact command - it's a pure client-side view, no server round-trip needed, and
                 // it must not also fire the wrench-only uninstall on the server.
-                var installedId = snapshot.ComponentMountStates.FirstOrDefault(s => s.MountId == mount.Id)?.InstalledComponentId;
+                var installedId = snapshot.Wiring.ComponentMountStates.FirstOrDefault(s => s.MountId == mount.Id)?.InstalledComponentId;
                 if (HoldingScrewdriver() && installedId is not null)
                     _openBlock = ToggleConnections(installedId);
                 else
@@ -1155,6 +1208,15 @@ public partial class Game1
             _pendingWireBendAt = new Vec2((_designMouse.X - origin.X) / ShipRenderer.PixelsPerUnit, (_designMouse.Y - origin.Y) / ShipRenderer.PixelsPerUnit);
             return (-1, -1, null, -1, false, false, null, false, null);
         }
+
+        // The scanner console isn't a small fixed-size panel like the ones below - it takes over
+        // almost the whole screen and every click on it is meaningful (aim the beam, drop a marker,
+        // pan the view), so "click landed outside CurrentPanelHousing()" is meaningless here
+        // (CurrentPanelSize has no case for it, so it would fall back to the tiny centred Standard
+        // box and read nearly every click on the map as "clicked away"). Matches
+        // CloseBlockIfWalkedAway's own explicit Navigation exclusion - Esc is the one way out.
+        if (_openBlock.Kind == BlockKind.Navigation)
+            return (-1, -1, null, -1, false, false, null, false, null);
 
         // A click that landed on the open panel but hit none of its controls still belongs to the
         // panel - pressing bare housing metal is not "clicked away". Only a click genuinely outside
@@ -1248,11 +1310,12 @@ public partial class Game1
             BlockKind.Distribution => snapshot.DistributionBlock.Position,
             BlockKind.Battery => snapshot.BatteryBlock.Position,
             BlockKind.Navigation => snapshot.NavigationConsole.Position,
+            BlockKind.Jukebox => snapshot.Jukebox?.Block.Position ?? myPosition,
             BlockKind.Rack => _openBlock.TargetComponentId is { } rackId
                 ? snapshot.StorageRacks.FirstOrDefault(r => r.Id == rackId)?.Position ?? myPosition
                 : myPosition,
             BlockKind.Connections => _openBlock.TargetComponentId is { } targetId
-                ? snapshot.Components.FirstOrDefault(c => c.Id == targetId)?.Position ?? myPosition
+                ? snapshot.Wiring.Components.FirstOrDefault(c => c.Id == targetId)?.Position ?? myPosition
                 : myPosition,
             // Whichever of this system's devices is actually nearest, not always the first one -
             // a system with several identical devices (Engine/Shields) opens the exact same panel
@@ -1287,7 +1350,7 @@ public partial class Game1
             {
                 if (!rect.Contains(_designMouse))
                     continue;
-                var owner = snapshot.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
+                var owner = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == pin.ComponentId);
                 if (owner is not null && NearEnough(owner.Position))
                     return pin;
             }
@@ -1312,12 +1375,12 @@ public partial class Game1
             return null;
         }
 
-        foreach (var mount in snapshot.ComponentMounts)
+        foreach (var mount in snapshot.Wiring.ComponentMounts)
         {
             if (!NearEnough(mount.Position) || !ComponentRenderer.GetMountBodyRect(mount, origin).Contains(_designMouse))
                 continue;
 
-            var installedId = snapshot.ComponentMountStates.FirstOrDefault(s => s.MountId == mount.Id)?.InstalledComponentId;
+            var installedId = snapshot.Wiring.ComponentMountStates.FirstOrDefault(s => s.MountId == mount.Id)?.InstalledComponentId;
             if (installedId is null)
             {
                 var heldKind = HeldItemTypes(me.Inventory).Select(ComponentDefinitions.ComponentKindFor).FirstOrDefault(k => k is not null);
@@ -1326,7 +1389,7 @@ public partial class Game1
                     : "Нужен компонент в руке";
             }
 
-            var installed = snapshot.Components.FirstOrDefault(c => c.Id == installedId);
+            var installed = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == installedId);
             if (installed is null)
                 return null;
 
@@ -1441,11 +1504,11 @@ public partial class Game1
 
         var myPosition = new Vec2(me.X, me.Y);
         var nearTurret = snapshot.Turrets.Any(t => (t.PeriscopePosition - myPosition).Length() < TurretInteractionRadius);
-        var nearBallisticTurret = snapshot.Turrets.Any(t =>
-            t.WeaponType == TurretWeaponType.Ballistic && (t.PeriscopePosition - myPosition).Length() < TurretInteractionRadius);
+        var nearAmmoTurret = snapshot.Turrets.Any(t =>
+            t.WeaponType != TurretWeaponType.Laser && (t.PeriscopePosition - myPosition).Length() < TurretInteractionRadius);
 
         if (me.CarryingAmmoCrate)
-            return nearBallisticTurret ? "[E] зарядить орудие" : "Несёте ящик патронов к орудию";
+            return nearAmmoTurret ? "[E] зарядить орудие" : "Несёте ящик патронов к орудию";
 
         var nearStorage = snapshot.AmmoStorages.FirstOrDefault(s => (s.Position - myPosition).Length() < TurretInteractionRadius);
         if (nearStorage is not null)
@@ -1491,7 +1554,7 @@ public partial class Game1
                 : "Нужен гаечный ключ или отвёртка в руке";
         }
 
-        var nearJunction = snapshot.Components.FirstOrDefault(c =>
+        var nearJunction = snapshot.Wiring.Components.FirstOrDefault(c =>
             c.Kind == ComponentKind.Junction && (c.Position - myPosition).Length() < TurretInteractionRadius);
         if (nearJunction is not null)
         {

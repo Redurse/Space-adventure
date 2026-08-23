@@ -12,14 +12,34 @@ namespace SpaceAdventure.Client.Rendering;
 public sealed class ShipRenderer
 {
     public const float PixelsPerUnit = 48f;
-    private const float CharacterDiameter = 0.7f; // world units
+    // Doubled on request, from 1.0.
+    //
+    // Worth knowing what this crosses: the collision clearance is RoomLayout.CharacterRadius, 0.7
+    // units or 33.6 pixels, and that has not moved. At a drawn diameter of 2.0 the figure's own
+    // half-width is 48 pixels against those 33.6, so a crewman standing against a bulkhead now
+    // overlaps it by about fourteen pixels instead of clearing it. Purely a drawing matter - where
+    // anyone can walk is unchanged - but if the overlap reads badly the fix is the collision
+    // radius, not this number.
+    internal const float CharacterDiameter = 2.0f; // world units - the footprint labels sit against
+
+    // How tall the drawn figure is, separate from the footprint above because the sprite is a person
+    // standing up rather than a disc seen from overhead.
+    //
+    // Halved from 2.5 on request: sixty pixels tall.
+    //
+    // Worth knowing, because it costs something: the figure is forty art rows, so sixty pixels is
+    // one and a half screen pixels per row - not a whole number, so the single-pixel details (the
+    // eyes, the seams between the limbs) land between pixels and soften. The nearest sizes that
+    // stay perfectly crisp are 80px, which is two rows to the pixel, and 40px, which is one. This
+    // is the size that was asked for; 80 is the one notch up that stays sharp.
+    internal const float CharacterHeight = 1.25f;
 
     // Size tiers requested for the power grid blocks: reactor/engine read as the biggest,
     // fixed installations; the distribution block is noticeably bigger than a plain system
     // block but still smaller than those two.
-    public const int NormalBlockSize = 20;
-    public const int MediumBlockSize = 28;
-    public const int BigBlockSize = 36;
+    public const int NormalBlockSize = 24;
+    public const int MediumBlockSize = 32;
+    public const int BigBlockSize = 40;
 
     // Bulkhead slab, in screen pixels, centred on the room boundary. Deliberately narrower than a
     // door's 1-unit (48px) span so a doorway still cuts cleanly through it, and narrower than twice
@@ -29,7 +49,6 @@ public sealed class ShipRenderer
     private const int RibSpacing = 26;
 
     private readonly Texture2D _pixel;
-    private readonly Texture2D _floorPlate;
     private readonly Texture2D _wallPlate;
     private readonly Texture2D[] _hullPlates;
     private readonly Texture2D _devicePlate;
@@ -42,17 +61,31 @@ public sealed class ShipRenderer
     // worldViewport: the same rect Game1's WorldViewportOrigin/WorldViewportSize describe - passed
     // in rather than duplicated here so the starfield always fills exactly the area the ship is
     // actually drawn into, not a guess at it.
+    private readonly DeviceSkin _deviceSkin;
+    private readonly TurretSkin _turretSkin;
+
+    // One set of plates per deck kind, baked at load. Three kinds times six variants is eighteen
+    // 48px textures, which is nothing, and it saves the whole floor being generated per frame.
+    private readonly Dictionary<DeckPlates.Deck, Texture2D[]> _deckPlates = new();
+    private readonly Texture2D _deckGrime;
+    private readonly CrewSkin _crewSkin;
+
     public ShipRenderer(GraphicsDevice graphicsDevice, SpriteFont font, Rectangle worldViewport)
     {
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
-        _floorPlate = TileTextures.CreateFloorPlate(graphicsDevice);
         _wallPlate = TileTextures.CreateWallPlate(graphicsDevice);
         _hullPlates = TileTextures.CreateHullPlates(graphicsDevice);
         _devicePlate = TileTextures.CreateDevicePlate(graphicsDevice);
         _floorNormals = TileTextures.CreateFloorNormals(graphicsDevice);
         _hullNormals = TileTextures.CreateHullNormals(graphicsDevice);
         _faceShade = TileTextures.CreateFaceShade(graphicsDevice);
+        _deviceSkin = new DeviceSkin(graphicsDevice);
+        _turretSkin = new TurretSkin(graphicsDevice);
+        foreach (var deck in Enum.GetValues<DeckPlates.Deck>())
+            _deckPlates[deck] = DeckPlates.Create(graphicsDevice, deck);
+        _deckGrime = DeckPlates.CreateGrime(graphicsDevice);
+        _crewSkin = new CrewSkin(graphicsDevice);
         _font = font;
         _starfield = new Starfield(_pixel, worldViewport);
     }
@@ -61,8 +94,11 @@ public sealed class ShipRenderer
     // actually rendered.
     public static Rectangle GetBlockRect(Vec2 worldPosition, int size, Vector2 origin)
     {
-        var center = origin + new Vector2(worldPosition.X, worldPosition.Y) * PixelsPerUnit;
-        return new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
+        // Truncated the same way GetRoomRect is, and for the same reason: rounding the sum lets a
+        // device drift a pixel back and forth against the deck it is bolted to as the camera moves.
+        var centerX = (int)origin.X + (int)(worldPosition.X * PixelsPerUnit);
+        var centerY = (int)origin.Y + (int)(worldPosition.Y * PixelsPerUnit);
+        return new Rectangle(centerX - size / 2, centerY - size / 2, size, size);
     }
 
     // The reactor's 3 physical levers (light / reactor power / door lock — ReactorLeverState),
@@ -177,6 +213,10 @@ public sealed class ShipRenderer
 
         DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.Rooms.Select(r => r.Id), origin, totalSeconds);
 
+        // A console is dark when the ship cannot power it: reactor down and batteries flat. Room
+        // lighting dims the whole compartment separately (RoomLighting) - this is the device's own
+        // screen going out, which is what actually reads as the ship being dead.
+        var shipPowered = snapshot.Power.ReactorOutput > 0.01f || snapshot.Power.BatteryCharge > 0.01f;
         foreach (var device in snapshot.SystemDevices)
         {
             // Match by DeviceId, not System — Shields has two separate physical generators
@@ -184,13 +224,19 @@ public sealed class ShipRenderer
             var damaged = snapshot.SystemStates.FirstOrDefault(s => s.DeviceId == device.Id)?.Damaged ?? false;
             var isOpen = openBlock.Kind == BlockKind.System && openBlock.System == device.System;
             var size = (int)((device.System == PowerSystemId.Engine ? BigBlockSize : NormalBlockSize) * device.SizeScale);
-            DrawSystemDevice(spriteBatch, device, damaged, isOpen, size, origin);
+            DrawSystemDevice(spriteBatch, device, damaged, isOpen, size, origin, shipPowered);
         }
 
-        // A console is dark when the ship cannot power it: reactor down and batteries flat. Room
-        // lighting dims the whole compartment separately (RoomLighting) - this is the device own
-        // screen going out, which is what actually reads as the ship being dead.
-        var shipPowered = snapshot.Power.ReactorOutput > 0.01f || snapshot.Power.BatteryCharge > 0.01f;
+        // Hull cameras (M48) aren't ShipSystemDevices (WireGraphFactory's own comment explains why -
+        // TestRunner.Mining.cs's ExpectedSystemDeviceIds asserts an exact 7-id set per hull), so they
+        // get their own small drawing pass instead of joining the loop above - same visual language,
+        // no click-to-open System panel behind it since there's nothing to open.
+        foreach (var camera in snapshot.Cameras)
+        {
+            var camDamaged = snapshot.SystemStates.FirstOrDefault(s => s.DeviceId == camera.Id)?.Damaged ?? false;
+            DrawCameraJunctionBox(spriteBatch, camera, camDamaged, origin, shipPowered);
+        }
+
         DrawReactorBlock(spriteBatch, snapshot.ReactorBlock, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds);
         DrawDistributionBlock(spriteBatch, snapshot.DistributionBlock, openBlock.Kind == BlockKind.Distribution, origin, shipPowered);
         DrawReactorTrunkWires(spriteBatch,
@@ -209,6 +255,8 @@ public sealed class ShipRenderer
         var anyoneAtHelm = snapshot.Characters.Any(c => c.IsAtHelm);
         DrawHelmConsole(spriteBatch, snapshot.HelmConsole, anyoneAtHelm, origin, shipPowered);
         DrawCardTable(spriteBatch, snapshot.CardTable, snapshot.CardGame is not null, origin);
+        if (snapshot.Jukebox is { } jukebox)
+            DrawJukebox(spriteBatch, jukebox, openBlock.Kind == BlockKind.Jukebox, origin);
 
         foreach (var turret in snapshot.Turrets)
         {
@@ -362,6 +410,46 @@ public sealed class ShipRenderer
     // A small dark backing sized to the text, drawn just under it - keeps a label legible over
     // whatever glow/screen/texture happens to sit behind it, rather than tuning every glow's own
     // brightness down to the point of looking dead just to keep text readable on top of it.
+    // A device's baked face, plus the two things that have no business being baked into it: the
+    // outline, which says whether this machine's panel is currently open, and the drop shadow that
+    // sits it on the deck rather than on top of the picture.
+    private void DrawDeviceFace(SpriteBatch spriteBatch, Rectangle rect, DeviceSkin.Face face, bool lit,
+        Color borderColor, float borderThickness)
+    {
+        spriteBatch.Draw(_deviceSkin.Get(face, rect.Width, lit), rect, Color.White);
+
+        var chamfer = Math.Max(2, Math.Min(rect.Width, rect.Height) / 6);
+        Span<Vector2> vertices = stackalloc Vector2[]
+        {
+            new(rect.X + chamfer, rect.Y), new(rect.Right - chamfer, rect.Y),
+            new(rect.Right, rect.Y + chamfer), new(rect.Right, rect.Bottom - chamfer),
+            new(rect.Right - chamfer, rect.Bottom), new(rect.X + chamfer, rect.Bottom),
+            new(rect.X, rect.Bottom - chamfer), new(rect.X, rect.Y + chamfer),
+        };
+        for (var i = 0; i < vertices.Length; i++)
+            HudIcons.DrawLine(spriteBatch, _pixel, vertices[i], vertices[(i + 1) % vertices.Length], borderColor, borderThickness);
+
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X + chamfer, rect.Bottom, rect.Width - chamfer * 2, 2), Color.Black * 0.28f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.Right, rect.Y + chamfer, 2, rect.Height - chamfer * 2), Color.Black * 0.28f);
+    }
+
+    // A device's name, above the machine rather than painted across it.
+    //
+    // On the face it fought with the hardware: the painted band, the dials and the text all wanted
+    // the same few pixels, and on a 24px device the dark backing plate alone covered a third of the
+    // face. Moving it off also frees the name from having to fit - which is why these went from
+    // "O2", "Э", "Б" to the actual words. A single letter is an abbreviation the player has to
+    // learn; a word is just the name of the thing.
+    private void DrawDeviceLabel(SpriteBatch spriteBatch, Rectangle rect, string text, float scale = 0.5f)
+    {
+        var size = _font.MeasureString(text) * scale;
+        // Six pixels of clearance, which also steps over a console's hood - that sits three pixels
+        // proud of the plate and is four deep, so anything tighter would have the name resting on it.
+        var position = new Vector2(rect.Center.X - size.X / 2f, rect.Y - size.Y - 6f);
+        DrawLabelBacking(spriteBatch, text, position, scale);
+        spriteBatch.DrawString(_font, text, position, Color.White, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+    }
+
     private void DrawLabelBacking(SpriteBatch spriteBatch, string text, Vector2 position, float scale)
     {
         var size = _font.MeasureString(text) * scale;
@@ -533,8 +621,7 @@ public sealed class ShipRenderer
     {
         var center = origin + new Vector2(locker.X, locker.Y) * PixelsPerUnit;
         var rect = GetBlockRect(locker.Position, NormalBlockSize, origin);
-        DrawChamferedHousing(spriteBatch, rect, Color.SlateGray * 0.7f, Color.LightSteelBlue, 1);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - 1, rect.Y + 2, 2, rect.Height - 4), Color.LightSteelBlue * 0.6f);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Locker, hasSuit, Color.LightSteelBlue, 1);
 
         const int lightSize = 4;
         var lightColor = hasSuit ? Color.CadetBlue : new Color(60, 70, 68);
@@ -574,21 +661,30 @@ public sealed class ShipRenderer
     // Physical, damageable system block (game_design.md section 1) — click it to see its
     // readout. Bigger than the item/tool markers so it reads as ship equipment; Engine gets the
     // "big" tier like the reactor (see Draw()).
-    private void DrawSystemDevice(SpriteBatch spriteBatch, ShipSystemDevice device, bool damaged, bool isOpen, int size, Vector2 origin)
+    private void DrawSystemDevice(SpriteBatch spriteBatch, ShipSystemDevice device, bool damaged, bool isOpen, int size, Vector2 origin, bool powered)
     {
         var rect = GetBlockRect(device.Position, size, origin);
         var center = new Vector2(rect.Center.X, rect.Center.Y);
 
-        DrawChamferedHousing(spriteBatch, rect, damaged ? new Color(74, 58, 52) : Color.SlateGray * 0.8f, damaged ? Color.Red : isOpen ? Color.Gold : Color.LightSteelBlue, isOpen ? 3 : 2);
-        DrawVents(spriteBatch, rect, 2);
+        // Each system carries its own hardware rather than the same box in a different colour:
+        // dials and pipework for life support, an intake for the engines, an emitter for the
+        // shields, a capacitor bank for the weapon charger. The machinery is what tells them apart;
+        // the painted band only confirms it.
+        var face = device.System switch
+        {
+            PowerSystemId.Oxygen => DeviceSkin.Face.Oxygen,
+            PowerSystemId.Engine => DeviceSkin.Face.Engine,
+            PowerSystemId.Shields => DeviceSkin.Face.Shields,
+            PowerSystemId.WeaponCharger => DeviceSkin.Face.Weapons,
+            _ => DeviceSkin.Face.Auxiliary,
+        };
+        DrawDeviceFace(spriteBatch, rect, face, powered && !damaged,
+            damaged ? Color.Red : isOpen ? Color.Gold : Color.LightSteelBlue, isOpen ? 3 : 2);
         if (damaged)
             DrawScorch(spriteBatch, rect);
         if (damaged)
             DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Bottom - 3, rect.Width, 3), horizontal: true);
-        var label = SystemShortLabel(device.System);
-        var labelPos = new Vector2(rect.X + 4, rect.Y + 4);
-        DrawLabelBacking(spriteBatch, label, labelPos, 0.55f);
-        spriteBatch.DrawString(_font, label, labelPos, Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        DrawDeviceLabel(spriteBatch, rect, SystemLabel(device.System));
 
         if (damaged)
             spriteBatch.DrawString(_font, "!", center + new Vector2(size / 2f - 2, -size), Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
@@ -599,6 +695,25 @@ public sealed class ShipRenderer
     // levers from the Hullwright's Bench concept pass (light / reactor power / door lock) and a
     // small cooling turbine that visibly spins while running — reactor.CurrentOutput already folds
     // in the emergency-shutdown lever (Reactor.cs), so every glow/spin here just follows it.
+    // A plain junction box for a hull camera's own wiring/repair point - the Auxiliary face and
+    // "Кам." label are the only things distinguishing it from the ship's own lighting box next
+    // door, both riding the same Secondary channel (WireGraphFactory).
+    private void DrawCameraJunctionBox(SpriteBatch spriteBatch, HullCamera camera, bool damaged, Vector2 origin, bool powered)
+    {
+        var rect = GetBlockRect(camera.InteriorPosition, NormalBlockSize, origin);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Auxiliary, powered && !damaged,
+            damaged ? Color.Red : Color.LightSteelBlue, 2);
+        if (damaged)
+        {
+            DrawScorch(spriteBatch, rect);
+            DrawHazardStripes(spriteBatch, new Rectangle(rect.X, rect.Bottom - 3, rect.Width, 3), horizontal: true);
+        }
+        DrawDeviceLabel(spriteBatch, rect, "Кам.");
+        if (damaged)
+            spriteBatch.DrawString(_font, "!", new Vector2(rect.Center.X + NormalBlockSize / 2f - 2, rect.Center.Y - NormalBlockSize),
+                Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+    }
+
     private void DrawReactorBlock(SpriteBatch spriteBatch, ReactorBlock block, ReactorState reactor, ReactorLeverState levers, bool isOpen, Vector2 origin, float totalSeconds)
     {
         var rect = GetBlockRect(block.Position, (int)(BigBlockSize * block.SizeScale), origin);
@@ -745,12 +860,8 @@ public sealed class ShipRenderer
     private void DrawDistributionBlock(SpriteBatch spriteBatch, PowerDistributionBlock block, bool isOpen, Vector2 origin, bool powered)
     {
         var rect = GetBlockRect(block.Position, MediumBlockSize, origin);
-        DrawChamferedHousing(spriteBatch, rect, Color.MediumPurple * 0.6f, isOpen ? Color.Gold : Color.Plum, isOpen ? 3 : 2);
-        DrawVents(spriteBatch, rect, 3);
-        DrawScreen(spriteBatch, rect, new Color(120, 90, 220), powered);
-        var distributionLabelPos = new Vector2(rect.X + 6, rect.Y + 6);
-        DrawLabelBacking(spriteBatch, "Э", distributionLabelPos, 0.7f);
-        spriteBatch.DrawString(_font, "Э", distributionLabelPos, Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Distribution, powered, isOpen ? Color.Gold : Color.Plum, isOpen ? 3 : 2);
+        DrawDeviceLabel(spriteBatch, rect, "Щиток");
     }
 
     // Medium — sits next to the distribution block, charge level shown as a bottom-up fill so a
@@ -758,23 +869,29 @@ public sealed class ShipRenderer
     private void DrawBatteryBlock(SpriteBatch spriteBatch, BatteryBlock block, PowerState power, bool isOpen, Vector2 origin, bool powered)
     {
         var rect = GetBlockRect(block.Position, MediumBlockSize, origin);
-        DrawChamferedHousing(spriteBatch, rect, Color.DarkGreen * 0.6f, isOpen ? Color.Gold : Color.LightGreen, isOpen ? 3 : 2);
-        DrawVents(spriteBatch, rect, 2);
-        DrawScreen(spriteBatch, rect, new Color(70, 200, 120), powered);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Battery, powered, isOpen ? Color.Gold : Color.LightGreen, isOpen ? 3 : 2);
 
-        const int margin = 4;
-        var fillArea = new Rectangle(rect.X + margin, rect.Y + margin, rect.Width - margin * 2, rect.Height - margin * 2);
+        // The charge column, live, in the recess the baked face leaves open for it. Segments rather
+        // than one continuous bar: a length has to be measured against something, while six lit
+        // cells out of six can simply be counted.
+        var u = rect.Width / 40f;
+        var column = new Rectangle(rect.X + (int)(28 * u), rect.Y + (int)(17 * u),
+            Math.Max(3, (int)(5 * u)), Math.Max(6, (int)(18 * u)));
         var fraction = power.BatteryCapacity > 0 ? MathHelper.Clamp(power.BatteryCharge / power.BatteryCapacity, 0f, 1f) : 0f;
-        var litHeight = (int)(fillArea.Height * fraction);
-        if (litHeight > 0)
+        const int segments = 6;
+        var litCells = (int)MathF.Round(fraction * segments);
+        var segmentHeight = Math.Max(1, column.Height / segments - 1);
+        for (var i = 0; i < segments; i++)
         {
-            var fill = fraction > 0.5f ? Color.YellowGreen : fraction > 0.2f ? Color.Orange : Color.OrangeRed;
-            spriteBatch.Draw(_pixel, new Rectangle(fillArea.X, fillArea.Bottom - litHeight, fillArea.Width, litHeight), fill);
+            var colour = i >= litCells ? new Color(48, 52, 58)
+                : fraction > 0.5f ? new Color(120, 228, 140)
+                : fraction > 0.2f ? new Color(232, 186, 80)
+                : new Color(226, 96, 70);
+            spriteBatch.Draw(_pixel, new Rectangle(column.X + 1,
+                column.Bottom - 1 - (i + 1) * (segmentHeight + 1), column.Width - 2, segmentHeight), colour);
         }
 
-        var batteryLabelPos = new Vector2(rect.X + 6, rect.Y + 6);
-        DrawLabelBacking(spriteBatch, "Б", batteryLabelPos, 0.7f);
-        spriteBatch.DrawString(_font, "Б", batteryLabelPos, Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        DrawDeviceLabel(spriteBatch, rect, "Батарея");
     }
 
     // Cargo shelving (game_design.md section 13) — click it to open its 30 slots. Shows how full it
@@ -786,19 +903,24 @@ public sealed class ShipRenderer
     private void DrawStorageRack(SpriteBatch spriteBatch, StorageRack rack, int offset, WorldSnapshot snapshot, bool isOpen, Vector2 origin)
     {
         var rect = GetBlockRect(rack.Position, MediumBlockSize, origin);
-        DrawChamferedHousing(spriteBatch, rect, Color.Sienna * 0.6f, isOpen ? Color.Gold : Color.Peru, isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Rack, true, isOpen ? Color.Gold : Color.Peru, isOpen ? 3 : 2);
         DrawHandle(spriteBatch, rect);
 
         var used = 0;
         for (var i = 0; i < StorageRack.Capacity; i++)
             if (offset + i < snapshot.RackSlots.Count && snapshot.RackSlots[offset + i] is not null)
                 used++;
+        // How full it is, without a second readout bolted on. The baked face already has crates on
+        // every shelf, so an empty one is that shelf with the light taken off it - a half-loaded
+        // rack stays the same piece of furniture instead of becoming a different drawing.
         const int shelves = 3;
+        var shelfU = rect.Width / 40f;
         for (var i = 0; i < shelves; i++)
         {
-            var filled = used > i * StorageRack.Capacity / shelves;
-            var y = rect.Y + 6 + i * 7;
-            spriteBatch.Draw(_pixel, new Rectangle(rect.X + 5, y, rect.Width - 10, 3), filled ? Color.Khaki : Color.Black * 0.5f);
+            if (used > i * StorageRack.Capacity / shelves)
+                continue;
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X + (int)(7 * shelfU), rect.Y + (int)((12 + i * 8) * shelfU),
+                (int)(26 * shelfU), Math.Max(2, (int)(7 * shelfU))), Color.Black * 0.62f);
         }
     }
 
@@ -806,12 +928,9 @@ public sealed class ShipRenderer
     private void DrawNavigationConsole(SpriteBatch spriteBatch, NavigationConsole console, bool isOpen, Vector2 origin, bool powered)
     {
         var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
-        DrawChamferedHousing(spriteBatch, rect, Color.Teal * 0.6f, isOpen ? Color.Gold : Color.LightSeaGreen, isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Navigation, powered, isOpen ? Color.Gold : Color.LightSeaGreen, isOpen ? 3 : 2);
         DrawHood(spriteBatch, rect);
-        DrawScreen(spriteBatch, rect, new Color(70, 200, 210), powered);
-        var navigationLabelPos = new Vector2(rect.X + 1, rect.Y + 7);
-        DrawLabelBacking(spriteBatch, "Сканер", navigationLabelPos, 0.5f);
-        spriteBatch.DrawString(_font, "Сканер", navigationLabelPos, Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        DrawDeviceLabel(spriteBatch, rect, "Сканер");
     }
 
 
@@ -820,12 +939,9 @@ public sealed class ShipRenderer
     private void DrawHelmConsole(SpriteBatch spriteBatch, HelmConsole console, bool isOpen, Vector2 origin, bool powered)
     {
         var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
-        DrawChamferedHousing(spriteBatch, rect, Color.DarkGoldenrod * 0.6f, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Helm, powered, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2);
         DrawHood(spriteBatch, rect);
-        DrawScreen(spriteBatch, rect, new Color(235, 180, 80), powered);
-        var helmLabelPos = new Vector2(rect.X + 1, rect.Y + 7);
-        DrawLabelBacking(spriteBatch, "Штурв", helmLabelPos, 0.45f);
-        spriteBatch.DrawString(_font, "Штурв", helmLabelPos, Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+        DrawDeviceLabel(spriteBatch, rect, "Штурвал");
     }
 
     // A quiet card table - not clickable, just a felt surface bolted to the deck; two crew
@@ -841,13 +957,26 @@ public sealed class ShipRenderer
         spriteBatch.DrawString(_font, "Карты", cardTableLabelPos, Color.White, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
     }
 
-    private static string SystemShortLabel(PowerSystemId system) => system switch
+    // The jukebox (Ship Editor only for now, Ship.Jukebox is nullable) - lit warm amber while
+    // playing, dim otherwise, the same "glow says it's doing something" language DrawCardTable
+    // uses for an active hand.
+    private void DrawJukebox(SpriteBatch spriteBatch, JukeboxState jukebox, bool isOpen, Vector2 origin)
     {
-        PowerSystemId.Oxygen => "O2",
-        PowerSystemId.Engine => "Дв",
-        PowerSystemId.Shields => "Щт",
-        PowerSystemId.WeaponCharger => "Ор",
-        PowerSystemId.Secondary => "Пр",
+        var rect = GetBlockRect(jukebox.Block.Position, MediumBlockSize, origin);
+        var accent = isOpen ? Color.Gold : jukebox.On ? new Color(224, 196, 120) : new Color(140, 120, 90);
+        // Lit means playing: the arch, the window and one pressed key all come up together, so the
+        // machine says whether it is running without anybody reading a label.
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Jukebox, jukebox.On, accent, isOpen ? 3 : 2);
+        DrawDeviceLabel(spriteBatch, rect, "Музыка");
+    }
+
+    private static string SystemLabel(PowerSystemId system) => system switch
+    {
+        PowerSystemId.Oxygen => "Кислород",
+        PowerSystemId.Engine => "Двигатель",
+        PowerSystemId.Shields => "Щиты",
+        PowerSystemId.WeaponCharger => "Орудия",
+        PowerSystemId.Secondary => "Прочее",
         _ => "?",
     };
 
@@ -873,16 +1002,22 @@ public sealed class ShipRenderer
         var mount = TurretMount.For(rooms, allTurrets, turret);
         var mountPx = origin + new Vector2(mount.Position.X, mount.Position.Y) * PixelsPerUnit;
         var rotation = mount.FireDegrees(state.AimDegrees) * (MathF.PI / 180f);
-        var barrelColor = damaged ? Color.DarkRed : manned ? Color.Gold : Color.Silver;
 
-        // Mount ring, then the barrel sticking out of it along the current aim. A manned gun is
-        // drawn heavier: while you're behind the periscope this is the thing you're steering, and
-        // it has to be findable at a glance against the ship's own plating.
-        var ringSize = manned ? 22f : 16f;
-        var barrelThickness = manned ? 10f : 7f;
-        spriteBatch.Draw(_pixel, mountPx, null, barrelColor * 0.85f, 0f, new Vector2(0.5f, 0.5f), new Vector2(ringSize, ringSize), SpriteEffects.None, 0f);
-        spriteBatch.Draw(_pixel, mountPx, null, barrelColor, rotation, new Vector2(0f, 0.5f),
-            new Vector2(TurretMount.BarrelLength * PixelsPerUnit, barrelThickness), SpriteEffects.None, 0f);
+        // Two sprites, and only the second one turns: a barbette bolted through the plating, and the
+        // rotating mass sitting in it. Drawing those as one square with a stick out of it is most of
+        // why this used to read as a diagram of a gun rather than as a gun.
+        //
+        // Which one is manned is carried by the trim paint and a lit sight rather than by making the
+        // whole thing bigger and gold. It still has to be findable against the plating while you are
+        // steering it, and the aim arc and sight line below are what do that - they are drawn only
+        // for the gun you are actually behind.
+        var look = damaged ? TurretSkin.Look.Damaged
+            : manned ? TurretSkin.Look.Manned
+            : TurretSkin.Look.Idle;
+        spriteBatch.Draw(_turretSkin.Base(look), mountPx, null, Color.White, 0f,
+            TurretSkin.BaseOrigin, 1f, SpriteEffects.None, 0f);
+        spriteBatch.Draw(_turretSkin.Gun(look), mountPx, null, Color.White, rotation,
+            TurretSkin.GunOrigin, 1f, SpriteEffects.None, 0f);
 
         if (!manned)
             return;
@@ -898,6 +1033,19 @@ public sealed class ShipRenderer
 
         var readout = $"{state.AimDegrees:0}°";
         spriteBatch.DrawString(_font, readout, mountPx + new Vector2(-10, -30), Color.Gold, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+
+        // Rounds left, as pips rather than a count. Mid-engagement what the gunner needs off the gun
+        // itself is "nearly out" or "fine"; the exact number is already on the gunnery panel, and
+        // reading a digit means looking away from what you are tracking.
+        if (state.MagazineCapacity > 0)
+        {
+            const int pips = 8;
+            var loaded = (int)MathF.Ceiling(pips * MathHelper.Clamp(
+                state.AmmoRemaining / (float)state.MagazineCapacity, 0f, 1f));
+            for (var i = 0; i < pips; i++)
+                spriteBatch.Draw(_pixel, new Rectangle((int)mountPx.X - pips * 3 + i * 6, (int)mountPx.Y + 28, 4, 3),
+                    i < loaded ? new Color(232, 196, 96) : new Color(52, 56, 62));
+        }
     }
 
     // A real periscope station instead of a flat marker square: a bolted octagonal floor block,
@@ -1202,9 +1350,18 @@ public sealed class ShipRenderer
         var rect = GetRoomRect(room, origin);
         var accent = accentOverride ?? RoomDecor.Accent(room.Id);
 
-        TileTextures.DrawTiled(spriteBatch, _floorPlate, TileTextures.FloorTileSize, rect, new Color(35, 40, 47));
-        DrawFloorGrating(spriteBatch, rect);
-        RoomDecor.DrawDeckMarkings(spriteBatch, _pixel, rect, accent);
+        // Plates rather than one repeated stamp, and the seams are cut into them rather than drawn
+        // over the top - which is why DrawFloorGrating is gone: its hairline grid had no depth, so
+        // it read as printed on. The gunnery and reactor compartments get their own field inside the
+        // same frame, so they are recognisably different rooms on recognisably the same ship.
+        //
+        // Indexed from the ship's own origin, so which plate lands where belongs to the ship and the
+        // pattern does not crawl across the deck when the camera moves.
+        DeckPlates.DrawTiled(spriteBatch, _deckPlates[DeckPlates.For(room.Id)], rect, Color.White,
+            new Point((int)origin.X, (int)origin.Y));
+        // Dirt across the plates, which is the one thing that hides the tile grid - nothing painted
+        // inside a tile can, because it repeats with the tile.
+        DeckPlates.DrawGrime(spriteBatch, _deckGrime, rect, room.Id);
         RoomDecor.DrawLightPool(spriteBatch, _pixel, rect, accent);
         RoomDecor.DrawFurniture(spriteBatch, _pixel, rect, room.Id, accent);
 
@@ -1337,26 +1494,25 @@ public sealed class ShipRenderer
         }
     }
 
+    // The camera's own fraction is dropped *before* the room's offset is added, not after.
+    //
+    // (int)(origin + offset) - (int)origin is not a constant as the camera glides: it flips by a
+    // pixel with origin's fractional part. Every tiled surface picks its plate variant from exactly
+    // that difference divided by the tile size, so for any room sitting at a whole world coordinate
+    // - which is most of them - the two possible values land either side of a multiple of 48 and the
+    // entire compartment reindexes. That is the deck and the wall plating visibly reshuffling while
+    // the camera pans from one compartment to the next.
+    //
+    // Splitting the truncation makes the difference exactly (int)(room.X * PixelsPerUnit), which
+    // does not depend on where the camera is at all. Costs at most a pixel of placement.
     private static Rectangle GetRoomRect(Room room, Vector2 origin) => new(
-        (int)(origin.X + room.X * PixelsPerUnit),
-        (int)(origin.Y + room.Y * PixelsPerUnit),
+        (int)origin.X + (int)(room.X * PixelsPerUnit),
+        (int)origin.Y + (int)(room.Y * PixelsPerUnit),
         (int)(room.Width * PixelsPerUnit),
         (int)(room.Height * PixelsPerUnit));
 
     private static float RoomOxygen(WorldSnapshot snapshot, string roomId) =>
         snapshot.RoomOxygen.FirstOrDefault(o => o.RoomId == roomId)?.Oxygen ?? 100f;
-
-    // Panel-seam grid — the floor "texture": a grid of faint darker lines every 24px reads as
-    // welded deck plating without needing an actual tileable sprite.
-    private void DrawFloorGrating(SpriteBatch spriteBatch, Rectangle rect)
-    {
-        const int cell = 24;
-        var seam = Color.Black * 0.25f;
-        for (var x = rect.X + cell; x < rect.Right; x += cell)
-            spriteBatch.Draw(_pixel, new Rectangle(x, rect.Y, 1, rect.Height), seam);
-        for (var y = rect.Y + cell; y < rect.Bottom; y += cell)
-            spriteBatch.Draw(_pixel, new Rectangle(rect.X, y, rect.Width, 1), seam);
-    }
 
     // Pulses via totalSeconds instead of a flat red square — reads as an active hazard light
     // rather than a static marker (SS13's breach warning strobe).
@@ -1533,68 +1689,6 @@ public sealed class ShipRenderer
     // actual person from this camera height. FacingX/Y offsets the shoulders/head forward and picks
     // which side the (unlit) hip capsule trails on, plus a small bright nose on the head, so a
     // standing-still character still visibly has a front and a back.
-    internal static void DrawHumanBody(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, int size, Color bodyColor, Color visorColor, Vector2 facing)
-    {
-        var perp = new Vector2(-facing.Y, facing.X);
-
-        var hipColor = bodyColor * 0.72f;
-        var hipCenter = center - facing * (size * 0.12f);
-
-        // Feet: two small dark ovals peeking out behind the hips - the one part of a standing
-        // figure that still shows past the torso when looking straight down at them, and drawn
-        // first so the hip capsule covers where they join the legs.
-        var footColor = new Color(28, 28, 32);
-        var footBack = hipCenter - facing * (size * 0.15f);
-        HudIcons.FillCircle(spriteBatch, pixel, footBack - perp * (size * 0.13f), size * 0.085f, footColor);
-        HudIcons.FillCircle(spriteBatch, pixel, footBack + perp * (size * 0.13f), size * 0.085f, footColor);
-
-        DrawCapsule(spriteBatch, pixel, hipCenter, perp, size * 0.62f, size * 0.40f, hipColor);
-
-        // Arms: small capsules off both sides of the shoulders, drawn before the shoulder capsule
-        // so it covers their inner ends and reads as a socket rather than two separate blobs.
-        var shoulderCenter = center + facing * (size * 0.06f);
-        var armColor = bodyColor * 0.85f;
-        DrawCapsule(spriteBatch, pixel, shoulderCenter - perp * (size * 0.36f), facing, size * 0.22f, size * 0.15f, armColor);
-        DrawCapsule(spriteBatch, pixel, shoulderCenter + perp * (size * 0.36f), facing, size * 0.22f, size * 0.15f, armColor);
-
-        DrawCapsule(spriteBatch, pixel, shoulderCenter, perp, size * 0.92f, size * 0.48f, bodyColor);
-        // A lit edge on the leading side, a shadowed one trailing - one flat tone reads as a cutout,
-        // the same tone with a light on it reads as a body with some actual shape to it
-        // (HullSkin.DrawPlateShading uses the same trick on the hull's own armour plates).
-        var shoulderHighlight = shoulderCenter + facing * (size * 0.02f) - perp * (size * 0.14f);
-        var shoulderShadow = shoulderCenter - facing * (size * 0.10f) + perp * (size * 0.18f);
-        HudIcons.FillCircle(spriteBatch, pixel, shoulderHighlight, size * 0.14f, Color.White * 0.16f);
-        HudIcons.FillCircle(spriteBatch, pixel, shoulderShadow, size * 0.14f, Color.Black * 0.16f);
-
-        // Neck: a short, slightly darker band closing the gap between shoulders and head, so the
-        // two don't read as one shape stacked on another with nothing between them.
-        var neckCenter = center + facing * (size * 0.14f);
-        HudIcons.FillCircle(spriteBatch, pixel, neckCenter, size * 0.15f, bodyColor * 0.8f);
-
-        var headCenter = center + facing * (size * 0.22f);
-        HudIcons.FillCircle(spriteBatch, pixel, headCenter, size * 0.30f, visorColor);
-        // Helmet rim - a ring round the visor's own edge, so the head reads as a helmet with a
-        // faceplate set into it rather than a flat coloured disc.
-        HudIcons.DrawRingArc(spriteBatch, pixel, headCenter, size * 0.30f, 0f, 360f, bodyColor * 0.7f, 14, MathF.Max(1.4f, size * 0.05f));
-
-        var noseCenter = headCenter + facing * (size * 0.20f);
-        HudIcons.FillCircle(spriteBatch, pixel, noseCenter, MathF.Max(1.5f, size * 0.045f), Color.White);
-    }
-
-    // A rect with its two short ends rounded off - a rivet-free version of the same "bar plus end
-    // circles" capsule ItemIcons builds tanks and handles from. `across` is the (already normalised)
-    // direction the capsule's long axis runs; the rect is rotated to match it exactly (rather than
-    // staying screen-aligned while only the end caps move), so a corner can never poke out past the
-    // rounding at a diagonal facing.
-    private static void DrawCapsule(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, Vector2 across, float width, float height, Color color)
-    {
-        var angle = MathF.Atan2(across.Y, across.X);
-        spriteBatch.Draw(pixel, center, null, color, angle, new Vector2(0.5f, 0.5f), new Vector2(width, height), SpriteEffects.None, 0f);
-        var capOffset = across * (width / 2f - height / 2f);
-        HudIcons.FillCircle(spriteBatch, pixel, center - capOffset, height / 2f, color);
-        HudIcons.FillCircle(spriteBatch, pixel, center + capOffset, height / 2f, color);
-    }
-
     internal void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin)
     {
         var size = (int)(CharacterDiameter * PixelsPerUnit);
@@ -1609,9 +1703,15 @@ public sealed class ShipRenderer
 
         // Hired crew (World.Recruiting.cs) reads as a body of a different colour, not another
         // anonymous crewmate - the point of hiring one is knowing it's there and doing its job.
-        var bodyColor = character.IsBot ? Color.SteelBlue * 0.9f : Color.OrangeRed * 0.9f;
-        var visorColor = character.WearingSuit ? Color.CadetBlue : new Color(255, 220, 190);
-        DrawHumanBody(spriteBatch, _pixel, center, size, bodyColor, visorColor, facing);
+        var bodyColor = character.IsBot ? new Color(70, 110, 150) : new Color(196, 78, 44);
+        // The accent is the shoulder patch on a uniform - the one place a crewman carries a colour
+        // that is not the cloth itself.
+        var accent = character.IsBot ? new Color(150, 200, 235) : new Color(226, 186, 70);
+        // Standing, anchored at the feet, so the body goes up the screen from where the crewman
+        // actually is. The world stays top-down and the person does not - the same mix SS13 and
+        // Rimworld use, and the reason the figure finally has arms and legs you can see.
+        _crewSkin.Draw(spriteBatch, new Vector2(center.X, center.Y + size * 0.30f),
+            CharacterHeight * PixelsPerUnit, bodyColor, accent, character.WearingSuit, facing);
 
         if (character.IsBot && character.Role is { } role)
             spriteBatch.DrawString(_font, $"{character.BotName} ({CrewRoles.Name(role)})", new Vector2(rect.X - 10, rect.Y - 14),

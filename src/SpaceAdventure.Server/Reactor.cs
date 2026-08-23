@@ -52,7 +52,12 @@ public sealed class Reactor
     // of the fuel rods: flipping it forces output to zero even with a full load, and restoring it
     // resumes normal fuel-driven output with no other state to reconcile.
     public bool EmergencyShutdown { get; set; }
-    public float CurrentOutput => !EmergencyShutdown && Fuel > 0 ? MaxOutput : 0;
+    // Combat damage (World.EnemyAi.cs's ApplyEnemyAttack, enemy/weapon overhaul - "реактор мог
+    // быть сломан") - same all-or-nothing shape as EmergencyShutdown, just triggered by a hit
+    // instead of a lever, and cleared the same way every other damaged fixture is: the wrench/
+    // screwdriver repair minigame (World.SystemRepair.cs) rather than flipping it back by hand.
+    public bool Broken { get; set; }
+    public float CurrentOutput => !EmergencyShutdown && !Broken && Fuel > 0 ? MaxOutput : 0;
 
     public Reactor(float maxOutput, float maxFuel, float fuelPerPowerUnitPerSecond)
     {

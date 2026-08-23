@@ -41,6 +41,7 @@ public enum CustomDeviceKind
     SuitLocker,
     StorageRack,
     CardTable,
+    Jukebox,
 }
 
 public sealed record CustomDeviceDef(CustomDeviceKind Kind, float X, float Y, TurretMountSide MountSide = TurretMountSide.Aft);

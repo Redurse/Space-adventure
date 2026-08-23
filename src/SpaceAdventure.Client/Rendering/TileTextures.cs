@@ -5,7 +5,7 @@ using Microsoft.Xna.Framework.Graphics;
 namespace SpaceAdventure.Client.Rendering;
 
 // Small procedurally-generated tileable textures standing in for floor/wall material - this project
-// has no image assets (see ShipRenderer.DrawFloorGrating's own comment), so instead of an artist's
+// has no image assets (see DeckPlates), so instead of an artist's
 // diamond-plate sprite this bakes the same idea (layered value noise, corner rivets, a diagonal
 // tread ridge) into a Texture2D once at startup.
 //
@@ -25,8 +25,6 @@ public static class TileTextures
     public const int WallTileSize = 16;
     public const int HullTileSize = 64;
     public const int DeviceTileSize = 16;
-
-    public static Texture2D CreateFloorPlate(GraphicsDevice device) => Build(device, FloorTileSize, FloorPixel);
 
     public static Texture2D CreateWallPlate(GraphicsDevice device) => Build(device, WallTileSize, WallPixel);
 
@@ -63,8 +61,11 @@ public static class TileTextures
             for (var x = 0; x < size; x++)
             {
                 // Central differences, wrapped, so the normal map tiles exactly like the plate does.
-                var dx = FloorPixel(Wrap(x + 1, size), y) - FloorPixel(Wrap(x - 1, size), y);
-                var dy = FloorPixel(x, Wrap(y + 1, size)) - FloorPixel(x, Wrap(y - 1, size));
+                // Read off the real deck plating rather than a height field of its own: the
+                // walking deck's first variant, which is what most of the ship is floored with.
+                float H(int hx, int hy) => DeckPlates.Height(DeckPlates.Deck.Standard, 0, hx, hy);
+                var dx = H(Wrap(x + 1, size), y) - H(Wrap(x - 1, size), y);
+                var dy = H(x, Wrap(y + 1, size)) - H(x, Wrap(y - 1, size));
                 // Strength, not a physical constant: the height field is a brightness in 0..1 over a
                 // tile a couple of world units across, so the raw slope is far too shallow to see.
                 // Kept modest on purpose - too high and every rivet/tread edge reads as a gouge
@@ -178,14 +179,22 @@ public static class TileTextures
     public static void DrawSquares(SpriteBatch spriteBatch, Texture2D[] plates, int sourceSize, int destSize,
         Rectangle rect, Color tint, Point cellOrigin)
     {
+        // Cropping a neighbour-facing side by exactly HullFrameWidth stops right on the frame's own
+        // boundary - but HullZone paints a one-pixel-wide lit/shadow ledge exactly there (the frame
+        // stepping down to the plate), which the crop then leaves in: a bright line from this block
+        // sitting right next to a dark line from the next one, i.e. the seam this was meant to
+        // hide. Cropping one pixel further removes that ledge too, so a dropped side shows nothing
+        // but the flat mid-plate tone right up to the edge, and two neighbours read as one
+        // uninterrupted sheet.
+        const int seamCrop = HullFrameWidth + 1;
         for (var y = rect.Y; y < rect.Bottom; y += destSize)
         {
-            var topGap = y > rect.Y ? HullFrameWidth : 0;
-            var bottomGap = y + destSize < rect.Bottom ? HullFrameWidth : 0;
+            var topGap = y > rect.Y ? seamCrop : 0;
+            var bottomGap = y + destSize < rect.Bottom ? seamCrop : 0;
             for (var x = rect.X; x < rect.Right; x += destSize)
             {
-                var leftGap = x > rect.X ? HullFrameWidth : 0;
-                var rightGap = x + destSize < rect.Right ? HullFrameWidth : 0;
+                var leftGap = x > rect.X ? seamCrop : 0;
+                var rightGap = x + destSize < rect.Right ? seamCrop : 0;
                 var source = new Rectangle(leftGap, topGap, sourceSize - leftGap - rightGap, sourceSize - topGap - bottomGap);
 
                 var cellX = (int)MathF.Floor((x - cellOrigin.X) / (float)destSize);
@@ -325,21 +334,6 @@ public static class TileTextures
              + Rivet(x, y, size - inset, inset)
              + Rivet(x, y, inset, size - inset)
              + Rivet(x, y, size - inset, size - inset);
-    }
-
-    // Tread plate: a diagonal ridge with a lit crest and a shadowed back, broad mottling underneath,
-    // and a rivet at each corner - ShipRenderer.DrawRivets' own corner-plate convention, echoed here
-    // at tile scale.
-    private static float FloorPixel(int x, int y)
-    {
-        var value = 0.93f + (Fbm(x, y, FloorTileSize, 2, 12) - 0.5f) * 0.05f;
-
-        var diagonal = Wrap(x + y, 12);
-        if (diagonal < 2) value += 0.04f;          // crest
-        else if (diagonal < 4) value -= 0.05f;     // the shadow it casts
-        else if (diagonal is 8 or 9) value += 0.015f;
-
-        return value + Rivets(x, y, FloorTileSize);
     }
 
     // Vertical brushed streaks rather than the floor's diagonal tread - a bulkhead panel is rolled

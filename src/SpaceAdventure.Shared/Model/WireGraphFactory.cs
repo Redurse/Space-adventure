@@ -53,15 +53,23 @@ public static class WireGraphFactory
                 new[] { new Vec2(junction.X, ship.DistributionBlock.Y) }));
 
         // Same one-corner routing for the drop wire: straight along the junction's own wall to the
-        // device's height, then straight across to the device itself.
-        void ConnectDevice(ShipSystemDevice device, Component junction, int outputIndex)
+        // device's height, then straight across to the device itself. Takes the raw id/room/position
+        // rather than a ShipSystemDevice so a HullCamera (below) can share this exact wiring shape
+        // without actually being a ShipSystemDevice itself - TestRunner.Mining.cs's
+        // ExpectedSystemDeviceIds asserts an exact set of 7 ids per hull, so a camera's drop/trunk
+        // has to reuse the Component/Wire graph directly instead of registering through
+        // ship.SystemDevices like every device the loop below handles.
+        void ConnectDeviceNode(string id, string roomId, float x, float y, Component junction, int outputIndex)
         {
-            components.Add(new Component(device.Id, ComponentKind.Device, device.RoomId, device.X, device.Y));
-            wires.Add(new Wire($"drop-{device.Id}",
+            components.Add(new Component(id, ComponentKind.Device, roomId, x, y));
+            wires.Add(new Wire($"drop-{id}",
                 new PinRef(junction.Id, ComponentDefinitions.JunctionOutPin(outputIndex).Id),
-                new PinRef(device.Id, "in"),
-                new[] { new Vec2(junction.X, device.Y) }));
+                new PinRef(id, "in"),
+                new[] { new Vec2(junction.X, y) }));
         }
+
+        void ConnectDevice(ShipSystemDevice device, Component junction, int outputIndex) =>
+            ConnectDeviceNode(device.Id, device.RoomId, device.X, device.Y, junction, outputIndex);
 
         foreach (var system in systems)
         {
@@ -94,6 +102,20 @@ public static class WireGraphFactory
                 ConnectTrunk($"trunk-{device.Id}".ToLowerInvariant(), system, junction);
                 ConnectDevice(device, junction, outputIndex: 0);
             }
+        }
+
+        // Every hull camera (M48 - "камеры как устройства корабля") gets its own dedicated
+        // junction+trunk off Distribution's Secondary output, same auxiliary channel the ship's
+        // lighting already draws from - a camera going dark from a cut wire reads the same way a
+        // lighting panel going dark already does. Deliberately not folded into the systems loop
+        // above: cameras aren't in ship.SystemDevices at all (see ConnectDeviceNode's own comment),
+        // so this only ever runs if the hull actually has any.
+        foreach (var camera in ship.Cameras)
+        {
+            var junctionId = $"junction-{camera.Id}".ToLowerInvariant();
+            var junction = PlaceJunction(junctionId);
+            ConnectTrunk($"trunk-{camera.Id}".ToLowerInvariant(), PowerSystemId.Secondary, junction);
+            ConnectDeviceNode(camera.Id, camera.RoomId, camera.X, camera.Y, junction, outputIndex: 0);
         }
 
         return (components, wires);

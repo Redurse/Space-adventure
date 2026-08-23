@@ -15,6 +15,11 @@ public sealed partial class World
             return;
 
         var reactor = PowerGrid.Reactor;
+        // A wrecked reactor needs the wrench/screwdriver repair minigame (World.SystemRepair.cs)
+        // first - swapping rods around wouldn't actually be what fixed it, and it'd otherwise be
+        // a way to get output back without ever counting as repaired.
+        if (reactor.Broken)
+            return;
         if (reactor.IsRodLoaded(slotIndex))
         {
             if (character.Inventory.TryAdd(ItemType.FuelRod))

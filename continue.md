@@ -3644,3 +3644,113 @@ minReachableNeighbors)` докидывает процедурный хвост �
 scissor-прямоугольника (неправильный пересчёт design→device координат — самое вероятное место для
 бага, если камера обрезается не там, где нужно).
 
+**M48 — внешние камеры становятся физическими устройствами корпуса, не виртуальным режимом.**
+По прямой просьбе пользователя ("камеры как устройства корабля, как и любая другая система") M46's
+4 фиксированных виртуальных направления заменены на `Ship.Cameras` (`HullCamera(Id, RoomId, X, Y,
+MountSide)`) — фиксированный набор точек крепления на конкретном корпусе (Ship.cs/Scout/Cruiser/
+Corvette), тот же интерьер/экстерьер сплит, что уже есть у `Turret`/`TurretMount`: `HullCameraMount.
+For` (новый файл, точная копия геометрии `TurretMount.For` для Fore/Aft/Port/Starboard) вычисляет
+физическую точку на обшивке и исходящий угол из интерьерной позиции ящика. Ряд-корпуса (Frigate/
+Scout/Cruiser) получили только Fore/Aft (Port/Starboard дал бы точку на внутренней переборке — та
+же причина, по которой их турели тоже никогда не используют фланговые стороны); Corvette — только
+Port/Starboard в оружейном отсеке (единственная комната с реальными бортовыми стенками), как и её
+турели.
+
+**Проводка/питание/повреждение — не новая система, стопроцентное переиспользование существующей.**
+Каждая камера получает свой junction+trunk от Distribution'а на канале `PowerSystemId.Secondary`
+(`WireGraphFactory.cs`, новый цикл `foreach (var camera in ship.Cameras)`), но **не** добавляется в
+`Ship.SystemDevices` — там уже жила ловушка: `TestRunner.Mining.cs`'s `ExpectedSystemDeviceIds`
+жёстко проверяет точный набор из 7 id на каждый корпус, и щедро добавить туда камеры сломало бы этот
+тест. Вместо этого `WireGraphFactory.ConnectDeviceNode` (обобщённая версия `ConnectDevice`, теперь
+принимающая голые id/room/x/y вместо `ShipSystemDevice`) регистрирует камеру прямо в графе
+Component/Wire как обычный `ComponentKind.Device` — благодаря этому **бесплатно** заработали: авто-
+ремонт (`World.SystemRepair.cs`'s `StepSystemRepairFor`, добавлен отдельный `foreach` по
+`Ship.Cameras`), F/E-репейр гаечным ключом (`World.Interact.cs`'s новый `nearbyDamagedCamera`-блок,
+копия существующего `nearbyDamagedSystem`), и урон от случайного попадания (`World.EnemyAi.cs`'s
+`SystemDamageChance`-ролл уже режет случайный провод из общего пула `_wires` — камерные провода в
+нём просто участвуют, без единой правки). Damaged-статус камеры едет в `WorldSnapshot.SystemStates`
+(`World.cs`, `.Concat(Ship.Cameras.Select(...))` после основного `Ship.SystemDevices.Select`) —
+переиспользует ту же форму `ShipSystemState`, что уже несёт статус Junction-коробок.
+
+**Рендер — реальный параллакс от физической точки крепления, не трюк "камера в центре корпуса".**
+`ExternalCameraPanel.cs` переписан: сетка теперь по `snapshot.Cameras.Count` (1×1/2×1/2×2/3×2...,
+`GridDimensions`), а не жёстко 2×2 на 4 направления. Ключевая правка в `DrawOneCamera` — `origin`
+для `FieldRenderer.Draw` больше не `center` (что давало "камера всегда в центре корпуса"), а
+`center - mount.Position * PixelsPerUnit`, где `mount.Position` — реальная точка крепления в тех же
+сырых room-координатах, что уже использует `ComputeCamera` для наведённой турели (якорь на дуле, не
+на центре корпуса) — тот же самый приём, просто применённый к внешней камере. По прямому запросу
+пользователя вид статичный (свободный обзор мышью ±45° убран целиком вместе с
+`_cameraLookOffsetDegrees`/`_cameraLookLastMouse`/`MaxLookOffsetDegrees`), сектор камеры широкий сам
+по себе, а `DrawHullSliver` рисует вдоль **боковой** (не нижней) грани кадра плашку обшивки с
+куполом-объективом камеры, нависающим на её внутренний край — сторона (лево/право) берётся из
+`MountSide` (Port/Fore — левый край, Starboard/Aft — правый), так что сетка из нескольких камер не
+выглядит одинаково с обеих сторон. Панель камер по отдельной просьбе развёрнута на весь экран
+(`cameraArea = new Rectangle(0, 0, DesignWidth, DesignHeight)` вместо старой полоски
+`WorldViewportOrigin/Size`) — HUD (топ-бар/инвентарь/role-box) по-прежнему рисуется поверх, как и
+раньше поверх карты. Кнопка "Камеры" дополнительно гейтится на `snapshot.Cameras.Count > 0`
+(корпуса Ship Editor'а камер не получили — под них нет `CustomDeviceKind`, это осознанно не в
+рамках этой правки).
+
+**Не пройдено живым запуском клиента** — та же оговорка, что у M46: верифицировано только полным
+прогоном тестов (316/316, `TestRunner.Cameras.cs` — геометрия на всех 4 хендмейд-корпусах,
+независимая проводка соседних камер, ремонт гаечным ключом), рендер и полноэкранная раскладка
+сетки визуально не увидены. Самое вероятное место для бага при живой проверке — тот же
+scissor-пересчёт в `ExternalCameraPanel.cs`, теперь применяемый к куда большей площади (весь экран
+вместо полоски).
+
+**Рефакторинг структуры кода — группировка `WorldSnapshot` (по инициативе пользователя, "идеи по
+улучшению структуры").** `WorldSnapshot` разрослась до ~65 позиционных полей одной плоской записи —
+самый хрупкий файл в проекте: вставка нового поля не в конец молча ломает порядок аргументов у
+единственного места конструирования (`World.cs`'s `CreateSnapshot()`). Первый (самый изолированный)
+срез сделан: `Components/ComponentStates/Wires/WireStates/ComponentMounts/ComponentMountStates`
+(6 полей, 39 мест чтения на клиенте) собраны в новый `WiringSnapshot` (`Protocol/WiringSnapshot.cs`,
+та же группировка, что уже есть у `StationSnapshot`/`EnemyShipSnapshot`/`AsteroidFieldSnapshot`) —
+`snapshot.Components` → `snapshot.Wiring.Components` и т.д. во всех читателях
+(`ComponentRenderer.cs`, `ConnectionsPanel.cs`, `ShipEditorPanel.cs`, `Game1.cs`/`Game1.Input.cs`,
+`TestRunner.Wiring.cs`). Верифицировано полным прогоном (316/316).
+
+**Остальные группы — сознательно не тронуты в этот заход.** Следующие кандидаты по тому же
+принципу: `ShipHardwareSnapshot` (Rooms/Doors/Turrets/Cameras/SystemDevices/WallBlocks/консоли —
+статичная раскладка корпуса) и `ShipDamageSnapshot` (DoorStates/TurretStates/SystemStates/
+JunctionStates/WallBlockStates/RoomOxygen — динамическое состояние повреждений). Разведка боем
+(`grep` по клиенту) показала ~166 мест чтения только для грубого подмножества этих полей, растянутых
+по 20 файлам (`ShipRenderer.cs` — 25, `ShipSchematicPanel.cs` — 20, `Game1.Input.cs` — 41) — на
+порядок больше площади поражения, чем у только что сделанной проводки, и без возможности
+верифицировать каждый шаг маленькими прогонами тестов (переименование поля само по себе не ловится
+существующими тестами, только компиляция). Сознательно остановлено здесь как безопасная, полностью
+рабочая и протестированная точка, а не начато вслепую во время сессии, когда тот же `WorldSnapshot.
+cs`/`World.cs` параллельно правит пользовательский инструмент (в этой самой сессии уже дважды менял
+оба файла под фичу джукбокса) — конфликт почти гарантирован, если тащить сразу большой кусок.
+`ClientCommand.cs` (тоже ~60 полей) от той же проблемы страдает значительно меньше: все поля
+именованные-с-дефолтом, вызовы идут через named arguments (`new ClientCommand(1, InteractPressed:
+true)`), а не позиционно — вставка нового поля куда угодно не ломает существующие сайты вызова, так
+что группировать его менее срочно.
+
+**Продолжение того же захода — два безопасных, чисто механических split'а файлов** (не трогают
+`WorldSnapshot.cs`/`World.cs`, поэтому не конфликтуют с параллельным инструментом): чистый code
+motion, ни одной строки логики не изменено, проверено полным прогоном тестов (316/316) после
+каждого шага.
+
+`GalaxyMapPanel.cs` (802 строки, самый нагруженный файл сессии по работе со сканером) разбит на
+4 файла по теме, продолжая уже существующий в проекте паттерн (`GalaxyMapPanel.Glyphs.cs` был
+до этого) — `GalaxyMapPanel.cs` (366 строк: конструктор, общая геометрия ComputeMapOrigin/
+GetPointRect/FactionColor, оркестрация Draw(), housing/faction-standings/rect-outline),
+`GalaxyMapPanel.Scanner.cs` (177 строк: геометрия/маска сонарного круга — RadarCircleLocalCenter/
+Radius, IsWithinRadarView/IsRingWithinRadarView, ComputeShipLockedMapOrigin,
+GetScannerHandleScreen, DrawRadarBezel/DrawScannerHandle/HitTestContact/DrawGlowDiamond),
+`GalaxyMapPanel.ShipAndStations.cs` (161 строка: DrawShipMarker/DrawShipHullSchematic/
+DrawStationSchematic/DrawShipVelocityVector), `GalaxyMapPanel.FieldContent.cs` (156 строк:
+DrawSystemBackdrop/DrawWarpZoneRing/DrawLargestAsteroidMarkers/DrawCloseRangeContacts). Единственная
+реальная правка — две забытые `using SpaceAdventure.Shared.Model;` в новых файлах (AsteroidShape/
+SystemOrbits оттуда), поймано сразу же сборкой.
+
+`Game1.cs` (1949 строк) — Update()/Draw() сами по себе гигантские (~500 строк каждый) и НЕ
+переносимы между файлами без разбиения на подметоды (это уже другой, более рискованный вид
+рефакторинга, сознательно не начат в этот заход). Вынесены только независимые кластеры вспомогательных
+методов, которые Update/Draw просто вызывают: `Game1.Camera.cs` (155 строк — ComputeCamera/
+UpdateCameraLookOffset/CursorLookAheadFrom/MannedTurret/TurretViewRotationDegrees/SceneZoom/
+ComputeStationCamera, плюс поле `_cameraLookOffset`) и `Game1.Lighting.cs` (221 строка —
+BuildVisibilityMask/ComputeShipPowerMood/BuildShipRoomLights/AddStationLights/BuildEnemyShipLights).
+`Game1.cs` сократился до 1604 строк. `DrawTopBar`/`DrawTopBarButtonFrame`/`PlayDoorBreakSoundIfAnyDoorJustBroke`
+намеренно оставлены в основном файле — слишком малы, чтобы оправдать ещё один файл.
+

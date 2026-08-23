@@ -91,7 +91,9 @@ public sealed class AtmosphereField
             if (!state.Breached)
                 continue;
             var block = snapshot.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
-            if (block is not null)
+            // Interior bulkheads (WallBlock.IsInterior) don't vent - both sides are already
+            // pressurized rooms, so there's no decompression steam to show even once it's broken.
+            if (block is not null && !block.IsInterior)
                 EmitIfReady($"breach:{state.Id}", SteamInterval, () => SpawnSteam(block.Position));
         }
 

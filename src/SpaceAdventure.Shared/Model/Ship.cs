@@ -10,6 +10,7 @@ public sealed partial class Ship
     public IReadOnlyList<Door> Doors { get; }
     public IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors { get; }
     public IReadOnlyList<Turret> Turrets { get; }
+    public IReadOnlyList<HullCamera> Cameras { get; }
     public IReadOnlyList<AmmoStorage> AmmoStorages { get; }
     public IReadOnlyList<SuitLocker> SuitLockers { get; }
     public IReadOnlyList<ShipSystemDevice> SystemDevices { get; }
@@ -20,6 +21,9 @@ public sealed partial class Ship
     public NavigationConsole NavigationConsole { get; }
     public HelmConsole HelmConsole { get; }
     public CardTable CardTable { get; }
+    // The jukebox's physical position, or null when this hull has none - unlike CardTable this is
+    // genuinely optional flavor furniture (Ship Editor only for now), not a fixture every hull gets.
+    public Jukebox? Jukebox { get; }
     // Two per hull (game_design.md section 13) - a starter kit of 3 units of every hand
     // tool/tank/weapon/consumable used to live scattered across the ship as individual ToolStation
     // pickups; it now lives here instead, split across these two shelves (World.ShipPurchase.cs's
@@ -42,6 +46,7 @@ public sealed partial class Ship
         IReadOnlyList<Door> doors,
         IReadOnlyList<AirlockOuterDoor> airlockOuterDoors,
         IReadOnlyList<Turret> turrets,
+        IReadOnlyList<HullCamera> cameras,
         IReadOnlyList<AmmoStorage> ammoStorages,
         IReadOnlyList<SuitLocker> suitLockers,
         IReadOnlyList<ShipSystemDevice> systemDevices,
@@ -56,14 +61,17 @@ public sealed partial class Ship
         string spawnRoomId,
         CardTable cardTable,
         float forwardDegrees = 0f,
-        IReadOnlyList<ComponentMount>? componentMounts = null)
+        IReadOnlyList<ComponentMount>? componentMounts = null,
+        Jukebox? jukebox = null)
     {
         ForwardDegrees = forwardDegrees;
         ComponentMounts = componentMounts ?? Array.Empty<ComponentMount>();
+        Jukebox = jukebox;
         Rooms = rooms;
         Doors = doors;
         AirlockOuterDoors = airlockOuterDoors;
         Turrets = turrets;
+        Cameras = cameras;
         AmmoStorages = ammoStorages;
         SuitLockers = suitLockers;
         SystemDevices = systemDevices;
@@ -122,6 +130,46 @@ public sealed partial class Ship
                 yield return new WallBlock($"{room.Id}-wall-{index++}", room.Id, room.Right, y + 0.5f);
     }
 
+    // One wall block per unit segment of every INTERIOR boundary - detected purely from room
+    // geometry (any two rooms whose rectangles share an edge segment), so every hull - hand-
+    // authored or player-built (Ship.Custom.cs) - gets these automatically without listing room
+    // pairs by hand. Unlike GenerateOuterWallBlocks these are tagged IsInterior: true (nothing to
+    // decompress into on the other side, World.Atmosphere.cs/AtmosphereParticles.cs both skip
+    // them for exactly that reason) but are otherwise ordinary WallBlocks - just as solid to a shot
+    // (World.EnemyAi.cs treats every WallBlock alike) and repaired the same way. A door footprint
+    // cut into the boundary is filtered out afterward by the same pass the constructor already
+    // runs for outer wall blocks.
+    private static IEnumerable<WallBlock> GenerateInteriorWallBlocks(IReadOnlyList<Room> rooms)
+    {
+        const float Epsilon = 0.01f;
+        var index = 0;
+        for (var i = 0; i < rooms.Count; i++)
+        {
+            for (var j = i + 1; j < rooms.Count; j++)
+            {
+                var a = rooms[i];
+                var b = rooms[j];
+
+                if (Math.Abs(a.Right - b.Left) < Epsilon || Math.Abs(b.Right - a.Left) < Epsilon)
+                {
+                    var sharedX = Math.Abs(a.Right - b.Left) < Epsilon ? a.Right : a.Left;
+                    var overlapTop = Math.Max(a.Top, b.Top);
+                    var overlapBottom = Math.Min(a.Bottom, b.Bottom);
+                    for (var y = overlapTop; y < overlapBottom - Epsilon; y += 1f)
+                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, sharedX, y + 0.5f, IsInterior: true);
+                }
+                else if (Math.Abs(a.Bottom - b.Top) < Epsilon || Math.Abs(b.Bottom - a.Top) < Epsilon)
+                {
+                    var sharedY = Math.Abs(a.Bottom - b.Top) < Epsilon ? a.Bottom : a.Top;
+                    var overlapLeft = Math.Max(a.Left, b.Left);
+                    var overlapRight = Math.Min(a.Right, b.Right);
+                    for (var x = overlapLeft; x < overlapRight - Epsilon; x += 1f)
+                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, x + 0.5f, sharedY, IsInterior: true);
+                }
+            }
+        }
+    }
+
     // Moves along a single axis at a time (call once for X, once for Y — see World.Step):
     // stay inside the current room's AABB by default; cross into a connected room only through
     // an aligned, currently-open Door; otherwise stop at the wall. A closed door blocks crossing
@@ -170,11 +218,24 @@ public sealed partial class Ship
         var turrets = new[]
         {
             new Turret("turret-bow", "cockpit", PeriscopeX: 1.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 10f, CooldownSeconds: 0.5f,
-                WeaponType: TurretWeaponType.Ballistic, MagazineCapacity: 6),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.MagneticDamage,
+                CooldownSeconds: TurretBalance.MagneticCooldownSeconds, WeaponType: TurretWeaponType.Magnetic,
+                MagazineCapacity: TurretBalance.MagneticMagazineCapacity),
             new Turret("turret-laser", "reactor", PeriscopeX: 6.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 8f, CooldownSeconds: 0.4f,
-                WeaponType: TurretWeaponType.Laser, MaxCharge: 30f, ChargePerShot: 10f, RechargePerPowerUnitPerSecond: 0.5f),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.LaserDamagePerTick,
+                CooldownSeconds: TurretBalance.LaserTickIntervalSeconds, WeaponType: TurretWeaponType.Laser,
+                MaxCharge: TurretBalance.LaserMaxCharge, ChargePerShot: TurretBalance.LaserChargePerTick,
+                RechargePerPowerUnitPerSecond: TurretBalance.LaserRechargePerPowerUnitPerSecond),
+        };
+
+        // Two hull cameras, bow and stern (M48 - "камеры как устройства корабля"): junction boxes
+        // a crew member walks up to and wires/repairs like any other system, HullCameraMount
+        // derives their actual outward-facing position on the plating from MountSide. Kept clear
+        // of the bow turret's own periscope (1.5, 3) by more than InteractionRadius.
+        var cameras = new[]
+        {
+            new HullCamera("camera-bow", "cockpit", X: 3.5f, Y: 5f, CameraMountSide.Fore),
+            new HullCamera("camera-stern", "airlock-chamber", X: 24f, Y: 1f, CameraMountSide.Aft),
         };
 
         // Ammo storage lives in quarters — deliberately far from the bow turret so hauling a
@@ -235,6 +296,9 @@ public sealed partial class Ship
         // crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).
         var cardTable = new CardTable("card-table", "cockpit", X: 4f, Y: 1f);
 
+        // Aft of the card table, clear of the turret periscope (1.5, 3) and every console above.
+        var jukebox = new Jukebox("jukebox", "cockpit", X: 4f, Y: 4.5f);
+
         // Outer-hull wall blocks: every room's top/bottom is exterior (the ship is one row
         // wide); only cockpit's left and the airlock chamber's right are exterior side walls not
         // covered by a dedicated door — engine's former right-side hull is now the door to the
@@ -247,6 +311,7 @@ public sealed partial class Ship
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[3], top: true, bottom: true, left: false, right: false));
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[4], top: true, bottom: true, left: false, right: false));
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[5], top: true, bottom: true, left: false, right: false));
+        wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
 
         // Two shelves: quarters (the one room that isn't already crowded with machinery) and engine
         // (World.ShipPurchase.cs's InitializeRackSlots seeds the crew's starter gear between them).
@@ -271,8 +336,8 @@ public sealed partial class Ship
         };
 
         var corridor = rooms.First(r => r.Id == "corridor");
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
-            cardTable, componentMounts: componentMounts);
+            cardTable, componentMounts: componentMounts, jukebox: jukebox);
     }
 }

@@ -16,6 +16,11 @@ public sealed class PowerGrid
 
     public Reactor Reactor { get; }
     public Battery Battery { get; }
+    // Combat damage (World.EnemyAi.cs's ApplyEnemyAttack) - a wrecked distribution block freezes
+    // every slider exactly where it was until repaired (World.SystemRepair.cs); allocation itself
+    // still runs normally (Reactor output, the battery's own charge/discharge), just nobody can
+    // move a slider while it's out.
+    public bool DistributionBroken { get; set; }
 
     private readonly Dictionary<PowerSystemId, float> _allocated;
     // Per player, not a single shared "currently held" slot - two crew members adjusting sliders
@@ -69,7 +74,7 @@ public sealed class PowerGrid
         // same system at once both actually add up instead of one clobbering the other's math.
         foreach (var (index, direction) in _adjustByPlayer.Values)
         {
-            if (direction == 0 || index < 0 || index >= Systems.Length)
+            if (DistributionBroken || direction == 0 || index < 0 || index >= Systems.Length)
                 continue;
 
             var system = Systems[index];

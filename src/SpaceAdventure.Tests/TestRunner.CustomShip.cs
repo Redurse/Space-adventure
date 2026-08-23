@@ -49,17 +49,22 @@ internal static partial class TestRunner
             && ship.SuitLockers.Single().RoomId == "b";
     }
 
-    // Room "a"'s shared side with "b" (X=4) and "b"'s shared side with "a" (also X=4) must carry no
-    // WallBlocks at all (interior bulkhead, nothing to vent into); "b"'s airlock side (right) must
-    // carry none either (Ship.Custom.cs's BuildWallBlocks) - only the three plain exterior sides of
-    // each room (top/bottom/left of "a", top/bottom of "b") should.
+    // Room "a"'s shared side with "b" (X=4) and "b"'s airlock side (right) must carry no OUTER
+    // WallBlocks (Ship.Custom.cs's BuildWallBlocks skips exactly those) - only the three plain
+    // exterior sides of each room (top/bottom/left of "a", top/bottom of "b") get one. The shared
+    // "a"/"b" boundary itself isn't blockless any more, though (enemy/weapon overhaul - "внутренние
+    // стены корабля также блокировали снаряды врага"): Ship.cs's GenerateInteriorWallBlocks now
+    // covers it separately, tagged IsInterior so it still doesn't vent (World.Atmosphere.cs) - the
+    // door cut into that boundary is filtered out of it exactly like an outer block would be.
     private static bool CustomShip_FromDefinition_SkipsWallBlocksOnInteriorAndAirlockSides()
     {
         var ship = Ship.FromCustomDefinition(BuildSimpleCustomShipDefinition());
+        var outerBlocks = ship.WallBlocks.Where(w => !w.IsInterior).ToList();
         var expected = 4 + 4 + 4 // room a: top, bottom, left
             + 4 + 4;             // room b: top, bottom (no left - interior, no right - airlock)
-        return ship.WallBlocks.Count == expected
-            && ship.WallBlocks.All(w => w.X != 4f); // nothing sits exactly on the shared/airlock wall line
+        return outerBlocks.Count == expected
+            && outerBlocks.All(w => w.X != 4f) // no OUTER block sits on the shared/airlock wall line
+            && ship.WallBlocks.Any(w => w.IsInterior && w.X == 4f); // but the interior boundary itself is covered now
     }
 
     private static bool CustomShip_World_CharacterWalksThroughPlacedDoor()

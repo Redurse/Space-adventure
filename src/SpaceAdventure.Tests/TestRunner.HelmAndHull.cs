@@ -177,6 +177,13 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock - no engine power at all
         world.Step(RealtimeStep);
 
+        // Undocking itself now gives a small deliberate push-off (World.StationDocking.cs's own
+        // Undock - "плавно уходил от станции") independent of engine power, so velocity right after
+        // casting off is no longer exactly zero - captured here rather than assumed, so the actual
+        // assertion below stays about what this test means to check: throttle with no engine power
+        // adds nothing on top of that push-off, not that the ship never moves at all.
+        var velocityAfterUndock = world.CreateSnapshot().ShipField;
+
         SitAtHelm(world, 1);
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
 
@@ -184,7 +191,7 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
 
         var field = world.CreateSnapshot().ShipField;
-        return field.VelocityX == 0f && field.VelocityY == 0f;
+        return field.VelocityX == velocityAfterUndock.VelocityX && field.VelocityY == velocityAfterUndock.VelocityY;
     }
 
     // The rock's outline is the thing everything else is measured against, so it has to be the same

@@ -184,7 +184,10 @@ internal static partial class TestRunner
         // generic hazard-avoidance would treat the very sector this test is trying to reach as
         // something to detour around, and the ship would circle it forever without ever crossing
         // its capture radius.
-        FlyToward(world, world.GalaxyMap.GetPoint("sector-alpha").Position + new Vec2(5f, 0f), () => world.IsInBattle, 1, targetPointId: "sector-alpha");
+        // maxTicks explicitly doubled from FlyToward's own 120s default (M48 - sector-alpha's own
+        // distance from home doubled alongside the field itself) - the default budget was tuned
+        // for the pre-doubling distance and no longer leaves enough margin for turning/accel time.
+        FlyToward(world, world.GalaxyMap.GetPoint("sector-alpha").Position + new Vec2(5f, 0f), () => world.IsInBattle, 1, maxTicks: 240 * 30, targetPointId: "sector-alpha");
 
         return world.IsInBattle;
     }
@@ -340,11 +343,14 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 6.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man
 
-        for (var shot = 0; shot < 3; shot++) // 3 shots * 10 charge empties the 30-charge capacitor
+        // The beam fires continuously while held (World.Combat.cs's TryFire, called every tick
+        // FireHeld is set), ticking every TurretBalance.LaserTickIntervalSeconds and draining
+        // ChargePerShot each time - holding it down for a few seconds past the full
+        // MaxCharge/ChargePerShot*TickInterval = 3s burn empties the capacitor.
+        for (var i = 0; i < 120; i++) // 4s, comfortably past the 3s it takes to empty
         {
-            world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
-            for (var i = 0; i < 15; i++) // outlast the 0.4s cooldown
-                world.Step(RealtimeStep);
+            world.ApplyCommand(1, new ClientCommand(1, FireHeld: true));
+            world.Step(RealtimeStep);
         }
         var depleted = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-laser").Charge;
 

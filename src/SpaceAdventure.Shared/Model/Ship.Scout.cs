@@ -31,8 +31,17 @@ public sealed partial class Ship
         var turrets = new[]
         {
             new Turret("turret-bow", "bridge", PeriscopeX: 1.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: 8f, CooldownSeconds: 0.6f,
-                WeaponType: TurretWeaponType.Ballistic, MagazineCapacity: 5),
+                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.MagneticDamage,
+                CooldownSeconds: TurretBalance.MagneticCooldownSeconds, WeaponType: TurretWeaponType.Magnetic,
+                MagazineCapacity: TurretBalance.MagneticMagazineCapacity),
+        };
+
+        // Two hull cameras, bow and stern (M48) - same bow/stern split as every other class, kept
+        // clear of the bow turret's periscope (1.5, 3) and the helm (4, 3).
+        var cameras = new[]
+        {
+            new HullCamera("camera-bow", "bridge", X: 1.5f, Y: 5f, CameraMountSide.Fore),
+            new HullCamera("camera-stern", "airlock-chamber", X: 12f, Y: 1f, CameraMountSide.Aft),
         };
 
         var ammoStorages = new[]
@@ -71,10 +80,14 @@ public sealed partial class Ship
         // Two crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).
         var cardTable = new CardTable("card-table", "bridge", X: 3f, Y: 1f);
 
+        // Bottom-right corner, clear of the ammo storage (2.5, 5) and the helm (4, 3).
+        var jukebox = new Jukebox("jukebox", "bridge", X: 4.5f, Y: 5f);
+
         var wallBlocks = new List<WallBlock>();
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[0], top: true, bottom: true, left: true, right: false));
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[1], top: true, bottom: true, left: false, right: false));
         wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[2], top: true, bottom: true, left: false, right: false));
+        wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
 
         var bridge = rooms.First(r => r.Id == "bridge");
         // No dedicated hold on this hull - both shelves share the ship's only two rooms.
@@ -91,8 +104,8 @@ public sealed partial class Ship
             new ComponentMount("mount-engine-door", "engine", X: 9.5f, Y: 4f, TargetDoorId: "door-engine-airlock"),
         };
 
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, ammoStorages, suitLockers, systemDevices, wallBlocks,
+        return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, bridge.Center, bridge.Id,
-            cardTable, componentMounts: componentMounts);
+            cardTable, componentMounts: componentMounts, jukebox: jukebox);
     }
 }

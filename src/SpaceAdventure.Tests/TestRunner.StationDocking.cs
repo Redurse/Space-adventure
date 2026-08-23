@@ -83,14 +83,14 @@ internal static partial class TestRunner
         // away it still physically is.
         const float BerthTracksIntendedTargetSlack = 40f;
         var ambushesResolved = 0;
-        // 600s: this loop caps speed at 1.5 (below) for the entire approach, not just the final
-        // crawl, so covering a longer bearing like outpost-gamma's (~602 units from home as of the
-        // system's own M47 station-spread redesign, GalaxyMap.cs) at that capped rate alone eats
-        // most of a 400s budget - 600s keeps roughly the same ~200s of slack the original 300s
-        // budget left over its own, shorter ~180-unit bearing, for turning time, an incidental
-        // ambush along the way, or the bang-bang cap's own stabilize/accelerate cycling knocking
-        // the average speed below its own ceiling.
-        for (var i = 0; i < 600 * 30; i++)
+        // 950s: this loop caps speed at 1.5 (below) for the entire approach, not just the final
+        // crawl, so covering a longer bearing like outpost-gamma's (~1063 units from home as of
+        // M48's field-doubling on top of M47's own station-spread redesign, GalaxyMap.cs) at that
+        // capped rate alone eats most of a 700s budget - 950s keeps roughly the same ~200s of
+        // slack the M47 600s budget left over its own, shorter ~602-unit bearing, for turning
+        // time, an incidental ambush along the way, or the bang-bang cap's own stabilize/accelerate
+        // cycling knocking the average speed below its own ceiling.
+        for (var i = 0; i < 950 * 30; i++)
         {
             if (world.IsInBattle)
             {

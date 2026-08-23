@@ -40,7 +40,7 @@ internal static partial class TestRunner
         ("World_ReloadTurret_RefillsAmmoAndClearsCarrying", World_ReloadTurret_RefillsAmmoAndClearsCarrying),
         ("EnemyShip_IsRetreating_BelowThreshold", EnemyShip_IsRetreating_BelowThreshold),
         ("EnemyShip_IsRetreating_FalseAboveThreshold", EnemyShip_IsRetreating_FalseAboveThreshold),
-        ("World_EnemyAi_EventuallyBreachesEveryRoom", World_EnemyAi_EventuallyBreachesEveryRoom),
+        ("World_EnemyAi_PriorityTargetingDisablesEnginesAndWeapons", World_EnemyAi_PriorityTargetingDisablesEnginesAndWeapons),
         ("World_Decompression_DrainsHealthInBreachedRoom", World_Decompression_DrainsHealthInBreachedRoom),
         ("World_Oxygen_GeneratorRestoresRoomOxygenWhenPowered", World_Oxygen_GeneratorRestoresRoomOxygenWhenPowered),
         ("World_RepairBreach_ClearsItViaInteract", World_RepairBreach_ClearsItViaInteract),
@@ -320,8 +320,14 @@ internal static partial class TestRunner
         ("World_Scanner_ContactStaysAtLastKnownPositionAfterLeavingTheCone", World_Scanner_ContactStaysAtLastKnownPositionAfterLeavingTheCone),
         ("World_Scanner_DoesNothingAwayFromTheConsole", World_Scanner_DoesNothingAwayFromTheConsole),
         ("World_Scanner_PingDoesNothingWhileOnCooldown", World_Scanner_PingDoesNothingWhileOnCooldown),
+        ("World_Scanner_CircularModeFindsShipRegardlessOfBearing", World_Scanner_CircularModeFindsShipRegardlessOfBearing),
+        ("World_Scanner_CircularModeHasHalfTheDirectionalRange", World_Scanner_CircularModeHasHalfTheDirectionalRange),
         ("World_Scanner_PlacingMarkerAddsItToTheSharedMap", World_Scanner_PlacingMarkerAddsItToTheSharedMap),
         ("World_Scanner_ManualMarkerSurvivesSaveAndLoad", World_Scanner_ManualMarkerSurvivesSaveAndLoad),
+        ("World_Cameras_EveryHandAuthoredHullHasWorkingCameraGeometry", World_Cameras_EveryHandAuthoredHullHasWorkingCameraGeometry),
+        ("World_Cameras_StartConnectedAndAppearInSnapshot", World_Cameras_StartConnectedAndAppearInSnapshot),
+        ("World_Cameras_CuttingOneCameraWireLeavesItsSiblingConnected", World_Cameras_CuttingOneCameraWireLeavesItsSiblingConnected),
+        ("World_Cameras_RepairingWithWrenchReconnectsIt", World_Cameras_RepairingWithWrenchReconnectsIt),
     };
 
     // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via

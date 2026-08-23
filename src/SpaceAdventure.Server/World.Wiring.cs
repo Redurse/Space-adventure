@@ -106,7 +106,11 @@ public sealed partial class World
         _components.Where(c => c.Kind == ComponentKind.Junction).Select(c =>
         {
             var deviceId = _wires.FirstOrDefault(w => w.FromPin.ComponentId == c.Id)?.ToPin.ComponentId;
-            var system = Ship.SystemDevices.FirstOrDefault(d => d.Id == deviceId)?.System ?? default;
+            // A camera's own junction isn't in Ship.SystemDevices at all (WireGraphFactory's own
+            // comment on ConnectDeviceNode) - it still feeds off the Secondary trunk, so falling
+            // through to PowerSystemId's default (Oxygen) would mislabel it in the Connections panel.
+            var system = Ship.SystemDevices.FirstOrDefault(d => d.Id == deviceId)?.System
+                ?? (Ship.Cameras.Any(cam => cam.Id == deviceId) ? PowerSystemId.Secondary : default);
             var (percent, tickPosition) = GetSystemRepairDisplay(c.Id);
             return new ShipSystemState(c.Id, system, IsJunctionDamaged(c.Id), percent, tickPosition);
         }).ToArray();

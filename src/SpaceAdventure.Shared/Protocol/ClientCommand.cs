@@ -202,4 +202,27 @@ public sealed record ClientCommand(
     // does anything server-side while at the console AND ScannerCooldownRemaining is 0
     // (World.Scanner.cs). Aiming the dial itself stays free and continuous - only the detecting
     // pulse costs the cooldown.
-    bool ScannerPingPressed = false);
+    bool ScannerPingPressed = false,
+    // Which of the console's own toggle-switch positions is currently selected (M48 follow-up -
+    // "переключением рычажка... либо лучевой либо круговой"), sent continuously like
+    // ScannerSweepDegrees rather than edge-triggered - the switch just sits wherever it was last
+    // left, the same "holds its last value" treatment every other continuous scanner field gets.
+    ScannerMode RequestedScannerMode = ScannerMode.Directional,
+    // The jukebox's on/off checkbox and its two steppers (JukeboxPanel) - edge-triggered like the
+    // reactor's levers, and proximity-checked server-side against Ship.Jukebox.Position the same
+    // way, since these are a physical device rather than a trusted HUD panel click.
+    bool JukeboxTogglePressed = false,
+    bool JukeboxNextTrackPressed = false,
+    bool JukeboxPrevTrackPressed = false,
+    bool JukeboxVolumeUpPressed = false,
+    bool JukeboxVolumeDownPressed = false,
+    // Held, not edge-triggered like FirePressed above - added for the 3-weapon turret rework
+    // (World.Combat.cs's TryFire) so a manned turret fires every tick the trigger is down, its own
+    // CooldownRemaining pacing the actual shots. FirePressed itself is untouched and still drives
+    // the personal-weapon shot while on foot (World.cs), which stays one shot per press.
+    bool FireHeld = false,
+    // The dev cheat panel's own button (Ё key, Game1.cs's CheatPanel) - edge-triggered like
+    // DoorToggleId, spawns one more raider at normal firing distance for testing hit resolution
+    // live instead of waiting through a whole encounter's approach (World.EnemyFleet.cs's
+    // DebugSpawnEnemyNearby). No proximity/role gate - it's a testing tool, not a game action.
+    bool DebugSpawnEnemyPressed = false);

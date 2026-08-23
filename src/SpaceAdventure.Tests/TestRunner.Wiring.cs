@@ -299,7 +299,7 @@ internal static partial class TestRunner
     // evaluation correctness is isolated from the economy. Position/room are arbitrary - these
     // components are never walked to in these tests, only wired and stepped.
     private static bool GateSignal(World world, string id) =>
-        world.CreateSnapshot().ComponentStates.First(s => s.ComponentId == id).SignalValue;
+        world.CreateSnapshot().Wiring.ComponentStates.First(s => s.ComponentId == id).SignalValue;
 
     private static bool World_Component_GateAnd_OutputsTrueOnlyWhenBothInputsTrue()
     {
@@ -499,7 +499,7 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
 
         var snapshot = world.CreateSnapshot();
-        return snapshot.ComponentStates.Any(s => s.ComponentId == "notA") && snapshot.ComponentStates.Any(s => s.ComponentId == "notB");
+        return snapshot.Wiring.ComponentStates.Any(s => s.ComponentId == "notA") && snapshot.Wiring.ComponentStates.Any(s => s.ComponentId == "notB");
     }
 
     // Sensors and actuators (World.ComponentLogic.cs, M22) - a sensor watches the room it's
@@ -619,7 +619,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, ComponentMountInteractId: "mount-cockpit-1"));
 
         var snapshot = world.CreateSnapshot();
-        var installed = snapshot.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId;
+        var installed = snapshot.Wiring.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId;
         var itemGone = snapshot.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.All(s => s != ItemType.Relay);
         return installed is not null && itemGone;
     }
@@ -632,7 +632,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: 0));
         world.ApplyCommand(1, new ClientCommand(1, ComponentMountInteractId: "mount-cockpit-1"));
 
-        var installedId = world.CreateSnapshot().ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId!;
+        var installedId = world.CreateSnapshot().Wiring.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId!;
         world.AddComponent(new Component("relay-x", ComponentKind.Relay, "cockpit", 0, 0));
         world.AddWire("wire-test", new PinRef("relay-x", "out"), new PinRef(installedId, "in"));
 
@@ -641,7 +641,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, ComponentMountInteractId: "mount-cockpit-1"));
 
         var after = world.CreateSnapshot();
-        var mountEmpty = after.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId is null;
+        var mountEmpty = after.Wiring.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId is null;
         var itemReturned = after.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Any(s => s == ItemType.GateNot);
         var wireGone = world.Wires.All(w => w.Id != "wire-test");
         return mountEmpty && itemReturned && wireGone;
@@ -654,7 +654,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, BuyItemType: ItemType.Relay));
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: 0));
         world.ApplyCommand(1, new ClientCommand(1, ComponentMountInteractId: "mount-cockpit-1"));
-        var installedId = world.CreateSnapshot().ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId!;
+        var installedId = world.CreateSnapshot().Wiring.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId!;
 
         world.Step(RealtimeStep);
         var before = GateSignal(world, installedId);
@@ -674,14 +674,14 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, BuyItemType: ItemType.Relay));
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: 0));
         world.ApplyCommand(1, new ClientCommand(1, ComponentMountInteractId: "mount-cockpit-1"));
-        var installedBefore = world.CreateSnapshot().ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId;
+        var installedBefore = world.CreateSnapshot().Wiring.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId;
 
         // Only a Shipyard-kind station sells hulls (game_design.md section 10) - the home outpost
         // has no Shipwright at all.
         DockAtStation(world, "outpost-gamma");
         world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
 
-        var afterMounts = world.CreateSnapshot().ComponentMountStates;
+        var afterMounts = world.CreateSnapshot().Wiring.ComponentMountStates;
         return installedBefore is not null && world.CurrentShipKind == ShipKind.Scout && afterMounts.All(s => s.InstalledComponentId is null);
     }
 

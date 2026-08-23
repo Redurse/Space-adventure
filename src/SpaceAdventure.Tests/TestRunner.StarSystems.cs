@@ -17,14 +17,14 @@ internal static partial class TestRunner
     }
 
     // A point clear of every asteroid in sol's field by a wide margin, just past
-    // GalaxyMap.WarpZoneRadius(1104) from the field's own centre (1200,1200, M40's 2400x2400
-    // scale, recentred alongside sol's own hand-placed content - AsteroidField.RecenterOffsetM40)
-    // - was (10,150), just past the old WarpZoneRadius(138) from the old (150,150) centre, for the
-    // old 300x300 field. Flying there and slowing down arms CanWarpNow with no specific point to
-    // hunt down and park on, the same "parked alongside, under the speed limit" gate as docking
-    // (World.StationDocking.cs's CanDockNow), just aimed at an area instead.
-    private const float SolWarpZoneX = 80f;
-    private const float SolWarpZoneY = 1200f;
+    // GalaxyMap.WarpZoneRadius(2208) from the field's own centre (2400,2400, M48's 4800x4800
+    // scale, recentred alongside sol's own hand-placed content - AsteroidField.RecenterOffsetM48)
+    // - was (80,1200), just past the M47 WarpZoneRadius(1104) from the (1200,1200) centre, for the
+    // 2400x2400 field before this doubling. Flying there and slowing down arms CanWarpNow with no
+    // specific point to hunt down and park on, the same "parked alongside, under the speed limit"
+    // gate as docking (World.StationDocking.cs's CanDockNow), just aimed at an area instead.
+    private const float SolWarpZoneX = 160f;
+    private const float SolWarpZoneY = 2400f;
 
     private static bool World_StarSystem_FlyToWarpZoneThenJumpToOtherSystem()
     {

@@ -480,54 +480,73 @@ public static partial class HullSkin
         var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(rect.Width, rect.Height) / 3f);
         var thin = MarginUnits * ShipRenderer.PixelsPerUnit;
 
-        if (margins.TopExterior != margins.LeftExterior)
+        // Corner-local, not the room-wide margins.XExterior flags: a room whose top edge is, say,
+        // exterior-interior-exterior along its length (a corridor mouth in the middle of it) has
+        // margins.TopExterior true from the outer stretches regardless of what's happening at this
+        // particular corner - using it here would fire (or miss) a chamfer based on the wrong end
+        // of the edge entirely. Checking the actual stretch at the corner's own coordinate is what
+        // makes this correct on every edge, not just the single-neighbour case it was written for.
+        if (EdgeExteriorAtCorner(room, rooms, 0, room.Left) != EdgeExteriorAtCorner(room, rooms, 2, room.Top))
         {
             var neighbor = FindDiagonalNeighbor(room, rooms, 0);
             if (neighbor is not null)
             {
                 var n = RoomRect(neighbor, origin);
-                if (margins.TopExterior)
+                if (EdgeExteriorAtCorner(room, rooms, 0, room.Left))
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Right + thin, rect.Y - margins.Top), cut, mirrorX: true, mirrorY: false);
                 else
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.X - margins.Left, n.Bottom + thin), cut, mirrorX: false, mirrorY: true);
             }
         }
-        if (margins.TopExterior != margins.RightExterior)
+        if (EdgeExteriorAtCorner(room, rooms, 0, room.Right) != EdgeExteriorAtCorner(room, rooms, 3, room.Top))
         {
             var neighbor = FindDiagonalNeighbor(room, rooms, 1);
             if (neighbor is not null)
             {
                 var n = RoomRect(neighbor, origin);
-                if (margins.TopExterior)
+                if (EdgeExteriorAtCorner(room, rooms, 0, room.Right))
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Left - thin, rect.Y - margins.Top), cut, mirrorX: false, mirrorY: false);
                 else
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.Right + margins.Right, n.Bottom + thin), cut, mirrorX: true, mirrorY: true);
             }
         }
-        if (margins.BottomExterior != margins.RightExterior)
+        if (EdgeExteriorAtCorner(room, rooms, 1, room.Right) != EdgeExteriorAtCorner(room, rooms, 3, room.Bottom))
         {
             var neighbor = FindDiagonalNeighbor(room, rooms, 2);
             if (neighbor is not null)
             {
                 var n = RoomRect(neighbor, origin);
-                if (margins.BottomExterior)
+                if (EdgeExteriorAtCorner(room, rooms, 1, room.Right))
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Left - thin, rect.Bottom + margins.Bottom), cut, mirrorX: false, mirrorY: true);
                 else
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.Right + margins.Right, n.Top - thin), cut, mirrorX: true, mirrorY: false);
             }
         }
-        if (margins.BottomExterior != margins.LeftExterior)
+        if (EdgeExteriorAtCorner(room, rooms, 1, room.Left) != EdgeExteriorAtCorner(room, rooms, 2, room.Bottom))
         {
             var neighbor = FindDiagonalNeighbor(room, rooms, 3);
             if (neighbor is not null)
             {
                 var n = RoomRect(neighbor, origin);
-                if (margins.BottomExterior)
+                if (EdgeExteriorAtCorner(room, rooms, 1, room.Left))
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(n.Right + thin, rect.Bottom + margins.Bottom), cut, mirrorX: true, mirrorY: true);
                 else
                     MaskPlateCorner(spriteBatch, pixel, new Vector2(rect.X - margins.Left, n.Top - thin), cut, mirrorX: false, mirrorY: false);
             }
         }
+    }
+
+    // Is the specific point `at` (a coordinate along `edge` - X for top/bottom, Y for left/right)
+    // actually part of an exterior stretch, rather than "does this edge have exterior anywhere at
+    // all" (RoomMargins' own coarse flags). The +-epsilon lets a corner sitting exactly on the
+    // boundary between a covered stretch and an exterior one still read as exterior there.
+    private static bool EdgeExteriorAtCorner(Room room, IReadOnlyList<Room> rooms, int edge, float at)
+    {
+        const float epsilon = 0.02f;
+        foreach (var (from, to) in ExteriorSpans(room, rooms, edge))
+            if (at >= from - epsilon && at <= to + epsilon)
+                return true;
+        return false;
     }
 
     // One diagonal cut corner filled back in with the flat plate colour - `corner` is the plate's
