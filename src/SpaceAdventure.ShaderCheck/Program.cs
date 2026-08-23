@@ -363,8 +363,8 @@ internal sealed class Checks : Game
         {
             var music = new SpaceAdventure.Client.Audio.GameMusic(Content);
             Console.WriteLine("     tracks loaded: " + music.TrackCount);
-            if (music.TrackCount != 7)
-                return "expected 7 tracks, loaded " + music.TrackCount;
+            if (music.TrackCount != 5)
+                return "expected 5 tracks, loaded " + music.TrackCount;
 
             music.SetMasterVolume(0f);          // verify without making noise
             music.Update(0.0);                  // arms, schedules the first track

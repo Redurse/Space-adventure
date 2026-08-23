@@ -11,15 +11,21 @@ public sealed class EnemyShipRuntime
     public EnemyShip Ship { get; }
     // Which hull this is, and therefore what a boarding party finds inside it (EnemyShipClass).
     public EnemyShipLayout Layout { get; }
-    // Which of the 3 turret weapons this hull is packing (enemy/weapon overhaul - "И враги, и
-    // игрок" applies weapons to both sides) - a flavor/behavior pick for TryEnemyFire
-    // (World.EnemyFleet.cs), not a full TurretRuntime: raiders don't track ammo or heat, they just
-    // shoot at a rate and bolt style that matches whichever weapon they're flying.
-    public TurretWeaponType WeaponType { get; }
+    // Which turret weapons this hull is packing (enemy/weapon overhaul - "И враги, и игрок"
+    // applies weapons to both sides) - a flavor/behavior list for TryEnemyFire (World.EnemyFleet.cs),
+    // not full TurretRuntimes: raiders don't track ammo or heat, each entry just shoots at a rate and
+    // bolt style that matches whichever weapon it is. Almost always one entry (whichever single
+    // weapon the squadron formation handed this hull); a hull with its own fixed
+    // EnemyShipLayout.WeaponLoadout (e.g. Frigate's 2 magnetic + 1 laser) carries all of them here so
+    // each fires independently on its own cooldown.
+    public IReadOnlyList<TurretWeaponType> WeaponLoadout { get; }
+    // One cooldown per entry in WeaponLoadout, same indices - a multi-turret hull's guns don't share
+    // a single reload clock, each fires on its own schedule. Starts at 0 for every slot; the opening
+    // delay (EnemyOpeningDelaySeconds) is applied to all of them right after construction.
+    public float[] TurretFireCooldowns { get; }
     public Vec2 Position { get; set; }
     public Vec2 Velocity { get; set; }
     public float RotationDegrees { get; set; }
-    public float FireCooldown { get; set; }
     public bool Alive => Ship.Hp > 0;
     // Which priority target (World.EnemyFleet.cs's EnemyTargetPriority) this raider is currently
     // committed to - null only before its first tick. Kept sticky there rather than re-picked every
@@ -37,12 +43,13 @@ public sealed class EnemyShipRuntime
     // doesn't all sweep the same direction in lockstep.
     public float OrbitDirection { get; init; } = 1f;
 
-    public EnemyShipRuntime(string id, float maxHp, Vec2 position, EnemyShipLayout layout, TurretWeaponType weaponType)
+    public EnemyShipRuntime(string id, float maxHp, Vec2 position, EnemyShipLayout layout, IReadOnlyList<TurretWeaponType> weaponLoadout)
     {
         Id = id;
         Ship = new EnemyShip(maxHp);
         Position = position;
         Layout = layout;
-        WeaponType = weaponType;
+        WeaponLoadout = weaponLoadout;
+        TurretFireCooldowns = new float[weaponLoadout.Count];
     }
 }

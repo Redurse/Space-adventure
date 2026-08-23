@@ -32,10 +32,6 @@ public sealed partial class World
     // with the jetpack rather than something that has already gone wrong by the time you see it.
     private const float PushOffSpeed = 2.4f;
     private const float EvaEntryNudge = 1.1f; // > the door's own 1-unit width, so it clears the rect entirely
-    // How close to a passable breach's own center counts as "walked at it" - roughly a door's own
-    // half-width, so a big-enough hole (World.WallBlocks.cs's IsPassableBreach) is as easy to walk
-    // through as an actual airlock, not a pinhole you have to line up on exactly.
-    private const float BreachCrossingRadius = 0.6f;
     private const float JetpackAccelerationPerSecond = 1f; // gentle correction thrust, not a main engine
     private const float JetpackFuelPerSecond = 10f;
 
@@ -114,10 +110,13 @@ public sealed partial class World
             d.RoomId == character.RoomId && d.Id != connectorId && IsDoorOpen(d.Id) && d.Contains(next));
         // No open door here - maybe there's a hole instead. A single broken block is still a
         // pinhole (nothing to see through so much as around); only a breach wide enough to
-        // actually fit through (two broken blocks side by side) works as a way out.
+        // actually fit through (two broken blocks side by side) works as a way out. Interior
+        // bulkheads are excluded here on purpose - a breach between two pressurized rooms is a
+        // walk-through into the next compartment (RoomLayout.MoveAlongAxis, World.Movement.cs),
+        // never a step into vacuum, regardless of how wide it's broken open.
         var breachBlock = outerDoor is null
-            ? Ship.WallBlocks.FirstOrDefault(b => b.RoomId == character.RoomId && IsPassableBreach(b) &&
-                (b.Position - next).Length() <= BreachCrossingRadius)
+            ? Ship.WallBlocks.FirstOrDefault(b => b.RoomId == character.RoomId && !b.IsInterior && IsPassableBreach(b) &&
+                (b.Position - next).Length() <= RoomLayout.BreachCrossingRadius)
             : null;
         if (outerDoor is null && breachBlock is null)
             return false;
@@ -217,9 +216,10 @@ public sealed partial class World
             : null;
         // No door underfoot - maybe a wide-enough breach is (same rule TryCrossIntoVacuum uses
         // going the other way): a hole big enough to fit through works exactly like an open
-        // airlock for getting back in, too.
+        // airlock for getting back in, too. Interior bulkheads excluded, same reasoning as
+        // TryCrossIntoVacuum above - they were never a way out to begin with.
         var breachBlock = steppingInward && outerDoor is null
-            ? Ship.WallBlocks.FirstOrDefault(b => IsPassableBreach(b) && (b.Position - absoluteLocalPos).Length() <= BreachCrossingRadius)
+            ? Ship.WallBlocks.FirstOrDefault(b => !b.IsInterior && IsPassableBreach(b) && (b.Position - absoluteLocalPos).Length() <= RoomLayout.BreachCrossingRadius)
             : null;
         if (outerDoor is null && breachBlock is null)
         {

@@ -13,6 +13,7 @@ public sealed partial class EnemyShipLayout
     {
         EnemyShipClass.Freighter => CreateFreighter(),
         EnemyShipClass.Gunship => CreateGunship(),
+        EnemyShipClass.Frigate => CreateFrigate(),
         _ => CreateRaider(),
     };
 
@@ -112,5 +113,45 @@ public sealed partial class EnemyShipLayout
 
         return new EnemyShipLayout(EnemyShipClass.Gunship, "Канонерка", rooms, doors,
             new AirlockOuterDoor("gunship-hatch", "gunship-breach", 0, 3, 1.0f, Door.StandardSpanUnits), crew, "gunship-breach");
+    }
+
+    // Same 5-compartment footprint as the player's own Corvette (Ship.Corvette.cs) - a frigate that
+    // actually matches the ship you're flying in size, not just in name. Suited crew throughout, one
+    // per compartment: this hull is meant to be cleared room by room the same way the gunship is,
+    // just across a bigger hull with a real command staff at the far end. Its own fixed WeaponLoadout
+    // (2 magnetic + 1 laser) is what makes it fly differently from every other class, which don't
+    // carry one and just get whichever single weapon the squadron formation hands them.
+    private static EnemyShipLayout CreateFrigate()
+    {
+        var rooms = new[]
+        {
+            new Room("frigate-bridge", "Мостик", 4.5f, 0, 4.5f, 4),
+            new Room("frigate-gundeck", "Орудийная палуба", 4, 4, 5.5f, 4),
+            new Room("frigate-reactor", "Реакторный отсек", 4, 8, 5.5f, 7),
+            new Room("frigate-portbay", "Пробитый левый отсек", 0, 8, 4, 10.5f),
+            new Room("frigate-starboardbay", "Правый отсек", 9.5f, 8, 4, 10.5f),
+        };
+
+        var doors = new[]
+        {
+            new Door("frigate-door-bridge-gundeck", "frigate-bridge", "frigate-gundeck", 6.75f, 4, Door.StandardSpanUnits, 1.0f),
+            new Door("frigate-door-gundeck-reactor", "frigate-gundeck", "frigate-reactor", 6.75f, 8, Door.StandardSpanUnits, 1.0f),
+            new Door("frigate-door-reactor-portbay", "frigate-reactor", "frigate-portbay", 4, 11, 1.0f, Door.StandardSpanUnits),
+            new Door("frigate-door-reactor-starboardbay", "frigate-reactor", "frigate-starboardbay", 9.5f, 11, 1.0f, Door.StandardSpanUnits),
+        };
+
+        var crew = new[]
+        {
+            new EnemyCrewSpawn("frigate-crew-1", "Абордажный расчёт", "frigate-portbay", 2f, 13f, ItemType.Rifle, Suited: true),
+            new EnemyCrewSpawn("frigate-crew-2", "Канонир", "frigate-gundeck", 6.75f, 6f, ItemType.Rifle, Suited: true),
+            // The engineer works in shirtsleeves next to the reactor - the one soft spot on the hull.
+            new EnemyCrewSpawn("frigate-crew-3", "Механик", "frigate-reactor", 6.75f, 11.5f, ItemType.Knife),
+            new EnemyCrewSpawn("frigate-crew-4", "Канонир", "frigate-starboardbay", 11.5f, 13f, ItemType.Rifle, Suited: true),
+            new EnemyCrewSpawn("frigate-crew-5", "Командир", "frigate-bridge", 6.75f, 2f, ItemType.LaserRifle, Suited: true),
+        };
+
+        return new EnemyShipLayout(EnemyShipClass.Frigate, "Фрегат", rooms, doors,
+            new AirlockOuterDoor("frigate-hatch", "frigate-portbay", 0, 13f, 1.0f, Door.StandardSpanUnits), crew, "frigate-portbay",
+            weaponLoadout: new[] { TurretWeaponType.Magnetic, TurretWeaponType.Magnetic, TurretWeaponType.Laser });
     }
 }

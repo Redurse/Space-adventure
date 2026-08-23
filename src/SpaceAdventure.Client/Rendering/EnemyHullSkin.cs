@@ -66,6 +66,12 @@ public sealed class EnemyHullSkin : IDisposable
         {
             (0.00f, 0.26f), (0.10f, 0.34f), (0.34f, 0.32f), (0.60f, 0.28f), (0.82f, 0.20f), (1.00f, 0.06f),
         },
+        // Broad amidships where its 3 turrets sit, a proper warship's beam rather than the gunship's
+        // narrow wedge - a Corvette-sized hull reads as bigger than everything else in the fleet.
+        EnemyShipClass.Frigate => new[]
+        {
+            (0.00f, 0.24f), (0.10f, 0.36f), (0.42f, 0.40f), (0.68f, 0.34f), (0.86f, 0.22f), (1.00f, 0.08f),
+        },
         _ => new[]
         {
             (0.00f, 0.20f), (0.12f, 0.30f), (0.30f, 0.26f), (0.55f, 0.20f), (0.78f, 0.12f), (1.00f, 0.02f),
@@ -129,6 +135,7 @@ public sealed class EnemyHullSkin : IDisposable
         {
             EnemyShipClass.Freighter => new Color(86, 82, 74),
             EnemyShipClass.Gunship => new Color(74, 78, 92),
+            EnemyShipClass.Frigate => new Color(62, 80, 62),
             _ => new Color(96, 58, 54),
         };
         if (retreating)
@@ -208,6 +215,34 @@ public sealed class EnemyHullSkin : IDisposable
                     c.Disc(stern + 14f, Cy + s * 22f, 9f,
                         retreating ? new Color(96, 128, 160) : new Color(120, 190, 255));
                     c.Disc(stern + 16f, Cy + s * 22f, 5f, new Color(232, 246, 255));
+                }
+                break;
+
+            case EnemyShipClass.Frigate:
+                // Twin magnetic sponsons on the beam (orange muzzle heat) and one dorsal laser mount
+                // forward of them (cyan lens) - the hull's fixed 2-magnetic/1-laser loadout, worn on
+                // the outside the same way the raider/gunship's own single gun always is.
+                for (var s = -1; s <= 1; s += 2)
+                {
+                    var oy = Cy + s * 80f;
+                    c.Rect(Cx - 20f, MathF.Min(Cy + s * 50f, oy), 24f, MathF.Abs(oy - (Cy + s * 50f)), dark);
+                    c.Rect(Cx - 34f, oy - 16f, 60f, 32f, dark);
+                    c.Rect(Cx - 30f, oy - 12f, 52f, 24f, Mix(baseColour, Color.White, 0.10f));
+                    c.Rect(Cx + 10f, oy - 6f, 44f, 12f, Mix(baseColour, Color.Black, 0.24f));
+                    c.Disc(Cx + 50f, oy, 8f, retreating ? new Color(170, 112, 52) : new Color(255, 150, 60));
+                }
+                Spine(Cx + 40f, bow - 20f, 22f, Mix(baseColour, Color.Black, 0.16f));
+                c.Rect(bow - 46f, Cy - 15f, 26f, 30f, dark);
+                c.Rect(bow - 42f, Cy - 11f, 18f, 22f, Mix(baseColour, Color.White, 0.10f));
+                c.Disc(bow - 30f, Cy, 9f, deep);
+                c.Disc(bow - 28f, Cy, 5f, retreating ? new Color(90, 150, 170) : new Color(120, 220, 255));
+                Spine(stern + 24f, Cx - 30f, 20f, Mix(baseColour, Color.Black, 0.18f));
+                c.Rect(Cx - 20f, Cy - 16f, 32f, 32f, new Color(44, 96, 90));
+                c.Rect(Cx - 15f, Cy - 12f, 12f, 8f, new Color(170, 240, 220));
+                for (var s = -1; s <= 1; s += 2)
+                {
+                    c.Disc(stern + 12f, Cy + s * 20f, 12f, deep);
+                    c.Disc(stern + 14f, Cy + s * 20f, 7f, retreating ? new Color(96, 128, 160) : new Color(120, 190, 255));
                 }
                 break;
 

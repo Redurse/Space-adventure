@@ -164,9 +164,16 @@ internal static partial class TestRunner
     {
         var station = Station.CreateDefault();
         var dockRoomId = station.DockRoomId;
-        var (pos, roomId) = station.MoveAlongAxis(new Vec2(2.5f, 0.5f), dockRoomId, new Vec2(0, -1f), _ => true);
+        // Reads the dock room's real bounds rather than a hardcoded corner (M49 - the dock room no
+        // longer sits at a fixed (0,0) origin, its size/position come from the procedural
+        // generator) - the top wall is guaranteed door-free regardless: the dock room's only two
+        // ring neighbours are to its right and below it (Station.Procedural.cs's own doc comment on
+        // why Dock always lands on the perimeter's top-left corner).
+        var room = station.GetRoom(dockRoomId);
+        var start = new Vec2(room.Center.X, room.Top + 1f);
+        var (pos, roomId) = station.MoveAlongAxis(start, dockRoomId, new Vec2(0, -1f), _ => true);
         // Clamped CharacterRadius short of the top hull wall, not exactly on it (see RoomLayout.cs).
-        return roomId == dockRoomId && Math.Abs(pos.Y - RoomLayout.CharacterRadius) < 0.01f;
+        return roomId == dockRoomId && Math.Abs(pos.Y - (room.Top + RoomLayout.CharacterRadius)) < 0.01f;
     }
 
 }

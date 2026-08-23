@@ -77,6 +77,19 @@ public partial class Game1
             // exactly like an open door, even though (unlike a door) nothing can walk through it.
             foreach (var pane in CockpitWindows.Panes(snapshot.Rooms))
                 gaps.Add(new SightGap(pane.Left, pane.Top, pane.Right, pane.Bottom));
+            // A breached wall block is a hole, not a wall - even a single one (World.EnemyAi.cs's
+            // own ApplyEnemyAttack already treats a fully-broken block as transparent to a shot
+            // passing through it, exterior or interior alike; this is the same idea for the eye).
+            // A small square centred on the block works for either orientation without needing to
+            // know which: Occluders.AddHorizontal/AddVertical only ever cut a gap out of the one
+            // wall-run whose own fixed coordinate falls inside the gap's span on that axis, so a
+            // vertical wall block's 1-unit Y-span cuts cleanly out of a vertical run and a
+            // horizontal block's X-span out of a horizontal one.
+            const float wallBlockGapHalfWidth = 0.5f;
+            foreach (var state in snapshot.WallBlockStates)
+                if (state.Breached && snapshot.WallBlocks.FirstOrDefault(b => b.Id == state.Id) is { } block)
+                    gaps.Add(new SightGap(block.X - wallBlockGapHalfWidth, block.Y - wallBlockGapHalfWidth,
+                        block.X + wallBlockGapHalfWidth, block.Y + wallBlockGapHalfWidth));
 
             // While docked the station's compartments are part of the same layout, in the same
             // coordinates - its walls block the view exactly like the ship's own.

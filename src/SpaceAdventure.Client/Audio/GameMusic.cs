@@ -16,16 +16,17 @@ namespace SpaceAdventure.Client.Audio;
 // is as much a part of it as the audio.
 //
 // And the order is a shuffled bag, not a coin flip. Pure random repeats itself in clumps, which
-// players read as a bug ("why this one again"), while a bag guarantees all seven come round before
+// players read as a bug ("why this one again"), while a bag guarantees all five come round before
 // any repeats - with a check that a reshuffle cannot put the same track twice across the seam.
 public sealed class GameMusic
 {
-    // Asset names under Content/Music. The five ambiences were 15-second loops; they are stored
-    // repeated to just over 75 seconds so a single play is worth starting.
+    // Asset names under Content/Music. Five full-length tracks, roughly one to four minutes each -
+    // long enough that a single play is worth starting on its own, unlike the stitched-up 15-second
+    // loops they replaced.
     private static readonly string[] TrackNames =
     {
-        "space_ambience_1", "space_ambience_2", "space_ambience_3", "space_ambience_4",
-        "space_ambience_5", "fantasy_space", "deep_space",
+        "ambience_engine_room_whales", "ambience_arriving_at_destination",
+        "ambience_overclocked_weakness", "ambience_trick_or_trauma", "ambience_monster_nearby",
     };
 
     // How long the silence between two tracks lasts. Wide on purpose - a fixed gap is a metronome.

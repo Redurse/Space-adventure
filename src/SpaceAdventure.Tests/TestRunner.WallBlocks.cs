@@ -259,4 +259,34 @@ internal static partial class TestRunner
 
         return world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsOutside;
     }
+
+    // The cockpit/reactor bulkhead (Ship.GenerateInteriorWallBlocks) shares its full Y0-6 boundary
+    // at X=5, but door-cockpit-reactor only covers Y2-4 - leaving Y0-2 as genuine IsInterior wall,
+    // with no door anywhere nearby. Breaking two adjacent blocks there (0.5 and 1.5) is the ONLY
+    // way across at that height, so a walk-through proves RoomLayout.MoveAlongAxis's new breach
+    // crossing actually works, not just that a door happened to also be in reach.
+    private static bool World_Eva_PassableInteriorBreach_WalksIntoAdjacentRoomNotVacuum()
+    {
+        var world = new World();
+        world.SpawnCharacter(1); // corridor
+        EquipCutterWithTank(world);
+
+        // Y=1.0, not 0.5: standing exactly level with the first block put it within the cutter's
+        // own pointRadius of cockpit's UNRELATED top hull block at (4.5,0) too, which won a
+        // same-tick tie against the intended target often enough to stall it at 0 damage forever -
+        // Y=1.0 clears both target blocks (0.5 away from each) while staying well clear (1.0 away)
+        // of that top wall.
+        WalkAcrossShipTo(world, 4.5f, 1.0f); // cockpit, right up against the interior bulkhead
+        if (CutWallBlockAt(world, 5f, 0.5f, new Vec2(1, 0), 4 * 30) >= 4 * 30)
+            return false;
+        MoveCharacterTo(world, 1, 4.5f, 1.5f); // same room, no door to cross
+        if (CutWallBlockAt(world, 5f, 1.5f, new Vec2(1, 0), 4 * 30) >= 4 * 30)
+            return false;
+
+        WalkFixedDirection(world, 1, 1f, 0f); // straight at the two-block gap just opened
+
+        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var room = world.CreateSnapshot().Rooms.FirstOrDefault(r => r.Contains(new Vec2(me.X, me.Y)));
+        return room?.Id == "reactor" && !me.IsOutside;
+    }
 }

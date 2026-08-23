@@ -364,13 +364,6 @@ public partial class Game1 : Game
     private readonly EffectTracker _effectTracker = new();
     private readonly AtmosphereField _atmosphere = new();
     private WorldSnapshot? _previousSnapshot;
-    // The meme sound effect, whoever's axe just finished off a door - null if the content build
-    // couldn't produce it (Shaders.TryLoad's own reasoning: a missing/failed asset build is worth
-    // silently skipping the effect, not crashing the whole game over).
-    private SoundEffect? _doorBreakSound;
-    // How many overlapping copies PlayDoorBreakSoundIfAnyDoorJustBroke fires per door - the only
-    // way to push the meme louder than volume 1f's hard ceiling (see that method's own comment).
-    private const int DoorBreakSoundLayers = 3;
 
     // Every panel origin, viewport rect and hit-test box in this class is written in these fixed
     // "design" pixels. Rather than making all of that resolution-aware, the whole scene is drawn
@@ -456,6 +449,14 @@ public partial class Game1 : Game
         _font = Content.Load<SpriteFont>("DebugFont");
         _pixel = new Texture2D(GraphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
+
+        // Everything below this line runs before the game loop's own Draw() ever gets called, so
+        // without a frame presented here the player stares at whatever blank colour the OS gave the
+        // freshly created window (white, on most Windows setups) for however long the panel/audio
+        // construction below takes. One manual clear+draw+present right now is enough to replace
+        // that with an actual "loading" message.
+        DrawLoadingFrame("ЗАГРУЗКА...");
+
         _shipRenderer = new ShipRenderer(GraphicsDevice, _font,
             new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y));
         _powerPanel = new PowerPanel(GraphicsDevice, _font);
@@ -498,10 +499,8 @@ public partial class Game1 : Game
         _sounds = new GameSounds(Content);
         _music = new GameMusic(Content);
         _jukeboxAudio = new JukeboxAudio(Content);
-        try { _doorBreakSound = Content.Load<SoundEffect>("Sounds/DoorBreak"); }
-        catch { _doorBreakSound = null; } // same "missing content build shouldn't crash the game" reasoning as Shaders.TryLoad
         // The one raster texture asset in an otherwise fully-procedural game (ItemIcons.cs draws
-        // every other icon from flat primitives) - same defensive load as the sound above, so an
+        // every other icon from flat primitives) - same defensive load as everything else here, so an
         // unbuilt/missing .xnb falls back to the old procedural DrawScrewdriver instead of crashing.
         // The hand-rendered main menu backdrop. Kept at its authored 286x186 and blown up with point
         // filtering at draw time - it is pixel art, and any smoothing on the way up destroys the
@@ -523,6 +522,21 @@ public partial class Game1 : Game
         // full volume, no particle cap change) exactly match the behavior above, so a machine that
         // never opens Settings sees no change at all.
         ApplyGraphicsSettings(PlayerSettingsStore.LoadGraphicsSettings());
+    }
+
+    // Presents a single static frame directly, bypassing the normal Update/Draw loop entirely -
+    // LoadContent hasn't finished yet at the point this is called, so that loop isn't running.
+    private void DrawLoadingFrame(string message)
+    {
+        var viewport = GraphicsDevice.Viewport;
+        var size = _font.MeasureString(message);
+        var position = new Vector2((viewport.Width - size.X) / 2f, (viewport.Height - size.Y) / 2f);
+
+        GraphicsDevice.Clear(Color.Black);
+        _spriteBatch.Begin();
+        _spriteBatch.DrawString(_font, message, position, Color.White);
+        _spriteBatch.End();
+        GraphicsDevice.Present();
     }
 
     // The single place every graphics/audio setting actually takes effect - called once at startup
@@ -1058,7 +1072,6 @@ public partial class Game1 : Game
         if (_client.LatestSnapshot is { } latestForEffects)
         {
             _effectTracker.Detect(_previousSnapshot, latestForEffects);
-            PlayDoorBreakSoundIfAnyDoorJustBroke(_previousSnapshot, latestForEffects);
             UpdateWorldSounds(_previousSnapshot, latestForEffects, gameTime.TotalGameTime.TotalSeconds);
             _previousSnapshot = latestForEffects;
         }
@@ -1123,35 +1136,6 @@ public partial class Game1 : Game
         HudIcons.FillCircle(spriteBatch, _pixel, center, rect.Width * 0.40f, new Color(40, 38, 34));
         HudIcons.DrawRingArc(spriteBatch, _pixel, center, rect.Width * 0.40f, 0f, 360f, TopBarGold * 0.75f, 20, 1.6f);
         ShipRenderer.DrawRectOutline(spriteBatch, _pixel, rect, TopBarGold * 0.55f, 1);
-    }
-
-    // "ТОПОР ГОШИ ДЛЯ ЛОМАНИЯ ДВЕРЕЙ" meme payoff - fires for every crew member's client the
-    // instant any door's own DoorState flips into Destroyed (World.Doors.cs's ChopDoor reaching 0
-    // HP), the same snapshot-diff detection EffectTracker already uses for welds/breaches/kills,
-    // just triggering a sound instead of a rendered effect. Whole-crew broadcast is deliberate -
-    // the shared DoorStates list means whoever's watching hears it too, not just whoever swung.
-    private void PlayDoorBreakSoundIfAnyDoorJustBroke(WorldSnapshot? previous, WorldSnapshot current)
-    {
-        if (previous is null || _doorBreakSound is null)
-            return;
-
-        foreach (var state in current.DoorStates)
-        {
-            var before = previous.DoorStates.FirstOrDefault(s => s.DoorId == state.DoorId);
-            if (before is { Destroyed: false } && state.Destroyed)
-            {
-                // Volume 1f is already the hard ceiling both XNA/MonoGame volume knobs allow (this
-                // instance's own Volume and the global SoundEffect.MasterVolume set in LoadContent) -
-                // software can't ask a mixer for more than "full scale". The one lever actually left
-                // is firing several overlapping instances of the same clip: their waveforms sum in
-                // the audio engine before the OS output stage, so 3 copies genuinely hit louder (and
-                // rougher/more distorted right at the ceiling) than one - not a fake number, real
-                // summed amplitude. AS LOUD AS POSSIBLE.
-                for (var i = 0; i < DoorBreakSoundLayers; i++)
-                    _doorBreakSound.Play(volume: 1f, pitch: 0f, pan: 0f);
-                return; // one meme per tick is plenty, even if several doors somehow broke at once
-            }
-        }
     }
 
     protected override void Draw(GameTime gameTime)

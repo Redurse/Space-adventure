@@ -20,9 +20,15 @@ public sealed partial class EnemyShipLayout
     public AirlockOuterDoor BoardingHatch { get; }
     public IReadOnlyList<EnemyCrewSpawn> CrewSpawns { get; }
     public string BoardingRoomId { get; }
+    // The hull's own fixed turret loadout (e.g. Frigate's 2 magnetic + 1 laser), or null to keep the
+    // older behavior of one weapon per hull picked by squadron slot (World.EnemyFleet.cs's
+    // EnemyWeaponFor) - a class only needs this when its weapons are a defining trait of the hull
+    // itself rather than whatever the squadron formation happens to hand it.
+    public IReadOnlyList<TurretWeaponType>? WeaponLoadout { get; }
 
     public EnemyShipLayout(EnemyShipClass kind, string name, IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors,
-        AirlockOuterDoor boardingHatch, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId)
+        AirlockOuterDoor boardingHatch, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId,
+        IReadOnlyList<TurretWeaponType>? weaponLoadout = null)
     {
         Kind = kind;
         Name = name;
@@ -31,6 +37,7 @@ public sealed partial class EnemyShipLayout
         BoardingHatch = boardingHatch;
         CrewSpawns = crewSpawns;
         BoardingRoomId = boardingRoomId;
+        WeaponLoadout = weaponLoadout;
     }
 
     public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen) =>
@@ -44,6 +51,7 @@ public sealed partial class EnemyShipLayout
         Create(EnemyShipClass.Raider),
         Create(EnemyShipClass.Freighter),
         Create(EnemyShipClass.Gunship),
+        Create(EnemyShipClass.Frigate),
     };
 
     public static EnemyShipLayout Of(EnemyShipClass kind) => All.First(l => l.Kind == kind);

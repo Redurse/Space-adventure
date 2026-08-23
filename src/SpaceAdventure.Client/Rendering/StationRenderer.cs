@@ -99,6 +99,7 @@ public sealed partial class StationRenderer
         NpcKind.Mechanic => Color.DarkOliveGreen,
         NpcKind.Shipwright => Color.MediumPurple,
         NpcKind.Security => Color.Firebrick,
+        NpcKind.Scientist => Color.LightSeaGreen,
         _ => Color.Gray,
     };
 

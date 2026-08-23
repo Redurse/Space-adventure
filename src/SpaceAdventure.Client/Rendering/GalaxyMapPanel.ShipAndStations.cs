@@ -72,30 +72,35 @@ public sealed partial class GalaxyMapPanel
         Primitives.StrokePolygon(spriteBatch, _pixel, points, Color.Black * 0.6f, 1.5f);
     }
 
-    // "При приближении выдавали свою настоящую отсековую структуру станции" (M48 follow-up) - a
-    // station's Rooms are a pure function of its StationKind alone (Station.Create(kind, Vec2.Zero),
-    // Station.Default.cs), so this needs no server round-trip and no per-instance data at all,
-    // same reasoning DrawShipHullSchematic's own zoom-threshold swap already relies on. Cached by
-    // kind since there are only a handful of them and the layout never changes.
-    private static readonly Dictionary<StationKind, Station> _stationSchematicCache = new();
+    // "При приближении выдавали свою настоящую отсековую структуру станции" (M48 follow-up) - every
+    // station now generates its own procedural shape (M49, Station.Procedural.cs), seeded purely
+    // from its own GalaxyPoint id, so the client can reproduce the exact same layout the server has
+    // for that one point with no round-trip - it just has to ask for that point's own id instead of
+    // a shared kind template. Cached per point id since the layout never changes once generated.
+    private static readonly Dictionary<string, Station> _stationSchematicCache = new();
 
     // Half the station schematic's own bounding width in world units (M48 follow-up - "чтобы
     // выглядело как на 2 скриншоте", not the earlier fixed-gap nudge) - lets the docked offset below
     // place the station schematic flush against the ship's own hull instead of floating an arbitrary
     // distance away from it.
-    private static float GetStationHalfWidth(StationKind kind)
+    private static float GetStationHalfWidth(GalaxyPoint point)
     {
-        if (!_stationSchematicCache.TryGetValue(kind, out var station))
-            _stationSchematicCache[kind] = station = Station.Create(kind, Vec2.Zero);
+        var station = GetOrBuildSchematic(point);
         if (station.Rooms.Count == 0)
             return 0f;
         return (station.Rooms.Max(r => r.Right) - station.Rooms.Min(r => r.Left)) / 2f;
     }
 
-    private void DrawStationSchematic(SpriteBatch spriteBatch, StationKind kind, Vector2 markerScreen, float zoom)
+    private static Station GetOrBuildSchematic(GalaxyPoint point)
     {
-        if (!_stationSchematicCache.TryGetValue(kind, out var station))
-            _stationSchematicCache[kind] = station = Station.Create(kind, Vec2.Zero);
+        if (!_stationSchematicCache.TryGetValue(point.Id, out var station))
+            _stationSchematicCache[point.Id] = station = Station.CreateProcedural(point.Id, point.StationKind, Vec2.Zero);
+        return station;
+    }
+
+    private void DrawStationSchematic(SpriteBatch spriteBatch, GalaxyPoint point, Vector2 markerScreen, float zoom)
+    {
+        var station = GetOrBuildSchematic(point);
         if (station.Rooms.Count == 0)
             return;
 

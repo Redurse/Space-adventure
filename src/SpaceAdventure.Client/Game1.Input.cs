@@ -914,8 +914,11 @@ public partial class Game1
             var stationOrigin = ComputeCamera(snapshot, me).Origin;
             foreach (var npc in snapshot.Station.Npcs)
             {
-                if (npc.Kind == NpcKind.Security)
-                    continue; // there's nothing to discuss with the guard - only to avoid them
+                if (npc.Kind is NpcKind.Security or NpcKind.Scientist)
+                    continue; // nothing to discuss with the guard, or with a Research-flavor
+                              // Scientist NPC (decorative only - no service like every other kind
+                              // has, so falling through to StationPanel's Trader default would be
+                              // wrong rather than merely unhelpful)
                 if (!StationRenderer.GetNpcRect(npc, stationOrigin).Contains(_designMouse))
                     continue;
                 _talkingToNpcId = _talkingToNpcId == npc.Id ? null : npc.Id;
@@ -1461,7 +1464,7 @@ public partial class Game1
                 return $"[E] украсть: {ItemDefinitions.DisplayName(nearCrate.Item)} (охрана не должна увидеть)";
 
             var nearNpc = snapshot.Station.Npcs.FirstOrDefault(n =>
-                n.Kind != NpcKind.Security && (n.Position - stationPosition).Length() < TurretInteractionRadius);
+                n.Kind is not (NpcKind.Security or NpcKind.Scientist) && (n.Position - stationPosition).Length() < TurretInteractionRadius);
             if (nearNpc is not null)
                 return $"[ЛКМ] поговорить: {nearNpc.Name}";
 

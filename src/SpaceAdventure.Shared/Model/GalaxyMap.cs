@@ -141,7 +141,7 @@ public sealed class GalaxyMap
             // Faction ownership (game_design.md section 12): home stays neutral so a new crew
             // always has somewhere that treats them the same regardless of reputation; the other
             // two stations belong to the rival powers, as do the sectors their raiders patrol.
-            new GalaxyPoint("home-station", "Домашняя станция", 2100f, 2800f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("home-station", "Домашняя станция", 2100f, 2800f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Trade),
             new GalaxyPoint("sector-alpha", "Сектор Альфа", 2600f, 3400f, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
             // Beta is a picket of two and Delta a patrol of three - the map's difficulty gradient
             // is squadron size, not per-ship strength (game_design.md section 12).
@@ -167,7 +167,7 @@ public sealed class GalaxyMap
             // between the M47 layout's own bearings (all of which cluster between roughly "east"
             // and "south" of the sun) - due west, due east, and due north respectively.
             new GalaxyPoint("sector-zeta", "Сектор Дзета", 900f, 1300f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-            new GalaxyPoint("frontier-outpost", "Пограничный аванпост", 3900f, 2400f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Outpost),
+            new GalaxyPoint("frontier-outpost", "Пограничный аванпост", 3900f, 2400f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Military),
             new GalaxyPoint("independent-relay", "Независимая станция-ретранслятор", 2400f, 900f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Trade),
             // No single faction actually owns this contested a home system outright - the crew's
             // own neutral turf sits alongside two rivals' sectors and a third guild's own outpost.
@@ -179,7 +179,7 @@ public sealed class GalaxyMap
         // planets/belts everywhere, not just sol.
         var alphaCentauri = new StarSystem("alpha-centauri", "Альфа Центавра", new[]
         {
-            new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Military),
         }, AsteroidField.CreateForSystem("alpha-centauri"), galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
 
         // The rest of the chain (game_design.md - "куча систем"): each new system is a light stub,
@@ -197,7 +197,7 @@ public sealed class GalaxyMap
 
         var vega = new StarSystem("vega", "Вега", new[]
         {
-            new GalaxyPoint("vega-outpost", "Аванпост Веги", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Outpost),
+            new GalaxyPoint("vega-outpost", "Аванпост Веги", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Research),
         }, AsteroidField.CreateForSystem("vega"), galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
 
         var tauCeti = new StarSystem("tau-ceti", "Тау Кита", new[]

@@ -12,4 +12,5 @@ public enum EnemyShipClass
     Raider, // three rooms, three unsuited crew: the sector's ordinary opposition
     Freighter, // big, lightly held, nobody suited - the one you can take by opening its doors
     Gunship, // small and mean, crew in suits, so it has to be cleared the hard way
+    Frigate, // Corvette-sized warship, suited crew throughout, fields 2 magnetic turrets + 1 laser
 }

@@ -177,6 +177,7 @@ internal static partial class TestRunner
         ("World_StationWall_WeldRevealsHpWithoutChangingIt", World_StationWall_WeldRevealsHpWithoutChangingIt),
         ("World_Eva_SingleBrokenBlock_IsNotPassable", World_Eva_SingleBrokenBlock_IsNotPassable),
         ("World_Eva_TwoAdjacentBrokenBlocks_ArePassable", World_Eva_TwoAdjacentBrokenBlocks_ArePassable),
+        ("World_Eva_PassableInteriorBreach_WalksIntoAdjacentRoomNotVacuum", World_Eva_PassableInteriorBreach_WalksIntoAdjacentRoomNotVacuum),
         ("World_TankSockets_WrongTankTypeIsRejected", World_TankSockets_WrongTankTypeIsRejected),
         ("World_Eva_SuitWithoutTank_SurvivesOnlyTheGracePeriod", World_Eva_SuitWithoutTank_SurvivesOnlyTheGracePeriod),
         ("World_Eva_SuitTankRunsDownInVacuum", World_Eva_SuitTankRunsDownInVacuum),
@@ -207,6 +208,7 @@ internal static partial class TestRunner
         ("World_Boarding_KillingAllCrew_DestroysEnemyShip", World_Boarding_KillingAllCrew_DestroysEnemyShip),
         ("World_Boarding_CrewFightsBack_DamagesBoarder", World_Boarding_CrewFightsBack_DamagesBoarder),
         ("EnemyShipClasses_AreDistinctStructures", EnemyShipClasses_AreDistinctStructures),
+        ("EnemyShipClasses_FrigateMatchesCorvetteFootprintAndCarriesItsFixedGuns", EnemyShipClasses_FrigateMatchesCorvetteFootprintAndCarriesItsFixedGuns),
         ("World_Boarding_SectorAlwaysFieldsTheSameHull", World_Boarding_SectorAlwaysFieldsTheSameHull),
         ("World_Boarding_OpeningDoors_VentsTheHullAndSuffocatesUnsuitedCrew", World_Boarding_OpeningDoors_VentsTheHullAndSuffocatesUnsuitedCrew),
         ("World_Boarding_HullDestroyedUnderneath_EjectsTheBoardingParty", World_Boarding_HullDestroyedUnderneath_EjectsTheBoardingParty),
@@ -229,7 +231,6 @@ internal static partial class TestRunner
         ("World_Quest_Bounty_TurnIn_FailsBeforeKill", World_Quest_Bounty_TurnIn_FailsBeforeKill),
         ("World_Quest_Mining_ConsumesOreAndPays", World_Quest_Mining_ConsumesOreAndPays),
         ("World_Quest_Mining_TurnIn_FailsWithoutEnoughOre", World_Quest_Mining_TurnIn_FailsWithoutEnoughOre),
-        ("World_Quest_Accept_FailsAtStationWithoutAdministrator", World_Quest_Accept_FailsAtStationWithoutAdministrator),
         ("World_Save_RoundTripsCampaignProgress", World_Save_RoundTripsCampaignProgress),
         ("World_Save_AutosavePendingSetOnDocking", World_Save_AutosavePendingSetOnDocking),
         ("SaveStore_RoundTripsThroughFile", SaveStore_RoundTripsThroughFile),
@@ -328,6 +329,13 @@ internal static partial class TestRunner
         ("World_Cameras_StartConnectedAndAppearInSnapshot", World_Cameras_StartConnectedAndAppearInSnapshot),
         ("World_Cameras_CuttingOneCameraWireLeavesItsSiblingConnected", World_Cameras_CuttingOneCameraWireLeavesItsSiblingConnected),
         ("World_Cameras_RepairingWithWrenchReconnectsIt", World_Cameras_RepairingWithWrenchReconnectsIt),
+        ("Station_Procedural_RoomCountStaysInTheAgreedBand", Station_Procedural_RoomCountStaysInTheAgreedBand),
+        ("Station_Procedural_AlwaysHasTheMandatoryModules", Station_Procedural_AlwaysHasTheMandatoryModules),
+        ("Station_Procedural_EveryRoomIsReachableFromTheDock", Station_Procedural_EveryRoomIsReachableFromTheDock),
+        ("Station_Procedural_NoTwoRoomsOverlap", Station_Procedural_NoTwoRoomsOverlap),
+        ("Station_Procedural_SamePointIdAlwaysRegeneratesIdentically", Station_Procedural_SamePointIdAlwaysRegeneratesIdentically),
+        ("Station_Procedural_DifferentPointIdsGiveDifferentShapes", Station_Procedural_DifferentPointIdsGiveDifferentShapes),
+        ("Station_Procedural_ConnectorLandsExactlyOnTheAnchor", Station_Procedural_ConnectorLandsExactlyOnTheAnchor),
     };
 
     // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via

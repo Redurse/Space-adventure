@@ -77,10 +77,10 @@ public sealed partial class World
         if (IsDocked)
         {
             var (rooms, doors) = GetDockedLayout();
-            return RoomLayout.MoveAlongAxis(rooms, doors, position, roomId, delta, IsDoorOpen);
+            return RoomLayout.MoveAlongAxis(rooms, doors, position, roomId, delta, IsDoorOpen, Ship.WallBlocks, IsPassableBreach);
         }
         if (character.OnStation)
             return Station.MoveAlongAxis(position, roomId, delta, IsDoorOpen);
-        return Ship.MoveAlongAxis(position, roomId, delta, IsDoorOpen);
+        return Ship.MoveAlongAxis(position, roomId, delta, IsDoorOpen, IsPassableBreach);
     }
 }

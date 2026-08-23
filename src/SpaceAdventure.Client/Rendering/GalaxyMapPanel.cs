@@ -190,7 +190,7 @@ public sealed partial class GalaxyMapPanel
             if (isDocked)
             {
                 var shipHalfWidthPixels = ShipLocalFrame.GetHullHalfExtents(snapshot.Rooms).X * PixelsPerUnit * zoom;
-                var stationHalfWidthPixels = GetStationHalfWidth(point.StationKind) * PixelsPerUnit * zoom;
+                var stationHalfWidthPixels = GetStationHalfWidth(point) * PixelsPerUnit * zoom;
                 display.X += (int)(shipHalfWidthPixels + stationHalfWidthPixels);
             }
 
@@ -201,10 +201,11 @@ public sealed partial class GalaxyMapPanel
             HudIcons.DrawRingArc(spriteBatch, _pixel, new Vector2(display.Center.X, display.Center.Y), captureRadiusPixels, 0f, 360f, color * 0.35f, 24, 1.5f);
 
             // "При приближении выдавали свою настоящую отсековую структуру" (M48 follow-up) - the
-            // real Rooms for this StationKind, the same way the ship's own hull schematic already
-            // replaces its simple marker once zoomed in far enough to read it.
+            // real Rooms for this specific station (M49 - every station has its own generated
+            // shape now, not a shared per-kind template), the same way the ship's own hull
+            // schematic already replaces its simple marker once zoomed in far enough to read it.
             if (zoom >= ShipSchematicZoomThreshold)
-                DrawStationSchematic(spriteBatch, point.StationKind, new Vector2(display.Center.X, display.Center.Y), zoom);
+                DrawStationSchematic(spriteBatch, point, new Vector2(display.Center.X, display.Center.Y), zoom);
             else
                 DrawPointGlyph(spriteBatch, point.Kind, display, color, totalSeconds);
 

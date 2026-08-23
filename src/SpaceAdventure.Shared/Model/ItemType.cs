@@ -15,7 +15,7 @@ public enum ItemType
     // Швейцарский армейский топор экипажа - держит его в одной руке, ломает запертую/повреждённую
     // дверь за пару ударов (World.Doors.cs's ChopDoor), а не только служит оружием ближнего боя.
     Axe,
-    // Гоша чинить не умеет - ЛКМ по прибору этой отвёрткой ломает его вместо ремонта
+    // "Отвёртка поломки" - починить ею нельзя ничего: ЛКМ по прибору ломает его вместо ремонта
     // (World.Wiring.cs's DamageDeviceWiring, Game1.Input.cs's own left-click branch for it).
     GoshaScrewdriver,
     // Worn, not held (EquipSlotDefinitions) - Barotrauma-style equipment slots (game_design.md

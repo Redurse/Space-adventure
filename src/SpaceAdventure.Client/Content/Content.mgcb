@@ -26,12 +26,6 @@
 /processorParam:DebugMode=Auto
 /build:Shaders/Post.fx
 
-#begin Sounds/DoorBreak.mp3
-/importer:Mp3Importer
-/processor:SoundEffectProcessor
-/processorParam:Quality=Best
-/build:Sounds/DoorBreak.mp3
-
 #begin Shaders/Light.fx
 /importer:EffectImporter
 /processor:EffectProcessor
@@ -163,47 +157,35 @@
 /build:Shaders/Planet.fx
 
 
-#begin Music/space_ambience_1.mp3
+#begin Music/ambience_engine_room_whales.mp3
 /importer:Mp3Importer
 /processor:SongProcessor
 /processorParam:Quality=Best
-/build:Music/space_ambience_1.mp3
+/build:Music/ambience_engine_room_whales.mp3
 
-#begin Music/space_ambience_2.mp3
+#begin Music/ambience_arriving_at_destination.mp3
 /importer:Mp3Importer
 /processor:SongProcessor
 /processorParam:Quality=Best
-/build:Music/space_ambience_2.mp3
+/build:Music/ambience_arriving_at_destination.mp3
 
-#begin Music/space_ambience_3.mp3
+#begin Music/ambience_overclocked_weakness.mp3
 /importer:Mp3Importer
 /processor:SongProcessor
 /processorParam:Quality=Best
-/build:Music/space_ambience_3.mp3
+/build:Music/ambience_overclocked_weakness.mp3
 
-#begin Music/space_ambience_4.mp3
+#begin Music/ambience_trick_or_trauma.mp3
 /importer:Mp3Importer
 /processor:SongProcessor
 /processorParam:Quality=Best
-/build:Music/space_ambience_4.mp3
+/build:Music/ambience_trick_or_trauma.mp3
 
-#begin Music/space_ambience_5.mp3
+#begin Music/ambience_monster_nearby.mp3
 /importer:Mp3Importer
 /processor:SongProcessor
 /processorParam:Quality=Best
-/build:Music/space_ambience_5.mp3
-
-#begin Music/fantasy_space.mp3
-/importer:Mp3Importer
-/processor:SongProcessor
-/processorParam:Quality=Best
-/build:Music/fantasy_space.mp3
-
-#begin Music/deep_space.mp3
-/importer:Mp3Importer
-/processor:SongProcessor
-/processorParam:Quality=Best
-/build:Music/deep_space.mp3
+/build:Music/ambience_monster_nearby.mp3
 
 #begin Music/Jukebox/jukebox_01_imperium_of_man.mp3
 /importer:Mp3Importer

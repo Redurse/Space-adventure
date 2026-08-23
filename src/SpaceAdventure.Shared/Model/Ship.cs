@@ -156,7 +156,7 @@ public sealed partial class Ship
                     var overlapTop = Math.Max(a.Top, b.Top);
                     var overlapBottom = Math.Min(a.Bottom, b.Bottom);
                     for (var y = overlapTop; y < overlapBottom - Epsilon; y += 1f)
-                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, sharedX, y + 0.5f, IsInterior: true);
+                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, sharedX, y + 0.5f, IsInterior: true, OtherRoomId: b.Id);
                 }
                 else if (Math.Abs(a.Bottom - b.Top) < Epsilon || Math.Abs(b.Bottom - a.Top) < Epsilon)
                 {
@@ -164,7 +164,7 @@ public sealed partial class Ship
                     var overlapLeft = Math.Max(a.Left, b.Left);
                     var overlapRight = Math.Min(a.Right, b.Right);
                     for (var x = overlapLeft; x < overlapRight - Epsilon; x += 1f)
-                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, x + 0.5f, sharedY, IsInterior: true);
+                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, x + 0.5f, sharedY, IsInterior: true, OtherRoomId: b.Id);
                 }
             }
         }
@@ -172,12 +172,15 @@ public sealed partial class Ship
 
     // Moves along a single axis at a time (call once for X, once for Y — see World.Step):
     // stay inside the current room's AABB by default; cross into a connected room only through
-    // an aligned, currently-open Door; otherwise stop at the wall. A closed door blocks crossing
-    // exactly like solid hull (game_design.md Phase 3, M16 - airtight compartments). No walls yet
-    // block crossing outside a room's own bounds if it isn't adjacent to any room at all (open
-    // space / outside the hull).
-    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen) =>
-        RoomLayout.MoveAlongAxis(Rooms, Doors, position, roomId, delta, isDoorOpen);
+    // an aligned, currently-open Door, or a wide-enough breach in an interior wall between two
+    // rooms (isPassableBreach - World.WallBlocks.cs's IsPassableBreach, wired in from
+    // World.Movement.cs); otherwise stop at the wall. A closed door blocks crossing exactly like
+    // solid hull (game_design.md Phase 3, M16 - airtight compartments). No walls yet block crossing
+    // outside a room's own bounds if it isn't adjacent to any room at all (open space / outside the
+    // hull) - that transition is World.Eva.cs's own, separate exterior-hull-breach path.
+    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen,
+        Func<WallBlock, bool>? isPassableBreach = null) =>
+        RoomLayout.MoveAlongAxis(Rooms, Doors, position, roomId, delta, isDoorOpen, WallBlocks, isPassableBreach);
 
     public static Ship CreateStarter()
     {

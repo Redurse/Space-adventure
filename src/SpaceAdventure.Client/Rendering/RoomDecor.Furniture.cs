@@ -19,23 +19,45 @@ public static partial class RoomDecor
             case var id when id.Contains("cockpit") || id.Contains("bridge"):
                 DrawChair(spriteBatch, pixel, corner, accent);
                 break;
-            case var id when id.Contains("armory") || id.Contains("weapon"):
+            // Shipwright's office folded in here too (M49 follow-up) - a hull-fitting workshop
+            // reads the same as an armory's tool bench.
+            case var id when id.Contains("armory") || id.Contains("weapon") || id.Contains("shipwright") ||
+                             id.Contains("foundry") || id.Contains("drydock") || id.Contains("outfitting") ||
+                             id.Contains("fitting") || id.Contains("refinery") || id.Contains("salvage"):
                 DrawWorkbench(spriteBatch, pixel, corner, accent);
                 break;
             case var id when id.Contains("reactor") || id.Contains("engine"):
                 DrawPipeRun(spriteBatch, pixel, rect, accent);
                 break;
-            case var id when id.Contains("quarters") || id.Contains("crew"):
+            case var id when id.Contains("quarters") || id.Contains("crew") || id.Contains("bunkroom") || id.Contains("barracks"):
                 DrawBunk(spriteBatch, pixel, corner, accent);
                 break;
-            case var id when id.Contains("life") || id.Contains("oxygen") || id.Contains("med"):
+            // Greenhouse rides along here too - the same "small rack of tanks/plants" silhouette
+            // reads as either racked oxygen tanks or racked plant trays.
+            case var id when id.Contains("life") || id.Contains("oxygen") || id.Contains("med") || id.Contains("greenhouse"):
                 DrawTankRack(spriteBatch, pixel, corner, accent);
                 break;
-            case var id when id.Contains("cargo") || id.Contains("storage") || id.Contains("hold"):
+            case var id when id.Contains("cargo") || id.Contains("storage") || id.Contains("hold") ||
+                             id.Contains("warehouse") || id.Contains("vault") || id.Contains("munitions"):
                 DrawCrateStack(spriteBatch, pixel, corner, accent);
                 break;
-            case var id when id.Contains("shield"):
+            case var id when id.Contains("shield") || id.Contains("command"):
                 DrawCapacitorBank(spriteBatch, pixel, corner, accent);
+                break;
+            // Everything below is new for M49's procedural stations (Station.Procedural.cs) - room
+            // flavors that have no ship-side equivalent to piggyback on, so they never matched
+            // anything above and drew no furniture at all.
+            case var id when id.Contains("trade") || id.Contains("cantina") || id.Contains("lounge") || id.Contains("brokerage"):
+                DrawMarketStall(spriteBatch, pixel, corner, accent);
+                break;
+            case var id when id.Contains("administrator") || id.Contains("recruiting") || id.Contains("archive"):
+                DrawOfficeDesk(spriteBatch, pixel, corner, accent);
+                break;
+            case var id when id.Contains("laboratory") || id.Contains("observatory"):
+                DrawScienceBench(spriteBatch, pixel, corner, accent);
+                break;
+            case var id when id.Contains("security") || id.Contains("training") || id.Contains("brig") || id.Contains("radar"):
+                DrawSecurityRack(spriteBatch, pixel, corner, accent);
                 break;
         }
     }
@@ -117,7 +139,7 @@ public static partial class RoomDecor
     }
 
     // A bank of small glowing capacitor cells - the shield bay's own hardware, distinct from the
-    // reactor hall's pipework.
+    // reactor hall's pipework. Doubles for a command centre's own bank of status electronics.
     private static void DrawCapacitorBank(SpriteBatch spriteBatch, Texture2D pixel, Vector2 corner, Color accent)
     {
         var housing = new Rectangle((int)corner.X - 30, (int)corner.Y - 8, 30, 26);
@@ -128,5 +150,53 @@ public static partial class RoomDecor
             spriteBatch.Draw(pixel, cell, Color.Black * 0.4f);
             spriteBatch.Draw(pixel, new Rectangle(cell.X, cell.Bottom - 6, cell.Width, 6), Color.Lerp(accent, Color.White, 0.3f) * 0.8f);
         }
+    }
+
+    // A shop counter with a signboard and a row of goods laid out on top - trade/cantina/lounge/
+    // brokerage's own furniture (M49 follow-up), none of which had a ship-side equivalent to
+    // piggyback on.
+    private static void DrawMarketStall(SpriteBatch spriteBatch, Texture2D pixel, Vector2 corner, Color accent)
+    {
+        var counter = new Rectangle((int)corner.X - 34, (int)corner.Y - 4, 34, 20);
+        spriteBatch.Draw(pixel, counter, new Color(72, 60, 46));
+        spriteBatch.Draw(pixel, new Rectangle(counter.X, counter.Y - 6, counter.Width, 6), accent * 0.75f);
+        for (var i = 0; i < 4; i++)
+            spriteBatch.Draw(pixel, new Rectangle(counter.X + 3 + i * 8, counter.Y + 3, 5, 5), Color.Lerp(accent, Color.White, 0.4f) * 0.8f);
+        ShipRenderer.DrawRectOutline(spriteBatch, pixel, counter, Color.Black * 0.35f, 1);
+    }
+
+    // A desk with a monitor propped on it - administrator/recruiting/archive's own furniture.
+    private static void DrawOfficeDesk(SpriteBatch spriteBatch, Texture2D pixel, Vector2 corner, Color accent)
+    {
+        var desk = new Rectangle((int)corner.X - 30, (int)corner.Y, 30, 14);
+        spriteBatch.Draw(pixel, desk, new Color(60, 58, 62));
+        ShipRenderer.DrawRectOutline(spriteBatch, pixel, desk, Color.Black * 0.35f, 1);
+        var monitor = new Rectangle(desk.X + 4, desk.Y - 14, 14, 12);
+        spriteBatch.Draw(pixel, monitor, new Color(30, 32, 36));
+        spriteBatch.Draw(pixel, new Rectangle(monitor.X + 2, monitor.Y + 2, monitor.Width - 4, monitor.Height - 4), accent * 0.7f);
+    }
+
+    // A bench with a row of glowing sample vials - laboratory/observatory's own furniture.
+    private static void DrawScienceBench(SpriteBatch spriteBatch, Texture2D pixel, Vector2 corner, Color accent)
+    {
+        var bench = new Rectangle((int)corner.X - 32, (int)corner.Y - 2, 32, 16);
+        spriteBatch.Draw(pixel, bench, new Color(50, 54, 58));
+        ShipRenderer.DrawRectOutline(spriteBatch, pixel, bench, Color.Black * 0.35f, 1);
+        for (var i = 0; i < 3; i++)
+        {
+            var vial = new Rectangle(bench.X + 4 + i * 9, bench.Y - 10, 5, 10);
+            spriteBatch.Draw(pixel, vial, Color.Lerp(accent, Color.White, 0.3f) * 0.85f);
+            spriteBatch.Draw(pixel, new Rectangle(vial.X, vial.Y, vial.Width, 3), Color.White * 0.5f);
+        }
+    }
+
+    // A wall rack of holstered rifles - security/training/brig/radar's own furniture.
+    private static void DrawSecurityRack(SpriteBatch spriteBatch, Texture2D pixel, Vector2 corner, Color accent)
+    {
+        var rack = new Rectangle((int)corner.X - 30, (int)corner.Y - 22, 30, 30);
+        spriteBatch.Draw(pixel, rack, new Color(42, 44, 48));
+        ShipRenderer.DrawRectOutline(spriteBatch, pixel, rack, accent * 0.6f, 1);
+        for (var i = 0; i < 3; i++)
+            spriteBatch.Draw(pixel, new Rectangle(rack.X + 4 + i * 8, rack.Y + 3, 3, rack.Height - 6), new Color(30, 30, 32));
     }
 }

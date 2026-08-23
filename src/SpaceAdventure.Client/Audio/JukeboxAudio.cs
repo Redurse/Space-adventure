@@ -15,7 +15,7 @@ namespace SpaceAdventure.Client.Audio;
 // Game1.Music.cs simply stops the ambient bag outright whenever the jukebox is on.
 //
 // Tracks load lazily, one at a time, the first time each is actually selected - not all 18 up
-// front in the constructor the way GameMusic preloads its own 7-track ambient bag. Eagerly reading
+// front in the constructor the way GameMusic preloads its own 5-track ambient bag. Eagerly reading
 // ~110MB of mp3 off disk during LoadContent stretched the startup window in which MonoGame's own
 // WinFormsGameWindow.OnDeactivate bug can null-ref if the window loses focus mid-load; loading only
 // what's actually playing keeps LoadContent back down near its old duration.

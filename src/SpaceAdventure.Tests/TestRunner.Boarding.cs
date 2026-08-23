@@ -57,6 +57,44 @@ internal static partial class TestRunner
         return me.OnEnemyShip && !me.IsOutside;
     }
 
+    // Not every class holds its boarding room (Gunship's breach is empty, unlike Raider/Freighter),
+    // so this commits to whichever living defender is nearest by door-graph hops (not recomputed
+    // every tick - re-picking "nearest" by straight-line distance while crossing rooms can thrash
+    // between two defenders that are each briefly closer mid-walk) and walks the door path to them
+    // one waypoint at a time, each leg with its own generous timeout. Returns that defender's id.
+    private static string WalkBoarderToMeleeRangeOfNearestDefender(World world)
+    {
+        var me0 = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var myRoom0 = world.EnemyShipLayout.Rooms.FirstOrDefault(r => r.Contains(new Vec2(me0.X, me0.Y)));
+        var target = world.CreateSnapshot().EnemyShip.Crew.Where(c => c.Alive)
+            .OrderBy(c => myRoom0 is null ? 0 : FindDoorPath(world.EnemyShipLayout.Doors, myRoom0.Id, c.RoomId).Count)
+            .First();
+
+        var waypoints = myRoom0 is null ? new List<Vec2>() : FindDoorPath(world.EnemyShipLayout.Doors, myRoom0.Id, target.RoomId);
+        waypoints.Add(new Vec2(target.X, target.Y));
+
+        foreach (var waypoint in waypoints)
+        {
+            for (var i = 0; i < 10 * 30; i++)
+            {
+                var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+                var toWaypoint = waypoint - new Vec2(me.X, me.Y);
+                if (toWaypoint.Length() <= 0.6f)
+                    break;
+
+                foreach (var door in world.EnemyShipLayout.Doors)
+                    if (!world.IsDoorOpen(door.Id) && (door.Position - new Vec2(me.X, me.Y)).Length() < 1.5f)
+                        world.ToggleDoor(door.Id);
+
+                var dir = toWaypoint.Normalized();
+                world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+                world.Step(RealtimeStep);
+            }
+        }
+
+        return target.Id;
+    }
+
     private static bool World_Boarding_FireWeaponDamagesCrewInSameRoom()
     {
         var world = new World();
@@ -66,25 +104,13 @@ internal static partial class TestRunner
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip)
             return false;
 
-        var defender = world.CreateSnapshot().EnemyShip.Crew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
-        var healthBefore = defender.Health;
-
-        // Walk right up to the defender in the boarding room, then swing.
-        for (var i = 0; i < 5 * 30; i++)
-        {
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var toTarget = new Vec2(defender.X - me.X, defender.Y - me.Y);
-            if (toTarget.Length() <= 0.6f)
-                break;
-            var dir = toTarget.Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
-            world.Step(RealtimeStep);
-        }
+        var defenderId = WalkBoarderToMeleeRangeOfNearestDefender(world);
+        var healthBefore = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId).Health;
 
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
         world.Step(RealtimeStep);
 
-        var after = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defender.Id);
+        var after = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId);
         return after.Health < healthBefore;
     }
 
@@ -99,23 +125,13 @@ internal static partial class TestRunner
         var knifeSlot = Array.IndexOf(inventory.MainSlots.ToArray(), ItemType.Knife);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: knifeSlot)); // un-hold
 
-        var defender = world.CreateSnapshot().EnemyShip.Crew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
-        for (var i = 0; i < 5 * 30; i++)
-        {
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var toTarget = new Vec2(defender.X - me.X, defender.Y - me.Y);
-            if (toTarget.Length() <= 0.6f)
-                break;
-            var dir = toTarget.Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
-            world.Step(RealtimeStep);
-        }
+        var defenderId = WalkBoarderToMeleeRangeOfNearestDefender(world);
 
-        var healthBefore = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defender.Id).Health;
+        var healthBefore = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId).Health;
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
         world.Step(RealtimeStep);
 
-        return world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defender.Id).Health == healthBefore;
+        return world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId).Health == healthBefore;
     }
 
     // Clearing every defender captures the ship outright - an alternative win condition to
@@ -129,32 +145,22 @@ internal static partial class TestRunner
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip)
             return false;
 
-        // Work through the ship room by room, walking toward the nearest living defender and
-        // firing whenever one is in range.
-        for (var i = 0; i < 120 * 30 && world.CreateSnapshot().EnemyShip.Crew.Any(c => c.Alive); i++)
+        // Work through the ship one defender at a time: walk to melee range of the nearest one
+        // (WalkBoarderToMeleeRangeOfNearestDefender's own door-graph BFS, robust to any hull shape -
+        // Frigate's spine runs the other way from the older classes, like the player's own Corvette),
+        // then hose it down with the rifle - well within its actual firing range by the time you're
+        // that close - before moving on to whoever's nearest next.
+        for (var round = 0; round < world.EnemyShipLayout.CrewSpawns.Count && world.CreateSnapshot().EnemyShip.Crew.Any(c => c.Alive); round++)
         {
-            var snapshot = world.CreateSnapshot();
-            var me = snapshot.Characters.Single(c => c.PlayerId == 1);
-            if (me.Health <= 0)
+            if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health <= 0)
                 return false; // died boarding - not what this test is checking
 
-            var target = snapshot.EnemyShip.Crew.Where(c => c.Alive)
-                .OrderBy(c => (new Vec2(c.X, c.Y) - new Vec2(me.X, me.Y)).Length())
-                .First();
-            var toTarget = new Vec2(target.X - me.X, target.Y - me.Y);
-            var dir = toTarget.Length() > 0.001f ? toTarget.Normalized() : Vec2.Zero;
-
-            // A boarded hull is buttoned up (World.cs registers its doors closed), so advancing
-            // means opening the one in front of you - the same click a player makes, done here as
-            // soon as the boarder is within arm's reach of it.
-            foreach (var door in world.EnemyShipLayout.Doors)
-                if (!world.IsDoorOpen(door.Id) && (door.Position - new Vec2(me.X, me.Y)).Length() < 1.5f)
-                    world.ToggleDoor(door.Id);
-
-            // Doors sit at the rooms' shared mid-height, so approach along that row first.
-            var moveY = Math.Abs(me.Y - 3f) > 0.2f ? Math.Sign(3f - me.Y) : dir.Y;
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: moveY, FirePressed: true));
-            world.Step(RealtimeStep);
+            WalkBoarderToMeleeRangeOfNearestDefender(world);
+            for (var i = 0; i < 3 * 30; i++)
+            {
+                world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
+                world.Step(RealtimeStep);
+            }
         }
 
         return world.CreateSnapshot().EnemyShip.Crew.All(c => !c.Alive) && world.CreateSnapshot().Enemy.Hp <= 0;
@@ -186,6 +192,26 @@ internal static partial class TestRunner
         return roomIds.Distinct().Count() == roomIds.Count
                && doorIds.Distinct().Count() == doorIds.Count
                && crewIds.Distinct().Count() == crewIds.Count;
+    }
+
+    // The Frigate's whole point is matching the player's own Corvette footprint (Ship.Corvette.cs:
+    // x 0..13.5, y 0..18.5) while fielding a fixed 2-magnetic/1-laser loadout no other class carries.
+    private static bool EnemyShipClasses_FrigateMatchesCorvetteFootprintAndCarriesItsFixedGuns()
+    {
+        var frigate = EnemyShipLayout.Of(EnemyShipClass.Frigate);
+        var left = frigate.Rooms.Min(r => r.X);
+        var top = frigate.Rooms.Min(r => r.Y);
+        var right = frigate.Rooms.Max(r => r.X + r.Width);
+        var bottom = frigate.Rooms.Max(r => r.Y + r.Height);
+        if (left != 0 || top != 0 || right != 13.5f || bottom != 18.5f)
+            return false;
+
+        return frigate.WeaponLoadout is { Count: 3 } loadout
+               && loadout.Count(w => w == TurretWeaponType.Magnetic) == 2
+               && loadout.Count(w => w == TurretWeaponType.Laser) == 1
+               // Every other class keeps the older behavior: whichever single weapon the squadron
+               // formation hands it, not a loadout of its own.
+               && EnemyShipLayout.All.Where(l => l.Kind != EnemyShipClass.Frigate).All(l => l.WeaponLoadout is null);
     }
 
     // Which hull defends a sector is fixed by the sector, not rolled fresh: run from a fight, come
@@ -273,17 +299,7 @@ internal static partial class TestRunner
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip)
             return false;
 
-        var defender = world.CreateSnapshot().EnemyShip.Crew.First(c => c.RoomId == world.EnemyShipLayout.BoardingRoomId);
-        for (var i = 0; i < 5 * 30; i++)
-        {
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var toTarget = new Vec2(defender.X - me.X, defender.Y - me.Y);
-            if (toTarget.Length() <= 0.6f)
-                break;
-            var dir = toTarget.Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
-            world.Step(RealtimeStep);
-        }
+        WalkBoarderToMeleeRangeOfNearestDefender(world);
 
         var healthBefore = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health;
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0));

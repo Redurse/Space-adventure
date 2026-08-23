@@ -15,36 +15,46 @@ public sealed partial class World
     public PowerGrid PowerGrid { get; } = new();
     public ShieldSystem Shield { get; } = new();
     // Enemy is a computed view over the squadron actually in the field (World.EnemyFleet.cs).
-    // One prebuilt layout per station kind (game_design.md section 10 - stations differ by which
-    // services they offer). Which one Station resolves to depends on where the ship currently is,
-    // so walking around "the station" means walking around whichever one you docked at.
-    // Rebuilt whenever Ship is replaced: the layouts are anchored on the ship's own outer airlock
-    // door so a docked station lines up with it exactly (World.StationDocking.cs), and a different
-    // hull puts that door somewhere else. Room/door ids don't depend on the anchor, so the flat
-    // door-state dictionary keyed by id survives the rebuild untouched.
-    private Dictionary<StationKind, Station> _stationsByKind = new();
+    // One generated instance per station actually visited so far this session (M49 - every station
+    // now gets its own procedural shape, Station.Procedural.cs), cached forever once built:
+    // generation is a pure, cheap function of the point's own id, so even a long playthrough that
+    // visits most of the galaxy caches at most a couple hundred small Station objects. Replaces the
+    // old "one shared instance per StationKind, repositioned to whichever same-kind point is
+    // nearest" model, which made every station of a given kind literally the same object.
+    private readonly Dictionary<string, Station> _stationsByPointId = new();
 
-    private void RebuildStationLayouts()
+    public Station Station => GetOrCreateStation(_dockedPointId ?? _nearestStationPointId ?? GalaxyMap.HomePointId);
+
+    private Station GetOrCreateStation(string pointId)
     {
+        if (_stationsByPointId.TryGetValue(pointId, out var existing))
+            return existing;
+
+        // Anchored on the ship's own outer airlock door so a docked station lines up with it
+        // exactly (World.StationDocking.cs) - a hull swap moves that door, which is why
+        // RebuildStationLayouts (World.ShipPurchase.cs) clears this cache instead of leaving stale
+        // instances anchored to a door that no longer exists there. The station's own SHAPE stays
+        // fixed forever (seeded from pointId alone, Station.Procedural.cs) - only this anchor
+        // translation gets redone.
+        var kind = GalaxyMap.GetPoint(pointId).StationKind;
         var anchor = Ship.AirlockOuterDoors.First().Position;
-        _stationsByKind = Enum.GetValues<StationKind>().ToDictionary(k => k, k => Station.Create(k, anchor));
+        var station = Station.CreateProcedural(pointId, kind, anchor);
+        _stationsByPointId[pointId] = station;
+        // Every station's doors, not just the one currently resolved - door state is one flat
+        // dictionary across all structures in the game. TryAdd rather than a raw assignment so
+        // re-generating an already-visited point after a hull swap can't stomp a door a player had
+        // genuinely closed (never happens today - a station is always safe, nobody has a reason to
+        // close one - but costs nothing to guard against).
+        foreach (var door in station.Doors)
+            _doorOpen.TryAdd(door.Id, true);
+        return station;
     }
 
-    public Station Station => _stationsByKind[CurrentStationKind];
-
-    // Falls back to whichever station point the ship is currently nearest (World.Voyage.cs's
-    // UpdateNearestStation - the approach already needs the right hull drawn before docking), then
-    // to Outpost when there's no station nearby at all.
-    private StationKind CurrentStationKind
-    {
-        get
-        {
-            var pointId = _dockedPointId ?? _nearestStationPointId;
-            if (pointId is not null && GalaxyMap.Points.FirstOrDefault(p => p.Id == pointId) is { Kind: GalaxyPointKind.Station } point)
-                return point.StationKind;
-            return StationKind.Outpost;
-        }
-    }
+    // Called from World.ShipPurchase.cs's InitializeShipState on every hull swap (and once from
+    // this constructor) - every cached station is anchored to the OLD hull's airlock position, so
+    // simply dropping them all is enough: the next access to Station lazily regenerates whichever
+    // one is actually needed, anchored to the new hull instead.
+    private void RebuildStationLayouts() => _stationsByPointId.Clear();
     // Which system's field is "the" field right now (World.StarSystems.cs) - a computed lookup
     // rather than a stored instance, so every existing reader (World.ShipField.cs, Cutting.cs,
     // Eva.cs, Quests.cs, Projectiles.cs, CrewAi.cs) keeps working unchanged even though there's no
@@ -108,11 +118,6 @@ public sealed partial class World
         Ship = shipKind == ShipKind.Custom ? Ship.FromCustomDefinition(customShip!) : Ship.Create(shipKind);
         _turretRuntimes = Ship.Turrets.ToDictionary(t => t.Id, t => new TurretRuntime(t));
         InitializeShipState();
-        // Every station kind's doors, not just the one currently resolved - door state is one flat
-        // dictionary across all structures, and which station Station resolves to changes as the
-        // ship travels (see CurrentStationKind).
-        foreach (var door in _stationsByKind.Values.SelectMany(s => s.Doors))
-            _doorOpen[door.Id] = true; // station is safe - no reason to ever close these
         // Every enemy hull class, not only the one currently in front of the guns - which ship of
         // the squadron is boardable changes mid-fight (World.EnemyFleet.cs), same as the station
         // above changes as the ship travels.

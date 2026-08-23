@@ -88,17 +88,20 @@ public sealed partial class World
             // side the guns and the airlock are on (TurretMount), so the fight happens where the
             // ship can answer it and where a boarding party can reach it.
             var position = _shipFieldPosition + new Vec2(EnemySpawnDistance + i * 6f, 0f);
-            _enemyShips.Add(new EnemyShipRuntime($"enemy-{i + 1}", EnemyMaxHp, position, EnemyClassFor(i), EnemyWeaponFor(i))
+            var layout = EnemyClassFor(i);
+            var ship = new EnemyShipRuntime($"enemy-{i + 1}", EnemyMaxHp, position, layout, WeaponLoadoutFor(layout, i))
             {
-                // A sector opens with raiders closing in, not with a volley at the moment of
-                // arrival - the player gets a few seconds to get to a gun.
-                FireCooldown = EnemyOpeningDelaySeconds,
                 // Own random phase so a whole squadron doesn't weave in lockstep (SteerEnemy's dodge).
                 DodgePhaseSeed = (float)(_random.NextDouble() * 1000.0),
                 // Starts its orbit exactly where it already is, spinning either way at random.
                 OrbitAngleDegrees = BearingDegrees(position - _shipFieldPosition),
                 OrbitDirection = _random.Next(2) == 0 ? 1f : -1f,
-            });
+            };
+            // A sector opens with raiders closing in, not with a volley at the moment of arrival -
+            // the player gets a few seconds to get to a gun. Applies to every turret this hull has.
+            for (var t = 0; t < ship.TurretFireCooldowns.Length; t++)
+                ship.TurretFireCooldowns[t] = EnemyOpeningDelaySeconds;
+            _enemyShips.Add(ship);
         }
         _remainingEnemyShips = count;
     }
@@ -127,7 +130,8 @@ public sealed partial class World
         var axis = RotateLocalToWorld(new Vec2(1f, 0f), _shipRotationDegrees);
         var position = _shipFieldPosition + axis * EnemyStandoffDistance;
         var index = _enemyShips.Count;
-        _enemyShips.Add(new EnemyShipRuntime($"debug-enemy-{index + 1}", EnemyMaxHp, position, EnemyClassFor(index), EnemyWeaponFor(index))
+        var layout = EnemyClassFor(index);
+        _enemyShips.Add(new EnemyShipRuntime($"debug-enemy-{index + 1}", EnemyMaxHp, position, layout, WeaponLoadoutFor(layout, index))
         {
             OrbitAngleDegrees = BearingDegrees(position - _shipFieldPosition),
             OrbitDirection = _random.Next(2) == 0 ? 1f : -1f,
@@ -167,6 +171,12 @@ public sealed partial class World
         var offset = Math.Abs(StableSectorSeed(_battleSectorPointId ?? _dockedPointId ?? "sector"));
         return EnemyWeaponChoices[(index + offset) % EnemyWeaponChoices.Length];
     }
+
+    // Most hulls carry exactly the single weapon EnemyWeaponFor hands them by squadron slot; a class
+    // with its own EnemyShipLayout.WeaponLoadout (Frigate's 2 magnetic + 1 laser) overrides that and
+    // always brings its whole fixed arsenal instead, regardless of formation slot.
+    private IReadOnlyList<TurretWeaponType> WeaponLoadoutFor(EnemyShipLayout layout, int index) =>
+        layout.WeaponLoadout ?? new[] { EnemyWeaponFor(index) };
 
     // string.GetHashCode is randomised per process, so it would hand the same sector a different
     // squadron on every launch - the same reason AsteroidShape writes its own hash.
@@ -396,13 +406,15 @@ public sealed partial class World
         return false;
     }
 
+    // Each turret in enemy.WeaponLoadout fires independently on its own TurretFireCooldowns entry -
+    // almost always a single-entry loop (the common one-weapon-per-hull case), but a multi-turret
+    // hull like Frigate has each of its 3 guns reload and fire on its own schedule against the same
+    // resolved target, rather than the whole ship sharing one clock.
     private void TryEnemyFire(EnemyShipRuntime enemy, Vec2 target, double deltaSeconds)
     {
-        enemy.FireCooldown = Math.Max(0f, enemy.FireCooldown - (float)deltaSeconds);
-
         // Same rule the design gives the player: badly hurt raiders break off (EnemyShip's
         // IsRetreating) - they stay shootable and boardable, they just stop shooting back.
-        if (enemy.FireCooldown > 0 || enemy.Ship.IsRetreating)
+        if (enemy.Ship.IsRetreating)
             return;
 
         // Range is judged against the hull's own centre, not the specific priority target - a
@@ -412,38 +424,45 @@ public sealed partial class World
         // fight never actually firing at all. Line of sight still checks the real aim line, since
         // that's genuinely about whether this specific shot is blocked.
         var toTarget = target - enemy.Position;
-        if ((_shipFieldPosition - enemy.Position).Length() > EnemyWeaponRangeUnits || !HasLineOfSight(enemy.Position, target))
-            return;
+        var inRange = (_shipFieldPosition - enemy.Position).Length() <= EnemyWeaponRangeUnits && HasLineOfSight(enemy.Position, target);
 
-        enemy.FireCooldown = enemy.WeaponType == TurretWeaponType.Magnetic
-            ? EnemyMagneticFireIntervalSeconds
-            : EnemyFireIntervalSeconds;
-
-        var direction = toTarget.Normalized();
-        var isLaser = enemy.WeaponType == TurretWeaponType.Laser;
-        var pellets = enemy.WeaponType == TurretWeaponType.MachineGun ? EnemyMachineGunPelletsPerBurst : 1;
-
-        // Each weapon its own wall damage (TurretBalance.EnemyMagneticWallDamage/EnemyLaserWallDamage/
-        // EnemyMachineGunWallDamage) - only WallBlock.Hp actually reads this (World.EnemyAi.cs's
-        // ApplyEnemyAttack); every other fixture it can hit is a plain on/off flag that any landed
-        // shot disables outright regardless of the number.
-        var damage = enemy.WeaponType switch
+        for (var t = 0; t < enemy.WeaponLoadout.Count; t++)
         {
-            TurretWeaponType.Magnetic => TurretBalance.EnemyMagneticWallDamage,
-            TurretWeaponType.Laser => TurretBalance.EnemyLaserWallDamage,
-            _ => TurretBalance.EnemyMachineGunWallDamage,
-        };
+            enemy.TurretFireCooldowns[t] = Math.Max(0f, enemy.TurretFireCooldowns[t] - (float)deltaSeconds);
+            if (enemy.TurretFireCooldowns[t] > 0 || !inRange)
+                continue;
 
-        for (var i = 0; i < pellets; i++)
-        {
-            var jitterDegrees = pellets > 1
-                ? ((float)_random.NextDouble() * 2f - 1f) * EnemyMachineGunSpreadDegrees
-                : 0f;
-            var jitterRadians = jitterDegrees * (MathF.PI / 180f);
-            var cos = MathF.Cos(jitterRadians);
-            var sin = MathF.Sin(jitterRadians);
-            var jittered = new Vec2(direction.X * cos - direction.Y * sin, direction.X * sin + direction.Y * cos);
-            SpawnProjectile(enemy.Position + jittered * EnemyHullRadius, jittered, fromEnemy: true, isLaser, damage);
+            var weapon = enemy.WeaponLoadout[t];
+            enemy.TurretFireCooldowns[t] = weapon == TurretWeaponType.Magnetic
+                ? EnemyMagneticFireIntervalSeconds
+                : EnemyFireIntervalSeconds;
+
+            var direction = toTarget.Normalized();
+            var isLaser = weapon == TurretWeaponType.Laser;
+            var pellets = weapon == TurretWeaponType.MachineGun ? EnemyMachineGunPelletsPerBurst : 1;
+
+            // Each weapon its own wall damage (TurretBalance.EnemyMagneticWallDamage/EnemyLaserWallDamage/
+            // EnemyMachineGunWallDamage) - only WallBlock.Hp actually reads this (World.EnemyAi.cs's
+            // ApplyEnemyAttack); every other fixture it can hit is a plain on/off flag that any landed
+            // shot disables outright regardless of the number.
+            var damage = weapon switch
+            {
+                TurretWeaponType.Magnetic => TurretBalance.EnemyMagneticWallDamage,
+                TurretWeaponType.Laser => TurretBalance.EnemyLaserWallDamage,
+                _ => TurretBalance.EnemyMachineGunWallDamage,
+            };
+
+            for (var i = 0; i < pellets; i++)
+            {
+                var jitterDegrees = pellets > 1
+                    ? ((float)_random.NextDouble() * 2f - 1f) * EnemyMachineGunSpreadDegrees
+                    : 0f;
+                var jitterRadians = jitterDegrees * (MathF.PI / 180f);
+                var cos = MathF.Cos(jitterRadians);
+                var sin = MathF.Sin(jitterRadians);
+                var jittered = new Vec2(direction.X * cos - direction.Y * sin, direction.X * sin + direction.Y * cos);
+                SpawnProjectile(enemy.Position + jittered * EnemyHullRadius, jittered, fromEnemy: true, isLaser, damage);
+            }
         }
     }
 

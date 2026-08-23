@@ -7,7 +7,7 @@ namespace SpaceAdventure.Shared.Model;
 public sealed record GalaxyPoint(string Id, string Name, float X, float Y, GalaxyPointKind Kind,
     FactionId Faction = FactionId.Independent,
     // Only meaningful for Kind == Station: which services it offers (game_design.md section 10).
-    StationKind StationKind = StationKind.Outpost,
+    StationKind StationKind = StationKind.Trade,
     // Only meaningful for Kind == HostileSector: how many ships defend it (game_design.md section
     // 12, "групповые вражеские встречи"). They engage one after another, not all at once.
     int SquadronSize = 1,

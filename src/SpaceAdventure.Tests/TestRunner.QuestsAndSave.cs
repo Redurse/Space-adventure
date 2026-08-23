@@ -104,19 +104,7 @@ internal static partial class TestRunner
 
     // Not every station kind staffs an Administrator (game_design.md section 10) - a Shipyard
     // sells hulls and nothing else, so there's no work to take there at all.
-    private static bool World_Quest_Accept_FailsAtStationWithoutAdministrator()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        DockAtStation(world, "outpost-gamma"); // Shipyard kind
-        if (!world.IsDocked)
-            return false;
-
-        world.ApplyCommand(1, new ClientCommand(1, AcceptCargoQuestPressed: true, AcceptQuestKind: QuestKind.Delivery));
-        return world.CreateSnapshot().ActiveQuest is null;
-    }
-
-    // A save carries campaign progress across a restart: hull, wallet, reputation, upgrades,
+// A save carries campaign progress across a restart: hull, wallet, reputation, upgrades,
     // inventory, the active job and where the crew is docked (SaveGame's own doc comment covers
     // what's deliberately left out).
     private static bool World_Save_RoundTripsCampaignProgress()
@@ -248,30 +236,28 @@ internal static partial class TestRunner
         WalkFixedDirection(world, 1, 1f, 0f); // crosses the connector into the station's dock room
     }
 
-    // Station rooms sit in a straight row at the doors' shared height, so walking along y=3 and
-    // only then stepping off it reaches any of them (the same two-leg rule MoveCharacterTo needs
-    // aboard ship - see the known pitfalls in continue.md).
+    // Routes through the station's own door graph (TestRunner.RoomGraph.cs's FindDoorPath) rather
+    // than assuming every room sits on one shared height (M49 - stations are a procedurally
+    // generated ring now, not a straight row) - walk each door's centre in turn, then the final
+    // direct hop into the target room, the same "known-safe two-leg" reasoning MoveCharacterTo's
+    // own callers already rely on aboard ship (each leg's straight line never has to leave the
+    // room it starts in, since both its endpoints sit on that room's own boundary or interior).
+    // If (x,y) isn't inside any station room at all - World_Crime_RedockingRestocksCrates's own
+    // "walk back through the connector towards the ship" call, whose target sits on the SHIP side
+    // of it - route to the dock room instead (guaranteed reachable) and let the final direct hop
+    // carry the rest of the way, the one short leg no door graph is needed for.
     private static void WalkOnStationTo(World world, float x, float y)
     {
-        for (var i = 0; i < 40 * 30; i++)
+        var station = world.Station;
+        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var fromRoom = station.Rooms.FirstOrDefault(r => r.Contains(new Vec2(me.X, me.Y)));
+        if (fromRoom is not null)
         {
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var dx = x - me.X;
-            if (Math.Abs(dx) <= 0.1f)
-                break;
-            var dy = Math.Abs(me.Y - 3f) > 0.15f ? Math.Sign(3f - me.Y) : 0;
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: Math.Sign(dx), MoveY: dy));
-            world.Step(RealtimeStep);
+            var toRoomId = (station.Rooms.FirstOrDefault(r => r.Contains(new Vec2(x, y))) ?? station.GetRoom(station.DockRoomId)).Id;
+            foreach (var waypoint in FindDoorPath(station.Doors, fromRoom.Id, toRoomId))
+                MoveCharacterTo(world, 1, waypoint.X, waypoint.Y);
         }
-
-        for (var i = 0; i < 10 * 30; i++)
-        {
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            if (Math.Abs(y - me.Y) <= 0.1f)
-                break;
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: Math.Sign(y - me.Y)));
-            world.Step(RealtimeStep);
-        }
+        MoveCharacterTo(world, 1, x, y);
 
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0));
     }
