@@ -120,8 +120,16 @@ public sealed partial class World
     // cutting action itself uses, so the bar can never show while a different block is what's
     // actually about to take the damage. Welding never targets a door (World.SystemRepair.cs's
     // E-key minigame is how a destroyed one gets fixed), so there's no welding branch here.
-    private string? GetDoorToolTargetId(Character character) =>
-        character.OnEnemyShip || character.IsOutside || !IsCutting(character.PlayerId)
-            ? null
-            : FindAimedCutTarget(character).DoorId;
+    private string? GetDoorToolTargetId(Character character)
+    {
+        if (!IsCutting(character.PlayerId))
+            return null;
+        // Same lookup CutIndoorAlongFlameOnEnemyShip itself uses (World.Cutting.cs), so the bar
+        // aboard a boarded hull can't disagree with what the flame is actually about to chop.
+        if (character.OnEnemyShip)
+            return FindAimedEnemyIndoorTarget(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius).DoorId;
+        if (character.IsOutside)
+            return null;
+        return FindAimedCutTarget(character).DoorId;
+    }
 }

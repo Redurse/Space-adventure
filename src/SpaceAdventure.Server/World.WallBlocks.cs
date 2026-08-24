@@ -170,8 +170,27 @@ public sealed partial class World
     // block's bar while the flame is actually about to cut a door instead (or the other way round).
     private string? GetWallToolTargetId(Character character)
     {
+        // Same "quiet number, shown only while it's being worked" bar as the player's own ship,
+        // aimed at whichever enemy hull is actually boarded - FindAimedEnemyIndoorTarget is the
+        // exact lookup CutIndoorAlongFlameOnEnemyShip/WeldIndoorAlongFlameOnEnemyShip themselves use
+        // (World.Cutting.cs/World.Welding.cs), so the bar can never disagree with what's actually
+        // about to take the damage. Wall block or airlock, whichever it found - they never collide.
         if (character.OnEnemyShip)
+        {
+            if (BoardableEnemy is null)
+                return null;
+            if (IsWelding(character.PlayerId))
+            {
+                var target = FindAimedEnemyIndoorTarget(character, WelderReachUnits, WelderSamples, WeldPointRadius);
+                return target.WallBlockId ?? target.AirlockId;
+            }
+            if (IsCutting(character.PlayerId))
+            {
+                var target = FindAimedEnemyIndoorTarget(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
+                return target.WallBlockId ?? target.AirlockId;
+            }
             return null;
+        }
         if (IsWelding(character.PlayerId))
             return FindAimedWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius)?.Id
                 ?? (character.OnStation ? FindAimedStationWallBlock(character, WelderReachUnits, WelderSamples, WeldPointRadius)?.Id : null);

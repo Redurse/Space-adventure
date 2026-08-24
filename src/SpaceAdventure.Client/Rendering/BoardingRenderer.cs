@@ -27,7 +27,7 @@ public sealed class BoardingRenderer
         _font = font;
     }
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, float totalSeconds = 0f)
     {
         // Real air, drawn through the same red tint the player's own compartments use: which rooms
         // are already vented is the boarding party's main tactical readout (World.EnemyAtmosphere.cs).
@@ -40,11 +40,30 @@ public sealed class BoardingRenderer
             _shipRenderer.DrawRoomWalls(spriteBatch, room, Oxygen(room.Id), origin);
 
         // Doors start closed aboard a hull that has just been boarded, and opening one is how the
-        // vacuum gets to the next compartment - so their real state has to show.
+        // vacuum gets to the next compartment - so their real state has to show. Destroyed, not just
+        // open, gets the player's own ship's flashing-orange treatment (ShipRenderer.DrawDoor) -
+        // without it a door chopped to 0 Hp (World.Doors.cs's ChopDoor) silently read as an
+        // ordinary open door instead of a wrecked one.
         foreach (var door in snapshot.EnemyShip.Doors)
         {
-            var isOpen = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? false;
-            _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen, origin);
+            var state = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id);
+            _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height,
+                state?.IsOpen ?? false, origin, destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
+        }
+
+        // A cut-through interior wall panel, same black-hole-plus-hazard-stripes treatment the
+        // player's own ship's DrawBreachedWallBlock gives one - previously this hull's own
+        // WallBlocks/WallBlockStates were never even read here, so a fully-cut interior panel
+        // produced no visual at all despite the server-side breach (World.Cutting.cs's
+        // CutIndoorAlongFlameOnEnemyShip) being real.
+        foreach (var state in snapshot.EnemyShip.WallBlockStates)
+        {
+            if (!state.Breached)
+                continue;
+            var block = snapshot.EnemyShip.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
+            var room = block is null ? null : snapshot.EnemyShip.Rooms.FirstOrDefault(r => r.Id == block.RoomId);
+            if (block is not null && room is not null)
+                _shipRenderer.DrawBreachedWallBlock(spriteBatch, block, room, origin, totalSeconds);
         }
 
         // Locked hatches, not standing-open holes: each only reads as passable once actually cut
@@ -74,15 +93,27 @@ public sealed class BoardingRenderer
         foreach (var shot in snapshot.PersonalShots.Where(s => s.Scene == ShotScene.EnemyShip))
             DrawShot(spriteBatch, _pixel, shot, origin);
 
+        // Same muzzle-out-in-front-of-the-body placement and real animation clock the player's own
+        // ship gets (ShipRenderer.Draw) - this used to draw straight from the character's own
+        // centre with the flame frozen at totalSeconds=0, which read as static/off compared to
+        // every other tool flame in the game.
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && c.OnEnemyShip))
-            FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
-                new Vector2(character.FacingX, character.FacingY), 0f);
+        {
+            var facing = new Vector2(character.FacingX, character.FacingY);
+            var center = origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit;
+            var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.Cutter, character.Inventory, center, facing)
+                ?? center + ShipRenderer.HeldToolOffset(facing);
+            FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);
+        }
 
         foreach (var character in snapshot.Characters.Where(c => c.Welding && c.OnEnemyShip))
-            FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
-                new Vector2(character.FacingX, character.FacingY), 0f);
+        {
+            var facing = new Vector2(character.FacingX, character.FacingY);
+            var center = origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit;
+            var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.WeldingTool, character.Inventory, center, facing)
+                ?? center + ShipRenderer.HeldToolOffset(facing);
+            FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);
+        }
     }
 
     // A round in flight: a bright head with a short streak behind it, coloured by who fired and

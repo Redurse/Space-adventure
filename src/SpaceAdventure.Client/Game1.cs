@@ -1233,7 +1233,15 @@ public partial class Game1 : Game
                     snapshot.Cameras.Count > 0 && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f, _externalCameraMode);
             }
             else if (myCharacter?.OnEnemyShip == true)
-                _boardingRenderer.Draw(_spriteBatch, snapshot, ComputeStationCamera(myCharacter));
+            {
+                // Needed for the same HUD-batch tool-target bar the player's own ship gets further
+                // down (Game1.cs's wallToolOrigin block) - left null this branch never ran there,
+                // so a door/wall block actually being cut aboard a boarded hull never showed its
+                // Hp bar even once the server started reporting a real target id.
+                var boardingOrigin = ComputeStationCamera(myCharacter);
+                _shipInteriorOrigin = boardingOrigin;
+                _boardingRenderer.Draw(_spriteBatch, snapshot, boardingOrigin, totalSeconds);
+            }
             else
             {
                 var (origin, hullCenter, _) = myCharacter is not null
@@ -1454,11 +1462,25 @@ public partial class Game1 : Game
                     // never collides with a ship one, same "either list, whichever matches" shape as
                     // the door bar lookup just below.
                     var block = hudSnapshot.WallBlocks.FirstOrDefault(b => b.Id == targetId)
-                        ?? hudSnapshot.Station.WallBlocks.FirstOrDefault(b => b.Id == targetId);
+                        ?? hudSnapshot.Station.WallBlocks.FirstOrDefault(b => b.Id == targetId)
+                        ?? hudSnapshot.EnemyShip.WallBlocks.FirstOrDefault(b => b.Id == targetId);
                     var state = hudSnapshot.WallBlockStates.FirstOrDefault(s => s.Id == targetId)
-                        ?? hudSnapshot.Station.WallBlockStates.FirstOrDefault(s => s.Id == targetId);
+                        ?? hudSnapshot.Station.WallBlockStates.FirstOrDefault(s => s.Id == targetId)
+                        ?? hudSnapshot.EnemyShip.WallBlockStates.FirstOrDefault(s => s.Id == targetId);
                     if (block is not null && state is not null)
                         _shipRenderer.DrawWallToolTargetBar(_spriteBatch, block, state, wallToolOrigin);
+
+                    // An enemy hull's own locked airlock, aimed at from inside instead of a wall
+                    // panel - AirlockOuterDoor isn't a WallBlock, so it can't go through the typed
+                    // wrapper above; the underlying bar only needs a position and a fraction.
+                    var airlockState = hudSnapshot.EnemyShip.AirlockStates.FirstOrDefault(s => s.Id == targetId);
+                    if (block is null && airlockState is not null)
+                    {
+                        var airlock = hudSnapshot.EnemyShip.AirlockOuterDoors.FirstOrDefault(d => d.Id == targetId);
+                        if (airlock is not null)
+                            _shipRenderer.DrawToolTargetBar(_spriteBatch, new Vector2(airlock.Position.X, airlock.Position.Y),
+                                airlockState.Fraction, wallToolOrigin);
+                    }
                 }
 
                 // Same bar, over a door the cutter is cutting through instead of a hull block -
@@ -1472,7 +1494,8 @@ public partial class Game1 : Game
                     if (doorState is null)
                         continue;
                     var doorPosition = hudSnapshot.Doors.FirstOrDefault(d => d.Id == doorTargetId)?.Position
-                        ?? hudSnapshot.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorTargetId)?.Position;
+                        ?? hudSnapshot.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorTargetId)?.Position
+                        ?? hudSnapshot.EnemyShip.Doors.FirstOrDefault(d => d.Id == doorTargetId)?.Position;
                     if (doorPosition is { } position)
                         _shipRenderer.DrawDoorToolTargetBar(_spriteBatch, new Vector2(position.X, position.Y), doorState, wallToolOrigin);
                 }

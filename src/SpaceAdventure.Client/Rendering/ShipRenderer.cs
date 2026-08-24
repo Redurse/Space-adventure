@@ -1531,7 +1531,9 @@ public sealed class ShipRenderer
     // close - shows through exactly as it would look through a real gap in the plating, without any
     // extra portal/render-target machinery. Barotrauma's own breaches work the same way: they don't
     // fake the ocean, they just stop drawing the hull over it.
-    private void DrawBreachedWallBlock(SpriteBatch spriteBatch, WallBlock block, Room room, Vector2 origin, float totalSeconds)
+    // internal: also called by BoardingRenderer for the boarded enemy hull's own breached interior
+    // wall blocks, the same visual language as the player's own ship's.
+    internal void DrawBreachedWallBlock(SpriteBatch spriteBatch, WallBlock block, Room room, Vector2 origin, float totalSeconds)
     {
         var center = origin + new Vector2(block.X, block.Y) * PixelsPerUnit;
         var onTopOrBottom = MathF.Abs(block.Y - room.Top) < 0.01f || MathF.Abs(block.Y - room.Bottom) < 0.01f;
@@ -1568,7 +1570,10 @@ public sealed class ShipRenderer
     internal void DrawDoorToolTargetBar(SpriteBatch spriteBatch, Vector2 worldPosition, DoorState state, Vector2 origin) =>
         DrawToolTargetBar(spriteBatch, worldPosition, state.Fraction, origin);
 
-    private void DrawToolTargetBar(SpriteBatch spriteBatch, Vector2 worldPosition, float fraction, Vector2 origin)
+    // internal: Game1's HUD batch also calls this directly for an enemy hull's own airlock target
+    // (a WallBlockState like a wall block's, but on an AirlockOuterDoor, which isn't a WallBlock) -
+    // the two typed wrappers above only cover the player's own ship's WallBlock/Door shapes.
+    internal void DrawToolTargetBar(SpriteBatch spriteBatch, Vector2 worldPosition, float fraction, Vector2 origin)
     {
         const int width = 32;
         const int height = 6;
