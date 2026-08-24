@@ -430,15 +430,22 @@ public sealed class FieldRenderer
     private void DrawEnemyShipExterior(SpriteBatch spriteBatch, Vector2 screenCenter,
         EnemyShipFieldState enemy, int crewAlive, float rotation, float totalSeconds)
     {
-        const float enemyVisualRadius = 3.5f; // matches World.EnemyHullRadius - what a shell has to hit
-        var sizePx = enemyVisualRadius * 2 * ShipRenderer.PixelsPerUnit;
+        // The hull's own real footprint (EnemyShipLayout.Classes.cs), not a uniform stand-in
+        // diameter - a Frigate (deliberately Corvette-sized) now actually reads as bigger on
+        // screen than a Raider. World.EnemyHullRadius (the shell hit-test circle) stays a fixed
+        // 3.5 for every class regardless - a bigger hull just means a shot can land visibly on the
+        // plating well outside that circle without it having missed a smaller one.
+        var (_, halfExtents) = EnemyShipLayout.Of(enemy.Kind).GetLocalBounds();
+        var sizePx = halfExtents.Length() * 2f * ShipRenderer.PixelsPerUnit;
 
-        // A baked hull per class rather than a filled polygon. What made the old one read as a
-        // marker was not its outline - it was that a ship is panels, parts and lit windows, and a
-        // single flat shape has none of those.
-        var hull = _enemyHulls.Get(enemy.Kind, enemy.IsRetreating);
-        spriteBatch.Draw(hull, screenCenter, null, Color.White, rotation, EnemyHullSkin.Origin,
-            sizePx / EnemyHullSkin.CanvasSize, SpriteEffects.None, 0f);
+        // A baked hull per class, at its own true scale - the same armour HullSkin draws for the
+        // player's own ship, run once offscreen against this class's real Rooms (EnemyHullSkin).
+        var (hull, hullOrigin) = _enemyHulls.Get(enemy.Kind);
+        // Muted rather than a second bake for the retreating state - approximates the old bake's
+        // own colour mix (Mix(baseColour, darker, 0.5f)) as a straight tint on the already-drawn
+        // armour instead.
+        var tint = enemy.IsRetreating ? new Color(150, 138, 128) : Color.White;
+        spriteBatch.Draw(hull, screenCenter, null, tint, rotation, hullOrigin, 1f, SpriteEffects.None, 0f);
 
         var cos = MathF.Cos(rotation);
         var sin = MathF.Sin(rotation);
