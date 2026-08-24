@@ -73,13 +73,21 @@ public sealed class EnemyHullSkin : IDisposable
         var widthPx = (int)MathF.Ceiling((halfExtents.X * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit);
         var heightPx = (int)MathF.Ceiling((halfExtents.Y * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit);
 
-        // Where the hull's own local centre (the same point EnemyShipRuntime.Position/
-        // RotationDegrees rotate everything else around, World.Eva.cs's EnemyHullLocalCenter) has to
-        // land on this canvas - the canvas's own centre - so that using this as the sprite's origin
-        // at draw time rotates it around exactly the point the simulation already treats as this
-        // hull's centre.
-        var origin = new Vector2(widthPx / 2f - center.X * ShipRenderer.PixelsPerUnit,
+        // The translation HullSkin.Draw itself needs (where local (0,0) lands on this canvas) is
+        // NOT the same point as the sprite's own pivot below - Rooms are authored starting near
+        // (0,0), not centred on it, so (0,0) is usually well off to one side of the hull's true
+        // centre.
+        var drawOrigin = new Vector2(widthPx / 2f - center.X * ShipRenderer.PixelsPerUnit,
             heightPx / 2f - center.Y * ShipRenderer.PixelsPerUnit);
+
+        // The hull's own local centre - the same point EnemyShipRuntime.Position/RotationDegrees
+        // rotate everything else around (World.Eva.cs's EnemyHullLocalCenter) - always lands
+        // exactly on this canvas's own centre, by construction (the margin is symmetric on every
+        // side). This, not drawOrigin above, is the pivot spriteBatch.Draw needs: get it wrong and
+        // the drawn hull sits rotated/offset from where TryAutoAttach's own hull-silhouette check
+        // (which uses the real centre) actually reacts to contact - the ship looks like it's
+        // somewhere the boots don't actually grab.
+        var pivot = new Vector2(widthPx / 2f, heightPx / 2f);
 
         using var target = new RenderTarget2D(_graphics, widthPx, heightPx, false, SurfaceFormat.Color, DepthFormat.None);
         _graphics.SetRenderTarget(target);
@@ -93,7 +101,7 @@ public sealed class EnemyHullSkin : IDisposable
             // contributes nothing, and the damage-scorch overlay (which needs systemStates) never
             // lights, the same "nothing to show" outcome null/empty already gives the player's ship.
             HullSkin.Draw(spriteBatch, _pixel, _hullPlates, layout.Rooms, layout.AirlockOuterDoors,
-                Array.Empty<ShipSystemDevice>(), origin, ForwardDegreesFor(kind));
+                Array.Empty<ShipSystemDevice>(), drawOrigin, ForwardDegreesFor(kind));
             spriteBatch.End();
         }
 
@@ -107,6 +115,6 @@ public sealed class EnemyHullSkin : IDisposable
         target.GetData(pixels);
         texture.SetData(pixels);
 
-        return (texture, origin);
+        return (texture, pivot);
     }
 }
