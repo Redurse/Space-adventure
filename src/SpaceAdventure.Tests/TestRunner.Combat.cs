@@ -16,7 +16,7 @@ internal static partial class TestRunner
             return false;
 
         float Distance(WorldSnapshot s) =>
-            new Vec2(s.EnemyShip.Ships[0].X - s.ShipField.X, s.EnemyShip.Ships[0].Y - s.ShipField.Y).Length();
+            (float)new Vec2(s.EnemyShip.Ships[0].X - s.ShipField.X, s.EnemyShip.Ships[0].Y - s.ShipField.Y).Length();
 
         var openingRange = Distance(atArrival);
         StepFor(world, 20 * 30);
@@ -423,10 +423,13 @@ internal static partial class TestRunner
         WalkAcrossShipTo(world, 7.2f, 0.7f); // back to the shields device
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
 
-        // Repair is gradual now (World.SystemRepair.cs's minigame) rather than fixed by that one
-        // press - staying put with the tool in hand lets the passive trickle finish it on its own.
-        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
-            world.Step(RealtimeStep);
+        // Repair is gradual now (World.SystemRepair.cs's minigame), a real 12-hour elapsed-time
+        // timer rather than fixed by that one press - DebugFastForwardAllRepairs skips the WAIT
+        // (1.3 million real Step calls to sit through 12 hours tick-by-tick isn't practical for a
+        // unit test), not the requirement: the character still has to be genuinely in reach with
+        // the tool held for the one more Step below to actually land the finish.
+        world.DebugFastForwardAllRepairs(13.0 * 3600.0);
+        world.Step(RealtimeStep);
 
         return stillDamagedWithoutTool && world.IsDeviceConnected("system-shields");
     }
@@ -559,7 +562,7 @@ internal static partial class TestRunner
         var absorbedFirst = shield.TryAbsorbHit();
         var pointsAfterOne = shield.Points;
 
-        return absorbedFirst && pointsAfterOne > 0f && pointsAfterOne < ShieldSystem.MaxPoints;
+        return absorbedFirst && pointsAfterOne > 0f && pointsAfterOne < shield.MaxPoints;
     }
 
     private static bool World_Shield_AbsorbsFirstAttackWithoutDamagingShip()

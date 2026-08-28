@@ -16,22 +16,50 @@ internal static partial class TestRunner
             && world.AsteroidField == world.GalaxyMap.GetSystem("sol").Field;
     }
 
-    // A point clear of every asteroid in sol's field by a wide margin, just past
-    // GalaxyMap.WarpZoneRadius(2208) from the field's own centre (2400,2400, M48's 4800x4800
-    // scale, recentred alongside sol's own hand-placed content - AsteroidField.RecenterOffsetM48)
-    // - was (80,1200), just past the M47 WarpZoneRadius(1104) from the (1200,1200) centre, for the
-    // 2400x2400 field before this doubling. Flying there and slowing down arms CanWarpNow with no
-    // specific point to hunt down and park on, the same "parked alongside, under the speed limit"
-    // gate as docking (World.StationDocking.cs's CanDockNow), just aimed at an area instead.
-    private const float SolWarpZoneX = 160f;
-    private const float SolWarpZoneY = 2400f;
+    // A point clear of every asteroid in sol's field by a wide margin, just past sol's own real,
+    // body-driven WarpZoneRadius (M50 - StarSystem.WarpZoneRadius, no longer a single flat
+    // constant shared by every system) from the field's own real centre. Computed fresh from the
+    // current field rather than a hand-picked literal, the same reason TestRunner.Campaign.cs's own
+    // safeBearing target is computed rather than hardcoded - a fixed literal tuned for one field
+    // size silently stops meaning "past the warp zone" the moment that size changes again. The same
+    // (50,58) bearing Campaign.cs already uses, clear of every hostile sector along the way.
+    private static Vec2 SolWarpZoneTarget(World world)
+    {
+        var sol = world.GalaxyMap.GetSystem("sol");
+        var safeBearing = new Vec2(50f, 58f).Normalized();
+        // +200 past the radius itself, not right on it - FlyToSolWarpZoneAndStop's own arrival
+        // tolerance (50 units) must never be able to land short of the actual boundary.
+        return sol.Field.Center + safeBearing * (sol.WarpZoneRadius + 200f);
+    }
+
+    // Teleports (comfortably near) the warp zone rather than actually flying there - simulated
+    // flight stopped being reproducible once CruiseMaxSpeed became a real, high KSP-scale cap
+    // (World.Gravity.cs) and the warp zone itself sits hundreds of billions of units out (a
+    // per-system, body-driven WarpZoneRadius, M52): even at CruiseMaxSpeed's own ~830,000 units/s
+    // ceiling, closing a several-hundred-billion-unit gap takes DAYS of simulated time, wildly past
+    // any test's own tick budget (confirmed via a scratch trace - after 1500s of full cruise the
+    // ship had covered barely 0.1% of the distance). What every caller actually checks afterward is
+    // warp GATING (CanWarpNow, WarpToSystemId behavior), not whether the autopilot can physically
+    // make the trip - exactly DebugPlaceShip's own "skip the piloting problem for setup that was
+    // never about piloting" reasoning (see World.ShipField.cs), applied here instead of to docking.
+    private static void FlyToSolWarpZoneAndStop(World world, int playerId = 1)
+    {
+        var target = SolWarpZoneTarget(world);
+        if (world.IsDocked)
+        {
+            world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
+            world.Step(RealtimeStep);
+        }
+        world.DebugPlaceShip(target);
+        world.Step(RealtimeStep);
+    }
 
     private static bool World_StarSystem_FlyToWarpZoneThenJumpToOtherSystem()
     {
         var world = new World();
         world.SpawnCharacter(1);
 
-        FlyToward(world, new Vec2(SolWarpZoneX, SolWarpZoneY), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
+        FlyToSolWarpZoneAndStop(world);
 
         if (!world.CanWarpNow)
             return false; // never reached the warp zone - setup problem, not the behavior under test
@@ -53,14 +81,14 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        FlyToward(world, new Vec2(SolWarpZoneX, SolWarpZoneY), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
+        FlyToSolWarpZoneAndStop(world);
         if (!world.CanWarpNow)
             return false; // never reached the warp zone - setup problem, not the behavior under test
 
         world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "alpha-centauri"));
         var alphaCentauriCenter = world.GalaxyMap.GetSystem("alpha-centauri").Field.Center;
         var shipField = world.CreateSnapshot().ShipField;
-        var landedInWarpZone = (alphaCentauriCenter - new Vec2(shipField.X, shipField.Y)).Length() >= GalaxyMap.WarpZoneRadius - 0.01f;
+        var landedInWarpZone = (alphaCentauriCenter - new Vec2(shipField.X, shipField.Y)).Length() >= world.GalaxyMap.GetSystem("alpha-centauri").WarpZoneRadius - 0.01f;
         var canContinueImmediately = world.CanWarpNow;
 
         world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "tau-ceti"));
@@ -91,7 +119,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        FlyToward(world, new Vec2(SolWarpZoneX, SolWarpZoneY), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
+        FlyToSolWarpZoneAndStop(world);
         if (!world.CanWarpNow)
             return false; // never reached the warp zone - setup problem, not the behavior under test
 
@@ -231,15 +259,45 @@ internal static partial class TestRunner
         if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.HostileThreshold)
             return false; // didn't actually anger them enough - setup problem, not the behavior under test
 
-        // Flying at the berth itself (World.Voyage.cs's UpdateNearestStation checks hostility on
-        // the same proximity scan that arms CanDockNow) - there's no separate "approach" state to
-        // land in short of the fight any more (M39), so this is just flying at the station until
-        // either the fight starts or the berth would otherwise be reachable. FlyToward's own until
-        // predicate stops it the moment either happens, rather than fighting through a battle the
-        // way ApproachBerth does - catching that moment is the whole point of this test.
-        var target = world.GalaxyMap.GetPoint("trade-station").Position;
-        FlyToward(world, target, () => world.IsInBattle ||
-            ((world.DockBerthPosition - target).Length() < 40f && world.CanDockNow), 1, maxTicks: 200 * 30);
+        // Teleports right onto the berth rather than flying there - UpdateNearestStation
+        // (World.Voyage.cs) checks hostility on a proximity scan against the station's own LIVE
+        // position every tick, so landing on it directly triggers the exact same defensive-squadron
+        // check a real approach would (M58 follow-up: flying there for real used to work when
+        // "trade-station" sat still at a single, forever-valid target point, but a hosted station
+        // now genuinely orbits - the same "skip the piloting problem for setup that was never about
+        // piloting" reasoning as DebugPlaceShip itself, see World.ShipField.cs).
+        if (world.IsDocked)
+        {
+            world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+            world.Step(RealtimeStep);
+        }
+        // Matches the station's own live velocity, not just its position - CaptureRadius(40) is
+        // tiny next to how far a hosted station moves in even a single tick (~1600+ units at this
+        // scale), so a STATIONARY ship placed exactly on it is already outside the radius again by
+        // the time the very next Step evaluates the proximity check (confirmed via a scratch trace).
+        // Two-sample finite-difference velocity match, same as ApproachBerth/DockAtStation
+        // (TestRunner.StationDocking.cs, TestRunner.HelmAndHull.cs) - sampled from the ship's OWN
+        // current position (never placed at the station itself before the final placement): doing
+        // so even briefly used to arm-and-instantly-clear the defensive battle on that earlier tick
+        // (World.Voyage.cs's HasFledTheSector had its own bug then - fixed - but there is still no
+        // reason to trigger the real thing twice).
+        var tradeStation = world.GalaxyMap.GetPoint("trade-station");
+        var sample1 = world.ResolveGalaxyPointPosition(tradeStation);
+        world.Step(RealtimeStep); // just advances time - the ship itself stays wherever it already is
+        var sample2 = world.ResolveGalaxyPointPosition(tradeStation);
+        var stationVelocity = (sample2 - sample1) * (1.0 / RealtimeStep);
+        // Anticipates the on-rails "establish" tick's own quirk: the very first Step after
+        // DebugSetShipVelocity re-derives Kepler orbital elements from the CURRENT (position,
+        // velocity) pair but stamps them with THAT tick's own (already-advanced) timestamp - so it
+        // reproduces the input exactly and the ship doesn't actually move at all on this first tick,
+        // even though real time passed and the station did move (confirmed via scratch trace: ship
+        // pinned exactly at its pre-step position, live station ~1684 units further on). Placing the
+        // ship one tick's worth of station-motion AHEAD of `sample2` means the "frozen" anchor and
+        // the station's real position coincide by the time this Step's own proximity check runs.
+        var anticipated = sample2 + stationVelocity * RealtimeStep;
+        world.DebugPlaceShip(anticipated);
+        world.DebugSetShipVelocity(stationVelocity);
+        world.Step(RealtimeStep);
 
         return world.IsInBattle;
     }

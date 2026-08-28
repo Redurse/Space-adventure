@@ -49,7 +49,12 @@ public sealed partial class World
     // pulse only fires once the cooldown has actually run out.
     private void HandleScannerInput(Character character, ClientCommand command)
     {
-        if (NavigationConsoleBroken || (Ship.NavigationConsole.Position - character.Position).Length() >= InteractionRadius)
+        // Content-каталог отсеков - an extra bridge room's own nav seat works the same as the primary
+        // console (Ship.cs's own doc comment on ExtraNavigationConsoles), same "just distance, no
+        // room check" convention this proximity test already used before.
+        var nearAnyNavigationConsole = (!NavigationConsoleBroken && (Ship.NavigationConsole.Position - character.Position).Length() < InteractionRadius)
+            || Ship.ExtraNavigationConsoles.Any(c => (c.Position - character.Position).Length() < InteractionRadius);
+        if (!nearAnyNavigationConsole)
             return;
 
         character.ScannerSweepDegrees = command.ScannerSweepDegrees;
@@ -85,7 +90,7 @@ public sealed partial class World
 
             if (!isCircular)
             {
-                var bearing = MathF.Atan2(toNpc.Y, toNpc.X) * (180f / MathF.PI);
+                var bearing = MathF.Atan2((float)toNpc.Y, (float)toNpc.X) * (180f / MathF.PI);
                 var offBearing = MathF.Abs(ShortestAngle(bearing - character.ScannerSweepDegrees));
                 if (offBearing > ScannerSweepHalfAngleDegrees)
                     continue;

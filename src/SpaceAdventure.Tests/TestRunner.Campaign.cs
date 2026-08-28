@@ -71,19 +71,23 @@ internal static partial class TestRunner
         if (world.Campaign != CampaignStage.EdgeBeckons)
             return false;
 
-        // Undock and fly clear past sol's own warp zone, roughly south-southeast of mining-outpost
-        // - checked clear of every asteroid and hostile sector along the way (the straight line
-        // from mining-outpost's own position to here stays a wide margin from sector-beta, the
-        // nearest hazard, unlike a straight line toward the warp-mechanic tests' own
-        // SolWarpZoneX/Y target, which passes almost through sector-beta's own capture radius from
-        // this different starting point). The bearing (50,58) is the same one the old 300x300
-        // field used (was a fixed point at that offset from the field's own centre, (150,295)) -
-        // preserved here and just extended out to the new, ×8-scaled WarpZoneRadius (M40) instead
-        // of repeating the old fixed offset, which would land nowhere near clear of the field's own
-        // new centre any more.
+        // Teleports clear of sol's own warp zone rather than actually flying there - same reason
+        // TestRunner.StarSystems.cs's own FlyToSolWarpZoneAndStop does (see its doc comment): at
+        // KSP scale the warp zone sits hundreds of billions of units out, days of simulated flight
+        // even at CruiseMaxSpeed, wildly past any test's tick budget. The bearing (50,58) is the
+        // same one the old 300x300 field used (was a fixed point at that offset from the field's
+        // own centre, (150,295)) - preserved here and just extended out to the current, real
+        // WarpZoneRadius instead of repeating the old fixed offset.
         var fieldCenter = world.AsteroidField.Center;
         var safeBearing = new Vec2(50f, 58f).Normalized();
-        FlyToward(world, fieldCenter + safeBearing * (GalaxyMap.WarpZoneRadius + 50f), () => world.CanWarpNow, 1, maxTicks: 500 * 30);
+        var warpZoneTarget = fieldCenter + safeBearing * (world.GalaxyMap.GetSystem("sol").WarpZoneRadius + 50f);
+        if (world.IsDocked)
+        {
+            world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+            world.Step(RealtimeStep);
+        }
+        world.DebugPlaceShip(warpZoneTarget);
+        world.Step(RealtimeStep);
         if (!world.CanWarpNow)
             return false;
 

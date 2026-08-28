@@ -50,8 +50,8 @@ public partial class Game1
     private void DrawEditorRoom(CustomRoomDef room)
     {
         var rect = new Rectangle(
-            ShipEditorCanvas.X + room.X * ShipEditorCellSize, ShipEditorCanvas.Y + room.Y * ShipEditorCellSize,
-            room.Width * ShipEditorCellSize, room.Height * ShipEditorCellSize);
+            (int)(ShipEditorCanvas.X + room.X * ShipEditorCellSize), (int)(ShipEditorCanvas.Y + room.Y * ShipEditorCellSize),
+            (int)(room.Width * ShipEditorCellSize), (int)(room.Height * ShipEditorCellSize));
         _spriteBatch.Draw(_pixel, rect, new Color(46, 52, 66));
         DrawRectOutline(rect, new Color(120, 130, 150), 2f);
 

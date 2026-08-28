@@ -1,35 +1,32 @@
 using System;
 using System.Linq;
 using SpaceAdventure.Shared.Model;
+using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Server;
 
-// Barotrauma-style repair minigame for a damaged system device (World.Wiring.cs's wire-based
-// Damaged flag) - replaces the old instant "press F once, fixed" with a slow passive fill plus a
-// sweeping tick: landing an extra F press while the tick sits inside the already-filled part of
-// the bar adds a bonus chunk of progress and starts the sweep over, instead of the whole repair
-// being one single press.
+// A damaged system device (World.Wiring.cs's wire-based Damaged flag) no longer fixes with one F
+// press, nor with the old skill-based sweeping-tick minigame (M57 - "нельзя было просто так
+// починить") - it's a plain elapsed-time timer now: 12 in-game hours of a character standing in
+// reach with a wrench/screwdriver in hand, deliberately long enough that it can't be soloed
+// through in a moment and instead becomes real content for the "ускорение" transit mode's
+// engineer window (M57 design conversation) - several broken devices, several engineers, each
+// slowly ticking down over the course of the burn.
 public sealed partial class World
 {
-    private const float SystemRepairPassivePercentPerSecond = 4f; // ~25s alone, with no bonus hits
-    private const float SystemRepairHitBonusPercent = 15f;
-    private const float SystemRepairTickSweepPerSecond = 0.6f; // full sweep of the bar in ~1.7s
+    private const double SystemRepairDurationSeconds = 12.0 * 3600.0;
 
     private sealed class SystemRepairProgress
     {
-        public float Percent;
-        public float TickPosition;
-        public int TickDirection = 1;
+        public double WorkedSeconds;
     }
 
     private readonly Dictionary<string, SystemRepairProgress> _systemRepairProgress = new();
 
     // Called every tick for every currently-damaged device, every currently-damaged Junction box
-    // (game_design.md - "щитки" are their own breakable device now, same minigame), and every
-    // destroyed door on the player's own ship (same minigame again) - the passive trickle and the
-    // sweeping tick only advance while at least one character is actually in reach with the right
-    // tool in hand - walk away mid-repair and it just pauses exactly where it was, rather than
-    // resetting.
+    // (game_design.md - "щитки" are their own breakable device too), and every destroyed door on
+    // the player's own ship - all driven by the same elapsed-time timer, only advancing while at
+    // least one character is actually in reach with the right tool in hand.
     private void StepSystemRepair(double deltaSeconds)
     {
         foreach (var device in Ship.SystemDevices)
@@ -82,49 +79,28 @@ public sealed partial class World
         if (!_systemRepairProgress.TryGetValue(id, out var progress))
             return;
 
+        // M57 - the Engineer tab's own device list adds a second, remote way to work a repair
+        // (Character.EngineerFocusDeviceId) alongside the original physical wrench/screwdriver
+        // presence - either one alone is enough, and having both doesn't work it any faster.
         var beingWorked = _characters.Values.Any(c =>
-            matchesRoom(c.RoomId) && (position - c.Position).Length() < InteractionRadius &&
-            (c.Inventory.IsHolding(ItemType.Wrench) || c.Inventory.IsHolding(ItemType.Screwdriver)));
+            (matchesRoom(c.RoomId) && (position - c.Position).Length() < InteractionRadius &&
+             (c.Inventory.IsHolding(ItemType.Wrench) || c.Inventory.IsHolding(ItemType.Screwdriver)))
+            || c.EngineerFocusDeviceId == id);
         if (!beingWorked)
-            return;
+            return; // pauses exactly where it was rather than resetting - walking away costs no progress
 
-        progress.TickPosition += progress.TickDirection * SystemRepairTickSweepPerSecond * (float)deltaSeconds;
-        if (progress.TickPosition >= 1f)
-        {
-            progress.TickPosition = 1f;
-            progress.TickDirection = -1;
-        }
-        else if (progress.TickPosition <= 0f)
-        {
-            progress.TickPosition = 0f;
-            progress.TickDirection = 1;
-        }
-
-        progress.Percent = Math.Min(100f, progress.Percent + SystemRepairPassivePercentPerSecond * (float)deltaSeconds);
-        if (progress.Percent >= 100f)
+        progress.WorkedSeconds += deltaSeconds;
+        if (progress.WorkedSeconds >= SystemRepairDurationSeconds)
             FinishSystemRepair(id);
     }
 
-    // The E-key attempt itself (World.Interact.cs) - starts the bar the first time (nothing to hit
-    // yet, so it's just a no-op start), and every press after that checks the sweep: landing it
-    // inside the already-filled part is a hit, worth a bonus chunk of progress and a fresh sweep
-    // from the start; landing outside it does nothing this time - no penalty, just no bonus.
+    // The E-key attempt itself (World.Interact.cs) - only ever needs to START the timer; once the
+    // entry exists, StepSystemRepairFor above advances it on its own every tick a character stays
+    // in reach with the right tool, so a repeated press here is just a harmless no-op.
     private void AttemptSystemRepair(string deviceId)
     {
-        if (!_systemRepairProgress.TryGetValue(deviceId, out var progress))
-        {
-            progress = new SystemRepairProgress();
-            _systemRepairProgress[deviceId] = progress;
-        }
-
-        if (progress.TickPosition > progress.Percent / 100f)
-            return; // missed - the sweep keeps going, nothing lost
-
-        progress.Percent = Math.Min(100f, progress.Percent + SystemRepairHitBonusPercent);
-        progress.TickPosition = 0f;
-        progress.TickDirection = 1;
-        if (progress.Percent >= 100f)
-            FinishSystemRepair(deviceId);
+        if (!_systemRepairProgress.ContainsKey(deviceId))
+            _systemRepairProgress[deviceId] = new SystemRepairProgress();
     }
 
     // A door id never collides with a wiring id (distinct naming conventions - "door-..." vs
@@ -150,6 +126,36 @@ public sealed partial class World
         _systemRepairProgress.Remove(id);
     }
 
-    private (float Percent, float TickPosition) GetSystemRepairDisplay(string deviceId) =>
-        _systemRepairProgress.TryGetValue(deviceId, out var progress) ? (progress.Percent, progress.TickPosition) : (0f, 0f);
+    // M57 - the Engineer tab's own device list needs the reactor/distribution/battery/helm/
+    // navigation "boxes" too, not just SystemDevices/Cameras/Junctions/Doors (those already ride
+    // the wire in SystemStates/JunctionStates/DoorStates) - these five only ever had their Broken/
+    // repair state read locally by World.Interact.cs's own proximity check before now, never
+    // resent every tick. Reuses ShipSystemState's exact shape; System is never actually read for
+    // these five client-side (the Engineer panel labels them by DeviceId, not by power system).
+    private IReadOnlyList<ShipSystemState> CreateBlockRepairStates() => new[]
+    {
+        new ShipSystemState(Ship.ReactorBlock.Id, PowerSystemId.Engine, PowerGrid.Reactor.Broken, GetSystemRepairDisplay(Ship.ReactorBlock.Id)),
+        new ShipSystemState(Ship.DistributionBlock.Id, PowerSystemId.Engine, PowerGrid.DistributionBroken, GetSystemRepairDisplay(Ship.DistributionBlock.Id)),
+        new ShipSystemState(Ship.BatteryBlock.Id, PowerSystemId.Engine, PowerGrid.Battery.Broken, GetSystemRepairDisplay(Ship.BatteryBlock.Id)),
+        new ShipSystemState(Ship.HelmConsole.Id, PowerSystemId.Secondary, HelmConsoleBroken, GetSystemRepairDisplay(Ship.HelmConsole.Id)),
+        new ShipSystemState(Ship.NavigationConsole.Id, PowerSystemId.Secondary, NavigationConsoleBroken, GetSystemRepairDisplay(Ship.NavigationConsole.Id)),
+    };
+
+    // Test-only convenience, same convention as World.ShipField.cs's DebugPlaceShip: the 12-hour
+    // duration above is deliberate real content (this file's own doc comment), not something a
+    // unit test should actually sit through tick-by-tick - 1.3 million Step calls per repair test
+    // would make the suite unusable. Only ever advances entries StepSystemRepairFor has already
+    // started (AttemptSystemRepair) and only takes effect once that same function's own
+    // "beingWorked" check next runs, so a test still has to genuinely hold the right tool in reach
+    // for the repair to land - this just skips the WAIT, not the requirement.
+    public void DebugFastForwardAllRepairs(double seconds)
+    {
+        foreach (var progress in _systemRepairProgress.Values)
+            progress.WorkedSeconds += seconds;
+    }
+
+    private float GetSystemRepairDisplay(string deviceId) =>
+        _systemRepairProgress.TryGetValue(deviceId, out var progress)
+            ? (float)Math.Min(100.0, progress.WorkedSeconds / SystemRepairDurationSeconds * 100.0)
+            : 0f;
 }

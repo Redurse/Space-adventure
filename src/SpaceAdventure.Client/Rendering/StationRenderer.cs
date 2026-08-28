@@ -83,12 +83,12 @@ public sealed partial class StationRenderer
 
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && c.OnStation))
             FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
+                origin + new Vector2((float)character.X, (float)character.Y) * ShipRenderer.PixelsPerUnit,
                 new Vector2(character.FacingX, character.FacingY), totalSeconds);
 
         foreach (var character in snapshot.Characters.Where(c => c.Welding && c.OnStation))
             FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel,
-                origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit,
+                origin + new Vector2((float)character.X, (float)character.Y) * ShipRenderer.PixelsPerUnit,
                 new Vector2(character.FacingX, character.FacingY), totalSeconds);
     }
 

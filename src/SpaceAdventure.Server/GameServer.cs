@@ -21,6 +21,18 @@ public sealed class GameServer
 
     private readonly string? _savePath;
 
+    // TEMP-DIAG (M51 - "лагает с самого начала игры", FPS/Sim overlay reads Sim well under 30):
+    // per-tick cost breakdown so the client's own diagnostic overlay (Game1.cs) can show WHICH part
+    // of a tick is actually slow, instead of guessing further. static + a single Current instance,
+    // the same "there's only ever one real one alive" reasoning GalaxyMap.Current already uses,
+    // since SoloSession's embedded server runs on its own thread with no other channel back to the
+    // render thread for this. Not thread-synchronized - a stale/torn read on a debug-only overlay
+    // is harmless, and doubles are practically atomic on x64. Remove once the actual cause is found.
+    public static GameServer? Current;
+    public double LastStepMs;
+    public double LastSnapshotMs;
+    public double LastTickTotalMs;
+
     // savePath null disables persistence entirely - which is what the whole test suite wants, and
     // keeps a headless server from scribbling over a player's save file (also how the tutorial run
     // avoids ever touching the real campaign's autosave). customShip carries a Ship Editor layout
@@ -31,6 +43,7 @@ public sealed class GameServer
     {
         _world = new World(shipKind, customShip ?? loadFrom?.CustomShip);
         _savePath = savePath;
+        Current = this;
         if (isTutorial)
             _world.StartTutorial();
         else if (loadFrom is not null)
@@ -71,6 +84,8 @@ public sealed class GameServer
     // Single tick step, exposed separately from Run() so tests can drive it without real-time waits.
     public void Tick()
     {
+        var tickStopwatch = Stopwatch.StartNew(); // TEMP-DIAG
+
         while (_joining.TryDequeue(out var joiner))
         {
             _connections.Add(joiner);
@@ -95,8 +110,19 @@ public sealed class GameServer
                 _world.ApplyCommand(playerId, command);
         }
 
-        _world.Tick++;
-        _world.Step(TickInterval.TotalSeconds);
+        // M57 - "режим ускорения времени": run N ordinary, unscaled 1/30s physics steps instead of
+        // one step with a scaled-up deltaSeconds (World.TimeAcceleration.cs's own doc comment
+        // explains why - project history already hit the "scaled deltaSeconds overshoots a fixed
+        // turn-rate threshold" trap once). Commands are still only drained ONCE above and the
+        // snapshot is still only sent ONCE below - only the simulation itself runs extra times.
+        var stepStopwatch = Stopwatch.StartNew(); // TEMP-DIAG
+        for (var i = 0; i < _world.TimeAccelerationLevel; i++)
+        {
+            // Tick itself is now incremented inside World.Step (World.cs's own M58 follow-up
+            // comment) - not duplicated here any more, which used to double-count against it.
+            _world.Step(TickInterval.TotalSeconds);
+        }
+        LastStepMs = stepStopwatch.Elapsed.TotalMilliseconds; // TEMP-DIAG
 
         // Autosave on docking (game_design.md section 5). The World only raises a flag; the
         // decision to touch the filesystem at all is the server's.
@@ -107,8 +133,12 @@ public sealed class GameServer
                 SaveStore.Save(_world.CreateSave(), _savePath);
         }
 
+        var snapshotStopwatch = Stopwatch.StartNew(); // TEMP-DIAG
         var snapshot = _world.CreateSnapshot();
+        LastSnapshotMs = snapshotStopwatch.Elapsed.TotalMilliseconds; // TEMP-DIAG
         foreach (var (connection, _) in _connections)
             connection.Send(snapshot);
+
+        LastTickTotalMs = tickStopwatch.Elapsed.TotalMilliseconds; // TEMP-DIAG
     }
 }

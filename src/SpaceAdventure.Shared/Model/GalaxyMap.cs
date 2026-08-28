@@ -30,17 +30,29 @@ public sealed class GalaxyMap
     // How far (in a system's own LOCAL field-space units, AsteroidField.Center-relative) the ship
     // has to fly from the field's centre before a jump is possible at all - the "edge of the solar
     // system", a plain ring around the whole system rather than one specific point to hunt down and
-    // park on. Every system shares one 4800x4800 field (AsteroidField.CreateDefault/the shared
-    // empty stub, M48 doubling M40's own 2400x2400), whose cardinal edges sit exactly 2400 units
-    // from centre - kept comfortably under that so the full ring stays reachable in every
-    // direction, not just along the diagonals. Scaled ×2 alongside the field's own M48 doubling
-    // (was 1104 for the 2400x2400 field, 138 before that for the original 300x300 one) - otherwise
-    // the ring would sit at barely half the way out, letting a ship warp away far short of the
-    // manually-flown crossing this milestone is actually about.
-    public const float WarpZoneRadius = 2208f;
+    // park on. Used to live here as one shared constant, back when every system shared the same
+    // 4800x4800 field - now that each system's own field is sized to its own real, generated
+    // planets (M50, CelestialBody.cs), this is StarSystem.WarpZoneRadius instead, one per system,
+    // computed from that system's own field size.
 
     private readonly List<StarSystem> _systems;
     private readonly List<GalaxyPoint> _points;
+    // GetPoint/GetSystem/SystemOf used to be plain `.First(...)` linear scans over these lists - a
+    // steady stream of small individual costs that don't matter for a handful of systems, but this
+    // galaxy can hold up to 200 (MaxProceduralSystems) and these three are called from well over a
+    // dozen server-tick call sites every single tick (World.Gravity.cs, World.StarSystems.cs,
+    // World.Voyage.cs, World.EnemyFleet.cs, and more) - one O(n) scan per call is bearable, but
+    // IsWithinWarpRange calling GetSystem twice inside SystemsWithinWarpRange's own per-candidate
+    // Where() turned that single method into O(n^2), run every tick via CreateStarSystemSummaries'
+    // own EnsureGenerated check regardless of whether the galaxy is actually still growing (M51 -
+    // "лагает с самого начала игры", present from tick one rather than needing to explore first).
+    // Indexed once here and kept in sync incrementally as the procedural tail grows
+    // (GenerateProceduralChunk) rather than rebuilt from scratch - nothing outside this class can
+    // mutate _systems/_points except through here (Points/Systems are exposed read-only), so there's
+    // no other path that could let these drift out of sync with the lists they mirror.
+    private readonly Dictionary<string, StarSystem> _systemsById;
+    private readonly Dictionary<string, GalaxyPoint> _pointsById;
+    private readonly Dictionary<string, StarSystem> _systemByPointId;
     public IReadOnlyList<StarSystem> Systems => _systems;
     public IReadOnlyList<GalaxyPoint> Points => _points;
     public string HomePointId { get; }
@@ -58,16 +70,43 @@ public sealed class GalaxyMap
     // still eventually reveal the same galaxy.
     private readonly Random _proceduralRandom = new(2000_02_00);
 
+    // Published the moment any instance exists, including one still mid-construction inside
+    // CreateStarter (the hand-authored systems build fast; the EnsureGenerated loop right after is
+    // what actually takes real time, M50 - each procedural system now generates real celestial
+    // bodies/belt asteroids, not the near-free stub it used to be) - lets a loading screen on
+    // another thread poll GeneratedProceduralCount for genuine, live progress while CreateStarter
+    // is still running on the thread that's building the game's own World (Game1.Menu.cs's
+    // StartHostedSession runs that construction on a background Task specifically so this can be
+    // polled from the render thread without freezing it). Not a general service-locator pattern -
+    // there is only ever one real galaxy alive per process, exactly like the embedded server itself.
+    public static volatile GalaxyMap? Current;
+
     private GalaxyMap(IReadOnlyList<StarSystem> handAuthoredSystems, string homePointId)
     {
         _systems = handAuthoredSystems.ToList();
         _points = _systems.SelectMany(s => s.Points).ToList();
+        _systemsById = new Dictionary<string, StarSystem>();
+        _pointsById = new Dictionary<string, GalaxyPoint>();
+        _systemByPointId = new Dictionary<string, StarSystem>();
+        foreach (var system in _systems)
+            IndexSystem(system);
         HomePointId = homePointId;
+        Current = this;
     }
 
-    public GalaxyPoint GetPoint(string id) => Points.First(p => p.Id == id);
-    public StarSystem GetSystem(string id) => Systems.First(s => s.Id == id);
-    public StarSystem SystemOf(string pointId) => Systems.First(s => s.Points.Any(p => p.Id == pointId));
+    private void IndexSystem(StarSystem system)
+    {
+        _systemsById[system.Id] = system;
+        foreach (var point in system.Points)
+        {
+            _pointsById[point.Id] = point;
+            _systemByPointId[point.Id] = system;
+        }
+    }
+
+    public GalaxyPoint GetPoint(string id) => _pointsById[id];
+    public StarSystem GetSystem(string id) => _systemsById[id];
+    public StarSystem SystemOf(string pointId) => _systemByPointId[pointId];
 
     public bool IsWithinWarpRange(string systemIdA, string systemIdB)
     {
@@ -136,12 +175,83 @@ public sealed class GalaxyMap
         // ever reached via a direct teleport (World.DebugPlaceShip) or an explicit, generous
         // budget, so nothing held those back from genuinely using the new size - pushed out toward
         // the WarpZoneRadius(2208) ring instead, with margin to spare.
-        var sol = new StarSystem("sol", "Солнечная система", new[]
+        // Every literal coordinate below was authored against AsteroidField.LegacyFieldSize
+        // (4800x4800) - sol's own field is now sized to its real generated planets instead (M50),
+        // which comes out bigger, so the whole hand-placed layout is rescaled by a single factor
+        // (AsteroidField.SolRescale) rather than rewritten - the same "everything just got bigger,
+        // same relative shape" migration this system's own field size already went through twice
+        // before (RecenterOffsetM40/M48), just computed instead of hand-picked this time.
+        var solScale = AsteroidField.SolRescale;
+
+        // A uniform rescale preserves every point's bearing/relative distance from the field's own
+        // centre, but says nothing about where sol's own real planets/moons (M50) will ever come
+        // near - a top-level planet's OWN distance from the field's centre never changes (only its
+        // bearing does, as it orbits), so a hand-placed point that merely avoids wherever a planet
+        // happens to sit at Tick 0 could still drift into its path hours later, or - the case that
+        // actually broke combat testing - end up close enough that a fight dragging on long enough
+        // for the enemy to disable the ship's own engines (a real mechanic, World.EnemyAi.cs) hands
+        // gravity a real, sustained pull with nothing left to oppose it. Excluding the entire radial
+        // BAND a planet's orbit ever sweeps through (plus its own moons' further reach) is time-
+        // invariant - safe at any tick, not just the one this was checked at - unlike nudging clear
+        // of a single instantaneous snapshot position.
+        const float OrbitBandMargin = AsteroidField.OrbitBandMargin;
+        var solBodies = CelestialBodyGenerator.Generate("sol");
+        var solBodiesById = solBodies.ToDictionary(b => b.Id);
+        var solStar = solBodies.Single(b => b.ParentId is null);
+        var solPlanets = solBodies.Where(b => b.ParentId == solStar.Id).OrderBy(p => p.OrbitRadius).ToList();
+        var solFieldCenter = new Vec2(AsteroidField.SolFieldSize / 2f, AsteroidField.SolFieldSize / 2f);
+
+        Vec2 ClearOfEveryOrbit(Vec2 point)
+        {
+            var fromCenter = point - solFieldCenter;
+            var radius = fromCenter.Length();
+            var bearing = radius > 0.01f ? fromCenter * (1f / radius) : new Vec2(1f, 0f);
+
+            // Always pushed OUTWARD, never toward the centre - processed star-then-planets in
+            // increasing orbit order so a push clearing one body can never land back inside a
+            // body already cleared earlier in the same pass. Picking whichever edge of a band was
+            // nearer (an earlier version of this) could push a point EXACTLY back into the star's
+            // own exclusion zone whenever that zone reached past a planet's own inner edge, then
+            // right back out again the next pass - an infinite oscillation with no correct answer,
+            // since there's no radius that is simultaneously "outside the star" and "below" a
+            // planet band that starts inside the star's own zone. Moving only outward has no such
+            // failure mode: the final radius is always clear of everything, just possibly further
+            // out than the very nearest theoretically-clear gap would have been.
+            {
+                var starBand = CelestialBodyGenerator.ClearanceRadius(solStar) + OrbitBandMargin;
+                if (radius < starBand)
+                    radius = starBand;
+
+                foreach (var planet in solPlanets)
+                {
+                    // ClearanceRadius(planet) alone already exceeds planet.Radius + moonReach by
+                    // construction (CelestialBodyGenerator's own MoonContainmentFactor keeps every
+                    // moon's own clearance buffer, let alone its orbit radius, safely inside its
+                    // parent's) - no separate moon-reach term needed.
+                    var halfBand = CelestialBodyGenerator.ClearanceRadius(planet) + OrbitBandMargin;
+                    var lower = MathF.Max(0f, planet.OrbitRadius - halfBand);
+                    var upper = planet.OrbitRadius + halfBand;
+                    if (radius >= lower && radius < upper)
+                        radius = upper;
+                }
+            }
+
+            return solFieldCenter + bearing * radius;
+        }
+
+        var solPoints = new GalaxyPoint[]
         {
             // Faction ownership (game_design.md section 12): home stays neutral so a new crew
             // always has somewhere that treats them the same regardless of reputation; the other
             // two stations belong to the rival powers, as do the sectors their raiders patrol.
-            new GalaxyPoint("home-station", "Домашняя станция", 2100f, 2800f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Trade),
+            // Shipyard (not Trade) so the home station always has a Shipwright - a new crew can
+            // build/demolish compartments and buy/sell hulls right where they start, without a
+            // trip to outpost-gamma first. Trade itself is unaffected (StationModuleKind.Trade is
+            // mandatory on every station regardless of kind, Station.Procedural.cs's own
+            // MandatoryModulesFor) - this only swaps which flavor of SECONDARY modules the station
+            // rolls (Drydock/Outfitting/Salvage/CrewBunkroom/FittingDock instead of Cantina/
+            // Brokerage/etc.), same as outpost-gamma's own secondary rooms already are.
+            new GalaxyPoint("home-station", "Домашняя станция", 2100f, 2800f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Shipyard),
             new GalaxyPoint("sector-alpha", "Сектор Альфа", 2600f, 3400f, GalaxyPointKind.HostileSector, FactionId.FreeFleet),
             // Beta is a picket of two and Delta a patrol of three - the map's difficulty gradient
             // is squadron size, not per-ship strength (game_design.md section 12).
@@ -155,10 +265,10 @@ public sealed class GalaxyMap
             // a station's own CaptureRadius is explicitly meant to be more forgiving than a bare
             // warp marker's (GalaxyPoint.cs's own doc comment).
             new GalaxyPoint("trade-station", "Торговая станция", 1800f, 3100f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade, CaptureRadius: 40f),
-            // Left at the field's own centre, alongside the sun it orbits - AsteroidField.
-            // CreateDefault's own rocks/ore sit right here too (recentred there by
-            // RecenterOffsetM48), so moving just this marker without the physical field itself
-            // would point the label somewhere the belt no longer actually is.
+            // Alongside the sun, but not exactly ON it any more (M50 - the sun is a real, physical
+            // body now, not just a decorative backdrop) - literal (2400,2400) here is a placeholder
+            // immediately overridden below to AsteroidField.ClusterCenter, which is where
+            // CreateDefault's own rocks/ore actually sit (offset clear of the star's own radius).
             new GalaxyPoint("asteroid-field-epsilon", "Пояс астероидов Эпсилон", 2400f, 2400f, GalaxyPointKind.AsteroidField),
             // The Miners' Guild (game_design.md section 12, Phase 4 - MinersGuild) sits right by
             // the belt it works, staying out of the Consortium/FreeFleet fight entirely.
@@ -171,7 +281,55 @@ public sealed class GalaxyMap
             new GalaxyPoint("independent-relay", "Независимая станция-ретранслятор", 2400f, 900f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Trade),
             // No single faction actually owns this contested a home system outright - the crew's
             // own neutral turf sits alongside two rivals' sectors and a third guild's own outpost.
-        }, AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null);
+        }.Select(p =>
+        {
+            // Overridden rather than rescaled-then-cleared like everything else -
+            // AsteroidField.ClusterCenter is exactly where CreateDefault's own rocks/ore actually
+            // sit, and it's already inside even the innermost planet's own orbit with plenty of
+            // margin to spare, so it needs no separate clearance pass here.
+            if (p.Id == "asteroid-field-epsilon")
+                return p with { X = AsteroidField.ClusterCenter.X, Y = AsteroidField.ClusterCenter.Y };
+
+            // M55 follow-up - "корабль поближе к центру солнечной системы": home's own hand-
+            // authored legacy coordinate, uniformly rescaled by solScale like every other point
+            // here, lands wherever that single factor happens to put it - and once solScale itself
+            // reaches KSP-scale sizes (a modest ~500-unit legacy offset scales into the millions),
+            // that overshoots every planet's own SOI band in one jump, landing next to whichever
+            // one happened to be the LAST it had to clear - for a big enough solScale, always the
+            // OUTERMOST, stranding a fresh crew's own home about as far from the rest of the system
+            // as this map ever places anything. Cleared from the field's own centre (radius 0)
+            // instead, which by construction can only ever land just outside the star's own SOI or
+            // the INNERMOST planet's own band, whichever reaches further - the closest to the
+            // middle of the system any point here is ever allowed to be.
+            var cleared = p.Id == "home-station"
+                ? ClearOfEveryOrbit(solFieldCenter)
+                : ClearOfEveryOrbit(new Vec2(p.X * solScale, p.Y * solScale));
+            if (p.Kind != GalaxyPointKind.Station)
+                return p with { X = cleared.X, Y = cleared.Y };
+
+            // M59 - "убрать орбитальную механику": a station still sits near whichever planet its
+            // own cleared spot happens to be nearest to (M52's own visual intent - "у планеты", not
+            // adrift in open space), but as a plain fixed offset from that planet's own (now static)
+            // position, not something that sweeps around it any more.
+            Vec2 PlanetPosition(CelestialBody planet) => CelestialBodyGenerator.PositionAt(planet, solBodiesById) + solFieldCenter;
+            var hostPlanet = solPlanets.OrderBy(planet => (PlanetPosition(planet) - cleared).Length()).First();
+            var localOffset = ClampToHostClearance(cleared - PlanetPosition(hostPlanet), hostPlanet);
+            var absolute = PlanetPosition(hostPlanet) + localOffset;
+            return p with { X = absolute.X, Y = absolute.Y };
+        }).ToArray();
+
+        // M55 follow-up - "все это в одном месте": ClearOfEveryOrbit's own band-snap above and
+        // ClampToHostSoi's own magnitude clamp each independently collapse every station whose
+        // ORIGINAL small-scale legacy coordinate falls short of the same orbit band/SOI fraction
+        // down to the exact same radius - both preserve bearing but discard whatever radius told
+        // them apart, so three of sol's hand-placed stations (home/outpost-gamma/mining-outpost,
+        // whose legacy spots sit within a few hundred units of each other along nearly the same
+        // bearing from centre) ended up landing on top of one another the instant solScale pushed
+        // their real spacing into the millions - a genuine world-generation defect, not a map
+        // rendering one, however many times the map's own drawing code got fixed. Spread apart by
+        // bearing AROUND their shared host instead, which neither existing clamp touches.
+        var sol = new StarSystem("sol", "Солнечная система", SeparateCoincidentStations(solPoints, solFieldCenter),
+        AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null);
 
         // Every hand-authored stub below is controlled by whichever faction its own single point
         // already belongs to - simplest reading of "who actually runs this place". Each gets its
@@ -180,7 +338,7 @@ public sealed class GalaxyMap
         var alphaCentauri = new StarSystem("alpha-centauri", "Альфа Центавра", new[]
         {
             new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Military),
-        }, AsteroidField.CreateForSystem("alpha-centauri"), galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
+        }.Select(p => PlaceSingleSystemPoint(p, "alpha-centauri")).ToArray(), AsteroidField.CreateForSystem("alpha-centauri"), galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
 
         // The rest of the chain (game_design.md - "куча систем"): each new system is a light stub,
         // the same shape alpha-centauri already was - a single point of interest, no dedicated warp
@@ -193,22 +351,22 @@ public sealed class GalaxyMap
         var sirius = new StarSystem("sirius", "Сириус", new[]
         {
             new GalaxyPoint("sirius-trade-post", "Торговый пост Сириуса", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
-        }, AsteroidField.CreateForSystem("sirius"), galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium);
+        }.Select(p => PlaceSingleSystemPoint(p, "sirius")).ToArray(), AsteroidField.CreateForSystem("sirius"), galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium);
 
         var vega = new StarSystem("vega", "Вега", new[]
         {
             new GalaxyPoint("vega-outpost", "Аванпост Веги", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Research),
-        }, AsteroidField.CreateForSystem("vega"), galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
+        }.Select(p => PlaceSingleSystemPoint(p, "vega")).ToArray(), AsteroidField.CreateForSystem("vega"), galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
 
         var tauCeti = new StarSystem("tau-ceti", "Тау Кита", new[]
         {
             new GalaxyPoint("tau-ceti-sector", "Сектор Тау Кита", 2400f, 2400f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-        }, AsteroidField.CreateForSystem("tau-ceti"), galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet);
+        }.Select(p => PlaceSingleSystemPoint(p, "tau-ceti")).ToArray(), AsteroidField.CreateForSystem("tau-ceti"), galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet);
 
         var barnardsStar = new StarSystem("barnards-star", "Звезда Барнарда", new[]
         {
             new GalaxyPoint("barnard-mining-outpost", "Форпост старателей Барнарда", 2400f, 2400f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
-        }, AsteroidField.CreateForSystem("barnards-star"), galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild);
+        }.Select(p => PlaceSingleSystemPoint(p, "barnards-star")).ToArray(), AsteroidField.CreateForSystem("barnards-star"), galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild);
 
         var handAuthoredSystems = new[] { sol, alphaCentauri, sirius, vega, tauCeti, barnardsStar };
         var map = new GalaxyMap(handAuthoredSystems, "home-station");
@@ -290,6 +448,82 @@ public sealed class GalaxyMap
     private static float Distance(float x1, float y1, float x2, float y2) =>
         MathF.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
 
+    // General version of sol's own per-point placement (CreateStarter's own lambda above), for
+    // every single-POI stub system (alpha-centauri etc.) and every procedural system below -
+    // replaces the literal (2400,2400) every one of them used to hard-code (only ever safe back
+    // when every system shared one fixed 4800x4800 field) with a spot that's actually clear of
+    // THIS system's own real generated bodies (AsteroidField.SafePointPosition) - otherwise a
+    // system whose own generated field came out much bigger than that legacy size stranded its one
+    // point far outside the real body cluster, and a much smaller one could bury it inside the
+    // star. A Station additionally rides an orbiting host planet, same as sol's own stations.
+    private static GalaxyPoint PlaceSingleSystemPoint(GalaxyPoint point, string systemId)
+    {
+        var position = AsteroidField.SafePointPosition(systemId);
+        if (point.Kind != GalaxyPointKind.Station)
+            return point with { X = position.X, Y = position.Y };
+
+        var bodies = CelestialBodyGenerator.Generate(systemId);
+        var bodiesById = bodies.ToDictionary(b => b.Id);
+        var star = bodies.Single(b => b.ParentId is null);
+        var planets = bodies.Where(b => b.ParentId == star.Id).ToList();
+        if (planets.Count == 0)
+            return point with { X = position.X, Y = position.Y };
+
+        var fieldSize = CelestialBodyGenerator.FieldSize(bodies);
+        var fieldCenter = new Vec2(fieldSize / 2f, fieldSize / 2f);
+        Vec2 PlanetPosition(CelestialBody planet) => CelestialBodyGenerator.PositionAt(planet, bodiesById) + fieldCenter;
+        var hostPlanet = planets.OrderBy(planet => (PlanetPosition(planet) - position).Length()).First();
+        var localOffset = ClampToHostClearance(position - PlanetPosition(hostPlanet), hostPlanet);
+        var absolute = PlanetPosition(hostPlanet) + localOffset;
+        return point with { X = absolute.X, Y = absolute.Y };
+    }
+
+
+    // The host pick above only matches whichever planet is nearest the already-cleared spot - that
+    // spot's bearing comes from the star's own orbit-band structure, not from that planet's own
+    // (random) phase, so the raw chord between them can be large. Clamping the offset to a fraction
+    // of the host's own clearance buffer keeps the station visually "at" that planet (M52's own
+    // intent, still true without orbital motion) and inside the budget FieldSize already reserves
+    // for the host planet's own footprint.
+    private const float StationHostOffsetClearanceFraction = 0.8f;
+
+    private static Vec2 ClampToHostClearance(Vec2 localOffset, CelestialBody hostPlanet)
+    {
+        var maxOffset = CelestialBodyGenerator.ClearanceRadius(hostPlanet) * StationHostOffsetClearanceFraction;
+        var length = localOffset.Length();
+        return length > maxOffset && length > 0.0001f ? localOffset * (maxOffset / length) : localOffset;
+    }
+
+    // M59 - "убрать орбитальную механику": every point is a plain fixed coordinate now, with no
+    // HostBodyId left to group stations by. Simplified to a generic anti-overlap pass instead: any
+    // station that landed within MinStationSeparation of an already-accepted one (processed in a
+    // fixed, deterministic Id order so results never depend on array order) gets nudged further out
+    // along its own bearing from the system's field centre until it clears every point placed so far.
+    private const float MinStationSeparation = 40f;
+
+    private static GalaxyPoint[] SeparateCoincidentStations(GalaxyPoint[] points, Vec2 fieldCenter)
+    {
+        var result = points.ToArray();
+        var placed = new List<Vec2>();
+        foreach (var (point, index) in result
+            .Select((p, i) => (Point: p, Index: i))
+            .Where(x => x.Point.Kind == GalaxyPointKind.Station)
+            .OrderBy(x => x.Point.Id, StringComparer.Ordinal))
+        {
+            var position = new Vec2(point.X, point.Y);
+            while (placed.Any(p => (p - position).Length() < MinStationSeparation))
+            {
+                var fromCenter = position - fieldCenter;
+                var bearing = fromCenter.Length() > 0.01f ? fromCenter * (1f / fromCenter.Length()) : new Vec2(1f, 0f);
+                position += bearing * MinStationSeparation;
+            }
+            placed.Add(position);
+            result[index] = point with { X = position.X, Y = position.Y };
+        }
+
+        return result;
+    }
+
     // Rolls the next `count` procedural systems (or however many remain under MaxProceduralSystems)
     // and appends them - called both by CreateStarter (one big eager chunk today) and by
     // EnsureGenerated (small top-up chunks as the crew explores). Always continues _proceduralRandom
@@ -364,14 +598,15 @@ public sealed class GalaxyMap
             var hostileSectorChance = isControlled ? ControlledSystemHostileSectorChance : ContestedSystemHostileSectorChance;
 
             var poi = random.NextDouble() >= hostileSectorChance
-                ? new GalaxyPoint($"{id}-poi", $"База {name}", 2400f, 2400f, GalaxyPointKind.Station, pointFaction,
-                    (StationKind)random.Next(Enum.GetValues<StationKind>().Length))
-                : new GalaxyPoint($"{id}-poi", $"Сектор {name}", 2400f, 2400f, GalaxyPointKind.HostileSector, pointFaction,
-                    SquadronSize: random.Next(1, 4));
+                ? PlaceSingleSystemPoint(new GalaxyPoint($"{id}-poi", $"База {name}", 2400f, 2400f, GalaxyPointKind.Station, pointFaction,
+                    (StationKind)random.Next(Enum.GetValues<StationKind>().Length)), id)
+                : PlaceSingleSystemPoint(new GalaxyPoint($"{id}-poi", $"Сектор {name}", 2400f, 2400f, GalaxyPointKind.HostileSector, pointFaction,
+                    SquadronSize: random.Next(1, 4)), id);
 
             var system = new StarSystem(id, name, new[] { poi }, AsteroidField.CreateForSystem(id), galaxyX: x, galaxyY: y, controllingFaction: controllingFaction);
             _systems.Add(system);
             _points.AddRange(system.Points);
+            IndexSystem(system);
             placed.Add((x, y));
         }
 

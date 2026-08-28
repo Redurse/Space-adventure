@@ -19,6 +19,12 @@ public sealed partial class World
 
     private float WeaponDamageBonus => _upgradeLevels[ShipUpgradeTrack.WeaponDamage] * WeaponDamageBonusPerLevel;
 
+    // Content-каталог отсеков - the reactor room count's own contribution to Reactor.OutputBonus,
+    // set by World.ShipBuilding.cs's RecomputeDeviceBonuses. Kept separate from the station-upgrade
+    // levels above (not folded into _upgradeLevels) since it's not a purchased, ever-only-increasing
+    // track - a detached/demolished reactor room genuinely lowers it back down.
+    private float _reactorRoomBonusOutput;
+
     // No-ops if not docked, the track is already maxed, or the crew can't afford the next level.
     private void TryPurchaseUpgrade(ShipUpgradeTrack track)
     {
@@ -41,10 +47,13 @@ public sealed partial class World
 
     // Reactor bonuses live on the Reactor itself (PowerGrid.Reactor.MaxOutput folds OutputBonus
     // in automatically) - re-derive them from scratch off the current levels rather than
-    // incrementing, so this stays correct regardless of purchase order.
+    // incrementing, so this stays correct regardless of purchase order. Also re-applied from
+    // RecomputeDeviceBonuses (World.ShipBuilding.cs) whenever _reactorRoomBonusOutput itself
+    // changes, so a purchased upgrade level and a built reactor room always sum correctly
+    // regardless of which happened more recently.
     private void ApplyUpgradeEffects()
     {
-        PowerGrid.Reactor.OutputBonus = _upgradeLevels[ShipUpgradeTrack.ReactorOutput] * ReactorOutputBonusPerLevel;
+        PowerGrid.Reactor.OutputBonus = _upgradeLevels[ShipUpgradeTrack.ReactorOutput] * ReactorOutputBonusPerLevel + _reactorRoomBonusOutput;
         PowerGrid.Reactor.FuelEfficiencyMultiplier =
             MathF.Pow(ReactorEfficiencyMultiplierPerLevel, _upgradeLevels[ShipUpgradeTrack.ReactorEfficiency]);
     }

@@ -19,14 +19,19 @@ public static class CustomShipValidator
 
         int Count(CustomDeviceKind kind) => def.Devices.Count(d => d.Kind == kind);
 
-        if (Count(CustomDeviceKind.Reactor) != 1)
-            errors.Add("Должен быть ровно один реактор.");
-        if (Count(CustomDeviceKind.Distribution) != 1)
-            errors.Add("Должен быть ровно один распределительный блок.");
-        if (Count(CustomDeviceKind.Helm) != 1)
-            errors.Add("Должна быть ровно одна консоль штурвала.");
-        if (Count(CustomDeviceKind.Navigation) != 1)
-            errors.Add("Должна быть ровно одна консоль навигации.");
+        // "Хотя бы один", не "ровно один" (M60+ content-каталог отсеков - гуманное.plan's "бонус, не
+        // список" решение): Ship.Custom.cs's BuildReactorBlock/BuildHelmConsole/etc. по-прежнему
+        // строят физический объект только из ПЕРВОГО устройства каждого вида (.First(...), безопасно
+        // игнорирует остальные) - лишние того же вида не ломают конструктор, а дают бонус (см.
+        // World.ShipBuilding.cs's RecomputeDeviceBonuses).
+        if (Count(CustomDeviceKind.Reactor) < 1)
+            errors.Add("Нужен хотя бы один реактор.");
+        if (Count(CustomDeviceKind.Distribution) < 1)
+            errors.Add("Нужен хотя бы один распределительный блок.");
+        if (Count(CustomDeviceKind.Helm) < 1)
+            errors.Add("Нужна хотя бы одна консоль штурвала.");
+        if (Count(CustomDeviceKind.Navigation) < 1)
+            errors.Add("Нужна хотя бы одна консоль навигации.");
         if (Count(CustomDeviceKind.Engine) == 0)
             errors.Add("Нужен хотя бы один двигательный блок.");
         // World.StepAtmosphere looks up the single Oxygen device unconditionally (World.

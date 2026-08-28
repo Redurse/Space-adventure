@@ -225,4 +225,40 @@ public sealed record ClientCommand(
     // DoorToggleId, spawns one more raider at normal firing distance for testing hit resolution
     // live instead of waiting through a whole encounter's approach (World.EnemyFleet.cs's
     // DebugSpawnEnemyNearby). No proximity/role gate - it's a testing tool, not a game action.
-    bool DebugSpawnEnemyPressed = false);
+    bool DebugSpawnEnemyPressed = false,
+    // M55 - the helm's "Посадка"/"Взлёт" toggle (World.PlanetLanding.cs's HandleLandingButtonPressed),
+    // same edge-triggered shape as DockPressed. Appended at the very end - GameClient.cs's
+    // SendInput/Game1.cs's call site pass every field positionally, so a new parameter has to go
+    // last, never inserted in the middle.
+    bool ToggleLandingPressed = false,
+    // M57 - "режим ускорения времени": null means "no change requested this tick" (the level is
+    // sticky server-side, not something re-sent every frame the way HelmThrottle is), a value means
+    // "set the level to exactly this" - only 1/10/100/1000 are meaningful, World.cs's handler
+    // ignores anything else. Only takes effect while manning the helm - this is a captain-tab
+    // button, not a free-standing menu. Appended at the very end for the same
+    // never-insert-in-the-middle reason every other field's own comment here already explains.
+    int? RequestedTimeAccelerationLevel = null,
+    // M57 - the Engineer tab's own device list: which device (if any) this character is currently
+    // remotely focused on repairing. Unlike every edge-triggered "...Pressed" field above, this is
+    // resent every tick with the client's own current selection (Game1.cs's _engineerFocusDeviceId,
+    // never reset to null after sending) - null is a real "not focused on anything" state, the same
+    // "zero/null overwrites, it's not 'no input'" convention HelmThrottle already established.
+    string? EngineerFocusDeviceId = null,
+    // M57 - the captain tab's "Флип" button: a one-press 180° turn for a flip-and-burn maneuver
+    // (World.ShipField.cs's FlipHeading), edge-triggered same shape as ToggleControlModePressed
+    // rather than a held/continuous input.
+    bool FlipHeadingPressed = false,
+    // M60 - "строить отсеки по ходу игры": which RoomCatalog entry to append, and where (world
+    // units, same frame as every other placed device). Edge-triggered like PurchaseShipKind, same
+    // docked-at-a-Shipwright gate (World.ShipBuilding.cs's TryBuildRoom). Appended at the very end
+    // for the same never-insert-in-the-middle reason every other field's own comment here explains.
+    BuildRoomRequest? BuildRoom = null,
+    // M61 - the symmetric "снести отсек" action (World.ShipBuilding.cs's TryDemolishRoom):
+    // edge-triggered like BuildRoom, null means no click that frame.
+    string? DemolishRoomId = null,
+    // Dev cheat panel's second button (Ё key, Game1.cs's CheatPanel) - same edge-triggered, no-gate
+    // shape as DebugSpawnEnemyPressed above, just handing out credits (World.Trade.cs's own
+    // DebugAddCredits, already used by the test suite) instead of spawning a raider. Appended at the
+    // very end for the same never-insert-in-the-middle reason every other field's own comment here
+    // explains.
+    bool DebugAddCreditsPressed = false);

@@ -12,38 +12,57 @@ namespace SpaceAdventure.Server;
 // ship's own layout space), just reinterpreted as "where the whole ship currently is inside the
 // AsteroidField" instead of a fixed origin - so a collision's contact point needs no extra
 // transform to find the nearest WallBlock to breach.
+//
+// M59 - "убрать орбитальную механику, вернуть статичную карту в духе Cosmoteer": no gravity, no
+// on-rails Kepler coasting, no cruise mode - pure inertia and thrust, the same shape this project's
+// own pre-M50 flight already had. Every celestial body is a fixed, physical obstacle (still worth
+// flying around, still solid to collide with) but exerts no pull of its own any more.
 public sealed partial class World
 {
-    // Calibrated so a straight run across a 300x300 system (AsteroidField.CreateDefault's own
-    // size) takes about a minute (game_design.md - two-tier map, "за минуту он долетал от одного
-    // края системы к другому") - the same cruise speed applies whether a human is flying or the
-    // autopilot is (World.Voyage.cs's StepTraveling no longer runs the unmanned case on a faster
-    // clock than a manned one).
-    // RCS mode (M41) - today's original free-rotation flight, unchanged: turning spins the bow in
-    // place at a constant rate regardless of speed, useful for precision work (docking, lining up
-    // a shot) where the bow has to point somewhere the ship isn't actually travelling.
-    private const float ShipMaxSpeed = 5f;
-    private const float ShipThrustAccelerationPerSecond = 4f;
+    // Calibrated so a straight run across a small system field takes on the order of seconds to a
+    // minute, not hours (M59 follow-up - back to this project's own pre-M50 scale, game_design.md's
+    // two-tier map "за минуту он долетал от одного края системы к другому").
+    // Renamed from ShipThrustAccelerationPerSecond (M58 - ship mass): this is a fixed FORCE, not an
+    // acceleration - IntegrateShipFieldMotion divides by ShipCatalog.Mass(CurrentShipKind) to get
+    // F=ma. Frigate's own mass is exactly 1.0 (ShipCatalog.cs), so this number is unchanged from
+    // before mass existed - Frigate's feel is preserved exactly, every other hull now accelerates
+    // faster/slower by 1/mass.
+    private const float ShipThrustForcePerSecond = 16f;
     private const float ShipRotationDegreesPerSecond = 90f;
     // Arc mode (M41, the default) - turning banks the nose at a rate tied to current speed instead
     // (IntegrateShipFieldMotion), the way a real vessel carrying real momentum comes about: standing
-    // still, the bow doesn't swing at all. Faster top speed and acceleration than RCS to make it
-    // the more capable mode for actually getting somewhere, trading away the ability to pivot in
-    // place - that's what Z (Rcs) is for.
-    private const float ArcMaxSpeed = 9f;
-    private const float ArcThrustAccelerationPerSecond = 6.5f;
+    // still, the bow doesn't swing at all. Faster acceleration than RCS to make it the more capable
+    // mode for actually getting somewhere, trading away the ability to pivot in place - that's what
+    // Z (Rcs) is for.
+    private const float ArcThrustForcePerSecond = 26f;
     // Yaw rate scales linearly with current speed (below), which makes the turn radius at full
-    // throttle a fixed ArcMaxSpeed/(rate in rad/s) regardless of how fast that actually is - at the
-    // original 50deg/s that worked out to only ~10 units, tighter than the hull itself, so a U-turn
-    // finished within half of one lap around its own nose instead of reading as a real banked
-    // arc. 15deg/s widens that same-speed radius to ~34 units instead (game_design.md/M47 -
+    // throttle a fixed ArcYawReferenceSpeed/(rate in rad/s) regardless of how fast that actually is -
+    // widened at M47 (from an original 50deg/s that made a U-turn tighter than the hull itself) to
+    // read as a real banked arc rather than "spinning the whole hull" (game_design.md/M47 -
     // "нужно чтобы это было реалистичнее").
     private const float ArcMaxYawRateDegreesPerSecond = 15f;
+    // Normalizes the Arc-mode yaw rate against "how much of the ship's own physical capability is
+    // currently being used" - full bank rate at or above this speed, scaling down toward zero at a
+    // standstill. Set relative to ShipMaxSpeed above (M59 follow-up - used to be calibrated against
+    // the old dynamic near-body speed cap before gravity was removed).
+    private const float ArcYawReferenceSpeed = 30f;
     private const float ShipAutoStabilizeDecelerationPerSecond = 6f;
     private const float ShipEngineReferencePower = 10f; // same order of magnitude as the "10 power ~= 1 breach" oxygen constant
     // Backing up runs the manoeuvring thrusters, not the main engines - astern is for easing off a
     // berth or out of a rock, not for flying anywhere.
     private const float ShipReverseThrustFraction = 0.45f;
+
+    // M59 - "убрать орбитальную механику": replaces the M50-era dynamic, distance-to-nearest-body
+    // speed cap (World.Gravity.cs's own DynamicMaxSpeed, deleted along with the rest of the gravity
+    // model) - a flat top speed again, the same shape this project's own pre-M50 flight used, since
+    // there's no gravity well left to reason a dynamic cap around.
+    private const float ShipMaxSpeed = 60f;
+
+    // M55 - landed on a planet's own small (PlanetSurface.Width/Height) local field, a much tighter
+    // scale than the system field's own ShipMaxSpeed above. A flat, walking-speed-adjacent cap -
+    // crossing the whole 300-unit field at this speed takes ~15s, plenty for looking around without
+    // making the field feel enormous.
+    private const float SurfaceMaxSpeed = 20f;
 
     private const float HullContactCooldownSeconds = 1.5f;
 
@@ -57,6 +76,9 @@ public sealed partial class World
     // into the exact trap this exemption exists to avoid - instead of the single casting-off
     // event it actually still is.
     private bool _justCastOffStation;
+    // M54 - "точность позиции корабля на большом масштабе": kept as a plain double Vec2 (the shared
+    // rescale to double precision) so repeated velocity*dt accumulation never loses precision even
+    // over a long flight - no separate accumulator needed.
     private Vec2 _shipFieldPosition;
     private Vec2 _shipVelocity = Vec2.Zero;
     private Vec2 _shipThrust = Vec2.Zero; // world-space, derived from throttle along the nose - what the exhaust is drawn from
@@ -68,6 +90,18 @@ public sealed partial class World
 
     private void ToggleControlMode() =>
         ControlMode = ControlMode == ShipControlMode.Arc ? ShipControlMode.Rcs : ShipControlMode.Arc;
+
+    // M57 - the captain tab's "Флип" button: a single instant 180° turn for a flip-and-burn
+    // maneuver (accelerate nose-first, flip, decelerate tail-first) - a deliberate one-press pilot
+    // action, not an autopilot that reorients gradually over several seconds.
+    private void FlipHeading() => _shipRotationDegrees = (_shipRotationDegrees + 180f) % 360f;
+
+    // The one place any code should assign _shipFieldPosition (a genuine reposition:
+    // docking/undocking, warp arrival, DebugPlaceShip, edge nudges).
+    private void SetShipFieldPosition(Vec2 value)
+    {
+        _shipFieldPosition = value;
+    }
 
     // Where the bow points in world terms, which is the ship's own forward axis turned by its
     // current heading (Ship.ForwardDegrees).
@@ -114,36 +148,55 @@ public sealed partial class World
         // ties the rate to current speed instead, zero at a standstill - a real vessel's own
         // momentum resisting a spin in place - which is what actually reads as "banking a turn"
         // rather than "spinning the whole hull".
+        // Content-каталог отсеков - a built RCS room's own TurnBonus (World.ShipBuilding.cs's
+        // DevicesForCatalogEntry) flat-adds to whichever base yaw rate the current control mode uses,
+        // same "usable in either mode" reasoning the plan settled on rather than real lateral thrust.
+        // Zero for every hand-authored hull's own Engine devices, so an unmodified hull turns exactly
+        // as before.
+        var turnBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.TurnBonus);
         if (ControlMode == ShipControlMode.Arc)
         {
-            var speedFraction = Math.Min(1f, _shipVelocity.Length() / ArcMaxSpeed);
-            _shipRotationDegrees += _helmTurn * ArcMaxYawRateDegreesPerSecond * speedFraction * dt;
+            // Normalized against a fixed reference speed (ArcYawReferenceSpeed), not the flat max
+            // speed cap below - the yaw rate should read as "how much of the ship's own physical
+            // capability is currently being used". Floors at 1.0 past the reference speed rather
+            // than growing further - there's still SOME maximum bank rate even at extreme velocity,
+            // just not zero.
+            var speedFraction = (float)Math.Min(1f, _shipVelocity.Length() / ArcYawReferenceSpeed);
+            _shipRotationDegrees += _helmTurn * (ArcMaxYawRateDegreesPerSecond + turnBonus) * speedFraction * dt;
         }
         else
         {
-            _shipRotationDegrees += _helmTurn * ShipRotationDegreesPerSecond * dt;
+            _shipRotationDegrees += _helmTurn * (ShipRotationDegreesPerSecond + turnBonus) * dt;
         }
 
         var throttle = _helmThrottle < 0f ? _helmThrottle * ShipReverseThrustFraction : _helmThrottle;
         _shipThrust = ShipNoseDirection * throttle;
 
-        var maxSpeed = ControlMode == ShipControlMode.Arc ? ArcMaxSpeed : ShipMaxSpeed;
-        var thrustAccelerationPerSecond = ControlMode == ShipControlMode.Arc ? ArcThrustAccelerationPerSecond : ShipThrustAccelerationPerSecond;
+        // Content-каталог отсеков - a built marching-engine room's own ThrustBonus flat-adds to the
+        // base force before the mass division below, same zero-change-for-hand-authored-hulls shape.
+        var thrustBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.ThrustBonus);
+        var thrustForcePerSecond = (ControlMode == ShipControlMode.Arc ? ArcThrustForcePerSecond : ShipThrustForcePerSecond) + thrustBonus;
+        var thrustAccelerationPerSecond = thrustForcePerSecond / ShipCatalog.Mass(CurrentShipKind);
+        var decelerationPerSecond = ShipAutoStabilizeDecelerationPerSecond * enginePowerScale;
 
         if (_shipAutoStabilize)
         {
-            var decel = ShipAutoStabilizeDecelerationPerSecond * enginePowerScale * dt;
+            var decel = decelerationPerSecond * dt;
             var speed = _shipVelocity.Length();
             _shipVelocity = speed <= decel ? Vec2.Zero : _shipVelocity - _shipVelocity.Normalized() * decel;
         }
         else
         {
+            var maxSpeed = _landedBodyId is not null ? SurfaceMaxSpeed : ShipMaxSpeed;
             _shipVelocity += _shipThrust * thrustAccelerationPerSecond * enginePowerScale * dt;
             if (_shipVelocity.Length() > maxSpeed)
                 _shipVelocity = _shipVelocity.Normalized() * maxSpeed;
         }
 
-        return _shipFieldPosition + _shipVelocity * dt;
+        // Position accumulates directly in double now that Vec2 itself is double - deltaSeconds
+        // (not the already-narrowed dt above), so a real, long flight never compounds float
+        // rounding error into its own position.
+        return _shipFieldPosition + _shipVelocity * deltaSeconds;
     }
 
     // Every physical hazard the field can hold applies at once now (M39) - there's no separate
@@ -151,8 +204,7 @@ public sealed partial class World
     // any combination of them simultaneously.
     private void StepShipFieldPhysics(double deltaSeconds)
     {
-        var candidatePosition = IntegrateShipFieldMotion(deltaSeconds)
-            .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+        var candidatePosition = IntegrateShipFieldMotion(deltaSeconds).Clamp(0.0, 0.0, ActiveFieldWidth, ActiveFieldHeight);
 
         if (TryFindHullCollision(candidatePosition, _shipRotationDegrees, out var localContactPoint))
         {
@@ -164,7 +216,7 @@ public sealed partial class World
             var slid = SlideAlongObstacle(candidatePosition);
             _shipVelocity = slid is null ? Vec2.Zero : ProjectVelocityOnto(slid.Value - _shipFieldPosition);
             if (slid is { } slidPosition)
-                _shipFieldPosition = slidPosition;
+                SetShipFieldPosition(slidPosition);
 
             // One breach per impact, not one per tick spent in contact - grinding along a rock
             // used to open a new hole thirty times a second.
@@ -176,44 +228,136 @@ public sealed partial class World
             return;
         }
 
-        // Another ship is not a thing you drive through. Ramming stops both hulls dead rather than
-        // holing them: the enemy's plating is a match for yours, and a fight that can be won by
-        // steering into the other ship isn't one worth having.
-        if (HullOverlapsEnemy(candidatePosition))
+        // None of what follows exists on a planet's own surface field (M55) - no other ships, no
+        // stations, and "the body" is the ground the ship is already sitting on, not a hazard still
+        // out ahead of it. TryFindHullCollision above (against ActiveObstacles, this body's own
+        // rocks while landed) is the only physical hazard a landed ship still needs to dodge.
+        if (_landedBodyId is null)
         {
-            _shipVelocity = Vec2.Zero;
-            return;
-        }
+            // Another ship is not a thing you drive through. Ramming stops both hulls dead rather
+            // than holing them: the enemy's plating is a match for yours, and a fight that can be
+            // won by steering into the other ship isn't one worth having.
+            if (HullOverlapsEnemy(candidatePosition))
+            {
+                _shipVelocity = Vec2.Zero;
+                return;
+            }
 
-        // The station's own compartments are solid too, whichever one happens to be nearest right
-        // now (World.Voyage.cs's UpdateNearestStation) - shoulder into them and the ship stops dead
-        // rather than passing through (its hull is sturdier than a lone asteroid, and docking is a
-        // deliberate button press, not a drift-in). Suppressed entirely for the single casting-off
-        // event (_justCastOffStation, set by Undock()) rather than re-derived from live geometry
-        // every tick: the instant after undocking the ship IS still mated to the berth (by
-        // construction), and a pilot lines up a heading before ever building any speed - turning
-        // in place, with zero net displacement, still moves the hull's own corners
-        // (HullTouchesStation is corner-based), which can flip "touching" back to true at
-        // whatever rotation the pilot happens to settle on first. Re-deriving "already touching"
-        // from that same live check would then treat the settled heading as a fresh, blockable
-        // approach and wedge the ship at the berth forever, unable to ever thrust clear - the very
-        // trap this exemption exists to avoid. A course that curves back through the same
-        // structure later is still correctly blocked once the flag has cleared (the first tick the
-        // hull actually reads clear) - this only ever forgives the one casting-off event, not the
-        // structure as a whole.
-        var touchingStationNow = HullTouchesStation(_shipFieldPosition);
-        if (_justCastOffStation)
-        {
-            if (!touchingStationNow)
-                _justCastOffStation = false;
-        }
-        else if (!touchingStationNow && HullTouchesStation(candidatePosition))
-        {
-            _shipVelocity = Vec2.Zero;
-            return;
+            // A planet/moon/star is solid too (M53 follow-up - "почему я смог войти в планету"):
+            // nothing here ever checked it as a physical obstacle the way asteroids/stations/enemies
+            // already are. Same stop-dead response as ramming an enemy - no wall-block-breach
+            // mechanic to reuse here (a body has no interior). Swept across the whole tick's travel,
+            // not just tested at the final candidate position: a fast-moving ship could otherwise
+            // cross a small body entirely between one tick's position and the next and never
+            // register as touched by a point-only test.
+            if (SweptOverlapsCelestialBody(_shipFieldPosition, candidatePosition) is { } touchedBody)
+            {
+                // Snapped to sit exactly at the contact threshold (HullOverlapsCelestialBody's own
+                // radius+hullRadius circle) along the ship's CURRENT bearing from the body, rather
+                // than left at the tick's unchanged starting position: with velocity always reset
+                // to zero on a blocked step, a deterministic physics tick would otherwise recompute
+                // and reject the exact same tiny candidate forever, never actually converging into
+                // "touching" - which M55's CanLandNow (the same threshold) needs to ever go true.
+                var system = GalaxyMap.GetSystem(_currentSystemId);
+                var bodyPosition = CelestialBodyGenerator.PositionAt(touchedBody, system.BodiesById) + system.Field.Center;
+                var (_, contactHalfExtents) = GetHullLocalBounds();
+                var contactRadius = touchedBody.Radius + contactHalfExtents.Length();
+                var awayFromBody = (_shipFieldPosition - bodyPosition).Normalized();
+                if (awayFromBody == Vec2.Zero)
+                    awayFromBody = new Vec2(1f, 0f);
+                SetShipFieldPosition(bodyPosition + awayFromBody * (contactRadius - 0.01f));
+                _shipVelocity = Vec2.Zero;
+                return;
+            }
+
+            // The station's own compartments are solid too, whichever one happens to be nearest
+            // right now (World.Voyage.cs's UpdateNearestStation) - shoulder into them and the ship
+            // stops dead rather than passing through (its hull is sturdier than a lone asteroid, and
+            // docking is a deliberate button press, not a drift-in). Suppressed entirely for the
+            // single casting-off event (_justCastOffStation, set by Undock()) rather than re-derived
+            // from live geometry every tick: the instant after undocking the ship IS still mated to
+            // the berth (by construction), and a pilot lines up a heading before ever building any
+            // speed - turning in place, with zero net displacement, still moves the hull's own
+            // corners (HullTouchesStation is corner-based), which can flip "touching" back to true
+            // at whatever rotation the pilot happens to settle on first. Re-deriving "already
+            // touching" from that same live check would then treat the settled heading as a fresh,
+            // blockable approach and wedge the ship at the berth forever, unable to ever thrust
+            // clear - the very trap this exemption exists to avoid. A course that curves back
+            // through the same structure later is still correctly blocked once the flag has cleared
+            // (the first tick the hull actually reads clear) - this only ever forgives the one
+            // casting-off event, not the structure as a whole.
+            var touchingStationNow = HullTouchesStation(_shipFieldPosition);
+            if (_justCastOffStation)
+            {
+                if (!touchingStationNow)
+                    _justCastOffStation = false;
+            }
+            else if (!touchingStationNow && HullTouchesStation(candidatePosition))
+            {
+                _shipVelocity = Vec2.Zero;
+                return;
+            }
         }
 
         _shipFieldPosition = candidatePosition;
+    }
+
+    // M55 follow-up - a plain hull-bounding-circle test (the hull's own half-extents diagonal, same
+    // as SweptOverlapsCelestialBody below) rather than the exact rotated hull box M53 originally
+    // used. Deliberately the SAME threshold the swept movement check and its own resting-position
+    // snap use: two different thresholds for "touching" here could leave the ship able to satisfy
+    // one but not the other, stuck forever just outside whichever is stricter. Returns the body
+    // actually touched rather than a bare bool (M55 - World.PlanetLanding.cs's CanLandNow needs to
+    // know WHICH one, to tell a landable rocky world/moon apart from a gas giant/star that should
+    // still just stop the ship dead without ever arming a landing button).
+    private CelestialBody? HullOverlapsCelestialBody(Vec2 candidateCenter)
+    {
+        var (_, halfExtents) = GetHullLocalBounds();
+        var hullRadius = halfExtents.Length();
+        var system = GalaxyMap.GetSystem(_currentSystemId);
+        foreach (var body in system.Bodies)
+        {
+            var bodyPosition = CelestialBodyGenerator.PositionAt(body, system.BodiesById) + system.Field.Center;
+            if ((bodyPosition - candidateCenter).Length() < body.Radius + hullRadius)
+                return body;
+        }
+        return null;
+    }
+
+    // M55 follow-up - the swept pre-check StepShipFieldPhysics actually calls now: HullOverlaps
+    // CelestialBody above only ever asks "is the hull touching a body AT this one exact point",
+    // which tunnels clean through a small body whenever a single tick's travel carries the
+    // candidate position past the whole body in one step. Checked against the closest point on the
+    // SEGMENT actually travelled this tick instead, with the hull approximated as a circle (its own
+    // half-extents' diagonal) rather than the exact rotated box the resting-position test above
+    // still uses - a conservative stand-in that's cheap to sweep and only ever needs to answer "did
+    // this straight line cross the body at all".
+    private CelestialBody? SweptOverlapsCelestialBody(Vec2 from, Vec2 to)
+    {
+        var (_, halfExtents) = GetHullLocalBounds();
+        var hullRadius = halfExtents.Length();
+        var system = GalaxyMap.GetSystem(_currentSystemId);
+        var segment = to - from;
+        var segmentLengthSq = segment.X * segment.X + segment.Y * segment.Y;
+
+        foreach (var body in system.Bodies)
+        {
+            var bodyPosition = CelestialBodyGenerator.PositionAt(body, system.BodiesById) + system.Field.Center;
+            Vec2 closest;
+            if (segmentLengthSq < 0.0001f)
+            {
+                closest = from;
+            }
+            else
+            {
+                var toBody = bodyPosition - from;
+                var t = Math.Clamp((toBody.X * segment.X + toBody.Y * segment.Y) / segmentLengthSq, 0f, 1f);
+                closest = from + segment * t;
+            }
+            if ((bodyPosition - closest).Length() < body.Radius + hullRadius)
+                return body;
+        }
+        return null;
     }
 
     // Whichever single axis of the blocked step is clear, if either is - X first, then Y.
@@ -230,8 +374,8 @@ public sealed partial class World
     // Keep only the part of the velocity that survived the slide, so the ship doesn't carry
     // momentum into a wall it isn't moving through any more.
     private Vec2 ProjectVelocityOnto(Vec2 travelled) => new(
-        MathF.Abs(travelled.X) > 0.0001f ? _shipVelocity.X : 0f,
-        MathF.Abs(travelled.Y) > 0.0001f ? _shipVelocity.Y : 0f);
+        Math.Abs(travelled.X) > 0.0001f ? _shipVelocity.X : 0f,
+        Math.Abs(travelled.Y) > 0.0001f ? _shipVelocity.Y : 0f);
 
     private static float RotateToward(float current, float target, float maxDelta)
     {
@@ -262,7 +406,7 @@ public sealed partial class World
         var cos = MathF.Cos(radians);
         var sin = MathF.Sin(radians);
 
-        foreach (var asteroid in AsteroidField.Asteroids)
+        foreach (var asteroid in ActiveObstacles)
         {
             var worldOffset = asteroid.Position - candidateWorldCenter;
             // Inverse-rotate (world -> hull-local) since local-to-world would be [cos,-sin; sin,cos].
@@ -300,7 +444,7 @@ public sealed partial class World
             var distance = (clamped - layoutPoint).Length();
             if (distance >= bestDistance)
                 continue;
-            (best, bestDistance) = (clamped, distance);
+            (best, bestDistance) = (clamped, (float)distance);
         }
         return best;
     }
@@ -324,9 +468,18 @@ public sealed partial class World
     // TestRunner.Voyage.cs's own manual-flight tests) still fly for real and never call this.
     public void DebugPlaceShip(Vec2 position)
     {
-        _shipFieldPosition = position.Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+        SetShipFieldPosition(position.Clamp(0, 0, ActiveFieldWidth, ActiveFieldHeight));
         _shipVelocity = Vec2.Zero;
         _shipThrust = Vec2.Zero;
         _shipRotationDegrees = 0f;
+    }
+
+    // Test-only convenience, same convention as DebugPlaceShip right above - sets a specific
+    // velocity directly and turns auto-stabilize off so it actually persists (auto-stabilize, on by
+    // default, decelerates toward absolute rest every tick regardless of what this just set).
+    public void DebugSetShipVelocity(Vec2 velocity)
+    {
+        _shipVelocity = velocity;
+        _shipAutoStabilize = false;
     }
 }

@@ -45,6 +45,8 @@ public sealed partial class World
         if (character.IsAtHelm)
         {
             character.IsAtHelm = false; // the last commanded thrust is deliberately left as-is (game_design.md Phase 3, M15)
+            character.EngineerFocusDeviceId = null; // M57 - the whole helm screen (and its Engineer tab) closes with it
+            ResetTimeAccelerationIfNobodyAtHelm(); // M57 - nobody left to react, don't keep racing ahead unsupervised
             return;
         }
 
@@ -179,8 +181,13 @@ public sealed partial class World
             return;
         }
 
-        if (!HelmConsoleBroken && Ship.HelmConsole.RoomId == character.RoomId &&
-            (Ship.HelmConsole.Position - character.Position).Length() < InteractionRadius)
+        // Content-каталог отсеков - an extra bridge room's own seat works exactly like the primary
+        // HelmConsole for piloting (same ship-wide IsAtHelm/throttle, Ship.cs's own doc comment on
+        // ExtraHelmConsoles), it's just never the one HelmConsoleBroken/repair targets.
+        var atAnyHelm = (!HelmConsoleBroken && Ship.HelmConsole.RoomId == character.RoomId &&
+                (Ship.HelmConsole.Position - character.Position).Length() < InteractionRadius)
+            || Ship.ExtraHelmConsoles.Any(c => c.RoomId == character.RoomId && (c.Position - character.Position).Length() < InteractionRadius);
+        if (atAnyHelm)
         {
             character.IsAtHelm = true;
             return;

@@ -56,7 +56,7 @@ internal static partial class TestRunner
 
         var exitPos = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var pushDirection = new Vec2(targetWorldPos.X - exitPos.X, targetWorldPos.Y - exitPos.Y).Normalized();
-        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: pushDirection.X, PushOffDirectionY: pushDirection.Y));
+        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: (float)pushDirection.X, PushOffDirectionY: (float)pushDirection.Y));
         world.Step(RealtimeStep);
 
         for (var i = 0; i < 40 * 30; i++) // aim at the target the whole way - a no-op once fuel is spent, just coasting on whatever velocity remains
@@ -71,7 +71,7 @@ internal static partial class TestRunner
             if (me.IsEvaAttached || toTarget.Length() <= 0.5f)
                 return;
             var dir = toTarget.Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)dir.X, MoveY: (float)dir.Y));
             world.Step(RealtimeStep);
         }
     }
@@ -89,7 +89,7 @@ internal static partial class TestRunner
                 return i;
 
             var aim = new Vec2(block.X - me.X, block.Y - me.Y).Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: aim.X, LookY: aim.Y));
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: (float)aim.X, LookY: (float)aim.Y));
             world.Step(RealtimeStep);
         }
         return maxTicks;
@@ -324,7 +324,7 @@ internal static partial class TestRunner
             if (toTarget.Length() <= World.CutterReachUnits * 0.7f)
                 return;
             var dir = toTarget.Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)dir.X, MoveY: (float)dir.Y));
             world.Step(RealtimeStep);
         }
     }
@@ -372,7 +372,7 @@ internal static partial class TestRunner
         // something - the nearby asteroid it just mined, per TryAutoAttach), then coast/correct.
         var beforePush = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var pushDir = new Vec2(doorFieldTarget.X - beforePush.X, doorFieldTarget.Y - beforePush.Y).Normalized();
-        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: pushDir.X, PushOffDirectionY: pushDir.Y));
+        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: (float)pushDir.X, PushOffDirectionY: (float)pushDir.Y));
         world.Step(RealtimeStep);
 
         for (var i = 0; i < 40 * 30; i++)
@@ -382,7 +382,7 @@ internal static partial class TestRunner
             if (me.IsEvaAttached || toShip.Length() <= 0.5f) // same as the flight out: coast in until the plating catches
                 break;
             var dir = toShip.Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y)); // jetpack correction if any fuel remains, harmless otherwise
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)dir.X, MoveY: (float)dir.Y)); // jetpack correction if any fuel remains, harmless otherwise
             world.Step(RealtimeStep);
         }
         for (var i = 0; i < 5 * 30; i++) // walk in through the door (attached to the ship by now)

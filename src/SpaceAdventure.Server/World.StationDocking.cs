@@ -56,7 +56,7 @@ public sealed partial class World
             return;
 
         _shipRotationDegrees = 0f;
-        _shipFieldPosition = DockBerthPosition;
+        SetShipFieldPosition(DockBerthPosition);
         _shipVelocity = Vec2.Zero;
         _shipThrust = Vec2.Zero;
         _shipAutoStabilize = true;
@@ -84,13 +84,15 @@ public sealed partial class World
         _dockedPointId = null;
         _justCastOffStation = true; // World.ShipField.cs's StepShipFieldPhysics clears this itself
 
-        // Otherwise the ship would just sit dead still exactly where it was (TryDockAtStation
-        // zeroed velocity, and docking's own auto-stabilize hold - still true from that same call -
-        // would instantly cancel out anything short of a real thruster burn). Releasing that hold
-        // and giving one small push lets ordinary inertia carry it clear on its own. -X is screen
+        // Otherwise the ship would just sit dead-on at the berth forever (TryDockAtStation zeroed
+        // velocity, and docking's own auto-stabilize hold - still true from that same call - would
+        // instantly cancel out anything short of a real thruster burn). Releasing that hold and
+        // giving it one small push lets ordinary inertia carry it clear on its own. -X is screen
         // "left" in the same world/field frame GalaxyMapPanel draws directly (no flip) - the same
         // side the map's own docked-offset fix (GalaxyMapPanel.cs) never draws the station on, so
-        // this always drifts away from wherever the station just appeared, not into it.
+        // this always drifts away from wherever the station is drawn, not into it. Stations are
+        // fixed now (M59), so no departure-velocity catch-up is needed - the ship's own position
+        // hasn't gone stale while docked.
         _shipAutoStabilize = false;
         _shipVelocity = new Vec2(-UndockDriftSpeed, 0f);
     }

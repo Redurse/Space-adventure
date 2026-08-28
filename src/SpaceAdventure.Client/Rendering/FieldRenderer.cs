@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using SpaceAdventure.Shared.Model;
@@ -18,8 +19,19 @@ namespace SpaceAdventure.Client.Rendering;
 public sealed class FieldRenderer
 {
     private const float EngineGlowMarginUnits = 0.3f;
+    // Beyond EnemyWeaponRangeUnits(31)/NpcAggroRadius(60) with real headroom, so a raider's hull
+    // has visibly taken shape well before it's close enough to shoot - not just a dot snapping into
+    // a sprite at the last moment. Everything past this is rendered as a plain colored point instead
+    // of a baked hull/triangle (DrawDistantShipDot) - the common case now that fields span real
+    // system distances (M50), most ambient traffic and not-yet-engaged raiders are far past it.
+    private const float ShipDetailRenderDistance = 220f;
 
     private readonly Texture2D _pixel;
+    // A real celestial body's own disc, or its gravity well (M50), can be tens of thousands of
+    // pixels across at this view's real field scale - HudIcons.FillCircle's per-pixel-row loop
+    // would cost millions of Draw calls at that size ("нереально лагает"), so bodies use this
+    // pre-baked circle texture (HudIcons.DrawScaledCircle, O(1) regardless of radius) instead.
+    private readonly Texture2D _softCircle;
     private readonly SpriteFont _font;
     private readonly GraphicsDevice _graphicsDevice;
     private readonly CrewSkin _crewSkin;
@@ -27,7 +39,23 @@ public sealed class FieldRenderer
     // One baked surface per rock (AsteroidTexture), kept for the life of the client - the same five
     // ids come back every time a field is entered, so this is built once and never again.
     private readonly Dictionary<string, AsteroidTexture.Skin> _asteroidSkins = new();
-    private bool _bakedAsteroidThisFrame;
+    // The actual pixel math (AsteroidTexture.BakePixels - the noise/crater/lighting loop over up
+    // to 640x640 texels) measured at ~250-400ms for one rock at its real baked resolution - that
+    // used to run synchronously inside DrawAsteroid, on the render thread, which is exactly what
+    // showed up as "Field: ~300+ms" the moment any never-before-seen rock needed baking (a fresh
+    // belt on first entry, or - the M55 landing feature - a planet surface's own dozen-plus
+    // obstacles, all brand new the instant the ship touches down). Throttling to "one bake per
+    // frame" (the old _bakedAsteroidThisFrame) never fixed that: each individual bake was still a
+    // multi-hundred-millisecond stall, just spread over consecutive frames instead of stacked into
+    // one. Moved onto a background task instead - BakePixels touches no GraphicsDevice state, only
+    // local arrays/Random instances, so it's safe off the render thread; only the cheap
+    // texture.SetData upload (a handful of ms) still happens here once a task completes.
+    private readonly Dictionary<string, Task<(Color[] Pixels, int Side, float HalfExtentUnits)>> _pendingAsteroidBakes = new();
+    // Same pattern, same reason, for a celestial body's own surface (PlanetTexture, M55 follow-up
+    // - "почему на месте планет пустота") - a body only ever needs baking once per session (its
+    // radius never changes), so keyed by id alone rather than "id:radius" the way a belt rock is.
+    private readonly Dictionary<string, PlanetTexture.Skin> _planetSkins = new();
+    private readonly Dictionary<string, Task<(Color[] Pixels, int Side, float HalfExtentUnits)>> _pendingPlanetBakes = new();
     // The engine glow's own displayed intensity, separate from the ship's actual instantaneous
     // thrust - snaps up the moment real thrust appears, but decays on its own once it drops back
     // to zero instead of cutting out the same instant the throttle is released, so easing off the
@@ -46,6 +74,7 @@ public sealed class FieldRenderer
         _enemyHulls = new EnemyHullSkin(graphicsDevice);
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
+        _softCircle = HudIcons.CreateSoftCircleTexture(graphicsDevice);
         _font = font;
     }
 
@@ -59,21 +88,40 @@ public sealed class FieldRenderer
         Vector2 WorldToScreen(Vec2 world)
         {
             var local = ShipLocalFrame.ToLocal(world, snapshot.ShipField, hullCenter);
-            return origin + new Vector2(local.X, local.Y) * ShipRenderer.PixelsPerUnit;
+            return origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
         }
 
-        // At most one rock is baked per frame: five at once is a visible hitch on the frame the
-        // field opens, five spread over five frames is nothing, and the ones still waiting are
-        // drawn flat in their correct outline meanwhile.
-        _bakedAsteroidThisFrame = false;
-        foreach (var asteroid in snapshot.Field.Asteroids)
-            DrawAsteroid(spriteBatch, asteroid, WorldToScreen(asteroid.Position), WorldToScreen);
-
-        foreach (var deposit in snapshot.Field.OreDeposits)
+        // M55 - landed on a planet's own surface: none of the system-field's own bodies/asteroids/
+        // ore exist in this small, unrelated-scale local space (PlanetSurface's own coordinates
+        // just happen to reuse the same "exterior world position" convention everything below
+        // already draws through). Ground drawn first, same reason DrawCelestialBodies goes first
+        // in the other branch - everything else should read as sitting on top of it.
+        var landedBodyId = snapshot.Voyage.LandedBodyId;
+        if (landedBodyId is not null)
         {
-            var state = snapshot.Field.OreDepositStates.FirstOrDefault(s => s.DepositId == deposit.Id);
-            if (state is not null && state.Hp > 0f)
-                DrawOreBlock(spriteBatch, deposit, state, WorldToScreen(deposit.Position), totalSeconds);
+            DrawPlanetSurfaceGround(spriteBatch, landedBodyId, snapshot, WorldToScreen);
+            foreach (var rock in PlanetSurface.Generate(landedBodyId))
+                DrawAsteroid(spriteBatch, rock, WorldToScreen(rock.Position), WorldToScreen);
+        }
+        else
+        {
+            // The star, its planets, and any moons (M50) - real, huge, gravity-having bodies, drawn
+            // first so everything else (asteroids, ships, characters) reads as being in front of
+            // them rather than the other way round.
+            DrawCelestialBodies(spriteBatch, snapshot, WorldToScreen);
+
+            // At most one rock is baked per frame: five at once is a visible hitch on the frame the
+            // field opens, five spread over five frames is nothing, and the ones still waiting are
+            // drawn flat in their correct outline meanwhile.
+            foreach (var asteroid in snapshot.Field.Asteroids)
+                DrawAsteroid(spriteBatch, asteroid, WorldToScreen(asteroid.Position), WorldToScreen);
+
+            foreach (var deposit in snapshot.Field.OreDeposits)
+            {
+                var state = snapshot.Field.OreDepositStates.FirstOrDefault(s => s.DepositId == deposit.Id);
+                if (state is not null && state.Hp > 0f)
+                    DrawOreBlock(spriteBatch, deposit, state, WorldToScreen(deposit.Position), totalSeconds);
+            }
         }
 
         // RoomId is null only for the original EVA-space drops - anything dropped on a ship/station
@@ -88,7 +136,7 @@ public sealed class FieldRenderer
         {
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
-            var direction = new Vector2(aim.X, aim.Y);
+            var direction = new Vector2((float)aim.X, (float)aim.Y);
             var center = WorldToScreen(new Vec2(character.X, character.Y));
             var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.Cutter, character.Inventory, center, direction) ?? center + ShipRenderer.HeldToolOffset(direction);
             DrawCuttingFlame(spriteBatch, muzzle, direction, totalSeconds);
@@ -98,7 +146,7 @@ public sealed class FieldRenderer
         {
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
-            var direction = new Vector2(aim.X, aim.Y);
+            var direction = new Vector2((float)aim.X, (float)aim.Y);
             var center = WorldToScreen(new Vec2(character.X, character.Y));
             var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.WeldingTool, character.Inventory, center, direction) ?? center + ShipRenderer.HeldToolOffset(direction);
             DrawWeldingFlame(spriteBatch, _pixel, muzzle,
@@ -110,7 +158,10 @@ public sealed class FieldRenderer
         // Only where a station actually exists in this system - many procedural systems have none
         // at all (GalaxyMap.cs), and the layout the World keeps around for docking is not a thing
         // in the sky when there's nothing nearby to anchor it to (snapshot.Voyage.HasNearbyStation).
-        if (snapshot.Voyage.HasNearbyStation)
+        // Also skipped while landed (M55) - HasNearbyStation/Station.Position are frozen/stale by
+        // then (UpdateNearestStation stops running the moment the ship lands), and numerically
+        // meaningless against this small local surface field regardless.
+        if (landedBodyId is null && snapshot.Voyage.HasNearbyStation)
         {
             var stationScreen = WorldToScreen(snapshot.Station.Position);
             var portScreen = WorldToScreen(snapshot.Station.DockingPortPosition);
@@ -131,46 +182,83 @@ public sealed class FieldRenderer
         // is called out by name; the rest are marked as raiders, so it's obvious which one to fly
         // at with a suit on.
         var rotation = -snapshot.ShipField.RotationDegrees * (MathF.PI / 180f);
+        var shipPosition = new Vec2(snapshot.ShipField.X, snapshot.ShipField.Y);
         foreach (var enemy in snapshot.EnemyShip.Ships)
         {
-            var enemyScreen = WorldToScreen(new Vec2(enemy.X, enemy.Y));
-            DrawEnemyShipExterior(spriteBatch, enemyScreen, enemy,
-                enemy.IsBoardable ? snapshot.EnemyShip.Crew.Count(c => c.Alive) : -1,
-                rotation + (enemy.RotationDegrees * MathF.PI / 180f), totalSeconds);
-            DrawOffScreenMarker(spriteBatch, enemyScreen, viewportOrigin, viewportSize,
-                enemy.IsBoardable ? "Враг" : "Рейдер", Color.OrangeRed);
+            var enemyWorld = new Vec2(enemy.X, enemy.Y);
+            var enemyScreen = WorldToScreen(enemyWorld);
 
-            // Any wall the player has already cut through on the currently boardable hull - the
-            // enemy-ship counterpart of ShipRenderer.DrawBreachedWallBlock, just placed by rotating
-            // the block's local position out to world space (World.Cutting.cs uses the identical
-            // maths server-side) instead of drawing straight into a room-local origin.
-            if (enemy.IsBoardable && snapshot.EnemyShip.WallBlockStates.Count > 0)
+            // M50's real field sizes mean "far away" is now the common case - the baked hull
+            // sprite, scorch marks, engine glow and health bar only earn their draw calls once
+            // something might actually come to blows. A raider still crossing the field from far
+            // out is rendered as the same plain dot ambient traffic gets below, and only "loads"
+            // its full silhouette once it closes to ShipDetailRenderDistance.
+            if ((enemyWorld - shipPosition).Length() <= ShipDetailRenderDistance)
             {
-                var enemyLocalCenter = ShipLocalFrame.GetHullCenter(snapshot.EnemyShip.Rooms);
-                foreach (var state in snapshot.EnemyShip.WallBlockStates)
+                DrawEnemyShipExterior(spriteBatch, enemyScreen, enemy,
+                    enemy.IsBoardable ? snapshot.EnemyShip.Crew.Count(c => c.Alive) : -1,
+                    rotation + (enemy.RotationDegrees * MathF.PI / 180f), totalSeconds);
+
+                // Any wall the player has already cut through on the currently boardable hull - the
+                // enemy-ship counterpart of ShipRenderer.DrawBreachedWallBlock, just placed by
+                // rotating the block's local position out to world space (World.Cutting.cs uses the
+                // identical maths server-side) instead of drawing straight into a room-local origin.
+                if (enemy.IsBoardable && snapshot.EnemyShip.WallBlockStates.Count > 0)
                 {
-                    if (!state.Breached)
-                        continue;
-                    var block = snapshot.EnemyShip.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
-                    if (block is null)
-                        continue;
-                    var blockWorld = new Vec2(enemy.X, enemy.Y) +
-                        ShipLocalFrame.ToWorldDirection(new Vec2(block.X, block.Y) - enemyLocalCenter, enemy.RotationDegrees);
-                    DrawEnemyHullBreach(spriteBatch, WorldToScreen(blockWorld), totalSeconds);
+                    var enemyLocalCenter = ShipLocalFrame.GetHullCenter(snapshot.EnemyShip.Rooms);
+                    foreach (var state in snapshot.EnemyShip.WallBlockStates)
+                    {
+                        if (!state.Breached)
+                            continue;
+                        var block = snapshot.EnemyShip.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
+                        if (block is null)
+                            continue;
+                        var blockWorld = enemyWorld +
+                            ShipLocalFrame.ToWorldDirection(new Vec2(block.X, block.Y) - enemyLocalCenter, enemy.RotationDegrees);
+                        DrawEnemyHullBreach(spriteBatch, WorldToScreen(blockWorld), totalSeconds);
+                    }
                 }
             }
+            else
+            {
+                DrawDistantShipDot(spriteBatch, enemyScreen, Color.OrangeRed);
+            }
+
+            DrawOffScreenMarker(spriteBatch, enemyScreen, viewportOrigin, viewportSize,
+                enemy.IsBoardable ? "Враг" : "Рейдер", Color.OrangeRed);
         }
 
         // Ambient traffic (World.NpcShips.cs, M43) - present and flying whether or not the player
-        // has ever come near, unlike the squadron above which only exists during a fight.
-        foreach (var npc in snapshot.NpcShips)
+        // has ever come near, unlike the squadron above which only exists during a fight. Almost
+        // always far away at this scale (M50's real field sizes), so this is the common case the
+        // dot fallback below is really for. Skipped while landed (M55) - every NPC position is
+        // still a system-scale number, meaningless (and never actually near) this small local
+        // surface field's own coordinates.
+        foreach (var npc in landedBodyId is null ? snapshot.NpcShips : Array.Empty<NpcShipFieldState>())
         {
-            var npcScreen = WorldToScreen(new Vec2(npc.X, npc.Y));
-            DrawNpcShipExterior(spriteBatch, npcScreen, npc, snapshot.FactionStandings,
-                rotation + (npc.RotationDegrees * MathF.PI / 180f));
+            var npcWorld = new Vec2(npc.X, npc.Y);
+            var npcScreen = WorldToScreen(npcWorld);
+            if ((npcWorld - shipPosition).Length() <= ShipDetailRenderDistance)
+            {
+                DrawNpcShipExterior(spriteBatch, npcScreen, npc, snapshot.FactionStandings,
+                    rotation + (npc.RotationDegrees * MathF.PI / 180f));
+            }
+            else
+            {
+                DrawDistantShipDot(spriteBatch, npcScreen, NpcShipMarkerColor(npc, snapshot.FactionStandings));
+            }
+
             DrawOffScreenMarker(spriteBatch, npcScreen, viewportOrigin, viewportSize,
                 NpcShipLabel(npc), NpcShipMarkerColor(npc, snapshot.FactionStandings));
         }
+
+        // M63 - drifting wreckage (World.ShipDebris.cs) - each fragment has its own independent
+        // world position/rotation (unlike Station, which never rotates on its own), so it needs the
+        // same "rotate this room's own offset out to world space" transform an enemy hull's wall
+        // blocks already use, not the simpler station-exterior one.
+        if (snapshot.ShipDebris is { Count: > 0 } debrisFragments)
+            foreach (var fragment in debrisFragments)
+                DrawShipDebris(spriteBatch, fragment, WorldToScreen, rotation);
 
         foreach (var shot in snapshot.Projectiles)
             DrawProjectile(spriteBatch, shot, WorldToScreen(new Vec2(shot.X, shot.Y)), rotation);
@@ -183,7 +271,7 @@ public sealed class FieldRenderer
             var facing = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
             DrawCharacter(spriteBatch, character, WorldToScreen(new Vec2(character.X, character.Y)),
-                new Vector2(facing.X, facing.Y));
+                new Vector2((float)facing.X, (float)facing.Y));
         }
 
         if (effects is not null)
@@ -194,6 +282,165 @@ public sealed class FieldRenderer
                 DrawExplosion(spriteBatch, WorldToScreen(effect.Position), effect.Progress);
         }
     }
+
+    // The star, planets, and moons of whatever system the ship is currently in (M50) - fixed
+    // positions now (M59), a pure function of the system id alone: CelestialBodyGenerator.Generate/
+    // PositionAt take no time argument any more, so client and server can never show a body
+    // anywhere other than where it actually sits.
+    // Generate/ToDictionary/the StarSystems lookup below are all real allocations (a fresh Random,
+    // several Lists, a Dictionary, LINQ enumerators) - fine once, ruinous run fresh every single
+    // frame at 60fps, which is exactly what calling this with no caching did: a steady stream of
+    // garbage that showed up as real, visible stutter (M50 follow-up - "нереально лагает"). The
+    // system id and its body layout are deterministic and never change mid-flight, so this only
+    // ever needs to be recomputed the one time the ship actually warps somewhere else.
+    private string? _cachedBodiesSystemId;
+    private IReadOnlyList<CelestialBody> _cachedBodies = Array.Empty<CelestialBody>();
+    private Dictionary<string, CelestialBody> _cachedBodiesById = new();
+    private Vec2 _cachedFieldCenter;
+
+    private void EnsureBodiesCached(WorldSnapshot snapshot)
+    {
+        if (_cachedBodiesSystemId == snapshot.CurrentSystemId)
+            return;
+        _cachedBodiesSystemId = snapshot.CurrentSystemId;
+        _cachedBodies = CelestialBodyGenerator.Generate(snapshot.CurrentSystemId);
+        _cachedBodiesById = _cachedBodies.ToDictionary(b => b.Id);
+        var currentSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
+        _cachedFieldCenter = new Vec2(currentSystem.Width / 2f, currentSystem.Height / 2f);
+    }
+
+    // M55 - "камера поварачивалась вертикально относительно положения планеты чтобы было проще
+    // садиться": how far the ship still is above the nearest LANDABLE body's own surface, and the
+    // bearing away from that body's centre (the direction that should read as screen-up once
+    // close) - Game1.Camera.cs's own scene-rotation blend uses this to ease the view from "flying
+    // past a huge circle" into "ground below, sky above" purely as a landing approach aid, no
+    // physics involved. Piggybacks on the same cached body list DrawCelestialBodies/
+    // DrawPlanetSurfaceGround already keep warm, rather than re-generating the system's bodies in
+    // a method called every single frame regardless of turret/landing state.
+    public (float SurfaceDistance, Vec2 AwayFromBody, float BodyRadius)? NearestLandableBodyApproach(WorldSnapshot snapshot, Vec2 shipFieldPosition)
+    {
+        EnsureBodiesCached(snapshot);
+        CelestialBody? nearestBody = null;
+        var nearestSurfaceDistance = float.MaxValue;
+        var nearestAway = Vec2.Zero;
+
+        foreach (var body in _cachedBodies)
+        {
+            if (!CelestialBodyGenerator.IsLandable(body))
+                continue;
+            var bodyPosition = CelestialBodyGenerator.PositionAt(body, _cachedBodiesById) + _cachedFieldCenter;
+            var offset = shipFieldPosition - bodyPosition;
+            var distance = offset.Length();
+            var surfaceDistance = distance - body.Radius;
+            if (surfaceDistance >= nearestSurfaceDistance)
+                continue;
+            nearestSurfaceDistance = (float)surfaceDistance;
+            nearestBody = body;
+            nearestAway = distance > 0.0001f ? offset * (1f / distance) : new Vec2(0f, -1f);
+        }
+
+        return nearestBody is null ? null : (nearestSurfaceDistance, nearestAway, nearestBody.Radius);
+    }
+
+    // M55 - a flat, MassTier-tinted ground fill under a landed ship, drawn as a single rotated
+    // quad rather than per-pixel: WorldToScreen's own rotation (ShipLocalFrame.ToLocal) is a pure
+    // rigid rotation, so an axis-aligned rectangle in PlanetSurface's own local coordinates stays
+    // a rectangle on screen, just turned - exactly what stretching/rotating a single pixel already
+    // draws for free, the same trick DrawEngines/DrawProjectile etc. already use below for their
+    // own rotated rectangles.
+    private void DrawPlanetSurfaceGround(SpriteBatch spriteBatch, string bodyId, WorldSnapshot snapshot, Func<Vec2, Vector2> worldToScreen)
+    {
+        EnsureBodiesCached(snapshot);
+        var color = _cachedBodiesById.TryGetValue(bodyId, out var body) ? CelestialBodyColor(body.MassTier) : Color.Gray;
+        var center = worldToScreen(PlanetSurface.Center);
+        var rotation = -snapshot.ShipField.RotationDegrees * (MathF.PI / 180f);
+        var size = new Vector2(PlanetSurface.Width, PlanetSurface.Height) * ShipRenderer.PixelsPerUnit;
+        spriteBatch.Draw(_pixel, center, null, color, rotation, new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);
+    }
+
+    private void DrawCelestialBodies(SpriteBatch spriteBatch, WorldSnapshot snapshot, Func<Vec2, Vector2> worldToScreen)
+    {
+        EnsureBodiesCached(snapshot);
+        var bodies = _cachedBodies;
+        var byId = _cachedBodiesById;
+        var fieldCenter = _cachedFieldCenter;
+
+        foreach (var body in bodies)
+        {
+            // PositionAt is relative to the star's own local origin - the field's own centre is
+            // where that origin actually sits in absolute field coordinates, so worldToScreen needs
+            // it added back in too.
+            var screen = worldToScreen(CelestialBodyGenerator.PositionAt(body, byId) + fieldCenter);
+            var radiusPx = body.Radius * ShipRenderer.PixelsPerUnit;
+            var color = CelestialBodyColor(body.MassTier);
+
+            // The star keeps the plain flat glow (M55 follow-up) - it isn't a solid surface to put
+            // relief or cloud bands on, and the existing bright disc + limb shading already reads
+            // fine for something that's meant to look like a light source, not a walkable body.
+            if (body.MassTier == BodyMassTier.Star)
+            {
+                HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen, radiusPx, color);
+                HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen + new Vector2(radiusPx * 0.18f, radiusPx * 0.18f), radiusPx * 0.92f, color * 0.8f);
+                HudIcons.DrawRingArc(spriteBatch, _pixel, screen, radiusPx, 0f, 360f, Color.Black * 0.35f, 96, 2f);
+                continue;
+            }
+
+            // Rotated by the same amount the field itself is rotated on screen (DrawAsteroid's own
+            // convention) - sunlight/craters/cloud bands stay fixed in the world while everything
+            // swings around the always-upright ship, instead of the texture just sitting frozen
+            // while its position correctly swings around it.
+            var axis = worldToScreen(CelestialBodyGenerator.PositionAt(body, byId) + fieldCenter + new Vec2(1f, 0f)) - screen;
+            var rotation = MathF.Atan2(axis.Y, axis.X);
+            DrawPlanetSkin(spriteBatch, body, screen, radiusPx, color, rotation);
+        }
+    }
+
+    // M55 follow-up - "почему на месте планет пустота": a real baked surface (PlanetTexture)
+    // instead of the flat shaded circle, baked once per body id on a background task exactly like
+    // DrawAsteroid's own rock bakes (PlanetTexture.BakePixels costs the same multi-hundred-ms as
+    // AsteroidTexture's own at this resolution - doing that synchronously here would reintroduce
+    // the exact frame-lag bug DrawAsteroid was just fixed for). Falls back to the old flat disc
+    // for however many frames the bake takes, same "waiting its turn" shape as an unbaked rock.
+    private void DrawPlanetSkin(SpriteBatch spriteBatch, CelestialBody body, Vector2 screen, float radiusPx, Color color, float rotation)
+    {
+        if (!_planetSkins.TryGetValue(body.Id, out var skin))
+        {
+            if (!_pendingPlanetBakes.TryGetValue(body.Id, out var pending))
+            {
+                pending = Task.Run(() => PlanetTexture.BakePixels(body));
+                _pendingPlanetBakes[body.Id] = pending;
+            }
+
+            if (!pending.IsCompletedSuccessfully)
+            {
+                HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen, radiusPx, color);
+                HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen + new Vector2(radiusPx * 0.18f, radiusPx * 0.18f), radiusPx * 0.92f, color * 0.8f);
+                HudIcons.DrawRingArc(spriteBatch, _pixel, screen, radiusPx, 0f, 360f, Color.Black * 0.35f, 96, 2f);
+                return;
+            }
+
+            var (pixels, side, halfExtentUnits) = pending.Result;
+            var texture = new Texture2D(_graphicsDevice, side, side);
+            texture.SetData(pixels);
+            skin = new PlanetTexture.Skin(texture, halfExtentUnits);
+            _planetSkins[body.Id] = skin;
+            _pendingPlanetBakes.Remove(body.Id);
+        }
+
+        var scale = skin.HalfExtentUnits * 2f * ShipRenderer.PixelsPerUnit / skin.Texture.Width;
+        spriteBatch.Draw(skin.Texture, screen, null, Color.White, rotation,
+            new Vector2(skin.Texture.Width / 2f, skin.Texture.Height / 2f), scale, SpriteEffects.None, 0f);
+        HudIcons.DrawRingArc(spriteBatch, _pixel, screen, radiusPx, 0f, 360f, Color.Black * 0.35f, 96, 2f);
+    }
+
+    private static Color CelestialBodyColor(BodyMassTier tier) => tier switch
+    {
+        BodyMassTier.Star => new Color(255, 230, 140),
+        BodyMassTier.Rocky => new Color(150, 120, 95),
+        BodyMassTier.IceGiant => new Color(170, 195, 220),
+        BodyMassTier.GasGiant => new Color(200, 160, 110),
+        _ => new Color(180, 180, 180), // Moon
+    };
 
     // A bigger, longer-lived burst than DrawSparkBurst's tool feedback - an expanding shockwave
     // ring plus a scatter of hull-chunk debris flung outward, for the one moment a whole ship
@@ -258,13 +505,13 @@ public sealed class FieldRenderer
             // Raw axis comparison rather than one normalised by the hull's proportions: on a long
             // thin hull an engine one unit off the centreline still belongs on the end plating.
             var toDevice = device.Position - hullCenter;
-            var outward = MathF.Abs(toDevice.X) >= MathF.Abs(toDevice.Y)
-                ? new Vector2(MathF.Sign(toDevice.X) is var sx && sx == 0 ? 1f : sx, 0f)
-                : new Vector2(0f, MathF.Sign(toDevice.Y));
+            var outward = MathF.Abs((float)toDevice.X) >= MathF.Abs((float)toDevice.Y)
+                ? new Vector2(MathF.Sign((float)toDevice.X) is var sx && sx == 0 ? 1f : sx, 0f)
+                : new Vector2(0f, MathF.Sign((float)toDevice.Y));
 
             var baseLocal = outward.X != 0f
-                ? new Vector2(hullCenter.X + outward.X * halfExtents.X, device.Y)
-                : new Vector2(device.X, hullCenter.Y + outward.Y * halfExtents.Y);
+                ? new Vector2((float)(hullCenter.X + outward.X * halfExtents.X), device.Y)
+                : new Vector2(device.X, (float)(hullCenter.Y + outward.Y * halfExtents.Y));
             var baseScreen = origin + baseLocal * ShipRenderer.PixelsPerUnit;
 
             DrawNacelle(spriteBatch, baseScreen, outward, device.SizeScale, thrust, totalSeconds, device.Id);
@@ -349,6 +596,25 @@ public sealed class FieldRenderer
         }
 
         spriteBatch.DrawString(_font, "Станция", screenCenter + new Vector2(-24, -90), Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+    }
+
+    // M63 - a fragment's own Rooms are stored relative to ITS pivot (World.ShipDebris.cs's own doc
+    // comment), so each room's world position is the fragment's world position plus that offset
+    // rotated by the fragment's own (independent, frozen-at-detachment) rotation - the identical
+    // transform DrawEnemyShipExterior's own wall-block-breach loop above already uses for an enemy
+    // hull's blocks, just for whole rooms instead of single blocks.
+    private void DrawShipDebris(SpriteBatch spriteBatch, ShipDebrisState fragment, Func<Vec2, Vector2> worldToScreen, float cameraRotation)
+    {
+        var fragmentWorld = new Vec2(fragment.X, fragment.Y);
+        var drawRotation = cameraRotation + fragment.RotationDegrees * MathF.PI / 180f;
+        foreach (var room in fragment.Rooms)
+        {
+            var roomWorld = fragmentWorld + ShipLocalFrame.ToWorldDirection(room.Center, fragment.RotationDegrees);
+            var screen = worldToScreen(roomWorld);
+            var size = new Vector2(room.Width, room.Height) * ShipRenderer.PixelsPerUnit;
+            spriteBatch.Draw(_pixel, screen, null, new Color(70, 62, 58), drawRotation, new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);
+            DrawRotatedOutline(spriteBatch, screen, size, drawRotation, new Color(120, 108, 100));
+        }
     }
 
     // Four thin rotated bars around the block's edges - SpriteBatch has no rotated-rect outline, so
@@ -436,7 +702,7 @@ public sealed class FieldRenderer
         // 3.5 for every class regardless - a bigger hull just means a shot can land visibly on the
         // plating well outside that circle without it having missed a smaller one.
         var (_, halfExtents) = EnemyShipLayout.Of(enemy.Kind).GetLocalBounds();
-        var sizePx = halfExtents.Length() * 2f * ShipRenderer.PixelsPerUnit;
+        var sizePx = (float)(halfExtents.Length() * 2f * ShipRenderer.PixelsPerUnit);
 
         // A baked hull per class, at its own true scale - the same armour HullSkin draws for the
         // player's own ship, run once offscreen against this class's real Rooms (EnemyHullSkin).
@@ -531,6 +797,16 @@ public sealed class FieldRenderer
             NpcShipKind.Scout => Color.LightGray,
             _ => Color.CornflowerBlue,
         };
+
+    // The far-away stand-in for both DrawEnemyShipExterior and DrawNpcShipExterior (ShipDetailRenderDistance) -
+    // a hull that's still just closing the distance doesn't need its silhouette, scorch marks or
+    // engine glow evaluated every frame, only something readable enough to track its heading by eye
+    // until it's close enough to matter.
+    private void DrawDistantShipDot(SpriteBatch spriteBatch, Vector2 screenCenter, Color color)
+    {
+        const float radius = 4f;
+        HudIcons.FillCircle(spriteBatch, _pixel, screenCenter, radius, color);
+    }
 
     // A plain triangular hull, unlike the raider's scavenged silhouette (DrawEnemyShipExterior) -
     // ambient traffic isn't a fight to read the shape of, just a coloured blip with a heading.
@@ -747,14 +1023,29 @@ public sealed class FieldRenderer
         var key = $"{asteroid.Id}:{asteroid.Radius}";
         if (!_asteroidSkins.TryGetValue(key, out var skin))
         {
-            if (_bakedAsteroidThisFrame)
+            // The pixel math runs on a background task (see _pendingAsteroidBakes' own comment) -
+            // started once per key and polled here every frame afterward. Still drawn flat
+            // (DrawAsteroidFlat) for however many frames the bake takes, exactly like the old
+            // one-per-frame throttle already did while "waiting its turn" - the only change is
+            // that the wait no longer blocks the render thread while it happens.
+            if (!_pendingAsteroidBakes.TryGetValue(key, out var pending))
+            {
+                pending = Task.Run(() => AsteroidTexture.BakePixels(asteroid));
+                _pendingAsteroidBakes[key] = pending;
+            }
+
+            if (!pending.IsCompletedSuccessfully)
             {
                 DrawAsteroidFlat(spriteBatch, asteroid, screenCenter, worldToScreen);
                 return;
             }
-            skin = AsteroidTexture.Bake(_graphicsDevice, asteroid);
+
+            var (pixels, side, halfExtentUnits) = pending.Result;
+            var texture = new Texture2D(_graphicsDevice, side, side);
+            texture.SetData(pixels);
+            skin = new AsteroidTexture.Skin(texture, halfExtentUnits);
             _asteroidSkins[key] = skin;
-            _bakedAsteroidThisFrame = true;
+            _pendingAsteroidBakes.Remove(key);
         }
 
         var scale = skin.HalfExtentUnits * 2f * pixelsPerUnit / skin.Texture.Width;

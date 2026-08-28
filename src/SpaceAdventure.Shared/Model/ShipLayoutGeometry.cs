@@ -4,8 +4,11 @@ namespace SpaceAdventure.Shared.Model;
 // whole-side exterior detection (-> Airlock candidates/placement, and which unit segments of a
 // room's boundary become WallBlocks). Used by both the client editor (to show valid click targets)
 // and Ship.Custom.cs (to actually build the hull), so the two never disagree about adjacency.
-// Everything here relies on room coordinates being whole grid units (CustomRoomDef's int fields),
-// so the touching-boundary checks below are exact integer comparisons, never float epsilon guesses.
+// Everything here relies on room coordinates sitting on a grid (CustomRoomDef.X/Y/Width/Height,
+// M60 follow-up - widened from int to float so half-unit hand-authored hulls round-trip too), so
+// the touching-boundary checks below are exact equality comparisons, never float epsilon guesses -
+// safe because grid-snapped placement (whole OR half units) is always exactly representable in
+// IEEE-754 float, the same way whole units always were.
 public static class ShipLayoutGeometry
 {
     public readonly record struct RoomPairOverlap(

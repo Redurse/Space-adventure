@@ -21,7 +21,7 @@ internal static partial class TestRunner
         var me = snapshot.Characters.Single(c => c.PlayerId == 1);
         var dropped = snapshot.DroppedItems.FirstOrDefault(d => d.Item == ItemType.Wrench);
         return MainSlot(world, slot) is null && dropped is not null && dropped.RoomId is not null
-            && MathF.Abs(dropped.X - me.X) < 0.01f && MathF.Abs(dropped.Y - me.Y) < 0.01f;
+            && Math.Abs(dropped.X - me.X) < 0.01 && Math.Abs(dropped.Y - me.Y) < 0.01;
     }
 
     // Same reachability rule as an ordinary move - the rack is a physical shelf, dropping from it

@@ -4,7 +4,14 @@ namespace SpaceAdventure.Shared.Model;
 // игрок"). X/Y are in map units, unrelated to the ship-interior coordinate system. Faction is who
 // holds it (game_design.md section 12) — for a station that sets its prices and whether it'll give
 // you work; for a hostile sector it's whose raider you'd be fighting there.
-public sealed record GalaxyPoint(string Id, string Name, float X, float Y, GalaxyPointKind Kind,
+// X/Y are double, not float (M58 follow-up - same fix as ShipFieldState's own doc comment): a
+// float32 position can't resolve two points closer than tens of thousands of units apart once the
+// field itself grew large enough - a non-hosted point's own absolute coordinate (X = (float)
+// someHugeDoubleValue.X, the pattern several call sites in GalaxyMap.cs still used) silently drifted
+// from whatever real, double-precision position it was meant to echo (AsteroidField.ClusterCenter,
+// in one confirmed case), stranding "the ship's own start point" and "the asteroids actually there"
+// tens of thousands of units apart despite being defined as the exact same point.
+public sealed record GalaxyPoint(string Id, string Name, double X, double Y, GalaxyPointKind Kind,
     FactionId Faction = FactionId.Independent,
     // Only meaningful for Kind == Station: which services it offers (game_design.md section 10).
     StationKind StationKind = StationKind.Trade,
@@ -21,5 +28,9 @@ public sealed record GalaxyPoint(string Id, string Name, float X, float Y, Galax
     // without touching anything else. Defaults to the radius every point used before this existed.
     float CaptureRadius = 8f)
 {
+    // M59 - "убрать орбитальную механику, вернуть статичную карту в духе Cosmoteer": every point
+    // (including a station) is a plain fixed coordinate now. Used to optionally ride along with a
+    // host celestial body (HostBodyId/OrbitAngularSpeed, M50/M52) - both removed, along with the
+    // RotatingOffset math and the PositionAt(bodiesById, totalSeconds, fieldCenter) method they drove.
     public Vec2 Position => new(X, Y);
 }

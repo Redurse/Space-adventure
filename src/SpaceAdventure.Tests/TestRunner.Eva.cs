@@ -77,7 +77,7 @@ internal static partial class TestRunner
 
         var start = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var push = new Vec2(deposit.X - start.X, deposit.Y - start.Y).Normalized();
-        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: push.X, PushOffDirectionY: push.Y));
+        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: (float)push.X, PushOffDirectionY: (float)push.Y));
 
         var gapWhenCaught = float.NaN;
         for (var i = 0; i < 40 * 30; i++)
@@ -85,7 +85,7 @@ internal static partial class TestRunner
             var before = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
             var gapBefore = AsteroidShape.DistanceOutside(rock, new Vec2(before.X, before.Y));
             var toward = new Vec2(deposit.X - before.X, deposit.Y - before.Y).Normalized();
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: toward.X, MoveY: toward.Y));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)toward.X, MoveY: (float)toward.Y));
             world.Step(RealtimeStep);
 
             if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsEvaAttached)
@@ -167,7 +167,7 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
         MoveCharacterTo(world, 2, 3f, 3f);
         var helmConsole = world.Ship.HelmConsole.Position;
-        MoveCharacterTo(world, 2, helmConsole.X, helmConsole.Y); // helm console
+        MoveCharacterTo(world, 2, (float)helmConsole.X, (float)helmConsole.Y); // helm console
         world.ApplyCommand(2, new ClientCommand(2, InteractPressed: true)); // man it
         world.ApplyCommand(2, new ClientCommand(2, HelmThrottle: 1f)); // straight +X - no rotation involved
         for (var i = 0; i < 30; i++)
@@ -422,7 +422,7 @@ internal static partial class TestRunner
                 .First();
             var aim = new Vec2(target.X - me.X, target.Y - me.Y);
             aim = aim.Length() > 0.01f ? aim.Normalized() : new Vec2(0f, -1f);
-            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: aim.X, LookY: aim.Y));
+            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: (float)aim.X, LookY: (float)aim.Y));
             world.Step(RealtimeStep);
         }
 

@@ -109,10 +109,7 @@ public sealed partial class World
 
     private IReadOnlyList<DoorState> CreateDoorStates() =>
         _doorOpen.Select(kv =>
-        {
-            var (percent, tickPosition) = GetSystemRepairDisplay(kv.Key);
-            return new DoorState(kv.Key, kv.Value, DoorHp(kv.Key), DoorMaxHp, percent, tickPosition);
-        }).ToArray();
+            new DoorState(kv.Key, kv.Value, DoorHp(kv.Key), DoorMaxHp, GetSystemRepairDisplay(kv.Key))).ToArray();
 
     // What the client shows a health bar over while the cutter is lit and actually aimed at a
     // door - same "quiet number, shown only while it's being worked" shape as GetWallToolTargetId

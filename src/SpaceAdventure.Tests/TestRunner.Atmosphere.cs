@@ -38,9 +38,20 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1); // position doesn't matter for this test
         EnterBattle(world);
+        var sectorPosition = world.GalaxyMap.GetPoint("sector-alpha").Position;
 
+        // Re-pinned every few seconds rather than left to drift freely - this test is about
+        // whether a long enough fight works through EVERY priority target (Engines, Weapons), not
+        // about surviving 600 real seconds of real gravity (World.Gravity.cs, M50) with its own
+        // engine deliberately disabled part way through by the very mechanic under test. Without
+        // this, the ship drifts far enough from the sector's own marker over that much simulated
+        // time to trip HasFledTheSector and end the fight before working through both targets.
         for (var i = 0; i < 600 * 30; i++)
+        {
+            if (i % 150 == 0)
+                world.DebugPlaceShip(sectorPosition);
             world.Step(RealtimeStep);
+        }
 
         var enginesDisabled = world.Ship.SystemDevices
             .Where(d => d.System == PowerSystemId.Engine)
@@ -145,7 +156,7 @@ internal static partial class TestRunner
                 .First();
             var aim = new Vec2(target.X - me.X, target.Y - me.Y);
             aim = aim.Length() > 0.01f ? aim.Normalized() : new Vec2(0f, -1f);
-            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: aim.X, LookY: aim.Y));
+            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: (float)aim.X, LookY: (float)aim.Y));
             world.Step(RealtimeStep);
         }
 
@@ -272,7 +283,7 @@ internal static partial class TestRunner
         var enemyLocal = new Vec2(worldOffset.X * cos + worldOffset.Y * sin, -worldOffset.X * sin + worldOffset.Y * cos) + hullLocalCenter;
 
         var toEnemy = enemyLocal - mount.Position;
-        var bearingDegrees = MathF.Atan2(toEnemy.Y, toEnemy.X) * (180f / MathF.PI);
+        var bearingDegrees = MathF.Atan2((float)toEnemy.Y, (float)toEnemy.X) * (180f / MathF.PI);
         var shortest = ((bearingDegrees - mount.OutwardDegrees) % 360f + 540f) % 360f - 180f;
         var wanted = Math.Clamp(shortest, turret.MinAimDegrees, turret.MaxAimDegrees);
         return wanted - turretState.AimDegrees;

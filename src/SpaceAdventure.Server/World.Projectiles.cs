@@ -70,7 +70,7 @@ public sealed partial class World
             // bottom/top edge close to the bow or stern) sits outside a max(X,Y)-radius circle by
             // a small but real margin and would silently miss this broad-phase check before ever
             // reaching the wall-block trace, even though it's a perfectly aimed shot.
-            var hullRadius = MathF.Sqrt(halfExtents.X * halfExtents.X + halfExtents.Y * halfExtents.Y);
+            var hullRadius = MathF.Sqrt((float)(halfExtents.X * halfExtents.X + halfExtents.Y * halfExtents.Y));
             if (!SegmentHitsCircle(from, to, _shipFieldPosition, hullRadius))
             {
                 shot.LocalEntryPoint = null; // clear of the hull - a later re-entry (rare) starts fresh
@@ -127,7 +127,7 @@ public sealed partial class World
     private IReadOnlyList<ProjectileState> CreateProjectileStates() =>
         _projectiles
             .Select(p => new ProjectileState(p.Id, p.Position.X, p.Position.Y,
-                MathF.Atan2(p.Velocity.Y, p.Velocity.X) * (180f / MathF.PI), p.FromEnemy, p.IsLaser))
+                MathF.Atan2((float)p.Velocity.Y, (float)p.Velocity.X) * (180f / MathF.PI), p.FromEnemy, p.IsLaser))
             .ToArray();
 }
 

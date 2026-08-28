@@ -6,10 +6,13 @@ namespace SpaceAdventure.Shared.Protocol;
 // how badly hurt it is. The whole squadron defending a sector is present at once, so this is a
 // list - the older single EnemyShipState still describes the one currently being fought (and
 // boarded), because the HP bar and the boarding hatch both need exactly one subject.
+// X/Y are double, not float (M58 follow-up - same fix as ShipFieldState's own doc comment: at
+// KSP-real field scale a float32 position can't resolve two points closer than ~77,000 units apart,
+// and an enemy hull shares that same field with the player ship).
 public sealed record EnemyShipFieldState(
     string Id,
-    float X,
-    float Y,
+    double X,
+    double Y,
     float RotationDegrees,
     float Hp,
     float MaxHp,

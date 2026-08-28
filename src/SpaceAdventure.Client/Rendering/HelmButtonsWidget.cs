@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using SpaceAdventure.Shared.Model;
@@ -12,12 +13,17 @@ namespace SpaceAdventure.Client.Rendering;
 // since it wasn't one of the three named here.
 public sealed class HelmButtonsWidget
 {
-    public static readonly Point Size = new(170, 132);
+    // Grown by 20px to fit the speed readout (M52 - "скорость корабля в виде мини панельки") as
+    // its own row rather than fighting the title bar for space - every button rect below shifts
+    // down by the same 20px so nothing overlaps it. Grown by another 16px (M55 follow-up) for the
+    // star-size readout.
+    public static readonly Point Size = new(170, 236);
     public const int TitleBarHeight = 16;
 
-    private static readonly Rectangle DockButtonRectLocal = new(10, 24, 150, 30);
-    private static readonly Rectangle ControlModeButtonRectLocal = new(10, 60, 150, 30);
-    private static readonly Rectangle CamerasButtonRectLocal = new(10, 96, 150, 30);
+    private static readonly Rectangle DockButtonRectLocal = new(10, 84, 150, 30);
+    private static readonly Rectangle ControlModeButtonRectLocal = new(10, 120, 150, 30);
+    private static readonly Rectangle CamerasButtonRectLocal = new(10, 156, 150, 30);
+    private static readonly Rectangle LandingButtonRectLocal = new(10, 192, 150, 30);
 
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
@@ -36,6 +42,7 @@ public sealed class HelmButtonsWidget
     public static Rectangle GetDockButtonRect(Vector2 origin) => Offset(DockButtonRectLocal, origin);
     public static Rectangle GetControlModeButtonRect(Vector2 origin) => Offset(ControlModeButtonRectLocal, origin);
     public static Rectangle GetCamerasButtonRect(Vector2 origin) => Offset(CamerasButtonRectLocal, origin);
+    public static Rectangle GetLandingButtonRect(Vector2 origin) => Offset(LandingButtonRectLocal, origin);
 
     private static Rectangle Offset(Rectangle rect, Vector2 origin) =>
         new((int)origin.X + rect.X, (int)origin.Y + rect.Y, rect.Width, rect.Height);
@@ -47,9 +54,39 @@ public sealed class HelmButtonsWidget
         spriteBatch.Draw(_pixel, GetTitleBarRect(origin), new Color(45, 52, 60));
         spriteBatch.DrawString(_font, "Управление", origin + new Vector2(6, 1), Color.LightGray, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
 
+        DrawSpeedReadout(spriteBatch, snapshot.ShipField, origin);
+        DrawStarSizeReadout(spriteBatch, snapshot.CurrentSystemId, origin);
         DrawDockButton(spriteBatch, snapshot, origin);
         DrawControlModeButton(spriteBatch, snapshot.ShipField, origin);
         DrawCamerasButton(spriteBatch, origin, camerasPowered, camerasActive);
+        DrawLandingButton(spriteBatch, snapshot, origin);
+    }
+
+    // M55 - "сесть на планету": same two-way toggle shape as DrawDockButton (World.PlanetLanding.cs's
+    // HandleLandingButtonPressed), just without a distance readout in the idle state - landing has
+    // no single "berth" point to measure toward, it arms the instant the hull settles against any
+    // landable body's surface at a safe speed (CanLandNow), so there's nothing meaningful to count
+    // down to show beforehand.
+    private void DrawLandingButton(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
+    {
+        var rect = GetLandingButtonRect(origin);
+
+        if (snapshot.Voyage.LandedBodyId is not null)
+        {
+            spriteBatch.Draw(_pixel, rect, Color.SeaGreen);
+            spriteBatch.DrawString(_font, "[L] ВЗЛЁТ", new Vector2(rect.X + 6, rect.Y + 9), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            return;
+        }
+
+        if (snapshot.CanLandNow)
+        {
+            spriteBatch.Draw(_pixel, rect, Color.SeaGreen);
+            spriteBatch.DrawString(_font, "[L] ПОСАДКА", new Vector2(rect.X + 6, rect.Y + 9), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            return;
+        }
+
+        spriteBatch.Draw(_pixel, rect, new Color(40, 40, 40));
+        spriteBatch.DrawString(_font, "Посадка", new Vector2(rect.X + 6, rect.Y + 9), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
     // Same slot either direction, same reasoning HelmPanel's own version had (World.StationDocking.cs's
@@ -79,9 +116,35 @@ public sealed class HelmButtonsWidget
             return;
         }
 
-        var toBerth = new Vector2(snapshot.DockBerthPosition.X - snapshot.ShipField.X, snapshot.DockBerthPosition.Y - snapshot.ShipField.Y);
+        var toBerth = new Vector2((float)(snapshot.DockBerthPosition.X - snapshot.ShipField.X), (float)(snapshot.DockBerthPosition.Y - snapshot.ShipField.Y));
         spriteBatch.Draw(_pixel, rect, new Color(50, 50, 50));
         spriteBatch.DrawString(_font, $"До причала: {toBerth.Length():0}", new Vector2(rect.X + 6, rect.Y + 9), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+    }
+
+    // M52 - "чтобы в штурвале отображалась скорость корабля в виде мини панельки": a plain speed
+    // readout - the ship's own current speed against a flat top speed (World.ShipField.cs's
+    // ShipMaxSpeed, M59 - no more dynamic near-body cap without a gravity model to shrink it).
+    private void DrawSpeedReadout(SpriteBatch spriteBatch, ShipFieldState shipField, Vector2 origin)
+    {
+        var speed = new Vector2(shipField.VelocityX, shipField.VelocityY).Length();
+        spriteBatch.DrawString(_font, $"Скорость: {speed:0} ед/с", origin + new Vector2(10, 22), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+    }
+
+    // M55 follow-up - "чтобы в штурвале отображался размер солнца": the current system's own star
+    // radius, cached per system id the same way FieldRenderer's own body cache is (Generate is a
+    // real allocation - fresh Random, several Lists, a Dictionary - fine once, wasteful every
+    // frame) since a system's own body layout never changes.
+    private string? _cachedStarSystemId;
+    private float _cachedStarRadius;
+
+    private void DrawStarSizeReadout(SpriteBatch spriteBatch, string currentSystemId, Vector2 origin)
+    {
+        if (_cachedStarSystemId != currentSystemId)
+        {
+            _cachedStarSystemId = currentSystemId;
+            _cachedStarRadius = CelestialBodyGenerator.Generate(currentSystemId).Single(b => b.ParentId is null).Radius;
+        }
+        spriteBatch.DrawString(_font, $"Радиус звезды: {_cachedStarRadius:0} ед", origin + new Vector2(10, 34), Color.Orange, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
     }
 
     // Click toggles the same Arc/Rcs mode the Z key does (World.ShipField.cs, M41) - a mouse-only

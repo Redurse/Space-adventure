@@ -15,7 +15,7 @@ internal static partial class TestRunner
     {
         var console = world.Ship.NavigationConsole.Position;
         MoveCharacterTo(world, playerId, 3f, 3f);
-        MoveCharacterTo(world, playerId, console.X, console.Y);
+        MoveCharacterTo(world, playerId, (float)console.X, (float)console.Y);
     }
 
     // How long ApplyCommand's own aim/undock/etc. plumbing takes to settle before firing the very

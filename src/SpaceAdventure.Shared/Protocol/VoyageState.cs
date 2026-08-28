@@ -13,4 +13,10 @@ public sealed record VoyageState(
     // no Station point at all (GalaxyMap.cs), and Station otherwise just keeps whatever position
     // it was last continuously tracked to (World.Voyage.cs's UpdateNearestStation), which would
     // read as a station floating in a system that doesn't have one without this.
-    bool HasNearbyStation);
+    bool HasNearbyStation,
+    // M55 - which body the ship is currently sitting on, mirroring DockedPointId's own shape (null
+    // means "in the system's own field", same as docking). The client never needs the body's own
+    // geometry sent to it - PlanetSurface.Generate(bodyId) is a pure function, so it derives the
+    // exact same terrain from this id alone, the same way it already derives asteroid belts/body
+    // positions from ids without either ever crossing the wire.
+    string? LandedBodyId = null);

@@ -45,6 +45,16 @@ public partial class Game1
         if (snapshot.TurretStates.Any(t => t.MannedByPlayerId == _client.PlayerId))
             return false;
 
+        // Content-каталог отсеков - the whole-ship overview (talking to the Shipwright) zooms the
+        // camera out to fit the entire hull, but the character's own sight cone is still just their
+        // ordinary walking-around vision radius - a handful of units, nowhere near enough to cover a
+        // whole hull at once. Without this exemption every room outside that radius (nearly the
+        // entire ship, at the zoomed-out scale) read as pitch black even though the camera was
+        // pointed right at it. Same reasoning as the turret/helm exemptions above: you cannot choose
+        // where to build a compartment you cannot see.
+        if (ShipBuildOverviewActive(snapshot))
+            return false;
+
         var gaps = new List<SightGap>();
         List<WallSegment> walls;
         Vector2 origin;
@@ -60,7 +70,7 @@ public partial class Game1
                 gaps.Add(Occluders.ToGap(airlock));
             walls = Occluders.Build(snapshot.EnemyShip.Rooms, gaps);
             origin = ComputeStationCamera(me);
-            eye = new Vector2(me.X, me.Y);
+            eye = new Vector2((float)me.X, (float)me.Y);
             // A boarded ship is a hostile hull running on its own damaged grid, not the player's -
             // dim, reddish, and flickering rather than tied to the player's own power state.
             lights = BuildEnemyShipLights(snapshot.EnemyShip.Rooms, totalSeconds);
@@ -107,7 +117,7 @@ public partial class Game1
             // own frame, and so must the eye - otherwise the mask would sit where the ship isn't.
             var camera = ComputeCamera(snapshot, me);
             origin = camera.Origin;
-            eye = new Vector2(camera.Anchor.X, camera.Anchor.Y);
+            eye = new Vector2((float)camera.Anchor.X, (float)camera.Anchor.Y);
 
             var mood = ComputeShipPowerMood(snapshot);
             lights = BuildShipRoomLights(snapshot.Rooms, mood.PowerFraction, snapshot.Power, totalSeconds);
@@ -135,10 +145,10 @@ public partial class Game1
         // being multiplied by it. Inside, both stay exactly as they were: a room lamp does fill a
         // room, and indoors there is no starfield to protect.
         var sightReady = me.IsOutside
-            ? _visibility.Build(walls, eye, new Vector2(facing.X, facing.Y), radius, halfAngle, ambient,
+            ? _visibility.Build(walls, eye, new Vector2((float)facing.X, (float)facing.Y), radius, halfAngle, ambient,
                 origin, _renderScale, falloffStart: VacuumLampFalloffStart, floor: VacuumMaskFloor,
                 edgeFade: VacuumLampEdgeFade, coneTint: VacuumLampTint)
-            : _visibility.Build(walls, eye, new Vector2(facing.X, facing.Y), radius, halfAngle, ambient,
+            : _visibility.Build(walls, eye, new Vector2((float)facing.X, (float)facing.Y), radius, halfAngle, ambient,
                 origin, _renderScale);
         // The reactor's light lever (World.cs) kills the room lighting overlay ship-wide - the
         // sight-only fallback right below already exists for exactly this ("nothing built this
@@ -185,9 +195,9 @@ public partial class Game1
         var lampIntensity = MathHelper.Lerp(0.05f, 0.55f, powerFraction);
         foreach (var room in rooms)
         {
-            var tint = Color.Lerp(Color.White, RoomDecor.Accent(room.Id), 0.22f);
+            var tint = Color.Lerp(Color.White, RoomDecor.Accent(room.Id, room.Name), 0.22f);
             var radius = MathF.Max(room.Width, room.Height) * 0.9f + 1.5f;
-            lights.Add(new PointLight(new Vector2(room.Center.X, room.Center.Y), radius, tint * lampIntensity));
+            lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius, tint * lampIntensity));
         }
 
         var reactorRoom = rooms.FirstOrDefault(r => r.Id.Contains("reactor") || r.Id.Contains("engine"));
@@ -199,7 +209,7 @@ public partial class Game1
                 ? 0.7f + 0.3f * MathF.Sin(totalSeconds * 17f) * MathF.Sin(totalSeconds * 6.1f)
                 : 1f;
             var radius = MathF.Max(reactorRoom.Width, reactorRoom.Height) * 0.75f + 1f;
-            lights.Add(new PointLight(new Vector2(reactorRoom.Center.X, reactorRoom.Center.Y), radius,
+            lights.Add(new PointLight(new Vector2((float)reactorRoom.Center.X, (float)reactorRoom.Center.Y), radius,
                 new Color(255, 150, 70) * (0.35f * outputFraction * flicker)));
         }
 
@@ -212,7 +222,7 @@ public partial class Game1
         foreach (var room in stationRooms)
         {
             var radius = MathF.Max(room.Width, room.Height) * 0.95f + 1.5f;
-            lights.Add(new PointLight(new Vector2(room.Center.X, room.Center.Y), radius, Color.White * 0.6f));
+            lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius, Color.White * 0.6f));
         }
     }
 
@@ -227,7 +237,7 @@ public partial class Game1
         {
             var flicker = 0.55f + 0.25f * MathF.Sin(totalSeconds * 9f + room.X) * MathF.Sin(totalSeconds * 2.3f + room.Y);
             var radius = MathF.Max(room.Width, room.Height) * 0.85f + 1.2f;
-            lights.Add(new PointLight(new Vector2(room.Center.X, room.Center.Y), radius,
+            lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius,
                 new Color(210, 90, 70) * MathHelper.Clamp(flicker, 0.2f, 0.85f)));
         }
         return lights;

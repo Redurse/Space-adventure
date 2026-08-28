@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using SpaceAdventure.Client.Rendering;
@@ -40,7 +41,32 @@ public partial class Game1
     private float SceneZoom(WorldSnapshot snapshot) =>
         MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen
             ? TurretViewZoom
-            : 1f;
+            : ShipBuildOverviewActive(snapshot)
+                ? ShipOverviewZoom(snapshot)
+                : 1f;
+
+    // Content-каталог отсеков - "видно весь корабль" build screen: talking to the Shipwright pulls
+    // the whole scene back far enough to fit the entire hull on screen at once (plus a margin for
+    // pointing at empty space just outside it, where a new compartment would actually attach), the
+    // same "one number moves camera+world+hit-tests together" SceneZoom trick TurretViewZoom already
+    // uses - so StationBuildPanel's placement overlay, HandleMouseClick's confirm-click, and the
+    // ordinary room/device rendering all agree on the same view with no separate code path.
+    private const float ShipOverviewMarginUnits = 15f; // ~5 tiles of empty space around the hull to build into
+    public bool ShipBuildOverviewActive(WorldSnapshot snapshot) =>
+        snapshot.Station.Npcs.FirstOrDefault(n => n.Id == _talkingToNpcId)?.Kind == NpcKind.Shipwright;
+
+    private float ShipOverviewZoom(WorldSnapshot snapshot)
+    {
+        var half = ShipLocalFrame.GetHullHalfExtents(snapshot.Rooms);
+        var width = (float)half.X * 2f + ShipOverviewMarginUnits * 2f;
+        var height = (float)half.Y * 2f + ShipOverviewMarginUnits * 2f;
+        var fitX = WorldViewportSize.X / (width * ShipRenderer.PixelsPerUnit);
+        var fitY = WorldViewportSize.Y / (height * ShipRenderer.PixelsPerUnit);
+        // _shipOverviewZoomMultiplier (Game1.cs's own scroll-wheel handling) rides on top of this
+        // auto-fit baseline rather than replacing it, so scrolling in/out never has to fight the
+        // "start centred on the whole hull" default the moment the dialogue opens.
+        return MathF.Min(fitX, fitY) * _shipOverviewZoomMultiplier;
+    }
 
     private (Turret Turret, TurretState State)? MannedTurret(WorldSnapshot snapshot)
     {
@@ -65,11 +91,79 @@ public partial class Game1
         return -90f - mount.FireDegrees(manned.State.AimDegrees);
     }
 
+    // M55 - "чтобы при близости к поверхности планеты камера поворачивалась вертикально...
+    // чтобы было проще садиться": the same whole-scene rotation trick TurretViewRotationDegrees
+    // uses, blended in as the ship nears a landable body's surface so "away from that body" reads
+    // as screen-up - a landing approach aid, not physics (FieldRenderer already regenerates body
+    // positions from the same pure functions World.Gravity.cs computes gravity from, so this needs
+    // no protocol field of its own). Only while still actually flying - once landed the surface's
+    // own fixed camera (ComputeStationCamera-style) takes over and this never runs.
+    private const float LandingApproachBlendRadii = 4f;
+
+    private float LandingApproachRotationDegrees(WorldSnapshot snapshot)
+    {
+        // M59 follow-up - "корабль относительно персонажа не расположен прямо" while docked: bodies
+        // got rescaled back down to Cosmoteer size (small planets/moons, M59), so a station riding
+        // close to its own host planet can now sit well within this blend's own radius - a docked,
+        // perfectly stationary ship has no business tilting the whole scene as if it were on final
+        // approach to landing. LandedBodyId already guards the "already landed" case; docked needs
+        // the exact same early-out.
+        if (snapshot.Voyage.LandedBodyId is not null || snapshot.Voyage.DockedPointId is not null)
+            return 0f;
+        var shipPosition = new Vec2(snapshot.ShipField.X, snapshot.ShipField.Y);
+        if (_fieldRenderer.NearestLandableBodyApproach(snapshot, shipPosition) is not { } approach)
+            return 0f;
+
+        // M59 follow-up - "после отстыковки камера странно повернулась": the DockedPointId guard
+        // above only covers the instant still sitting AT the berth - a station can now sit as close
+        // as ~1.4 body-radii above its own host planet's surface (GalaxyMap.cs's own
+        // StationHostOffsetClearanceFraction(0.8) against CelestialBodyGenerator.ClearanceRadius,
+        // Radius*3), comfortably inside this blend's own multi-radius start distance at the new
+        // Cosmoteer scale - so the ship kept tilting the instant it left the berth, still sitting
+        // right next to that same station. This is a landing-approach aid, not a "near any planet"
+        // one: it should only ever engage while the body's own surface is genuinely the closer thing
+        // to head for than the station just left behind (or any other station in range) - never while
+        // still effectively in a station's own docking neighbourhood.
+        var nearestStationDistance = snapshot.GalaxyPoints
+            .Where(p => p.Kind == GalaxyPointKind.Station)
+            .Select(p => (p.Position - shipPosition).Length())
+            .DefaultIfEmpty(double.MaxValue)
+            .Min();
+        if (approach.SurfaceDistance >= nearestStationDistance)
+            return 0f;
+
+        // Starts blending in a few body-radii out, fully aligned by the time the surface is
+        // actually reached. M59 follow-up: bodies are Cosmoteer-scale now (small radii), not the
+        // huge KSP-scale ones this comment used to assume - "a few body-radii out" is correspondingly
+        // much closer in absolute terms, so this only ever engages on a real, close approach to a
+        // SMALL body, same intent as before just at the new scale.
+        var blendDistance = approach.BodyRadius * LandingApproachBlendRadii;
+        var blend = MathHelper.Clamp(1f - approach.SurfaceDistance / blendDistance, 0f, 1f);
+        if (blend <= 0f)
+            return 0f;
+
+        var localAway = ShipLocalFrame.ToLocalDirection(approach.AwayFromBody, snapshot.ShipField.RotationDegrees);
+        var localAngleDegrees = MathF.Atan2((float)localAway.Y, (float)localAway.X) * (180f / MathF.PI);
+        var targetRotation = -90f - localAngleDegrees;
+        return targetRotation * blend;
+    }
+
     private (Vector2 Origin, Vec2 HullCenter, Vec2 Anchor) ComputeCamera(WorldSnapshot snapshot, CharacterState me)
     {
         var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);
         Vec2 anchorLocal;
-        if (MannedTurret(snapshot) is { } manned)
+        if (ShipBuildOverviewActive(snapshot))
+        {
+            // Content-каталог отсеков - centered on the hull itself rather than the character, who
+            // is off talking to the Shipwright somewhere on the station and isn't the point of this
+            // view. ShipOverviewZoom above already shrank the whole scene to fit the hull - anchoring
+            // on anything else would immediately scroll it back out of frame. _shipOverviewPanOffset
+            // (Game1.cs's own right-drag handling) is already stored in these same ship-local units
+            // (divided by SceneZoom at drag time, not screen pixels), so it just adds straight onto
+            // the anchor like any other offset.
+            anchorLocal = hullCenter + new Vec2(_shipOverviewPanOffset.X, _shipOverviewPanOffset.Y);
+        }
+        else if (MannedTurret(snapshot) is { } manned)
         {
             var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
             // Along the live aim direction, not the mount's fixed outward normal - the camera
@@ -92,9 +186,20 @@ public partial class Game1
         // Divided by the zoom because the scene batch scales everything drawn at this origin: the
         // anchor has to land on the middle of the screen *after* that scaling, not before it.
         var screenCenter = (WorldViewportOrigin + WorldViewportSize / 2f) / SceneZoom(snapshot);
-        var origin = screenCenter - new Vector2(cameraAnchor.X, cameraAnchor.Y) * ShipRenderer.PixelsPerUnit;
+        var origin = screenCenter - new Vector2((float)cameraAnchor.X, (float)cameraAnchor.Y) * ShipRenderer.PixelsPerUnit;
         return (origin, hullCenter, anchorLocal);
     }
+
+    // Inverse of the forward mapping ReadTurretAimTowardCursor already relies on (mountOnScreen =
+    // (origin + local*PixelsPerUnit) * SceneZoom) - the scene batch scales the WHOLE drawn position
+    // by zoom, origin included, so recovering a ship-local point from a raw design-space cursor
+    // position has to divide the cursor by that same zoom before subtracting origin, not after.
+    // Every zoom-1 caller (walking the ship interior, laying wire) never noticed the difference -
+    // dividing by 1 is a no-op - which is exactly why the whole-ship overview's own placement click
+    // (the first real zoom<1 caller of this inverse) landed nowhere near the highlighted tile: the
+    // old inline formula skipped this division and used ONLY the design mouse and origin as-is.
+    private static Vec2 ScreenToShipLocal(Vector2 designPos, Vector2 origin, float zoom) =>
+        new((designPos.X / zoom - origin.X) / ShipRenderer.PixelsPerUnit, (designPos.Y / zoom - origin.Y) / ShipRenderer.PixelsPerUnit);
 
     // Recomputes the target lookahead from this frame's fresh mouse/snapshot and eases the smoothed
     // offset toward it - called once per Update (not from inside ComputeCamera itself, which runs
@@ -135,7 +240,7 @@ public partial class Game1
     {
         var zoom = SceneZoom(snapshot);
         var screenCenter = (WorldViewportOrigin + WorldViewportSize / 2f) / zoom;
-        var baseOrigin = screenCenter - new Vector2(baseAnchor.X, baseAnchor.Y) * ShipRenderer.PixelsPerUnit;
+        var baseOrigin = screenCenter - new Vector2((float)baseAnchor.X, (float)baseAnchor.Y) * ShipRenderer.PixelsPerUnit;
         var mouseLocal = (new Vector2(_designMouse.X, _designMouse.Y) / zoom - baseOrigin) / ShipRenderer.PixelsPerUnit;
 
         var toCursor = new Vec2(mouseLocal.X, mouseLocal.Y) - baseAnchor;
@@ -150,6 +255,6 @@ public partial class Game1
     private static Vector2 ComputeStationCamera(CharacterState me)
     {
         var screenCenter = WorldViewportOrigin + WorldViewportSize / 2f;
-        return screenCenter - new Vector2(me.X, me.Y) * ShipRenderer.PixelsPerUnit;
+        return screenCenter - new Vector2((float)me.X, (float)me.Y) * ShipRenderer.PixelsPerUnit;
     }
 }

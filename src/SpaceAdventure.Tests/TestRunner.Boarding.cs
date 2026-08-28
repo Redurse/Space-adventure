@@ -53,7 +53,7 @@ internal static partial class TestRunner
         {
             var enemy = world.CreateSnapshot().EnemyShip.Ships.First(s => s.IsBoardable);
             var worldDir = RotateLocalToWorld(inwardLocalDir, enemy.RotationDegrees);
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: worldDir.X, MoveY: worldDir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)worldDir.X, MoveY: (float)worldDir.Y));
             world.Step(RealtimeStep);
         }
 
@@ -125,7 +125,7 @@ internal static partial class TestRunner
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
             var toBlock = EnemyHullBlockWorldPosition(world, localOffset) - new Vec2(me.X, me.Y);
             var dir = toBlock.Length() > 0.001f ? toBlock.Normalized() : new Vec2(1f, 0f);
-            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: dir.X, LookY: dir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: (float)dir.X, LookY: (float)dir.Y));
             world.Step(RealtimeStep);
         }
 
@@ -166,7 +166,7 @@ internal static partial class TestRunner
         {
             var enemy = world.CreateSnapshot().EnemyShip.Ships.First(s => s.IsBoardable);
             var worldDir = RotateLocalToWorld(inwardLocalDir, enemy.RotationDegrees);
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: worldDir.X, MoveY: worldDir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)worldDir.X, MoveY: (float)worldDir.Y));
             world.Step(RealtimeStep);
         }
 
@@ -224,7 +224,7 @@ internal static partial class TestRunner
         BoardEnemyShip(world, ItemType.Knife, withCutter: true);
 
         var door = world.EnemyShipLayout.Doors.First(d => d.Connects(world.EnemyShipLayout.BoardingRoomId));
-        MoveCharacterTo(world, 1, door.Position.X, door.Position.Y);
+        MoveCharacterTo(world, 1, (float)door.Position.X, (float)door.Position.Y);
 
         // WallCutDamagePerSecond=34 against DoorMaxHp=100 takes just under 3 real seconds of
         // continuous flame - well under 100 ticks at RealtimeStep, with margin for the cut not
@@ -234,7 +234,7 @@ internal static partial class TestRunner
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
             var toDoor = door.Position - new Vec2(me.X, me.Y);
             var dir = toDoor.Length() > 0.001f ? toDoor.Normalized() : new Vec2(1f, 0f);
-            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: dir.X, LookY: dir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: (float)dir.X, LookY: (float)dir.Y));
             world.Step(RealtimeStep);
         }
 
@@ -265,7 +265,7 @@ internal static partial class TestRunner
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
             var toBlock = entryBlock.Position - new Vec2(me.X, me.Y);
             var dir = toBlock.Length() > 0.001f ? toBlock.Normalized() : new Vec2(1f, 0f);
-            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: dir.X, LookY: dir.Y));
+            world.ApplyCommand(1, new ClientCommand(1, WeldHeld: true, LookX: (float)dir.X, LookY: (float)dir.Y));
             world.Step(RealtimeStep);
         }
 
@@ -313,7 +313,7 @@ internal static partial class TestRunner
                         world.ToggleDoor(door.Id);
 
                 var dir = toWaypoint.Normalized();
-                world.ApplyCommand(1, new ClientCommand(1, MoveX: dir.X, MoveY: dir.Y));
+                world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)dir.X, MoveY: (float)dir.Y));
                 world.Step(RealtimeStep);
             }
         }

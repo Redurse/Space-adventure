@@ -164,11 +164,11 @@ public sealed class ShipSchematicPanel
         var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);
         var halfExtents = ShipLocalFrame.GetHullHalfExtents(snapshot.Rooms);
         var scale = halfExtents.X > 0f && halfExtents.Y > 0f
-            ? Math.Min(area.Width / (2f * halfExtents.X), area.Height / (2f * halfExtents.Y)) * 0.92f
+            ? (float)(Math.Min(area.Width / (2f * halfExtents.X), area.Height / (2f * halfExtents.Y)) * 0.92f)
             : 1f;
         var areaCenter = new Vector2(area.Center.X, area.Center.Y);
 
-        Vector2 ToPanel(Vec2 local) => areaCenter + new Vector2(local.X - hullCenter.X, local.Y - hullCenter.Y) * scale;
+        Vector2 ToPanel(Vec2 local) => areaCenter + new Vector2((float)(local.X - hullCenter.X), (float)(local.Y - hullCenter.Y)) * scale;
 
         foreach (var room in snapshot.Rooms)
         {

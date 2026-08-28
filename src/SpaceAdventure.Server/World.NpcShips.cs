@@ -32,7 +32,7 @@ public sealed partial class World
     // sharing the stream outright - so this needs a fully separate counter, not just a separate
     // Random instance drawing from a shared one.
     private static int _npcSeedCounter;
-    private readonly Random _npcRandom = new(Interlocked.Increment(ref _npcSeedCounter) * 15485867);
+    private readonly Random _npcRandom = new(DebugNextSeedComponent(ref _npcSeedCounter) * 15485867);
 
     private readonly List<NpcShipRuntime> _npcShips = new();
     // Which system _npcShips currently represents - recomputed lazily on mismatch (StepNpcFleet)
@@ -67,11 +67,16 @@ public sealed partial class World
 
     private void StepNpcShip(NpcShipRuntime npc, float dt)
     {
-        var toWaypoint = npc.Waypoint - npc.Position;
+        // Resolved live through WaypointStationId whenever the current target actually is a real
+        // GalaxyPoint (M58 follow-up), not navigated toward the static npc.Waypoint snapshot
+        // directly - see NpcShipRuntime's own doc comment on why.
+        var waypointPosition = ResolveNpcWaypoint(npc);
+        var toWaypoint = waypointPosition - npc.Position;
         if (toWaypoint.Length() < NpcWaypointArriveRadius)
         {
-            npc.Waypoint = NextWaypointFor(npc);
-            toWaypoint = npc.Waypoint - npc.Position;
+            (npc.Waypoint, npc.WaypointStationId) = NextWaypointFor(npc);
+            waypointPosition = ResolveNpcWaypoint(npc);
+            toWaypoint = waypointPosition - npc.Position;
         }
 
         var speed = npc.Kind switch
@@ -85,17 +90,24 @@ public sealed partial class World
 
         if (npc.Velocity.Length() > 0.1f)
         {
-            var facing = MathF.Atan2(npc.Velocity.Y, npc.Velocity.X) * (180f / MathF.PI);
+            var facing = MathF.Atan2((float)npc.Velocity.Y, (float)npc.Velocity.X) * (180f / MathF.PI);
             npc.RotationDegrees = RotateToward(npc.RotationDegrees, facing, NpcTurnDegreesPerSecond * dt);
         }
     }
 
+    // Live position of an NPC's current waypoint - WaypointStationId, when set, is a real
+    // GalaxyPoint whose station may have moved a real distance since npc.Waypoint was last
+    // snapshotted (M58 follow-up); the static Vec2 is the fallback for random patrol points and
+    // the single-station case's own synthetic "away" point, neither of which are GalaxyPoints.
+    private Vec2 ResolveNpcWaypoint(NpcShipRuntime npc) =>
+        npc.WaypointStationId is { } id ? ResolveGalaxyPointPosition(GalaxyMap.GetPoint(id)) : npc.Waypoint;
+
     // Cargo alternates between the two ends of its fixed run; Military/Scout just get a fresh
     // random patrol point every time they reach the last one.
-    private Vec2 NextWaypointFor(NpcShipRuntime npc) =>
+    private (Vec2 Waypoint, string? StationId) NextWaypointFor(NpcShipRuntime npc) =>
         npc.Kind == NpcShipKind.Cargo
-            ? (npc.Waypoint - npc.RouteA).Length() < 1f ? npc.RouteB : npc.RouteA
-            : RandomPointInField();
+            ? (npc.Waypoint - npc.RouteA).Length() < 1f ? (npc.RouteB, npc.RouteBStationId) : (npc.RouteA, npc.RouteAStationId)
+            : (RandomPointInField(), null);
 
     private Vec2 RandomPointInField() =>
         new(_npcRandom.NextSingle() * AsteroidField.Width, _npcRandom.NextSingle() * AsteroidField.Height);
@@ -118,9 +130,10 @@ public sealed partial class World
             // means a handful of overlapping shuttle routes, not a fully-connected mesh.
             for (var i = 0; i < stations.Length && _npcShips.Count < NpcFleetMaxPerSystem; i++)
             {
-                var here = stations[i].Position;
-                var next = stations[(i + 1) % stations.Length].Position;
-                _npcShips.Add(new NpcShipRuntime($"npc-cargo-{index++}", NpcShipKind.Cargo, stations[i].Faction, here, here, next));
+                var here = ResolveGalaxyPointPosition(stations[i]);
+                var next = ResolveGalaxyPointPosition(stations[(i + 1) % stations.Length]);
+                _npcShips.Add(new NpcShipRuntime($"npc-cargo-{index++}", NpcShipKind.Cargo, stations[i].Faction, here,
+                    here, stations[i].Id, next, stations[(i + 1) % stations.Length].Id));
             }
         }
         else if (stations.Length == 1)
@@ -128,9 +141,10 @@ public sealed partial class World
             // Nowhere else in THIS system to shuttle to - a fixed point out past the warp zone
             // reads as "this run continues on to another system" rather than inventing a second
             // destination that doesn't exist here.
-            var here = stations[0].Position;
-            var away = AsteroidField.Center + new Vec2(GalaxyMap.WarpZoneRadius, 0f);
-            _npcShips.Add(new NpcShipRuntime($"npc-cargo-{index++}", NpcShipKind.Cargo, stations[0].Faction, here, here, away));
+            var here = ResolveGalaxyPointPosition(stations[0]);
+            var away = AsteroidField.Center + new Vec2(GalaxyMap.GetSystem(_currentSystemId).WarpZoneRadius, 0f);
+            _npcShips.Add(new NpcShipRuntime($"npc-cargo-{index++}", NpcShipKind.Cargo, stations[0].Faction, here,
+                here, stations[0].Id, away, null)); // "away" is synthetic, not a real GalaxyPoint - null station id
         }
 
         // Whoever actually has a flag flying in this system (a point's own owner, or the system's
@@ -147,7 +161,7 @@ public sealed partial class World
             if (_npcShips.Count >= NpcFleetMaxPerSystem)
                 break;
             var start = RandomPointInField();
-            _npcShips.Add(new NpcShipRuntime($"npc-military-{index++}", NpcShipKind.Military, faction, start, start, RandomPointInField()));
+            _npcShips.Add(new NpcShipRuntime($"npc-military-{index++}", NpcShipKind.Military, faction, start, start, null, RandomPointInField(), null));
         }
 
         if (_npcShips.Count < NpcFleetMaxPerSystem)
@@ -156,7 +170,7 @@ public sealed partial class World
             // flavor - it never fights regardless of whose it is (NpcShipKind's own doc comment).
             var scoutFaction = militaryFactions.Length > 0 ? militaryFactions[_npcRandom.Next(militaryFactions.Length)] : FactionId.Independent;
             var start = RandomPointInField();
-            _npcShips.Add(new NpcShipRuntime($"npc-scout-{index++}", NpcShipKind.Scout, scoutFaction, start, start, RandomPointInField()));
+            _npcShips.Add(new NpcShipRuntime($"npc-scout-{index++}", NpcShipKind.Scout, scoutFaction, start, start, null, RandomPointInField(), null));
         }
     }
 

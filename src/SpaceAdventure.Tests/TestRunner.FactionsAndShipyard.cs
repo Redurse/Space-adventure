@@ -109,7 +109,7 @@ internal static partial class TestRunner
         if (!isBroken())
             return;
 
-        MoveCharacterTo(world, playerId, position.X, position.Y);
+        MoveCharacterTo(world, playerId, (float)position.X, (float)position.Y);
         world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true)); // starts the repair minigame
         for (var i = 0; i < 30 * 30 && isBroken(); i++) // 30s - comfortably past the passive-only repair time
             world.Step(RealtimeStep);
@@ -350,8 +350,9 @@ internal static partial class TestRunner
     {
         var world = new World(); // starts docked at home-station as a Frigate
         world.SpawnCharacter(1);
-        // Only a Shipyard-kind station sells hulls (game_design.md section 10) - the home outpost
-        // has no Shipwright at all, so the trip is part of the mechanic, not test overhead.
+        // home-station is itself a Shipyard now too, but this still exercises the real
+        // "undock/redock at a different Shipwright" path rather than assuming the two are
+        // interchangeable - outpost-gamma is just as valid a target as staying put would be.
         DockAtStation(world, "outpost-gamma");
 
         var creditsBefore = world.Credits;

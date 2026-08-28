@@ -202,7 +202,7 @@ internal static partial class TestRunner
         // new destination used to - only actually flying clear of the sector does
         // (World.Voyage.cs's HasFledTheSector, exercised in full by EnemyFleet.cs's own test).
         SitAtHelm(world, 1);
-        var homeTarget = world.GalaxyMap.GetPoint("home-station").Position;
+        var homeTarget = world.ResolveGalaxyPointPosition(world.GalaxyMap.GetPoint("home-station"));
         world.ApplyCommand(1, SteerToward(world, 1, homeTarget)); // try to flee
         world.Step(RealtimeStep);
 

@@ -35,8 +35,88 @@ public sealed class AsteroidField
     // (2400,2400) as well: RecenterOffsetM40 + (2400-1200) = 2250.
     public const float RecenterOffsetM48 = RecenterOffsetM40 + 1200f;
 
+    // The field size every hand-placed sol coordinate above (and every hand-authored GalaxyPoint,
+    // GalaxyMap.cs) was actually authored against, right up through M48's own doubling - the
+    // baseline M50's own real, body-driven sizing (SolFieldSize below) is measured against to
+    // rescale that whole layout by a single factor, the same "everything just got bigger, same
+    // relative shape" migration RecenterOffsetM40/M48 already did twice, just computed instead of
+    // hand-picked this time since a real generated system's own size isn't a round number.
+    public const float LegacyFieldSize = 4800f;
+
+    // sol's own real body layout (M50) - generated once, reused both for sizing sol's own field
+    // below and by GalaxyMap.cs to rescale sol's hand-authored point positions by the same factor.
+    private static readonly IReadOnlyList<CelestialBody> SolBodies = CelestialBodyGenerator.Generate("sol");
+    public static float SolFieldSize => CelestialBodyGenerator.FieldSize(SolBodies);
+    public static float SolRescale => SolFieldSize / LegacyFieldSize;
+
+    // A small buffer ON TOP of a body's own clearance radius (CelestialBodyGenerator.ClearanceRadius)
+    // - shared with GalaxyMap.cs's own identical clearance pass over every OTHER hand-placed sol
+    // point, so both agree on the exact same margin. M59 follow-up - rescaled down from 1000f
+    // alongside the rest of the map (small, Cosmoteer-scale system instead of KSP-real), no longer
+    // tied to a gravity SOI (M59 removed the gravity model entirely) - purely a visual/navigational
+    // buffer now.
+    public const float OrbitBandMargin = 30f;
+
+    // Where the hand-placed cluster below (and GalaxyMap.cs's own asteroid-field-epsilon marker)
+    // actually lands in absolute sol-field coordinates - the CLOSEST point to the field's own
+    // centre that's still clear of every real body's own orbit band (star first, then each planet
+    // in increasing orbit order, always pushed outward - see GalaxyMap.cs's own ClearOfEveryOrbit
+    // for why "always outward" specifically, rather than whichever edge happens to be nearer).
+    // Originally sat exactly at the centre ("alongside the sun it orbits") back when the sun was
+    // purely decorative (pre-M50) - kept as close to that as sol's own real body layout allows,
+    // rather than pushed all the way out past every planet, since this is also the one fixed spot
+    // a large share of the test suite parks a ship at to test helm/EVA/mining/collision mechanics
+    // in isolation (EnterAsteroidFieldAndManHelm) and a genuinely cross-system flight there would
+    // break every budget/steering assumption those tests already make.
+    public static Vec2 ClusterCenter => SafePointPositionFor(SolBodies, SolFieldSize);
+
+    // General version of the same "closest-to-centre point that's still clear of every real body's
+    // own orbit band" search above, for ANY system rather than just sol - every hand-authored
+    // single-point stub system (alpha-centauri etc.) and every procedural system (GalaxyMap.cs)
+    // used to place their one point at a literal (2400,2400), which only ever made sense back when
+    // every system shared the same fixed 4800x4800 field. Once M50 sized each system's own field to
+    // its own real generated bodies, that literal coordinate could land outside the real body
+    // cluster entirely (a much bigger field) or inside the star itself (a much smaller one) -
+    // exactly the "objects outside the solar system" bug this replaces.
+    public static Vec2 SafePointPosition(string systemId)
+    {
+        var bodies = CelestialBodyGenerator.Generate(systemId);
+        return SafePointPositionFor(bodies, CelestialBodyGenerator.FieldSize(bodies));
+    }
+
+    private static Vec2 SafePointPositionFor(IReadOnlyList<CelestialBody> bodies, float fieldSize)
+    {
+        var star = bodies.Single(b => b.ParentId is null);
+        var planets = bodies.Where(b => b.ParentId == star.Id).OrderBy(p => p.OrbitRadius);
+        var radius = CelestialBodyGenerator.ClearanceRadius(star) + OrbitBandMargin;
+        foreach (var planet in planets)
+        {
+            // ClearanceRadius(planet) alone already exceeds planet.Radius + moonReach by
+            // construction (CelestialBodyGenerator's own MoonContainmentFactor keeps every moon's
+            // own clearance buffer, let alone its orbit radius, safely inside its parent's) - no
+            // separate moon-reach term needed.
+            var halfBand = CelestialBodyGenerator.ClearanceRadius(planet) + OrbitBandMargin;
+            var lower = MathF.Max(0f, planet.OrbitRadius - halfBand);
+            var upper = planet.OrbitRadius + halfBand;
+            if (radius >= lower && radius < upper)
+                radius = upper;
+        }
+
+        var half = fieldSize / 2f;
+        // A different bearing from TestRunner.Gravity.cs's own FarFieldClearPoint (0.6,0.8) - both
+        // pick a point "safely clear of every real body", and sol's own cluster additionally has
+        // real, static asteroids sitting at it (the hand-placed cluster below); sharing a bearing
+        // would spawn a gravity test's ship inside that same rock field by coincidence.
+        return new Vec2(half, half) + new Vec2(-0.8f, 0.6f) * radius;
+    }
+
     public static AsteroidField CreateDefault()
     {
+        // The hand-placed cluster below was authored around its own local (150,150) in a small
+        // (300x300) space - shifted here onto ClusterCenter (offset clear of the real star, M50)
+        // instead of the field's bare centre, the same "recentre the old fixed layout onto wherever
+        // it actually needs to sit now" migration RecenterOffsetM40/M48 already did twice before.
+        var clusterCenter = ClusterCenter;
         var asteroids = new[]
         {
             new Asteroid("asteroid-1", 80f, 60f, 5f),
@@ -44,7 +124,7 @@ public sealed class AsteroidField
             new Asteroid("asteroid-3", 60f, 220f, 4f),
             new Asteroid("asteroid-4", 220f, 100f, 6f),
             new Asteroid("asteroid-5", 150f, 40f, 4f),
-        }.Select(a => a with { X = a.X + RecenterOffsetM48, Y = a.Y + RecenterOffsetM48 }).ToArray();
+        }.Select(a => a with { X = a.X - 150.0 + clusterCenter.X, Y = a.Y - 150.0 + clusterCenter.Y }).ToArray();
 
         // Two or three blocks of ore per asteroid, sitting on its surface (game_design.md Phase 3,
         // M18). Each is cut apart on its own and drops one item, so a rock is worth a couple of
@@ -65,7 +145,7 @@ public sealed class AsteroidField
             new OreDeposit("ore-4c", "asteroid-4", 214f, 100f, 110f),
             new OreDeposit("ore-5a", "asteroid-5", 154f, 40f, 90f),
             new OreDeposit("ore-5b", "asteroid-5", 148f, 36f, 90f),
-        }.Select(d => d with { X = d.X + RecenterOffsetM48, Y = d.Y + RecenterOffsetM48 }).ToArray();
+        }.Select(d => d with { X = d.X - 150.0 + clusterCenter.X, Y = d.Y - 150.0 + clusterCenter.Y }).ToArray();
 
         // Veins are written down as points on the nominal circle, then pulled onto the rock's real
         // outline (AsteroidShape) - otherwise a deposit sits buried inside a spur or floating off a
@@ -77,25 +157,27 @@ public sealed class AsteroidField
             return deposit with { X = surface.X, Y = surface.Y };
         }).ToArray();
 
-        // 4800x4800 (M48 - "в 2 раза больше по длине и ширине", doubling M40's own 2400x2400 -
-        // 16 minutes edge-to-edge under manual flight at ShipMaxSpeed(5) rather than the ~1 minute
-        // a 300x300 field gave) - the cluster above is already recentred (RecenterOffsetM48), so it
-        // sits in the middle of the newly opened-up space rather than being redistributed across
-        // it; M43's persistent NPC traffic and M44's scanner-revealed contacts are what populate
-        // the rest. sol's own SystemOrbits-driven belts (M48) are layered in on top, exactly the
-        // same way any other system's are - this hand-placed cluster just keeps existing alongside
-        // them rather than being replaced.
+        // Real-body-sized (M50), not a fixed 4800x4800 any more - SolFieldSize is however big
+        // sol's own generated star/planets/moons actually need (CelestialBodyGenerator.FieldSize).
+        // The cluster above is already recentred onto this exact size, so it sits in the middle of
+        // the newly opened-up space rather than being redistributed across it; M43's persistent
+        // NPC traffic and M44's scanner-revealed contacts are what populate the rest. sol's own
+        // real planetary belts are layered in on top, exactly the same way any other system's are
+        // - this hand-placed cluster just keeps existing alongside them rather than being replaced.
         var belts = GenerateBeltAsteroids("sol");
-        return new AsteroidField(width: 4800f, height: 4800f,
+        return new AsteroidField(width: SolFieldSize, height: SolFieldSize,
             asteroids.Concat(belts).ToArray(), onTheSurface);
     }
 
     // Every OTHER system (the 5 hand-authored stubs and the 194 procedural ones, GalaxyMap.cs) -
-    // no hand-placed cluster of its own, just whatever SystemOrbits.Generate rolled for it. Each
-    // system gets its OWN distinct AsteroidField instance (not a shared one) so its own belt
-    // content can't leak into any other system's.
-    public static AsteroidField CreateForSystem(string systemId) =>
-        new(width: 4800f, height: 4800f, GenerateBeltAsteroids(systemId).ToArray(), Array.Empty<OreDeposit>());
+    // no hand-placed cluster of its own, just whatever CelestialBodyGenerator rolled for it, sized
+    // to actually fit its own real planets. Each system gets its OWN distinct AsteroidField
+    // instance (not a shared one) so its own belt content can't leak into any other system's.
+    public static AsteroidField CreateForSystem(string systemId)
+    {
+        var size = CelestialBodyGenerator.FieldSize(CelestialBodyGenerator.Generate(systemId));
+        return new AsteroidField(width: size, height: size, GenerateBeltAsteroids(systemId).ToArray(), Array.Empty<OreDeposit>());
+    }
 
     // M48 - "с шансом в 25 процентов между любыми 2 орбитами спанвился пояс астероидов... очень
     // много астероидов разного размера, но не слишком плотно чтобы можно было пролететь". No ore
@@ -110,21 +192,25 @@ public sealed class AsteroidField
 
     private static List<Asteroid> GenerateBeltAsteroids(string systemId)
     {
-        var layout = SystemOrbits.Generate(systemId);
-        var center = new Vec2(4800f / 2f, 4800f / 2f);
+        var bodies = CelestialBodyGenerator.Generate(systemId);
+        var star = bodies.Single(b => b.ParentId is null);
+        var planets = bodies.Where(b => b.ParentId == star.Id).OrderBy(b => b.OrbitRadius).ToList();
+        var beltGaps = CelestialBodyGenerator.BeltGaps(systemId, planets.Count);
+        var fieldSize = CelestialBodyGenerator.FieldSize(bodies);
+        var center = new Vec2(fieldSize / 2f, fieldSize / 2f);
         var result = new List<Asteroid>();
 
-        for (var gap = 0; gap < layout.BeltAfterOrbit.Count; gap++)
+        for (var gap = 0; gap < beltGaps.Count; gap++)
         {
-            if (!layout.BeltAfterOrbit[gap])
+            if (!beltGaps[gap])
                 continue;
 
             // A belt's own random stream, independent of the orbit-layout roll above and of every
             // other belt/system - AsteroidShape.StableHash again, just salted with the gap index
             // so two belts in the same system don't draw identical rocks.
             var random = new Random(AsteroidShape.StableHash($"{systemId}-belt-{gap}"));
-            var innerRadius = layout.OrbitRadii[gap];
-            var outerRadius = layout.OrbitRadii[gap + 1];
+            var innerRadius = planets[gap].OrbitRadius;
+            var outerRadius = planets[gap + 1].OrbitRadius;
             var count = random.Next(BeltAsteroidsMin, BeltAsteroidsMax + 1);
 
             for (var i = 0; i < count; i++)

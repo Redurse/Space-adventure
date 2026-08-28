@@ -237,11 +237,14 @@ public sealed partial class Station
         // then re-translate" step. Dock's own cell is (col=0,row=0), so its raw left-edge-centre is
         // (0, rowHeights[0]/2) regardless of how wide/tall the rest of the ring's cells rolled.
         var offset = new Vec2(connectorAnchor.X, connectorAnchor.Y - rowHeights[0] / 2f);
-        var rooms = roomDefs.Select(r => new Room(r.Id, r.Name, r.X + offset.X, r.Y + offset.Y, r.Width, r.Height)).ToList();
-        var shiftedDoors = doors.Select(d => d with { X = d.X + offset.X, Y = d.Y + offset.Y }).ToList();
-        var shiftedNpcs = npcs.Select(npc => npc with { X = npc.X + offset.X, Y = npc.Y + offset.Y }).ToList();
-        var shiftedCrates = crates.Select(c => c with { X = c.X + offset.X, Y = c.Y + offset.Y }).ToList();
-        var shipConnector = new AirlockOuterDoor($"{pointId}-connector", rooms[0].Id, connectorAnchor.X, connectorAnchor.Y, 1.0f, Door.StandardSpanUnits);
+        var (offsetX, offsetY) = offset.AsFloat(); // truncate the (double) offset to float ONCE,
+        // so every shifted fixture below is a plain float+float add, not its own repeated cast.
+        var rooms = roomDefs.Select(r => new Room(r.Id, r.Name, r.X + offsetX, r.Y + offsetY, r.Width, r.Height)).ToList();
+        var shiftedDoors = doors.Select(d => d with { X = d.X + offsetX, Y = d.Y + offsetY }).ToList();
+        var shiftedNpcs = npcs.Select(npc => npc with { X = npc.X + offsetX, Y = npc.Y + offsetY }).ToList();
+        var shiftedCrates = crates.Select(c => c with { X = c.X + offsetX, Y = c.Y + offsetY }).ToList();
+        var (anchorX, anchorY) = connectorAnchor.AsFloat();
+        var shipConnector = new AirlockOuterDoor($"{pointId}-connector", rooms[0].Id, anchorX, anchorY, 1.0f, Door.StandardSpanUnits);
 
         return new Station(rooms, shiftedDoors, shipConnector, shiftedNpcs, shiftedCrates, WorldCenter, rooms[0].Id);
     }

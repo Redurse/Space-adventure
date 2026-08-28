@@ -255,7 +255,7 @@ internal static partial class TestRunner
         {
             var toRoomId = (station.Rooms.FirstOrDefault(r => r.Contains(new Vec2(x, y))) ?? station.GetRoom(station.DockRoomId)).Id;
             foreach (var waypoint in FindDoorPath(station.Doors, fromRoom.Id, toRoomId))
-                MoveCharacterTo(world, 1, waypoint.X, waypoint.Y);
+                MoveCharacterTo(world, 1, (float)waypoint.X, (float)waypoint.Y);
         }
         MoveCharacterTo(world, 1, x, y);
 

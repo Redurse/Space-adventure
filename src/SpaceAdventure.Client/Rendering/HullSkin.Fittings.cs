@@ -42,8 +42,8 @@ public static partial class HullSkin
                 continue;
 
             var half = new Vector2(room.Width, room.Height) / 2f;
-            var aft = Vector2.Dot(new Vector2(room.Center.X, room.Center.Y), -bow) + MathF.Abs(Vector2.Dot(half, bow));
-            var lateral = Vector2.Dot(new Vector2(device.Position.X, device.Position.Y), side);
+            var aft = Vector2.Dot(new Vector2((float)room.Center.X, (float)room.Center.Y), -bow) + MathF.Abs(Vector2.Dot(half, bow));
+            var lateral = Vector2.Dot(new Vector2((float)device.Position.X, (float)device.Position.Y), side);
 
             // Housing tapers outward to the mouth, the way a bell does.
             var throatWidth = 0.85f * device.SizeScale;
@@ -102,7 +102,7 @@ public static partial class HullSkin
         foreach (var room in rooms)
         {
             var half = new Vector2(room.Width, room.Height) / 2f;
-            var lateral = Vector2.Dot(new Vector2(room.Center.X, room.Center.Y), side);
+            var lateral = Vector2.Dot(new Vector2((float)room.Center.X, (float)room.Center.Y), side);
             var reach = MathF.Abs(Vector2.Dot(half, side));
             if (lateral - reach < portEdge)
             {
@@ -114,7 +114,7 @@ public static partial class HullSkin
                 starboardEdge = lateral + reach;
                 starboardRoom = room;
             }
-            deepest = MathF.Max(deepest, Vector2.Dot(new Vector2(room.Center.X, room.Center.Y), -bow) + MathF.Abs(Vector2.Dot(half, bow)));
+            deepest = MathF.Max(deepest, Vector2.Dot(new Vector2((float)room.Center.X, (float)room.Center.Y), -bow) + MathF.Abs(Vector2.Dot(half, bow)));
         }
 
         DrawFinBank(spriteBatch, pixel, portRoom, bow, side, portEdge, -1f, origin);
@@ -128,7 +128,7 @@ public static partial class HullSkin
             return;
 
         var half = new Vector2(room.Width, room.Height) / 2f;
-        var along = Vector2.Dot(new Vector2(room.Center.X, room.Center.Y), -bow);
+        var along = Vector2.Dot(new Vector2((float)room.Center.X, (float)room.Center.Y), -bow);
         var depth = MathF.Abs(Vector2.Dot(half, bow));
 
         for (var i = 0; i < 3; i++)
@@ -156,7 +156,7 @@ public static partial class HullSkin
     {
         foreach (var port in ports)
         {
-            var center = origin + new Vector2(port.Position.X, port.Position.Y) * ShipRenderer.PixelsPerUnit;
+            var center = origin + new Vector2((float)port.Position.X, (float)port.Position.Y) * ShipRenderer.PixelsPerUnit;
             var outward = center - hullCenter;
             if (outward.LengthSquared() < 1f)
                 continue;
@@ -197,14 +197,14 @@ public static partial class HullSkin
         var livery = LiveryFor(shipKind);
         var side = new Vector2(-bow.Y, bow.X);
         var nose = ForwardMost(rooms, bow);
-        var spine = Vector2.Dot(new Vector2(nose.Center.X, nose.Center.Y), side);
+        var spine = Vector2.Dot(new Vector2((float)nose.Center.X, (float)nose.Center.Y), side);
 
         var front = float.PositiveInfinity;
         var back = float.NegativeInfinity;
         foreach (var room in rooms)
         {
             var half = new Vector2(room.Width, room.Height) / 2f;
-            var along = Vector2.Dot(new Vector2(room.Center.X, room.Center.Y), -bow);
+            var along = Vector2.Dot(new Vector2((float)room.Center.X, (float)room.Center.Y), -bow);
             var depth = MathF.Abs(Vector2.Dot(half, bow));
             front = MathF.Min(front, along - depth);
             back = MathF.Max(back, along + depth);

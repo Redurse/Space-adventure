@@ -130,4 +130,33 @@ public sealed record WorldSnapshot(
     IReadOnlyList<HullCamera> Cameras,
     // The jukebox's block + on/off/track/volume (World.cs) - null when this hull has no jukebox
     // device at all (Ship.Jukebox), the same "device may not exist" shape ActiveQuest already uses.
-    JukeboxState? Jukebox);
+    JukeboxState? Jukebox,
+    // M55 - whether the ship is parked well enough against a landable body's surface to arm the
+    // helm's "Посадка" button (World.PlanetLanding.cs's CanLandNow) - same "arms the button"
+    // pattern CanDock/CanWarpNow already use. Which body it's actually landed ON, once pressed,
+    // lives in Voyage.LandedBodyId instead (mirroring DockedPointId's own placement there).
+    bool CanLandNow = false,
+    // M57 - "режим ускорения времени": 1/10/100/1000, how many ordinary 1/30s physics steps
+    // GameServer.Tick() runs per real tick right now (World.TimeAcceleration.cs). Ship-wide, not
+    // per-player - whoever is at helm sees and changes the same value.
+    int TimeAccelerationLevel = 1,
+    // M57 - the Engineer tab's device list needs the reactor/distribution/battery/helm/navigation
+    // "boxes" too (World.SystemRepair.cs's CreateBlockRepairStates) - reuses ShipSystemState's
+    // shape the same way JunctionStates/Cameras already do, just for these five fixtures that
+    // previously only had their Broken/repair state read locally by World.Interact.cs.
+    IReadOnlyList<ShipSystemState>? BlockStates = null,
+    // Which GalaxyPoint id DockBerthPosition is actually anchored to right now (World.cs's own
+    // Station property: DockedPointId while docked, otherwise whichever point UpdateNearestStation
+    // last found nearest) - exposed raw so the client can show it next to the ship's own live
+    // position instead of only the bare distance number.
+    string? DockBerthPointId = null,
+    // M62 - rooms currently under construction (World.ShipBuilding.cs's StepRoomBuilds), drawn as a
+    // translucent ghost with a progress readout - not part of Rooms above until the timer actually
+    // completes (PendingRoomBuildState's own doc comment explains why it needs a separate record).
+    IReadOnlyList<PendingRoomBuildState>? PendingRoomBuilds = null,
+    // M62 - the ship-wide hull-plating hold (World.ShipBuilding.cs), shown next to Credits so the
+    // Shipwright build list can grey out an entry the ship can't actually afford right now.
+    int HullPlatingStock = 0,
+    // M63 - every free-flying hull fragment that has structurally detached so far this session
+    // (World.ShipDebris.cs) - drifting debris, drawn by FieldRenderer alongside asteroids/ships.
+    IReadOnlyList<ShipDebrisState>? ShipDebris = null);

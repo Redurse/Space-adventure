@@ -28,7 +28,7 @@ internal static partial class TestRunner
             var block = snapshot.WallBlocks.First(b => Math.Abs(b.X - blockX) < 0.1f && Math.Abs(b.Y - blockY) < 0.1f);
             if (snapshot.WallBlockStates.First(s => s.Id == block.Id).Breached)
                 return i;
-            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: aim.X, LookY: aim.Y));
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: (float)aim.X, LookY: (float)aim.Y));
             world.Step(RealtimeStep);
         }
         return maxTicks;
@@ -124,7 +124,7 @@ internal static partial class TestRunner
         var aim = new Vec2(finalTarget.X - afterWalk.X, finalTarget.Y - afterWalk.Y).Normalized();
         for (var i = 0; i < 4 * 30; i++) // comfortably past the ~3s a full block takes
         {
-            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: aim.X, LookY: aim.Y));
+            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: (float)aim.X, LookY: (float)aim.Y));
             world.Step(RealtimeStep);
         }
 

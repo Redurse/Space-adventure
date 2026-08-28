@@ -71,7 +71,7 @@ public sealed partial class World
         if (toEnemy.Length() < 0.1f)
             return;
 
-        var bearingDegrees = MathF.Atan2(toEnemy.Y, toEnemy.X) * (180f / MathF.PI);
+        var bearingDegrees = MathF.Atan2((float)toEnemy.Y, (float)toEnemy.X) * (180f / MathF.PI);
         var wanted = Math.Clamp(ShortestAngle(bearingDegrees - mount.OutwardDegrees),
             turret.MinAimDegrees, turret.MaxAimDegrees);
         var delta = wanted - runtime.AimDegrees;

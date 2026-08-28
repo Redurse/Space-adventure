@@ -75,8 +75,13 @@ public sealed partial class GalaxyMapPanel
     // solves mapOrigin backward so the ship's own screen position always lands exactly on the
     // circle's centre, at any zoom. Shared between Draw() and Game1.cs's own click/drag handling so
     // both agree on where everything actually is on screen.
-    internal static Vector2 ComputeShipLockedMapOrigin(Vector2 panelOrigin, Vec2 shipMapPosition, float zoom) =>
-        panelOrigin + RadarCircleLocalCenter - new Vector2(shipMapPosition.X, shipMapPosition.Y) * PixelsPerUnit * zoom;
+    // GalaxyMapPanel follow-up - same double-narrowed-before-scaling fix as ComputeMapOrigin's own
+    // doc comment describes (its full root-cause writeup lives there).
+    internal static Vector2 ComputeShipLockedMapOrigin(Vector2 panelOrigin, Vec2 shipMapPosition, float zoom)
+    {
+        var scaled = shipMapPosition * (double)PixelsPerUnit * zoom;
+        return panelOrigin + RadarCircleLocalCenter - new Vector2((float)scaled.X, (float)scaled.Y);
+    }
 
     // Where the draggable bearing handle sits on the rim for a given sweep angle (M48 follow-up -
     // "по границе круга можно было перетаскивать кнопку") - a fixed screen distance from the ship
@@ -147,7 +152,11 @@ public sealed partial class GalaxyMapPanel
         const float hitRadiusPixels = 10f;
         foreach (var contact in me.ScannerContacts ?? Array.Empty<ScannerContactState>())
         {
-            var contactScreen = mapOrigin + new Vector2(contact.X, contact.Y) * PixelsPerUnit * zoom;
+            // Same double-first-then-narrow requirement as ComputeShipLockedMapOrigin's own doc
+            // comment (M58 follow-up) - contact.X/Y are KSP-scale, narrowing to float before
+            // multiplying by PixelsPerUnit*zoom would already have lost the offset entirely.
+            var scaled = new Vec2(contact.X, contact.Y) * (double)PixelsPerUnit * zoom;
+            var contactScreen = mapOrigin + new Vector2((float)scaled.X, (float)scaled.Y);
             if (Vector2.Distance(screenPoint, contactScreen) <= hitRadiusPixels)
                 return contact;
         }

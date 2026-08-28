@@ -87,8 +87,10 @@ internal static partial class TestRunner
         WalkAcrossShipTo(world, camera.X, camera.Y);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
 
-        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
-            world.Step(RealtimeStep);
+        // World.SystemRepair.cs's own real 12-hour elapsed-time timer - see
+        // World_RepairSystem_RequiresWrenchHeldInHand's own comment on DebugFastForwardAllRepairs.
+        world.DebugFastForwardAllRepairs(13.0 * 3600.0);
+        world.Step(RealtimeStep);
 
         return world.IsDeviceConnected(camera.Id);
     }

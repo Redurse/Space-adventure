@@ -230,7 +230,7 @@ public sealed partial class World
     private static float FormationAngleOffsetDegrees(int index, int count) =>
         (index - (count - 1) / 2f) * EnemyFormationAngleSpacingDegrees;
 
-    private static float BearingDegrees(Vec2 vector) => MathF.Atan2(vector.Y, vector.X) * (180f / MathF.PI);
+    private static float BearingDegrees(Vec2 vector) => MathF.Atan2((float)vector.Y, (float)vector.X) * (180f / MathF.PI);
 
     // Fixed priority order the user asked for, evaluated top to bottom: Engines, then Weapons, then
     // Reactor, then Bridge, then Oxygen - every one of them a real disable now (HelmConsoleBroken

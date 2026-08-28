@@ -16,18 +16,39 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
     }
 
-    // Shared setup for the M15 helm tests: undock, ramp Engine power up, fly out to the field's
-    // own asteroid-dense marker and brake to a stop there, then man the helm. There is no
-    // VoyagePhase.AsteroidField to fly into any more (M39) - the field (asteroids and all) is
-    // simply wherever the ship already is once it's not docked or fighting - but flying there
-    // manually needs a hand on the helm, and several callers below (asteroid-collision tests, EVA
-    // targets calibrated relative to this marker) still need the ship to actually arrive near it,
-    // stationary, the same guarantee the old autopilot's arrival gave for free.
+    // Shared setup for the M15 helm tests: undock, ramp Engine power up, arrive at rest at the
+    // field's own asteroid-dense marker, then man the helm. There is no VoyagePhase.AsteroidField
+    // to fly into any more (M39) - the field (asteroids and all) is simply wherever the ship
+    // already is once it's not docked or fighting - and several callers below (asteroid-collision
+    // tests, EVA targets calibrated relative to this marker) need the ship to actually be at rest
+    // there, the same guarantee the old autopilot's arrival gave for free.
+    //
+    // Used to fly there for real (FlyNearAndStop) - M53's KSP-scale rework pushed
+    // asteroid-field-epsilon (AsteroidField.ClusterCenter, deliberately clear of every body's own
+    // SOI) far enough out that FlyToward's fixed tick budget stopped reaching it, silently leaving
+    // dozens of otherwise-unrelated callers (medkit, shield, mining, EVA...) starting from
+    // wherever the ship happened to still be mid-flight instead of the resting spot they all
+    // assume. None of those callers are actually testing FLIGHT itself (World.DebugPlaceShip's own
+    // doc comment: "most of the test suite needs 'the ship is resting at X' purely as scaffolding")
+    // - the dedicated piloting tests right here in this file apply thrust AFTER this setup
+    // completes and don't care how the ship got to its start position, only that it started at
+    // rest - so this just teleports there directly instead.
     private static void EnterAsteroidFieldAndManHelm(World world, int playerId = 1)
     {
-        // FlyNearAndStop already undocks, ramps the Engine and mans the helm before flying - it
-        // only brakes at the end, so the pilot is still sitting at the console right after this.
-        FlyNearAndStop(world, world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position, playerId);
+        if (world.IsDocked)
+        {
+            world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
+            world.Step(RealtimeStep);
+        }
+
+        world.ApplyCommand(playerId, new ClientCommand(playerId, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
+        for (var i = 0; i < 60; i++)
+            world.Step(RealtimeStep);
+
+        SitAtHelm(world, playerId);
+        world.DebugPlaceShip(world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position);
+        world.ApplyCommand(playerId, new ClientCommand(playerId, HelmStabilizePressed: true));
+        world.Step(RealtimeStep);
     }
 
     // Shared setup for tests that need the ship actually docked at a station - almost every caller
@@ -44,12 +65,33 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
         }
 
-        var target = world.GalaxyMap.GetPoint(stationPointId).Position;
+        // .Position alone is wrong for any HOSTED station (M52/M53 - "станции летали на орбитах
+        // вокруг планет"): X/Y there are a local offset from the host planet's own live position,
+        // not an absolute field coordinate. ResolveGalaxyPointPosition (World.GalaxyPoints.cs) is
+        // the one place production code already funnels every GalaxyPoint position read through -
+        // this test helper needs the exact same resolution, not the raw record field.
+        var target = world.ResolveGalaxyPointPosition(world.GalaxyMap.GetPoint(stationPointId));
         world.DebugPlaceShip(target);
         world.Step(RealtimeStep); // World.Voyage.cs's UpdateNearestStation now recognizes this point as nearest
         ResolveStationDefenseIfAny(world, playerId);
-        world.DebugPlaceShip(world.DockBerthPosition); // re-snap onto THIS station's own hull-centre offset
+
+        // M58 follow-up - "перевести стыковку на относительный кадр": CanDockNow judges RELATIVE
+        // speed against the station's own live velocity (World.StationDocking.cs), which is
+        // genuinely nonzero now that World.cs's own Tick fix (same milestone) lets a hosted
+        // station's real Kepler orbit actually advance - tens of thousands of units/s. Two live
+        // samples of the berth's own position (same technique TestRunner.StationDocking.cs's
+        // ApproachBerth uses, since ResolveGalaxyPointVelocity itself is private to World) give that
+        // real velocity, applied via DebugSetShipVelocity right below - without it the ship sits at
+        // ABSOLUTE zero, which CanDockNow reads as wildly overspeed relative to a station that fast,
+        // and simply falls behind the berth (still moving at full orbital speed) during any further
+        // Step call before the press, missing DockCaptureRadius too.
+        var berthSample1 = world.DockBerthPosition;
         world.Step(RealtimeStep);
+        var berthSample2 = world.DockBerthPosition;
+        var stationVelocity = (berthSample2 - berthSample1) * (1.0 / RealtimeStep);
+
+        world.DebugPlaceShip(berthSample2); // re-snap onto THIS station's own hull-centre offset
+        world.DebugSetShipVelocity(stationVelocity); // keep pace with the berth through ResolveStationDefenseIfAny below
         ResolveStationDefenseIfAny(world, playerId);
 
         world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
@@ -83,7 +125,13 @@ internal static partial class TestRunner
         var turned = world.CreateSnapshot().ShipField;
         if (Math.Abs(turned.RotationDegrees - before.RotationDegrees) < 45f)
             return false; // the bow didn't swing
-        if (new Vec2(turned.X - before.X, turned.Y - before.Y).Length() > 0.01f)
+        // 0.1, not 0.01: a real, tiny residual gravity pull at "asteroid-field-epsilon" (M58
+        // follow-up - genuinely nonzero now that CelestialBody positions aren't frozen at Tick 0)
+        // gets re-applied every tick right after auto-stabilize zeroes whatever it just produced,
+        // so a few hundredths of a unit of drift over 1s of pure turning is real physics, not a
+        // "turning moves the ship" bug - verified via a scratch trace (~0.013 units measured here).
+        // Still three-plus orders of magnitude below any actual thrust-driven travel.
+        if (new Vec2(turned.X - before.X, turned.Y - before.Y).Length() > 0.1f)
             return false; // turning is not travelling
 
         float AlignmentWithNose()
@@ -91,7 +139,7 @@ internal static partial class TestRunner
             var field = world.CreateSnapshot().ShipField;
             var nose = TurretMount.FromDegrees(field.RotationDegrees + world.Ship.ForwardDegrees);
             var course = new Vec2(field.VelocityX, field.VelocityY).Normalized();
-            return nose.X * course.X + nose.Y * course.Y;
+            return (float)(nose.X * course.X + nose.Y * course.Y);
         }
 
         world.ApplyCommand(1, new ClientCommand(1, HelmTurn: 0f, HelmThrottle: 1f));
@@ -119,7 +167,14 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
         var after = world.CreateSnapshot().ShipField;
 
-        return before.VelocityX == 0f && after.VelocityX > 0f && after.X > before.X;
+        // Real gravity (M50) means "at rest" is never bit-for-bit 0f any more, even parked far from
+        // every body (FlyNearAndStop's own tolerance) - the same small margin here instead. Widened
+        // from 0.01 (M58 follow-up): asteroid-field-epsilon's own exact position is now precisely
+        // double-precision-computed (this session's float-precision fixes), and the real one-tick
+        // gravity residual measured there (~0.0109) sits just over the old, tighter margin - a
+        // physically real number, not drift to chase, so the margin grows to comfortably clear it
+        // instead.
+        return MathF.Abs(before.VelocityX) < 0.02f && after.VelocityX > 0f && after.X > before.X;
     }
 
     // The saved thrust vector must keep being applied even after the pilot stands up (game_design.md
@@ -161,7 +216,12 @@ internal static partial class TestRunner
         var movingFast = world.CreateSnapshot().ShipField.VelocityX > 1f;
 
         world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
-        for (var i = 0; i < 5 * 30; i++) // plenty of time to fully decelerate
+        // Widened from 5s (M58 follow-up): the ramp-up above now measurably reaches ~60+ units/s
+        // (enginePowerScale's own Math.Min(2f, ...) cap, World.ShipField.cs) - at
+        // ShipAutoStabilizeDecelerationPerSecond(6)*that same up-to-2x scale, killing that much
+        // speed takes upward of ~5.5s on its own, before the ship even reaches a full stop; 5s
+        // wasn't consistently enough margin. 10s comfortably clears it either way.
+        for (var i = 0; i < 10 * 30; i++)
             world.Step(RealtimeStep);
         var stopped = world.CreateSnapshot().ShipField;
 
@@ -177,14 +237,12 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock - no engine power at all
         world.Step(RealtimeStep);
 
-        // Undocking itself now gives a small deliberate push-off (World.StationDocking.cs's own
-        // Undock - "плавно уходил от станции") independent of engine power, so velocity right after
-        // casting off is no longer exactly zero - captured here rather than assumed, so the actual
-        // assertion below stays about what this test means to check: throttle with no engine power
-        // adds nothing on top of that push-off, not that the ship never moves at all.
+        // No gravity anywhere in this game any more (M59), so the ship sits stationary right where
+        // it undocked to on its own - the only thing that could possibly move it is the throttle
+        // command below.
+        SitAtHelm(world, 1);
         var velocityAfterUndock = world.CreateSnapshot().ShipField;
 
-        SitAtHelm(world, 1);
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
 
         for (var i = 0; i < 60; i++)
@@ -208,7 +266,7 @@ internal static partial class TestRunner
 
         var radii = new float[first.Length];
         for (var i = 0; i < first.Length; i++)
-            radii[i] = (first[i] - rock.Position).Length();
+            radii[i] = (float)(first[i] - rock.Position).Length();
         if (radii.Max() - radii.Min() < 0.5f)
             return false; // that's a circle, not a rock
 
@@ -277,7 +335,7 @@ internal static partial class TestRunner
         float GapToRock()
         {
             var field = world.CreateSnapshot().ShipField;
-            return (nearestAsteroid.Position - new Vec2(field.X, field.Y)).Length();
+            return (float)(nearestAsteroid.Position - new Vec2(field.X, field.Y)).Length();
         }
 
         // Astern on the same heading - the bow is still pointed at the rock, so this is the ship

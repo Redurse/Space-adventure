@@ -25,7 +25,7 @@ public static class HullSilhouette
 
         var nearest = float.MaxValue;
         foreach (var room in rooms)
-            nearest = Math.Min(nearest, (ClampToRoom(room, localPoint) - localPoint).Length());
+            nearest = (float)Math.Min(nearest, (ClampToRoom(room, localPoint) - localPoint).Length());
         return nearest;
     }
 
@@ -83,7 +83,7 @@ public static class HullSilhouette
                 if (distance >= bestDistance || Contains(rooms, candidate))
                     continue;
                 best = candidate;
-                bestDistance = distance;
+                bestDistance = (float)distance;
             }
         }
 

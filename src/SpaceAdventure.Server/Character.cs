@@ -35,6 +35,13 @@ public sealed class Character
     public string RoomId { get; set; }
     public string? ManningTurretId { get; set; }
     public bool IsAtHelm { get; set; }
+    // M57 - the Engineer tab's own device list (World.SystemRepair.cs's StepSystemRepairFor):
+    // which device this character is remotely focused on repairing from that list, or null for
+    // none. Unconditionally overwritten every ApplyCommand the same way HelmThrottle is ("zero/
+    // null is a real state, not 'no input'") - the client always echoes its own current selection,
+    // never a one-shot edge-triggered press, so switching away (or standing up) actually clears it
+    // instead of leaving a stale focus nobody can see.
+    public string? EngineerFocusDeviceId { get; set; }
     // The navigation console's scanner dial (World.Scanner.cs, M44) - only ever written while
     // standing at NavigationConsole, so it simply holds its last value once walked away from,
     // the same "last commanded thrust stays" idea IsAtHelm's own doc comment already establishes

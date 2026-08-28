@@ -102,7 +102,7 @@ internal static partial class TestRunner
         // (World.PersonalShots.cs), not damage applied the instant the button goes down.
         var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var aim = new Vec2(guard.X - me.X, guard.Y - me.Y).Normalized();
-        world.ApplyCommand(1, new ClientCommand(1, FirePressed: true, LookX: aim.X, LookY: aim.Y));
+        world.ApplyCommand(1, new ClientCommand(1, FirePressed: true, LookX: (float)aim.X, LookY: (float)aim.Y));
         for (var i = 0; i < 30; i++)
             world.Step(RealtimeStep);
 

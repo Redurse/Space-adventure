@@ -30,7 +30,7 @@ public sealed class SystemRepairPanel
         _font = font;
     }
 
-    public void Draw(SpriteBatch spriteBatch, string deviceName, bool holdingTool, float progressPercent, float tickPosition, Vector2 origin)
+    public void Draw(SpriteBatch spriteBatch, string deviceName, bool holdingTool, float progressPercent, Vector2 origin)
     {
         var panelRect = new Rectangle((int)origin.X, (int)origin.Y, PanelWidth, PanelHeight);
         spriteBatch.Draw(_pixel, panelRect, PanelBackground * 0.97f);
@@ -68,17 +68,11 @@ public sealed class SystemRepairPanel
             spriteBatch.Draw(_pixel, new Rectangle(barRect.X + 8, barRect.Y + 3, System.Math.Max(0, fillWidth - 8), barRect.Height - 6), new Color(214, 130, 40));
         }
         DrawRectOutline(spriteBatch, barRect, Color.LightGray * 0.6f, 1);
-        // The sweeping tick - landing another F press while it sits inside the already-filled part
-        // (tickPosition <= fraction) is a hit: a bonus chunk of progress and a fresh sweep from the
-        // start (World.SystemRepair.cs's AttemptSystemRepair). Sitting past the fill is a miss.
-        var tickX = barRect.X + (int)(MathHelper.Clamp(tickPosition, 0f, 1f) * barRect.Width);
-        var tickInsideFill = tickPosition <= fraction;
-        spriteBatch.Draw(_pixel, new Rectangle(tickX - 1, barRect.Y - 4, 2, barRect.Height + 8), tickInsideFill ? Color.White : Color.OrangeRed);
 
         var buttonRect = new Rectangle(panelRect.X + 12, barRect.Y - 4, barRect.X - 10 - (panelRect.X + 12), 30);
         spriteBatch.Draw(_pixel, buttonRect, holdingTool ? new Color(70, 110, 60) : new Color(60, 60, 60));
         DrawRectOutline(spriteBatch, buttonRect, Color.Black * 0.5f, 1);
-        var buttonLabel = holdingTool ? $"[E]\n{progressPercent:0}%" : "РЕМОНТ\nТРЕБУЕТСЯ...";
+        var buttonLabel = holdingTool ? $"РЕМОНТ\n{progressPercent:0}%" : "РЕМОНТ\nТРЕБУЕТСЯ...";
         var lines = buttonLabel.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {

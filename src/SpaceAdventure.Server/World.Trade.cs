@@ -16,6 +16,14 @@ public sealed partial class World
 
     public int Credits { get; private set; } = StartingCredits;
 
+    // Originally a test-only precondition setter, same convention as DebugSetHullPlatingStock
+    // (World.ShipBuilding.cs) - content-каталог отсеков's expensive entries (reactor 900cr, cockpit
+    // 700cr, ...) exceed StartingCredits, and grinding real trades up to that just to isolate a
+    // build-time bonus test would be its own separate thing to get right. Also wired to the dev
+    // cheat panel's own second button now (World.cs's DebugAddCreditsPressed) - same reasoning,
+    // just for a human testing the same expensive catalog entries live instead of a test fixture.
+    public void DebugAddCredits(int amount) => Credits += amount;
+
     private StationKind? DockedStationKind =>
         _dockedPointId is { } id ? GalaxyMap.GetPoint(id).StationKind : null;
 

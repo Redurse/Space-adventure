@@ -2,10 +2,16 @@ using SpaceAdventure.Shared.Protocol;
 
 namespace SpaceAdventure.Shared.Model;
 
+// X/Y are double, not float (M58 follow-up - same fix as ShipFieldState's own doc comment):
+// overloaded between a small ship-interior-local coordinate (normal case) and a real KSP-scale
+// field-absolute one whenever this character IsOutside/OnStation/OnEnemyShip - float precision at
+// that second scale can't resolve two points closer than tens of thousands of units apart, breaking
+// anything (EVA proximity/grab checks, in particular) that needs the small delta between an EVA
+// character and something else genuinely field-scale (an asteroid, the ship itself).
 public sealed record CharacterState(
     int PlayerId,
-    float X,
-    float Y,
+    double X,
+    double Y,
     bool CarryingAmmoCrate = false,
     float Health = 100f,
     bool WearingSuit = false,

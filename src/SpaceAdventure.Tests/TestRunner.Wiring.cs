@@ -65,8 +65,12 @@ internal static partial class TestRunner
         WalkAcrossShipTo(world, 7.2f, 4.3f); // reactor room's first engine device (Ship.cs)
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
 
-        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
-            world.Step(RealtimeStep);
+        // World.SystemRepair.cs's own real 12-hour elapsed-time timer - DebugFastForwardAllRepairs
+        // skips the wait (not the requirement to be in reach with the tool held, checked by the one
+        // more Step below), the same reasoning World_RepairSystem_RequiresWrenchHeldInHand's own
+        // comment gives.
+        world.DebugFastForwardAllRepairs(13.0 * 3600.0);
+        world.Step(RealtimeStep);
 
         return world.IsDeviceConnected("system-engine") && !world.IsDeviceConnected("system-engine-2");
     }
@@ -288,8 +292,10 @@ internal static partial class TestRunner
         MoveToOxygenJunction(world);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
 
-        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
-            world.Step(RealtimeStep);
+        // World.SystemRepair.cs's own real 12-hour elapsed-time timer - see
+        // World_RepairSystem_RequiresWrenchHeldInHand's own comment on DebugFastForwardAllRepairs.
+        world.DebugFastForwardAllRepairs(13.0 * 3600.0);
+        world.Step(RealtimeStep);
 
         return damagedRightAfterCut && stillDamagedWithoutTool && !world.IsJunctionDamaged("junction-oxygen");
     }
@@ -676,8 +682,8 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, ComponentMountInteractId: "mount-cockpit-1"));
         var installedBefore = world.CreateSnapshot().Wiring.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId;
 
-        // Only a Shipyard-kind station sells hulls (game_design.md section 10) - the home outpost
-        // has no Shipwright at all.
+        // Only a Shipyard-kind station sells hulls (game_design.md section 10) - outpost-gamma is
+        // one, same as home-station itself now is, just picked explicitly rather than assumed.
         DockAtStation(world, "outpost-gamma");
         world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
 

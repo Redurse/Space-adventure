@@ -90,10 +90,21 @@ public partial class Game1 : Game
         RoleBoxOrigin.Y - PlayerHealthPanel.BarHeight - 6f);
     private static readonly Vector2 GalaxyMapPanelOrigin = new(60, 64);
     private static readonly Vector2 StationPanelOrigin = new(60, 64);
+    // Content-каталог отсеков - the Shipwright's own bottom-of-screen build catalog (StationBuildPanel),
+    // anchored along the bottom edge the same way the reference screenshot's own toolbar sits, clear
+    // of HelmTabBarOrigin's own bottom-left slot (this one is centered, not left-aligned).
+    private static readonly Vector2 StationBuildPanelOrigin =
+        new((DesignWidth - StationBuildPanel.PanelWidth) / 2f, DesignHeight - StationBuildPanel.PanelHeight - 8);
     // Window 3 of the helm redesign (M47 follow-up) - a fixed HUD corner, unlike window 2's own
     // draggable widget, since nothing about it ever needs to get out of the way of the schematic
     // underneath (it already floats above window 1, not over any of its own controls).
     private static readonly Vector2 ShipSchematicPanelOrigin = new(DesignWidth - ShipSchematicPanel.Width - 12, 12);
+    // M57 - the tab switcher sits at a fixed spot regardless of tab (same "mode switch, not an
+    // instrument" reasoning ShipSchematicPanelOrigin's own comment gives for staying fixed rather
+    // than draggable) - bottom-left, clear of both the always-on TEMP-DIAG FPS/Sim overlay (fixed
+    // at (10,10), ~130px tall) up top and the permanent bottom HUD band (inventory hotbar/equip
+    // row/role box/health bar) HelmButtonsWidget's own default position already dodges the same way.
+    private static readonly Vector2 HelmTabBarOrigin = new(60, DesignHeight - 70 - HelmTabBar.Size.Y);
     private static readonly Vector2 InfoPanelOrigin = new(60, 64);
     private static readonly Vector2 ShipEditorPanelOrigin = new(60, 64);
     // Centered like PauseMenuPanel below - a 2-player minigame taking over the middle of the
@@ -161,6 +172,7 @@ public partial class Game1 : Game
     private GalaxyMapPanel _galaxyMapPanel = null!;
     private GalacticMapPanel _galacticMapPanel = null!;
     private StationPanel _stationPanel = null!;
+    private StationBuildPanel _stationBuildPanel = null!;
     private CardGamePanel _cardGamePanel = null!;
     // Windows 2 and 3 of the helm redesign (M47 follow-up) - replace the old fixed HelmPanel/
     // ShipStatusPanel pair. Window 1 itself is _galaxyMapPanel, reused as-is (see the myIsAtHelm
@@ -168,6 +180,19 @@ public partial class Game1 : Game
     // for, just not yet shown anywhere but the nav console.
     private HelmButtonsWidget _helmButtonsWidget = null!;
     private ShipSchematicPanel _shipSchematicPanel = null!;
+    // M57 - the 3 windows above become 3 switchable tabs (HelmTab.cs's own doc comment) instead of
+    // all drawn at once; _helmTab is purely client-local, like _openBlock, so different players at
+    // helm can watch different tabs. _helmTabBar switches it, _timeAccelerationWidget is the
+    // captain tab's own speed-selector (its Draw call sits alongside _helmButtonsWidget's).
+    private HelmTab _helmTab = HelmTab.Captain;
+    private HelmTabBar _helmTabBar = null!;
+    private TimeAccelerationWidget _timeAccelerationWidget = null!;
+    // M57 - the Engineer tab's own device list + which device (if any) THIS client's own character
+    // is remotely focused on. Sticky, not a one-shot pending flag (unlike _pendingToggleLanding
+    // etc.) - resent every tick as-is (ClientCommand.EngineerFocusDeviceId's own doc comment) so
+    // standing on a different tab or clicking a different row actually changes/clears it.
+    private EngineerDevicePanel _engineerDevicePanel = null!;
+    private string? _engineerFocusDeviceId;
     // Window 2's own dragged position (Game1.PanelDrag.cs's UpdateHelmWidgetDrag) - not keyed
     // through _panelPositions like the block-console panels, since this widget is visible whenever
     // the player is at the helm rather than tied to _openBlock.
@@ -279,6 +304,7 @@ public partial class Game1 : Game
     // cleared once this same frame when building the outgoing ClientCommand - same "side-effect
     // field for an overlay click" shape as _pendingReturnToMainMenu above.
     private bool _debugSpawnEnemyClickedThisFrame;
+    private bool _debugAddCreditsClickedThisFrame;
     // Set by the pause menu's "ГЛАВНОЕ МЕНЮ" click (Game1.Input.cs), read and cleared once at the
     // top of the next Update - see that check's own comment for why this can't just call
     // ReturnToMainMenu() directly from inside the click handler.
@@ -286,9 +312,34 @@ public partial class Game1 : Game
     // Edge-triggered hull purchase, cleared the frame after it's sent - HandleMouseClick's return
     // tuple is already at its practical limit, so this one rides as a field instead.
     private ShipKind? _pendingShipPurchase;
+    // M60 - the Shipwright's own "Построить" list, same edge-triggered field pattern as
+    // _pendingShipPurchase right above.
+    private BuildRoomRequest? _pendingBuildRoom;
+    // Content-каталог отсеков - click-to-place UI: which catalog entry is currently being placed
+    // (set by StationBuildPanel's own module row, cleared on confirm or cancel - see
+    // HandleMouseClick's own placement-confirm block and Update's right-click cancel check). Not
+    // edge-triggered like _pendingBuildRoom above - this one persists across frames while the
+    // player is busy pointing at a spot, not sent to the server until they actually click one.
+    private string? _placingRoomCatalogId;
+    private RoomCategory _buildPanelCategory = RoomCategory.Structural;
+    // Whole-ship overview's own free camera - right-drag pans, scroll wheel zooms, same idiom the
+    // galaxy map/helm schematic already use (_mapPanOffset/_mapZoom above) rather than a new one.
+    // Reset the moment the overview opens fresh (_shipOverviewWasActive's own transition check in
+    // Update) so re-talking to the Shipwright always starts back at the auto-fit view instead of
+    // wherever the player last scrolled off to.
+    private Vector2 _shipOverviewPanOffset = Vector2.Zero;
+    private float _shipOverviewZoomMultiplier = 1f;
+    private Point? _shipOverviewPanLastMouse;
+    private Point? _shipOverviewRightPressPos;
+    private bool _shipOverviewWasActive;
+    // M61 - the symmetric "снести отсек" button, same edge-triggered field pattern.
+    private string? _pendingDemolishRoomId;
     private QuestKind? _pendingQuestKind; // same pattern, for the Administrator's job board
     private bool _pendingDock; // and for the helm's "Стыковка" button
     private bool _pendingToggleControlMode; // window 2's own РСУ/ВИРАЖ button, same edge as the Z key
+    private bool _pendingToggleLanding; // window 2's own "Посадка"/"Взлёт" button, same edge as the L key (M55)
+    private int? _pendingTimeAccelerationLevel; // captain tab's own ×1/×10/×100/×1000 buttons (M57)
+    private bool _pendingFlipHeading; // captain tab's own "Флип" button (M57)
     private bool _pendingScannerPing; // the scanner console's own "Скан" button (M47 follow-up)
     private string? _pendingHireCandidateId; // and for the Recruiter's board
     private PinRef? _pendingPinInteract; // wire-laying (World.Wiring.cs), M19-M23
@@ -322,8 +373,58 @@ public partial class Game1 : Game
     // The galaxy map's own camera - purely a client view of server-authoritative positions, so it
     // lives here rather than in any snapshot. Zoom via scroll wheel, pan via right-drag; both only
     // read while the navigation console is actually open.
+    // "Изначально спавнилась в центре солнечной системы на солнце" (M52): ComputeMapOrigin now
+    // anchors the star at screen-centre by construction, so this untouched Vector2.Zero starting
+    // value already IS "centred on the sun" - no separate one-time initializer needed.
     private float _mapZoom = 1f;
+    // Set once by UpdateCore the first frame a snapshot actually exists (M55 follow-up - "экран
+    // изначально был отдален... чтобы было видно половину солнечной системы") - system width
+    // isn't known yet at construction time, so _mapZoom's own literal default above stays the
+    // fallback until that first frame replaces it with a size-aware value.
+    private bool _mapZoomInitialized;
+    // serverTotalSeconds - gameTime.TotalGameTime.TotalSeconds, solved once the first frame a
+    // snapshot exists and reused every frame after (Draw's own comment on serverTotalSeconds has
+    // the full story) - null only until that first snapshot arrives.
+    private double? _serverTimeOffsetSeconds;
     private Vector2 _mapPanOffset = Vector2.Zero;
+    // Temporary diagnostic (M51 - "все еще лагает"): a persistent "slideshow" complaint survived
+    // several rendering-side fixes (LOD, SOI draw cost, trajectory throttling) with no visible
+    // improvement, which points away from render cost and toward the server's own tick throughput -
+    // GameServer.Run has no catch-up logic (a slow Tick() just delays nextTickAt further out), so a
+    // tick that's grown too expensive shows up as the WHOLE simulation running in slow motion, not
+    // as dropped frames. Sim measures itself client-side (counting distinct snapshot.Tick values
+    // seen per real second) rather than needing any server/protocol change - if it reads well under
+    // 30, the bottleneck is server-side tick cost; if it's near 30 while FPS is still low, the
+    // bottleneck really is client rendering after all. Remove once the actual cause is found.
+    private double _diagFpsWindowStartSeconds;
+    private int _diagFrameCountInWindow;
+    private float _diagDisplayedFps;
+    private long _diagLastSeenTick = -1;
+    private double _diagTickWindowStartSeconds;
+    private int _diagTicksSeenInWindow;
+    private int _diagDisplayedTicksPerSecond;
+    // Rates, not raw cumulative counts - GC.CollectionCount/GetTotalAllocatedBytes only ever grow,
+    // so a per-second delta is what actually says whether garbage collection is the thing eating the
+    // missing time between what UpdateCore/DrawCore's own Stopwatch sees and what FPS/Sim show -
+    // stop-the-world Gen1/Gen2 pauses freeze every managed thread in the process at once, which is
+    // exactly the kind of "cost neither timer can see because it isn't inside either of them" gap
+    // that would otherwise look inexplicable.
+    private long _diagLastAllocBytes;
+    private int _diagLastGc0;
+    private int _diagLastGc1;
+    private int _diagLastGc2;
+    private float _diagAllocMbPerSecond;
+    private int _diagGc0PerSecond;
+    private int _diagGc1PerSecond;
+    private int _diagGc2PerSecond;
+    // Phase breakdown of DrawCore itself, once Draw's own total (_diagLastDrawMs) turned out to be
+    // the actual cost (548ms, matching FPS 2 almost exactly) - narrows down WHICH of the mask/scene/
+    // post/HUD phases is actually responsible instead of guessing from source alone.
+    private double _diagMaskMs, _diagSceneMs, _diagPostMs, _diagHudMs;
+    // Sub-phases of Scene itself (the "else" branch only - ship interior, not docked/boarding/helm) -
+    // Release cut Scene from 514ms to 183ms (Debug JIT overhead was real) but 183ms is still nowhere
+    // near acceptable, so this narrows down which of the three renderers it actually is.
+    private double _diagShipMs, _diagStationMs, _diagFieldMs;
     private Point? _mapPanLastMouse;
     private int _prevScrollWheelValue;
     // The console's own housing can be dragged around the HUD by its own right-drag (M48 follow-up -
@@ -453,9 +554,9 @@ public partial class Game1 : Game
         // Everything below this line runs before the game loop's own Draw() ever gets called, so
         // without a frame presented here the player stares at whatever blank colour the OS gave the
         // freshly created window (white, on most Windows setups) for however long the panel/audio
-        // construction below takes. One manual clear+draw+present right now is enough to replace
-        // that with an actual "loading" message.
-        DrawLoadingFrame("ЗАГРУЗКА...");
+        // construction below takes. Checkpoints at each real stage of this fixed sequence report
+        // genuine progress (percent is how much of THIS list has actually run, not an animation).
+        DrawLoadingFrame("ЗАГРУЗКА...", 0);
 
         _shipRenderer = new ShipRenderer(GraphicsDevice, _font,
             new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y));
@@ -471,11 +572,23 @@ public partial class Game1 : Game
         _galaxyMapPanel = new GalaxyMapPanel(GraphicsDevice, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
         _galacticMapPanel = new GalacticMapPanel(GraphicsDevice, _font);
         _stationPanel = new StationPanel(_font);
+        _stationBuildPanel = new StationBuildPanel(GraphicsDevice, _font);
         _cardGamePanel = new CardGamePanel(GraphicsDevice, _font);
         _helmButtonsWidget = new HelmButtonsWidget(GraphicsDevice, _font);
+        _helmTabBar = new HelmTabBar(GraphicsDevice, _font);
+        _timeAccelerationWidget = new TimeAccelerationWidget(GraphicsDevice, _font);
+        _engineerDevicePanel = new EngineerDevicePanel(GraphicsDevice, _font);
         _scannerModeWidget = new ScannerModeWidget(GraphicsDevice, _font);
         _shipSchematicPanel = new ShipSchematicPanel(GraphicsDevice, _font);
+        DrawLoadingFrame("ЗАГРУЗКА...", 25);
+
+        // FieldRenderer's own ctor is the single heaviest step in this whole list - it bakes every
+        // enemy hull class's armour onto a render target up front (EnemyHullSkin.cs), a handful of
+        // real GPU round-trips rather than the cheap plain-object constructions everywhere else
+        // here - worth its own checkpoint on both sides so the percentage doesn't visibly stall.
         _fieldRenderer = new FieldRenderer(GraphicsDevice, _font);
+        DrawLoadingFrame("ЗАГРУЗКА...", 55);
+
         _externalCameraPanel = new ExternalCameraPanel(GraphicsDevice, _font, _fieldRenderer);
         _stationRenderer = new StationRenderer(_shipRenderer, GraphicsDevice, _font);
         _boardingRenderer = new BoardingRenderer(_shipRenderer, GraphicsDevice, _font);
@@ -495,10 +608,13 @@ public partial class Game1 : Game
         _crewPanel = new CrewPanel(GraphicsDevice, _font);
         _infoPanel = new InfoPanel(GraphicsDevice, _font);
         _shipEditorPanel = new ShipEditorPanel(GraphicsDevice, _font);
+        DrawLoadingFrame("ЗАГРУЗКА...", 75);
+
         _existingSave = SaveStore.Load();
         _sounds = new GameSounds(Content);
         _music = new GameMusic(Content);
         _jukeboxAudio = new JukeboxAudio(Content);
+        DrawLoadingFrame("ЗАГРУЗКА...", 90);
         // The one raster texture asset in an otherwise fully-procedural game (ItemIcons.cs draws
         // every other icon from flat primitives) - same defensive load as everything else here, so an
         // unbuilt/missing .xnb falls back to the old procedural DrawScrewdriver instead of crashing.
@@ -526,17 +642,54 @@ public partial class Game1 : Game
 
     // Presents a single static frame directly, bypassing the normal Update/Draw loop entirely -
     // LoadContent hasn't finished yet at the point this is called, so that loop isn't running.
-    private void DrawLoadingFrame(string message)
+    // percent, when given, is genuine progress through LoadContent's own known, fixed sequence of
+    // steps (called at a handful of checkpoints below) - not an animation standing in for it.
+    private void DrawLoadingFrame(string message, int percent = -1)
     {
+        var text = percent >= 0 ? $"{message} {Math.Clamp(percent, 0, 100)}%" : message;
         var viewport = GraphicsDevice.Viewport;
-        var size = _font.MeasureString(message);
+        var size = _font.MeasureString(text);
         var position = new Vector2((viewport.Width - size.X) / 2f, (viewport.Height - size.Y) / 2f);
 
         GraphicsDevice.Clear(Color.Black);
         _spriteBatch.Begin();
-        _spriteBatch.DrawString(_font, message, position, Color.White);
+        _spriteBatch.DrawString(_font, text, position, Color.White);
         _spriteBatch.End();
         GraphicsDevice.Present();
+    }
+
+    // The background-session counterpart of DrawLoadingFrame above (StartHostedSession, M50) -
+    // drawn from the NORMAL Update/Draw loop instead of bypassing it (that loop is exactly what
+    // needs to keep running while GalaxyMap.CreateStarter() works on another thread), so this
+    // relies on the engine's own Present at the end of the frame rather than calling one itself.
+    private void DrawSessionLoadingScreen()
+    {
+        // GeneratedProceduralCount (Shared/Model/GalaxyMap.cs) is genuine, live progress - however
+        // many procedural systems the background construction has actually finished rolling so
+        // far - read off the one instance CreateStarter is building right now (GalaxyMap.Current).
+        // EstimatedStartupGalaxySystems is a rough ceiling (typically 6 hand-authored systems need
+        // a handful of EnsureGenerated chunks of 20 each to get their own 3 starting neighbours),
+        // not an exact prediction - the percentage it drives is real work completed either way,
+        // just capped short of 100% until FinishPendingSessionIfReady actually confirms done.
+        const int estimatedStartupGalaxySystems = 80;
+        var generated = GalaxyMap.Current?.GeneratedProceduralCount ?? 0;
+        var percent = Math.Clamp(generated * 100 / estimatedStartupGalaxySystems, 0, 99);
+        var text = $"ЗАГРУЗКА... {percent}%";
+
+        var viewport = GraphicsDevice.Viewport;
+        var size = _font.MeasureString(text);
+        var position = new Vector2((viewport.Width - size.X) / 2f, (viewport.Height - size.Y) / 2f);
+
+        GraphicsDevice.Clear(Color.Black);
+        _spriteBatch.Begin();
+        _spriteBatch.DrawString(_font, text, position, Color.White);
+
+        const int barWidth = 320;
+        const int barHeight = 8;
+        var barPosition = new Vector2((viewport.Width - barWidth) / 2f, position.Y + size.Y + 16f);
+        _spriteBatch.Draw(_pixel, new Rectangle((int)barPosition.X, (int)barPosition.Y, barWidth, barHeight), Color.Black * 0.6f);
+        _spriteBatch.Draw(_pixel, new Rectangle((int)barPosition.X, (int)barPosition.Y, barWidth * percent / 100, barHeight), Color.LightSteelBlue);
+        _spriteBatch.End();
     }
 
     // The single place every graphics/audio setting actually takes effect - called once at startup
@@ -582,8 +735,21 @@ public partial class Game1 : Game
         AtmosphereField.MaxParticles = Math.Max(0, settings.MaxParticles);
     }
 
+    // TEMP-DIAG (M51 slowdown investigation): wraps the real Update body just to time it - renamed
+    // to UpdateCore rather than inlining a Stopwatch at the top, since the body below has several
+    // early returns (state-machine style) that a single top-of-method timer would miss entirely.
+    private double _diagLastUpdateMs;
+
     protected override void Update(GameTime gameTime)
     {
+        var diagUpdateStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        UpdateCore(gameTime);
+        _diagLastUpdateMs = diagUpdateStopwatch.Elapsed.TotalMilliseconds;
+    }
+
+    private void UpdateCore(GameTime gameTime)
+    {
+
         var keyboard = Keyboard.GetState();
 
         // Edge-triggered (holding Escape down must fire this once, not every frame) - what it
@@ -614,6 +780,17 @@ public partial class Game1 : Game
 
         if (!_sessionStarted)
         {
+            // A background SoloSession construction in flight (Game1.Menu.cs's StartHostedSession,
+            // M50) - polled here every frame instead of blocking on it, so Update/Draw keep running
+            // (a loading screen, Draw below) rather than the window simply freezing for however
+            // long GalaxyMap.CreateStarter() takes. HandleMenu is skipped meanwhile - there is no
+            // menu state to react to clicks on while a session is already being built.
+            if (_pendingSession is not null)
+            {
+                FinishPendingSessionIfReady();
+                base.Update(gameTime);
+                return;
+            }
             HandleMenu(keyboard, (float)gameTime.ElapsedGameTime.TotalSeconds);
             base.Update(gameTime);
             return;
@@ -707,6 +884,11 @@ public partial class Game1 : Game
         // the mode every frame.
         var toggleControlModeKeyPressed = isAtHelm && !_shipSearchFocused && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
 
+        // L lands/takes off (M55) - same edge-triggered shape as Z above. World.PlanetLanding.cs's
+        // own CanLandNow is what actually refuses to arm it away from a landable body's surface, so
+        // this is sent unconditionally too.
+        var toggleLandingKeyPressed = isAtHelm && !_shipSearchFocused && keyboard.IsKeyDown(Keys.L) && !_prevGameplayKeyboard.IsKeyDown(Keys.L);
+
         var interactDown = keyboard.IsKeyDown(Keys.E);
         var spaceDown = keyboard.IsKeyDown(Keys.Space);
         var interactPressed = (interactDown && !_prevInteractDown) || escapeSendsInteract;
@@ -746,6 +928,41 @@ public partial class Game1 : Game
         var aimDirection = keyboardAim != 0f || !isManningTurret ? keyboardAim : ReadTurretAimTowardCursor();
         var mouse = Mouse.GetState();
 
+        // M55 follow-up - "экран изначально был отдален... чтобы было видно половину солнечной
+        // системы": a freshly-started session used to leave the helm's schematic zoomed in at a
+        // flat 1f (this class's own field initializer, set before any session/system exists) until
+        // the player scrolled out by hand - a system can be millions of units across, so that
+        // read as "empty black screen" rather than "solar system". Done exactly once, the first
+        // frame a snapshot actually exists, rather than every frame (which would fight right back
+        // against the player's own subsequent scroll input).
+        if (!_mapZoomInitialized && _client.LatestSnapshot is { } zoomInitSnapshot)
+        {
+            _mapZoomInitialized = true;
+            var initialSystem = zoomInitSnapshot.StarSystems.First(s => s.Id == zoomInitSnapshot.CurrentSystemId);
+            // Same "whole system fits at 0.9 of screen width" shape scrolling's own minHelmZoom
+            // uses below, just aimed at HALF that width instead of the whole thing - exactly twice
+            // the zoom level, since this ignores CompressedUnits the same conservative way
+            // minHelmZoom already does (real, uncompressed width; compression only ever makes the
+            // true extent smaller on screen than this assumes, never bigger).
+            var halfSystemZoom = DesignWidth * 0.9f / (GalaxyMapPanel.PixelsPerUnit * initialSystem.Width * 0.5f);
+            var minInitialZoom = MathF.Min(0.02f, DesignWidth * 0.9f / (GalaxyMapPanel.PixelsPerUnit * initialSystem.Width));
+            _mapZoom = Math.Clamp(halfSystemZoom, minInitialZoom, 3f);
+        }
+
+        // Content-каталог отсеков - the whole-ship overview gets its own free camera, same
+        // right-drag-pans/scroll-zooms idiom as the galaxy map right below rather than a new one.
+        // Reset the instant the overview freshly opens (not every frame it's open, which would
+        // fight the player's own scrolling) so re-talking to the Shipwright always starts back at
+        // the auto-fit view instead of wherever a previous visit left it scrolled to.
+        var shipOverviewSnapshot = _client.LatestSnapshot;
+        var shipOverviewActive = shipOverviewSnapshot is not null && ShipBuildOverviewActive(shipOverviewSnapshot);
+        if (shipOverviewActive && !_shipOverviewWasActive)
+        {
+            _shipOverviewPanOffset = Vector2.Zero;
+            _shipOverviewZoomMultiplier = 1f;
+        }
+        _shipOverviewWasActive = shipOverviewActive;
+
         // Galaxy map camera: right-drag to pan, scroll wheel to zoom - both harmless to read even
         // when the map isn't open (they just accumulate into fields nothing else looks at then).
         var mapOpen = _openBlock.Kind == BlockKind.Navigation;
@@ -772,9 +989,21 @@ public partial class Game1 : Game
                 _sonarPanelDragOffset += new Vector2(mouse.Position.X - lastSonarMouse.X, mouse.Position.Y - lastSonarMouse.Y);
             _mapPanLastMouse = mouse.Position;
         }
+        else if (shipOverviewActive && mouse.RightButton == ButtonState.Pressed)
+        {
+            // Divided by the current zoom, unlike the helm's own screen-space _mapPanOffset above -
+            // this offset feeds ComputeCamera's anchor (ship-local units, scaled by SceneZoom at
+            // draw time same as everything else in that frame), not a raw screen position, so
+            // dragging has to undo that same scaling to track the cursor 1:1 regardless of how far
+            // zoomed in/out the overview currently is.
+            if (_shipOverviewPanLastMouse is { } lastOverviewMouse)
+                _shipOverviewPanOffset += new Vector2(mouse.Position.X - lastOverviewMouse.X, mouse.Position.Y - lastOverviewMouse.Y) / SceneZoom(shipOverviewSnapshot!);
+            _shipOverviewPanLastMouse = mouse.Position;
+        }
         else
         {
             _mapPanLastMouse = null;
+            _shipOverviewPanLastMouse = null;
         }
         var scrollDelta = mouse.ScrollWheelValue - _prevScrollWheelValue;
         _prevScrollWheelValue = mouse.ScrollWheelValue;
@@ -791,24 +1020,40 @@ public partial class Game1 : Game
         }
         else if (isAtHelm && scrollDelta != 0 && _client.LatestSnapshot is { } scrollSnapshot)
         {
-            // Zooms toward wherever the cursor already is, not the panel's own corner - the world
-            // point currently under the cursor is computed at the OLD zoom/pan first, then panOffset
-            // is solved backward so that same point still lands under the cursor at the NEW zoom
-            // (GalaxyMapPanel.ComputeMapOrigin's own "panOffset - min corner * PixelsPerUnit * zoom"
-            // shifts nonlinearly with zoom on its own, so panOffset has to move to compensate or the
-            // view would drift while zooming instead of holding the cursor's own spot still).
+            // Zooms toward wherever the cursor already is, not the star at screen-centre - the
+            // world point currently under the cursor is computed at the OLD zoom/pan first, then
+            // panOffset is solved backward so that same point still lands under the cursor at the
+            // NEW zoom (GalaxyMapPanel.ComputeMapOrigin's own anchor shifts nonlinearly with zoom
+            // on its own, so panOffset has to move to compensate or the view would drift while
+            // zooming instead of holding the cursor's own spot still).
             var cursorScreen = new Vector2(_designMouse.X, _designMouse.Y);
-            var mapOriginBefore = GalaxyMapPanel.ComputeMapOrigin(GalaxyMapPanelOrigin, scrollSnapshot.GalaxyPoints, _mapZoom, _mapPanOffset);
+            var helmSystem = scrollSnapshot.StarSystems.First(s => s.Id == scrollSnapshot.CurrentSystemId);
+            var helmStarPosition = new Vec2(helmSystem.Width / 2f, helmSystem.Height / 2f);
+            var helmScreenCenter = new Vector2(DesignWidth / 2f, DesignHeight / 2f);
+            var mapOriginBefore = GalaxyMapPanel.ComputeMapOrigin(helmScreenCenter, helmStarPosition, _mapZoom, _mapPanOffset);
             var worldUnderCursor = GalaxyMapPanel.ScreenToField(cursorScreen, mapOriginBefore, _mapZoom);
-            // 0.02, not 0.04: sol's own stations now reach out toward WarpZoneRadius(2208) from the
-            // centre (M48 doubled the field on top of M47's own station-spread redesign) - the old
-            // floor could no longer show the whole system at once.
-            var newZoom = Math.Clamp(_mapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.02f, 3f);
-            var minCorner = scrollSnapshot.GalaxyPoints.Count > 0
-                ? new Vector2(scrollSnapshot.GalaxyPoints.Min(p => p.X), scrollSnapshot.GalaxyPoints.Min(p => p.Y))
-                : Vector2.Zero;
-            _mapPanOffset = cursorScreen - GalaxyMapPanelOrigin - (worldUnderCursor - minCorner) * GalaxyMapPanel.PixelsPerUnit * newZoom;
+            // Scaled to the CURRENT system's own real width, not a fixed magic number any more (M48
+            // tuned a flat 0.02 for its own doubled field; M52's per-system-generated, often far
+            // bigger real-proportions layout made that fixed floor wrong in both directions - too
+            // tight to ever see a huge system whole, too loose on a small one) - never LESS
+            // permissive than the old 0.02 floor, only more so when the system genuinely needs it
+            // ("масштаб... можно было также далеко отдалять камеру").
+            var minHelmZoom = MathF.Min(0.02f, DesignWidth * 0.9f / (GalaxyMapPanel.PixelsPerUnit * helmSystem.Width));
+            var newZoom = Math.Clamp(_mapZoom * MathF.Pow(1.1f, scrollDelta / 120f), minHelmZoom, 3f);
+            _mapPanOffset = cursorScreen - helmScreenCenter - (worldUnderCursor - new Vector2((float)helmStarPosition.X, (float)helmStarPosition.Y)) * GalaxyMapPanel.PixelsPerUnit * newZoom;
             _mapZoom = newZoom;
+        }
+        else if (shipOverviewActive && scrollDelta != 0)
+        {
+            // A multiplier on top of ShipOverviewZoom's own auto-fit, not a replacement for it - the
+            // auto-fit baseline still keeps a freshly-opened or freshly-reset view holding the whole
+            // hull, same as the moment the dialogue itself opens; this just lets the player push in
+            // past that to see one compartment closer up, or pull out further for a bigger margin to
+            // attach into. Clamped well short of either extreme - the auto-fit number already tends
+            // toward very small (a big hull, or the intentionally short WorldViewportSize.Y), so a
+            // wide multiplier range would make it trivial to zoom the hull down to a few pixels or
+            // blow it up past the screen entirely.
+            _shipOverviewZoomMultiplier = Math.Clamp(_shipOverviewZoomMultiplier * MathF.Pow(1.1f, scrollDelta / 120f), 0.4f, 3f);
         }
 
         // Scanner sweep (World.Scanner.cs, M44) - M48 follow-up made this Barotrauma-style: instead
@@ -826,7 +1071,7 @@ public partial class Game1 : Game
             // Ship-locked (M48 follow-up), matching GalaxyMapPanel.Draw's own console-only camera
             // exactly - a click has to land on the same screen position as whatever it's clicking.
             var mapOrigin = GalaxyMapPanel.ComputeShipLockedMapOrigin(GalaxyMapPanelOrigin + _sonarPanelDragOffset, mapSnapshot.Voyage.ShipMapPosition, _mapZoom);
-            var shipScreen = mapOrigin + new Vector2(mapSnapshot.Voyage.ShipMapPosition.X, mapSnapshot.Voyage.ShipMapPosition.Y) * GalaxyMapPanel.PixelsPerUnit * _mapZoom;
+            var shipScreen = mapOrigin + new Vector2((float)mapSnapshot.Voyage.ShipMapPosition.X, (float)mapSnapshot.Voyage.ShipMapPosition.Y) * GalaxyMapPanel.PixelsPerUnit * _mapZoom;
             var cursorScreen = new Vector2(_designMouse.X, _designMouse.Y);
             var leftPressedNow = mouse.LeftButton == ButtonState.Pressed;
             if (leftPressedNow && !_scannerHandleDragging && _prevMapLeftButton != ButtonState.Pressed)
@@ -834,8 +1079,8 @@ public partial class Game1 : Game
                 var hit = GalaxyMapPanel.HitTestContact(cursorScreen, myCharacter, mapOrigin, _mapZoom);
                 if (hit is not null)
                 {
-                    placeScannerMarkerAtX = hit.X;
-                    placeScannerMarkerAtY = hit.Y;
+                    placeScannerMarkerAtX = (float)hit.X;
+                    placeScannerMarkerAtY = (float)hit.Y;
                 }
                 else if (GalaxyMapPanel.HitTestScannerHandle(cursorScreen, GalaxyMapPanelOrigin + _sonarPanelDragOffset, scannerSweepDegrees))
                 {
@@ -956,10 +1201,22 @@ public partial class Game1 : Game
         }
 
         var shipPurchase = _pendingShipPurchase;
+        var buildRoom = _pendingBuildRoom;
+        _pendingBuildRoom = null;
+        var demolishRoomId = _pendingDemolishRoomId;
+        _pendingDemolishRoomId = null;
         var questKind = _pendingQuestKind;
         var dockPressed = _pendingDock;
         var hireCandidateId = _pendingHireCandidateId;
         var toggleControlModePressed = toggleControlModeKeyPressed || _pendingToggleControlMode;
+        var toggleLandingPressed = toggleLandingKeyPressed || _pendingToggleLanding;
+        // M57 - leaving the Engineer tab drops the remote-repair focus too, the same way standing
+        // up from the helm already does server-side (World.Interact.cs) - otherwise switching to
+        // Captain/Scientist and back would silently resume whatever device was focused before.
+        if (_helmTab != HelmTab.Engineer)
+            _engineerFocusDeviceId = null;
+        var requestedTimeAccelerationLevel = _pendingTimeAccelerationLevel;
+        var flipHeadingPressed = _pendingFlipHeading;
         var scannerPingPressed = _pendingScannerPing;
         var requestedScannerMode = _requestedScannerMode;
         _pendingShipPurchase = null; // edge-triggered: sent exactly once per click
@@ -967,6 +1224,9 @@ public partial class Game1 : Game
         _pendingDock = false;
         _pendingHireCandidateId = null;
         _pendingToggleControlMode = false;
+        _pendingToggleLanding = false;
+        _pendingTimeAccelerationLevel = null;
+        _pendingFlipHeading = false;
         _pendingScannerPing = false;
 
         var tankAttach = _pendingTankAttach;
@@ -1031,6 +1291,47 @@ public partial class Game1 : Game
         // RMB-drag checks.
         var wireLayCancelPressed = mouse.RightButton == ButtonState.Pressed && _prevRightMouseButton == ButtonState.Released &&
             myCharacter?.LayingWireFromPin is not null;
+
+        // Content-каталог отсеков - same right-click-cancel idea as the wire-lay check right above
+        // (back out of an in-progress module placement without spending anything - no server round
+        // trip needed, nothing was ever sent until a confirm click), extended to also leave the
+        // Shipwright's whole-ship overview entirely when nothing is left to cancel (the fallthrough
+        // in HandleMouseClick's own me.OnStation branch means clicking empty station floor no longer
+        // closes it, so right-click is this mode's own "back out" gesture instead).
+        //
+        // Outside the overview this still fires the instant the button goes down, same as always -
+        // but the overview's own free camera now also reads a HELD right button as pan-dragging
+        // (right above), so a press there can no longer mean "cancel" until release tells the two
+        // apart: released close to where it went down is a click (cancel/back-out); released well
+        // away from it was a drag that just finished, and undoing the player's own placement pick or
+        // closing their dialogue out from under a pan they were mid-gesture on would be exactly
+        // backwards.
+        var rightPressedThisFrame = mouse.RightButton == ButtonState.Pressed && _prevRightMouseButton == ButtonState.Released;
+        var rightReleasedThisFrame = mouse.RightButton == ButtonState.Released && _prevRightMouseButton == ButtonState.Pressed;
+        if (rightPressedThisFrame)
+            _shipOverviewRightPressPos = mouse.Position;
+
+        if (!shipOverviewActive && rightPressedThisFrame && _placingRoomCatalogId is not null)
+        {
+            _placingRoomCatalogId = null;
+        }
+        else if (shipOverviewActive && rightReleasedThisFrame)
+        {
+            const float dragThresholdPixels = 6f;
+            var wasDrag = _shipOverviewRightPressPos is { } pressPos &&
+                Vector2.Distance(pressPos.ToVector2(), mouse.Position.ToVector2()) > dragThresholdPixels;
+            if (!wasDrag)
+            {
+                if (_placingRoomCatalogId is not null)
+                    _placingRoomCatalogId = null;
+                else
+                {
+                    _talkingToNpcId = null;
+                    _openBlock = ClickTarget.None;
+                }
+            }
+        }
+
         _prevRightMouseButton = mouse.RightButton;
 
         // Barotrauma's rule: the held tool works on the left button, aimed at the cursor. Held, not
@@ -1042,15 +1343,18 @@ public partial class Game1 : Game
 
         var debugSpawnEnemyPressed = _debugSpawnEnemyClickedThisFrame;
         _debugSpawnEnemyClickedThisFrame = false;
+        var debugAddCreditsPressed = _debugAddCreditsClickedThisFrame;
+        _debugAddCreditsClickedThisFrame = false;
 
-        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, pushOffDirection.X, pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, lookDirection.X, lookDirection.Y,
+        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
-            _client.LatestSnapshot?.ServerTimestampMs ?? 0, wireBendAt?.X, wireBendAt?.Y,
+            _client.LatestSnapshot?.ServerTimestampMs ?? 0, (float?)wireBendAt?.X, (float?)wireBendAt?.Y,
             toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed,
             scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode,
             jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed,
-            fireHeld, debugSpawnEnemyPressed);
+            fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, _engineerFocusDeviceId, flipHeadingPressed,
+            buildRoom, demolishRoomId, debugAddCreditsPressed);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1138,10 +1442,30 @@ public partial class Game1 : Game
         ShipRenderer.DrawRectOutline(spriteBatch, _pixel, rect, TopBarGold * 0.55f, 1);
     }
 
+    // TEMP-DIAG (M51 slowdown investigation): same wrap-and-time approach as UpdateCore above - Draw
+    // has its own early returns (the pre-session menu/loading-screen branch), so timing it from a
+    // thin outer wrapper is the only way to catch every path through it, not just the one that falls
+    // through to the very end.
+    private double _diagLastDrawMs;
+
     protected override void Draw(GameTime gameTime)
+    {
+        var diagDrawStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        DrawCore(gameTime);
+        _diagLastDrawMs = diagDrawStopwatch.Elapsed.TotalMilliseconds;
+    }
+
+    private void DrawCore(GameTime gameTime)
     {
         if (!_sessionStarted)
         {
+            if (_pendingSession is not null)
+            {
+                DrawSessionLoadingScreen();
+                base.Draw(gameTime);
+                return;
+            }
+
             // The menu goes through the same post chain the world does. It used to return early,
             // straight past ScenePost, which meant the bloom, grade, vignette, grain and dither
             // built for the game simply did not exist on the first screen anybody ever sees.
@@ -1166,7 +1490,85 @@ public partial class Game1 : Game
         // happen before the backbuffer is cleared and drawn into - swapping render targets discards
         // whatever the backbuffer already held.
         var totalSeconds = (float)gameTime.TotalGameTime.TotalSeconds;
+        // M55 follow-up - "почему при отстыковке я оказался не около станции" / "на месте текущих
+        // значков станций там нет" / "они находятся в другом месте": every fix so far this session
+        // (compression consistency, elliptical-orbit position, host-relative anchoring) still
+        // compared against a body's position computed from THIS - the client's own wall-clock
+        // since the process launched (gameTime.TotalGameTime), completely unrelated to the
+        // SERVER's own simulation clock (World.Gravity.cs's CurrentTotalSeconds = Tick /
+        // SecondsPerTick, which starts from world/save creation, not from whenever this particular
+        // client happened to connect or restart). Every orbiting body's angle is a function of
+        // that time, so the two clocks disagreeing meant the map was always drawing every planet,
+        // moon AND station (M52 made stations orbit too) at the WRONG point along its own orbit
+        // relative to whatever the server's real physics (docking capture radius, "До причала",
+        // Undock's own snap-to-station) actually has it at - no amount of fixing the SCREEN
+        // projection math could ever paper over comparing against the wrong real position to
+        // begin with. snapshot.Tick is the one number the server and client both agree on for the
+        // current instant (already sent every snapshot) - dividing by the server's own fixed tick
+        // rate (World.Gravity.cs's SecondsPerTick, 30/s, the same rate the "Тики N/30" diagnostic
+        // line already assumes) reconstructs the exact time value CurrentTotalSeconds itself is.
+        const float serverTicksPerSecond = 30f;
+        // M55 follow-up - "на сильных приближениях корабль очень сильно дергается": the FIRST fix
+        // here (tickSnapshot.Tick / serverTicksPerSecond, used directly) only advances once per
+        // server tick - correct, but a visible STEP every 1/30s with nothing smooth in between,
+        // which reads as fine at ordinary zoom (each step is a fraction of a pixel) and as
+        // outright jitter once zoomed in far enough that a single tick's worth of real orbital
+        // motion covers several pixels. gameTime.TotalGameTime itself already advances perfectly
+        // smoothly every frame - it was only ever wrong by a fixed OFFSET (the client's own launch
+        // time vs the server's own already-elapsed session time), not by rate. Solving for that
+        // offset once, the moment a snapshot first exists, and just adding the client's own
+        // already-smooth clock to it from then on gives both: correct (anchored to the server's
+        // real elapsed time) AND smooth (never stops advancing between ticks). Solo sessions run
+        // client and server in the same process (GameServer.Current) sharing one real clock, so
+        // this offset does not need periodic re-syncing to avoid drifting apart over time.
+        if (_serverTimeOffsetSeconds is null && _client.LatestSnapshot is { } offsetSnapshot)
+            _serverTimeOffsetSeconds = offsetSnapshot.Tick / (double)serverTicksPerSecond - gameTime.TotalGameTime.TotalSeconds;
+        var serverTotalSeconds = _serverTimeOffsetSeconds is { } offsetSeconds
+            ? (float)(gameTime.TotalGameTime.TotalSeconds + offsetSeconds)
+            : totalSeconds;
+
+        // TEMP-DIAG-BEGIN (M51 slowdown investigation - see the fields' own comment)
+        _diagFrameCountInWindow++;
+        if (totalSeconds - _diagFpsWindowStartSeconds >= 1.0)
+        {
+            _diagDisplayedFps = (float)(_diagFrameCountInWindow / (totalSeconds - _diagFpsWindowStartSeconds));
+            _diagFrameCountInWindow = 0;
+            _diagFpsWindowStartSeconds = totalSeconds;
+        }
+        if (_client.LatestSnapshot is { } diagSnapshot && diagSnapshot.Tick != _diagLastSeenTick)
+        {
+            _diagLastSeenTick = diagSnapshot.Tick;
+            _diagTicksSeenInWindow++;
+        }
+        if (totalSeconds - _diagTickWindowStartSeconds >= 1.0)
+        {
+            _diagDisplayedTicksPerSecond = _diagTicksSeenInWindow;
+            _diagTicksSeenInWindow = 0;
+            _diagTickWindowStartSeconds = totalSeconds;
+
+            var diagAllocBytes = GC.GetTotalAllocatedBytes();
+            var diagGc0 = GC.CollectionCount(0);
+            var diagGc1 = GC.CollectionCount(1);
+            var diagGc2 = GC.CollectionCount(2);
+            _diagAllocMbPerSecond = (diagAllocBytes - _diagLastAllocBytes) / (1024f * 1024f);
+            _diagGc0PerSecond = diagGc0 - _diagLastGc0;
+            _diagGc1PerSecond = diagGc1 - _diagLastGc1;
+            _diagGc2PerSecond = diagGc2 - _diagLastGc2;
+            _diagLastAllocBytes = diagAllocBytes;
+            _diagLastGc0 = diagGc0;
+            _diagLastGc1 = diagGc1;
+            _diagLastGc2 = diagGc2;
+        }
+        // TEMP-DIAG-END
+
+        // TEMP-DIAG-BEGIN (M51 - narrowing down which phase of DrawCore is the 548ms cost)
+        var diagPhaseStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        // TEMP-DIAG-END
         var maskReady = _client.LatestSnapshot is { } maskSnapshot && BuildVisibilityMask(maskSnapshot, totalSeconds);
+        // TEMP-DIAG-BEGIN
+        _diagMaskMs = diagPhaseStopwatch.Elapsed.TotalMilliseconds;
+        diagPhaseStopwatch.Restart();
+        // TEMP-DIAG-END
 
         // The scene and its light mask go into ScenePost's off-screen target so a full-screen
         // shader has a finished frame to sample; when the effect isn't loaded this is false and
@@ -1185,7 +1587,9 @@ public partial class Game1 : Game
         // else. The pivot is the same point ComputeCamera anchors the manned turret's view on, so
         // rotating around it leaves the turret itself fixed at screen-center instead of swinging
         // it off to one side.
-        var sceneRotationDegrees = _client.LatestSnapshot is { } rotSnapshot ? TurretViewRotationDegrees(rotSnapshot) : 0f;
+        var sceneRotationDegrees = _client.LatestSnapshot is { } rotSnapshot
+            ? MannedTurret(rotSnapshot) is not null ? TurretViewRotationDegrees(rotSnapshot) : LandingApproachRotationDegrees(rotSnapshot)
+            : 0f;
         var screenPivot = (WorldViewportOrigin + WorldViewportSize / 2f) / sceneZoom;
         var sceneTransform =
             Matrix.CreateTranslation(-screenPivot.X, -screenPivot.Y, 0f) *
@@ -1194,6 +1598,16 @@ public partial class Game1 : Game
             Matrix.CreateScale(sceneZoom, sceneZoom, 1f) * _renderScale;
         _spriteBatch.Begin(transformMatrix: sceneTransform);
         _shipInteriorOrigin = null;
+        // TEMP-DIAG-BEGIN (M55 follow-up - "слайдшоу для модельки корабля": these three only ever
+        // get overwritten by the final "else" branch below (actually walking the ship interior) -
+        // every other branch (helm, docked, boarding, map) left them holding whatever they were
+        // the last time that branch ran, which reads as a frozen, wildly misleading number the
+        // instant the player is somewhere else - e.g. a real "Поле 31.0мс" from minutes ago,
+        // sitting there unchanged at the helm where this frame's real field-render cost is 0.
+        // Cleared here so every branch that skips the measurement below honestly shows 0.0мс
+        // instead of stale leftovers from a different camera mode.
+        _diagShipMs = _diagStationMs = _diagFieldMs = 0;
+        // TEMP-DIAG-END
         if (_client.LatestSnapshot is { } snapshot)
         {
             var myCharacter = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
@@ -1221,16 +1635,35 @@ public partial class Game1 : Game
                 _infoPanel.Draw(_spriteBatch, snapshot, _client.PlayerId, _infoPanelTab, InfoPanelOrigin);
             else if (myIsAtHelm)
             {
-                // The 3-window helm redesign (M47 follow-up): the pilot no longer sees the ship
-                // from outside at all - window 1 is the very same schematic/fog-of-war map the
-                // scanner console shows (reused wholesale, not a separate exterior render), window
-                // 3 is the Barotrauma-style status board, window 2 the small draggable button
-                // widget. Nothing here needs _shipInteriorOrigin - same as the Navigation/galactic-
-                // map/external-camera branches above, which leave it null too.
-                _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, totalSeconds, pilotView: true);
-                _shipSchematicPanel.Draw(_spriteBatch, snapshot, ShipSchematicPanelOrigin, _shipSchematicCategory, _shipSearchQuery, _shipSearchFocused);
-                _helmButtonsWidget.Draw(_spriteBatch, snapshot, _helmWidgetPosition,
-                    snapshot.Cameras.Count > 0 && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f, _externalCameraMode);
+                // M57 - the 3-window helm redesign (M47 follow-up) becomes 3 switchable tabs
+                // (HelmTab.cs): Captain flies (window 2's button widget + the time-acceleration
+                // selector), Scientist watches the sonar (window 1's schematic/fog-of-war map,
+                // reused wholesale), Engineer works the device list (window 3's schematic).
+                // Nothing here needs _shipInteriorOrigin - same as the Navigation/galactic-map/
+                // external-camera branches above, which leave it null too.
+                // Backdrop/instruments first, tab bar drawn LAST so it always sits on top instead
+                // of being painted over by whichever window is behind it (M57 follow-up - the map
+                // window is large enough to otherwise cover a same-corner overlay entirely).
+                switch (_helmTab)
+                {
+                    case HelmTab.Captain:
+                        // The captain still needs to see where the ship actually is/where it's
+                        // headed to fly it - same near-fullscreen map window 1 always showed,
+                        // just now specifically the captain's own tab rather than shared with
+                        // everyone at helm regardless of what they were doing.
+                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true);
+                        _helmButtonsWidget.Draw(_spriteBatch, snapshot, _helmWidgetPosition,
+                            snapshot.Cameras.Count > 0 && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f, _externalCameraMode);
+                        _timeAccelerationWidget.Draw(_spriteBatch, snapshot.TimeAccelerationLevel, _helmWidgetPosition + new Vector2(0, -46));
+                        break;
+                    case HelmTab.Scientist:
+                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true);
+                        break;
+                    case HelmTab.Engineer:
+                        _engineerDevicePanel.Draw(_spriteBatch, snapshot, ShipSchematicPanelOrigin, _engineerFocusDeviceId);
+                        break;
+                }
+                _helmTabBar.Draw(_spriteBatch, _helmTab, HelmTabBarOrigin, _designMouse);
             }
             else if (myCharacter?.OnEnemyShip == true)
             {
@@ -1251,21 +1684,50 @@ public partial class Game1 : Game
                 // Behind the periscope you are outside the ship looking at it, so it's drawn closed
                 // up - and so is the station it's docked to, for the same reason.
                 var fromOutside = MannedTurret(snapshot) is not null;
+                // TEMP-DIAG-BEGIN (M51 - Scene phase was 183-514ms; narrowing to which renderer)
+                var diagSubStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                // TEMP-DIAG-END
                 _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles);
+                // TEMP-DIAG-BEGIN
+                _diagShipMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
+                diagSubStopwatch.Restart();
+                // TEMP-DIAG-END
+
+                // Content-каталог отсеков - the click-to-place grid/ghost overlay, drawn in this
+                // same ship-local frame right on top of the real geometry so it lines up exactly
+                // with whatever HandleMouseClick's own confirm-click hit-test computes.
+                if (_placingRoomCatalogId is { } placingId && RoomCatalog.Find(placingId) is { } placingEntry)
+                {
+                    var candidates = RoomPlacementPreview.FindCandidates(snapshot, placingEntry);
+                    var mouseLocal = ScreenToShipLocal(new Vector2(_designMouse.X, _designMouse.Y), origin, sceneZoom);
+                    var nearest = RoomPlacementPreview.NearestTo(candidates, mouseLocal);
+                    _shipRenderer.DrawPlacementOverlay(_spriteBatch, snapshot, candidates, nearest, origin);
+                }
                 // A docked station is laid out in these same coordinates, joined to the ship by the
                 // shared airlock rectangle - drawn alongside the interior rather than instead of it,
                 // so there's no moment where the view swaps to "the station screen".
                 if (snapshot.Voyage.DockedPointId is not null && !fromOutside)
                     _stationRenderer.Draw(_spriteBatch, snapshot, origin, _talkingToNpcId, totalSeconds);
+                // TEMP-DIAG-BEGIN
+                _diagStationMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
+                diagSubStopwatch.Restart();
+                // TEMP-DIAG-END
                 // Viewport divided by the zoom for the same reason as the camera origin: the
                 // off-screen markers clamp against the screen edges, which live at design
                 // coordinates on the far side of the batch's scale.
                 _fieldRenderer.Draw(_spriteBatch, snapshot, origin, hullCenter,
                     WorldViewportOrigin / sceneZoom, WorldViewportSize / sceneZoom, totalSeconds, _effectTracker.Effects,
                     seenFromOutside: fromOutside);
+                // TEMP-DIAG-BEGIN
+                _diagFieldMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
+                // TEMP-DIAG-END
             }
         }
         _spriteBatch.End();
+        // TEMP-DIAG-BEGIN
+        _diagSceneMs = diagPhaseStopwatch.Elapsed.TotalMilliseconds;
+        diagPhaseStopwatch.Restart();
+        // TEMP-DIAG-END
 
         // Multiplied over the finished scene, before any HUD is drawn. Room lighting already has
         // the player's own sight folded into it (MergeSight, called earlier - a lit room stays lit
@@ -1308,7 +1770,7 @@ public partial class Game1 : Game
                 if (particle.Kind != AtmosphereKind.Steam)
                     continue;
 
-                var centre = shimmerOrigin + new Vector2(particle.Position.X, particle.Position.Y) * ShipRenderer.PixelsPerUnit;
+                var centre = shimmerOrigin + new Vector2((float)particle.Position.X, (float)particle.Position.Y) * ShipRenderer.PixelsPerUnit;
                 // Wider than the wisp ShipRenderer draws: air bends light well past the part of it
                 // you can actually see.
                 var radius = particle.Size * ShipRenderer.PixelsPerUnit * (1f + particle.Progress * 1.6f) * 3f;
@@ -1344,6 +1806,10 @@ public partial class Game1 : Game
         _scenePost.Present(_spriteBatch, totalSeconds);
         if (savedVacuumLook is { } restoreVacuum)
             RestorePostLook(restoreVacuum);
+        // TEMP-DIAG-BEGIN
+        _diagPostMs = diagPhaseStopwatch.Elapsed.TotalMilliseconds;
+        diagPhaseStopwatch.Restart();
+        // TEMP-DIAG-END
 
         // The manoeuvring exhaust goes on after the composite rather than into the scene.
         //
@@ -1375,6 +1841,16 @@ public partial class Game1 : Game
             // below), not a full-screen takeover - drawn whenever talking to someone; it no-ops
             // internally if _talkingToNpcId is null.
             _stationPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, StationPanelOrigin, _talkingToNpcId);
+
+            // Content-каталог отсеков - shown while actively talking to the Shipwright OR while a
+            // module is still being placed (StationBuildPanel highlights whichever tile is selected,
+            // so it has to stay visible even after the player has already walked off to point at
+            // their own ship - the dialogue itself may have already closed by then).
+            var talkingToShipwright = _talkingToNpcId is { } npcId &&
+                hudSnapshot.Station.Npcs.FirstOrDefault(n => n.Id == npcId)?.Kind == NpcKind.Shipwright;
+            if (talkingToShipwright || _placingRoomCatalogId is not null)
+                _stationBuildPanel.Draw(_spriteBatch, hudSnapshot, StationBuildPanelOrigin, _buildPanelCategory, _placingRoomCatalogId, _designMouse);
+
             _cardGamePanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, CardGamePanelOrigin);
 
             // Only one block's terminal is shown at a time, at the same HUD slot — you have to
@@ -1423,7 +1899,7 @@ public partial class Game1 : Game
                 // overlay like every other terminal in this switch, so the ship interior/exterior
                 // keeps rendering normally behind it via the scene batch's own final `else` branch.
                 case BlockKind.Navigation:
-                    _galaxyMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin + _sonarPanelDragOffset, _mapZoom, _mapPanOffset, _client.PlayerId, totalSeconds);
+                    _galaxyMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin + _sonarPanelDragOffset, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds);
                     if (hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { } scannerMe)
                         _scannerModeWidget.Draw(_spriteBatch, scannerMe.ScannerMode, scannerMe.ScannerCooldownRemaining, _scannerWidgetPosition);
                     break;
@@ -1478,7 +1954,7 @@ public partial class Game1 : Game
                     {
                         var airlock = hudSnapshot.EnemyShip.AirlockOuterDoors.FirstOrDefault(d => d.Id == targetId);
                         if (airlock is not null)
-                            _shipRenderer.DrawToolTargetBar(_spriteBatch, new Vector2(airlock.Position.X, airlock.Position.Y),
+                            _shipRenderer.DrawToolTargetBar(_spriteBatch, new Vector2((float)airlock.Position.X, (float)airlock.Position.Y),
                                 airlockState.Fraction, wallToolOrigin);
                     }
                 }
@@ -1497,7 +1973,7 @@ public partial class Game1 : Game
                         ?? hudSnapshot.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorTargetId)?.Position
                         ?? hudSnapshot.EnemyShip.Doors.FirstOrDefault(d => d.Id == doorTargetId)?.Position;
                     if (doorPosition is { } position)
-                        _shipRenderer.DrawDoorToolTargetBar(_spriteBatch, new Vector2(position.X, position.Y), doorState, wallToolOrigin);
+                        _shipRenderer.DrawDoorToolTargetBar(_spriteBatch, new Vector2((float)position.X, (float)position.Y), doorState, wallToolOrigin);
                 }
 
                 // Same HUD-batch exemption as the wall bar just above - shown while standing next
@@ -1519,7 +1995,7 @@ public partial class Game1 : Game
                         var cardOrigin = wallToolOrigin + new Vector2(nearbyDamaged.X, nearbyDamaged.Y) * ShipRenderer.PixelsPerUnit
                             + new Vector2(-SystemRepairPanel.PanelWidth / 2f, -SystemRepairPanel.PanelHeight - 30);
                         _systemRepairPanel.Draw(_spriteBatch, ComponentRenderer.SystemLabel(nearbyDamaged.System), holdingRepairTool,
-                            repairState?.RepairProgress ?? 0f, repairState?.RepairTickPosition ?? 0f, cardOrigin);
+                            repairState?.RepairProgress ?? 0f, cardOrigin);
                     }
 
                     // Same card, same proximity radius, for a damaged Junction box instead of a
@@ -1535,7 +2011,7 @@ public partial class Game1 : Game
                         var cardOrigin = wallToolOrigin + new Vector2(nearbyDamagedJunction.X, nearbyDamagedJunction.Y) * ShipRenderer.PixelsPerUnit
                             + new Vector2(-SystemRepairPanel.PanelWidth / 2f, -SystemRepairPanel.PanelHeight - 30);
                         _systemRepairPanel.Draw(_spriteBatch, "Распред. коробка", holdingRepairTool,
-                            repairState?.RepairProgress ?? 0f, repairState?.RepairTickPosition ?? 0f, cardOrigin);
+                            repairState?.RepairProgress ?? 0f, cardOrigin);
                     }
 
                     // Same card again, for a destroyed door (World.Doors.cs) - jammed open by its
@@ -1552,10 +2028,10 @@ public partial class Game1 : Game
                         var holdingRepairTool = HeldItemTypes(repairMe.Inventory).Contains(ItemType.Wrench) ||
                                                  HeldItemTypes(repairMe.Inventory).Contains(ItemType.Screwdriver);
                         var doorPosition = DoorPosition(nearbyDestroyedDoor.DoorId)!.Value;
-                        var cardOrigin = wallToolOrigin + new Vector2(doorPosition.X, doorPosition.Y) * ShipRenderer.PixelsPerUnit
+                        var cardOrigin = wallToolOrigin + new Vector2((float)doorPosition.X, (float)doorPosition.Y) * ShipRenderer.PixelsPerUnit
                             + new Vector2(-SystemRepairPanel.PanelWidth / 2f, -SystemRepairPanel.PanelHeight - 30);
                         _systemRepairPanel.Draw(_spriteBatch, "Дверь", holdingRepairTool,
-                            nearbyDestroyedDoor.RepairProgress, nearbyDestroyedDoor.RepairTickPosition, cardOrigin);
+                            nearbyDestroyedDoor.RepairProgress, cardOrigin);
                     }
                 }
             }
@@ -1640,6 +2116,37 @@ public partial class Game1 : Game
             else if (_cheatPanelOpen)
                 _cheatPanel.Draw(_spriteBatch, CheatPanelOrigin, _designMouse);
         }
+        // TEMP-DIAG-BEGIN
+        _diagHudMs = diagPhaseStopwatch.Elapsed.TotalMilliseconds;
+        // TEMP-DIAG-END
+
+        // TEMP-DIAG-BEGIN (M51 slowdown investigation - see _diagDisplayedFps's own comment)
+        var diagServer = GameServer.Current;
+        var diagServerLine = diagServer is null
+            ? "Сервер: нет"
+            : $"Тик {diagServer.LastTickTotalMs:0.0}мс  Шаг {diagServer.LastStepMs:0.0}мс  Снап {diagServer.LastSnapshotMs:0.0}мс";
+        var diagClientLine = $"Обновл {_diagLastUpdateMs:0.0}мс  Рендер {_diagLastDrawMs:0.0}мс";
+        var diagPhaseLine = $"Маска {_diagMaskMs:0.0}мс  Сцена {_diagSceneMs:0.0}мс  Пост {_diagPostMs:0.0}мс  Хад {_diagHudMs:0.0}мс";
+        var diagSceneSubLine = $"Корабль {_diagShipMs:0.0}мс  Станция {_diagStationMs:0.0}мс  Поле {_diagFieldMs:0.0}мс";
+        var diagGcLine = $"ГК0/с {_diagGc0PerSecond}  ГК1/с {_diagGc1PerSecond}  ГК2/с {_diagGc2PerSecond}  Выд {_diagAllocMbPerSecond:0}МБ/с";
+        // TEMP-DIAG-BEGIN
+        var diagOrbitLine = _client.LatestSnapshot is { } diagOrbitSnapshot
+            ? $"Тик {diagOrbitSnapshot.Tick}  Ускр x{diagOrbitSnapshot.TimeAccelerationLevel}  X {diagOrbitSnapshot.ShipField.X:0}  Y {diagOrbitSnapshot.ShipField.Y:0}  " +
+              $"VX {diagOrbitSnapshot.ShipField.VelocityX:0}  VY {diagOrbitSnapshot.ShipField.VelocityY:0}"
+            : "нет снапшота";
+        // "До причала" (HelmButtonsWidget) measures against DockBerthPosition, shown raw here -
+        // whether it's actually tracking live (changing frame to frame roughly like ShipField.X/Y
+        // does) or frozen/stale is the first thing to rule in or out.
+        var diagBerthLine = _client.LatestSnapshot is { } diagBerthSnapshot
+            ? $"DockBerth X {diagBerthSnapshot.DockBerthPosition.X:0} Y {diagBerthSnapshot.DockBerthPosition.Y:0}  " +
+              $"CanDock={diagBerthSnapshot.CanDock}  Docked={diagBerthSnapshot.Voyage.DockedPointId ?? "null"}  " +
+              $"BerthPointId={diagBerthSnapshot.DockBerthPointId ?? "null"}"
+            : "";
+        // TEMP-DIAG-END
+        _spriteBatch.DrawString(_font, $"Кадры/с {_diagDisplayedFps:0}  Тики {_diagDisplayedTicksPerSecond}/30\n{diagServerLine}\n{diagClientLine}\n{diagPhaseLine}\n{diagSceneSubLine}\n{diagGcLine}\n{diagOrbitLine}\n{diagBerthLine}",
+            new Vector2(10, 10), Color.Yellow, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        // TEMP-DIAG-END
+
         _spriteBatch.End();
 
         base.Draw(gameTime);

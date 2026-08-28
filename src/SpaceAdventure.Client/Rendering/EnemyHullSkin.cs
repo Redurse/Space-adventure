@@ -70,15 +70,15 @@ public sealed class EnemyHullSkin : IDisposable
         var layout = EnemyShipLayout.Of(kind);
         var (center, halfExtents) = layout.GetLocalBounds();
 
-        var widthPx = (int)MathF.Ceiling((halfExtents.X * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit);
-        var heightPx = (int)MathF.Ceiling((halfExtents.Y * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit);
+        var widthPx = (int)MathF.Ceiling((float)((halfExtents.X * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit));
+        var heightPx = (int)MathF.Ceiling((float)((halfExtents.Y * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit));
 
         // The translation HullSkin.Draw itself needs (where local (0,0) lands on this canvas) is
         // NOT the same point as the sprite's own pivot below - Rooms are authored starting near
         // (0,0), not centred on it, so (0,0) is usually well off to one side of the hull's true
         // centre.
-        var drawOrigin = new Vector2(widthPx / 2f - center.X * ShipRenderer.PixelsPerUnit,
-            heightPx / 2f - center.Y * ShipRenderer.PixelsPerUnit);
+        var drawOrigin = new Vector2((float)(widthPx / 2f - center.X * ShipRenderer.PixelsPerUnit),
+            (float)(heightPx / 2f - center.Y * ShipRenderer.PixelsPerUnit));
 
         // The hull's own local centre - the same point EnemyShipRuntime.Position/RotationDegrees
         // rotate everything else around (World.Eva.cs's EnemyHullLocalCenter) - always lands

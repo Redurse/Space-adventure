@@ -25,17 +25,20 @@ public sealed partial class World
     // enemy ships - a squadron's formation AI tracks the ship's own position closely
     // (World.EnemyFleet.cs's SteerEnemy), so distance to them barely opens even during a real
     // retreat; every battle starts within the marker's own small CaptureRadius(8) by construction,
-    // so reaching this takes a real, sustained retreat either way. Scaled ×2 alongside the field's
-    // own M48 doubling (was 280 for the 2400x2400 field, 35 before that for the original 300x300
-    // one) - every marker now sits comfortably far from any wall after recentring
-    // (AsteroidField.RecenterOffsetM48), so this is purely about matching the field's own new
-    // scale, not squeezing past a nearby edge any more.
-    private const float BattleFleeDistance = 560f;
+    // so reaching this takes a real, sustained retreat either way. A fraction of the CURRENT
+    // system's own field size (M50 - each system's field is now sized to its own real generated
+    // planets, no longer one shared 4800x4800) rather than an absolute constant - preserves the
+    // same ratio the field's own doubling history already established (560/4800, 280/2400,
+    // 35/300 - always ~11.7% of the field's own width) instead of hand-picking a new number every
+    // time a system's scale changes.
+    private const float BattleFleeDistanceFraction = 560f / 4800f;
+    private float BattleFleeDistance => AsteroidField.Width * BattleFleeDistanceFraction;
     // However a fight is left, the ship should land somewhere flyable, not pinned to the system's
     // own outer boundary - NudgeAwayFromFieldEdge is the safety net underneath BattleFleeDistance,
     // in case a future system's own layout ever puts a marker's escape route that close to the wall.
-    // Scaled ×2 alongside the field's own M48 doubling (was 96, 12 before the original M40 scaling).
-    private const float FieldEdgeSafetyMargin = 192f;
+    // Same field-size-fraction treatment as BattleFleeDistance above (192/4800, always 4%).
+    private const float FieldEdgeSafetyMarginFraction = 192f / 4800f;
+    private float FieldEdgeSafetyMargin => AsteroidField.Width * FieldEdgeSafetyMarginFraction;
 
     public GalaxyMap GalaxyMap { get; } = GalaxyMap.CreateStarter();
 
@@ -64,8 +67,37 @@ public sealed partial class World
 
     private void StepVoyage(double deltaSeconds)
     {
+        // M57 follow-up - "телепортирует в другую часть орбиты": a docked ship used to sit at a
+        // single _shipFieldPosition frozen for however long the crew stayed docked (this early
+        // return skipped StepShipFieldPhysics entirely) while the STATION itself kept right on
+        // orbiting in the background - real time at a station (shopping, repairs, a quest, or just
+        // idling with time acceleration running) is completely routine, and left the ship's own
+        // frozen coordinate stale by however far the station had since moved. Undock() used to
+        // paper over that with a one-time "catch up to the station's current position" snap right
+        // at the moment of casting off - correct in that it kept the two together, but it read as a
+        // sudden teleport to a genuinely different point along the same orbit, which is exactly
+        // what it was. Keeping the ship's own field position pinned to the docked point's LIVE
+        // position every tick instead - not just once at Undock() - means there's nothing left to
+        // catch up on: the ship was already sitting exactly where the station now is, the whole
+        // time, so undocking is a smooth continuation instead of a jump.
         if (IsDocked)
-            return; // sits at the berth until the "Стыковка" button casts off (World.StationDocking.cs's Undock)
+        {
+            if (_dockedPointId is { } dockedId)
+                _shipFieldPosition = ResolveGalaxyPointPosition(GalaxyMap.GetPoint(dockedId));
+            return; // still sits at the berth until the "Стыковка" button casts off (Undock)
+        }
+
+        // M55 - landed on a planet: the ship still needs to drive around its own small surface
+        // field (StepShipFieldPhysics itself branches on _landedBodyId for that), but everything
+        // below reasons about the SYSTEM field (nearest station, battles, quests) - all of it
+        // meaningless (and numerically nonsensical, tiny surface coordinates vs system-scale ones)
+        // while sitting on a body's own ground. TakeOff (World.PlanetLanding.cs) is the only way
+        // back into any of this, same shape as Undock ending IsDocked's own early return above.
+        if (IsLandedOnPlanet)
+        {
+            StepShipFieldPhysics(deltaSeconds);
+            return;
+        }
 
         StepShipFieldPhysics(deltaSeconds);
         UpdateNearestStation();
@@ -93,7 +125,7 @@ public sealed partial class World
         // radius, comfortably more than sitting nearby could plausibly still count as) - otherwise
         // it would stay permanently immune to ever catching this ship again.
         if (_recentlyDisengagedSectorId is { } clearedId &&
-            (GalaxyMap.GetPoint(clearedId).Position - _shipFieldPosition).Length() > GalaxyMap.GetPoint(clearedId).CaptureRadius * 3f)
+            (ResolveGalaxyPointPosition(GalaxyMap.GetPoint(clearedId)) - _shipFieldPosition).Length() > GalaxyMap.GetPoint(clearedId).CaptureRadius * 3f)
             _recentlyDisengagedSectorId = null;
     }
 
@@ -110,16 +142,17 @@ public sealed partial class World
     {
         var nearest = GalaxyMap.GetSystem(_currentSystemId).Points
             .Where(p => p.Kind == GalaxyPointKind.Station)
-            .OrderBy(p => (p.Position - _shipFieldPosition).Length())
+            .OrderBy(p => (ResolveGalaxyPointPosition(p) - _shipFieldPosition).Length())
             .FirstOrDefault();
         _nearestStationPointId = nearest?.Id;
         if (nearest is null)
             return;
 
-        Station.RepositionTo(nearest.Position);
+        var nearestPosition = ResolveGalaxyPointPosition(nearest);
+        Station.RepositionTo(nearestPosition);
 
         if (_battleSectorPointId is null && nearest.Id != _recentlyDisengagedSectorId &&
-            (nearest.Position - _shipFieldPosition).Length() <= nearest.CaptureRadius &&
+            (nearestPosition - _shipFieldPosition).Length() <= nearest.CaptureRadius &&
             GetStanding(OwnerOf(nearest.Id)) <= FactionDefinitions.HostileThreshold)
             StartBattle(nearest, StationDefenseSquadronSize);
     }
@@ -203,8 +236,8 @@ public sealed partial class World
             if (awayFromSector.Length() < sector.CaptureRadius + 1f)
             {
                 var direction = awayFromSector.Length() > 0.01f ? awayFromSector.Normalized() : new Vec2(1f, 0f);
-                _shipFieldPosition = (sector.Position + direction * (sector.CaptureRadius + 1f))
-                    .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+                SetShipFieldPosition((sector.Position + direction * (sector.CaptureRadius + 1f))
+                    .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height));
             }
             // The nudge above only guarantees clearance along the one line it pushed along - the
             // exclusion (StepVoyage) is what actually protects against just drifting back within
@@ -219,12 +252,21 @@ public sealed partial class World
     // True once the ship has actually flown clear of whatever's fighting it, not merely clear of
     // the ships themselves - their own formation AI keeps them tracking the ship's current position
     // closely (SteerEnemy), so measuring against them barely moves even during a real retreat. The
-    // marker is a fixed point every battle starts within CaptureRadius(8) of, so this only fires
-    // after genuinely putting distance behind, regardless of how tightly the squadron itself manages
-    // to keep pace.
+    // marker is a fixed point every battle starts within CaptureRadius of, so this only fires after
+    // genuinely putting distance behind, regardless of how tightly the squadron itself manages to
+    // keep pace.
+    // M58 follow-up - this same method also resolves a STATION's own defensive-squadron battle
+    // (UpdateNearestStation, not just a hostile sector's), and a hosted station genuinely orbits now
+    // (M52) - its raw GalaxyPoint.Position is a static phase-zero anchor, not where the fight is
+    // actually happening. Measuring against that stale anchor instead of the live position made
+    // every station-defense battle read as "fled" on the very same tick it started (the anchor sits
+    // however far the station has swept since spawn, routinely past BattleFleeDistance on its own),
+    // instantly clearing the fight before anything else could ever see it. ResolveGalaxyPointPosition
+    // is safe here for hostile sectors too - GalaxyPoint.PositionAt falls back to the raw X/Y
+    // unchanged for anything without a host body (ResolveGalaxyPointPosition's own doc comment).
     private bool HasFledTheSector() =>
         _battleSectorPointId is { } sectorId &&
-        (GalaxyMap.GetPoint(sectorId).Position - _shipFieldPosition).Length() > BattleFleeDistance;
+        (ResolveGalaxyPointPosition(GalaxyMap.GetPoint(sectorId)) - _shipFieldPosition).Length() > BattleFleeDistance;
 
     // Running rather than winning - the squadron is still out there, so no bounty progress, no
     // standing hit for them, nothing recorded as destroyed. Same anti-recapture bookkeeping a won
@@ -245,9 +287,9 @@ public sealed partial class World
     // satisfy, but this is the safety net in case some future system's layout ever does.
     private void NudgeAwayFromFieldEdge()
     {
-        _shipFieldPosition = new Vec2(
+        SetShipFieldPosition(new Vec2(
             Math.Clamp(_shipFieldPosition.X, FieldEdgeSafetyMargin, AsteroidField.Width - FieldEdgeSafetyMargin),
-            Math.Clamp(_shipFieldPosition.Y, FieldEdgeSafetyMargin, AsteroidField.Height - FieldEdgeSafetyMargin));
+            Math.Clamp(_shipFieldPosition.Y, FieldEdgeSafetyMargin, AsteroidField.Height - FieldEdgeSafetyMargin)));
     }
 
     // Station stop (game_design.md Phase1: "станция для дозаправки/ремонта") — tops fuel back
@@ -259,7 +301,7 @@ public sealed partial class World
         // only in TryDockAtStation so the game's own opening state - already docked at the home
         // station - lines up the same way as one the player flew in.
         _shipRotationDegrees = 0f;
-        _shipFieldPosition = DockBerthPosition;
+        SetShipFieldPosition(DockBerthPosition);
         _dockedPointId = pointId;
         AutosavePending = true; // game_design.md section 5 - docking is the save point
         ResetStationCrimeState(); // a new visit finds the crates restocked and the guards calm
@@ -267,6 +309,7 @@ public sealed partial class World
         RefillOxygenTanks(); // a station resupplies air the same way it refuels and repairs
         InitializeWallBlocks(); // a station patches the hull back to full the same way
         RestockAmmoStorages(); // and tops the ammo crates back up too
+        RestockHullPlating(); // M62 - and the hull-plating hold, same restock timing
         foreach (var room in Ship.Rooms)
             _roomOxygen[room.Id] = FullOxygen;
         RegenerateRecruitRoster();

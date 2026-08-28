@@ -10,10 +10,11 @@ namespace SpaceAdventure.Client.Rendering;
 public sealed class CheatPanel
 {
     public const int PanelWidth = 300;
-    public const int PanelHeight = 96;
+    public const int PanelHeight = 152;
     private const int ButtonWidth = 260;
     private const int ButtonHeight = 44;
     private const int TopPadding = 38;
+    private const int ButtonGap = 12;
     private const int BorderThickness = 2;
     private static readonly Color PanelBackground = new(40, 20, 20);
     private static readonly Color PanelBorder = new(150, 70, 70);
@@ -35,6 +36,14 @@ public sealed class CheatPanel
         (int)panelOrigin.Y + TopPadding,
         ButtonWidth, ButtonHeight);
 
+    // Second button, same "testing tool, not a game action" shape as the enemy spawner above -
+    // 100 credits at a time so content-каталог отсеков's own expensive catalog entries (reactor
+    // 900cr, cockpit 700cr, ...) can be tested live without grinding real trades up to that first.
+    public static Rectangle GetAddCreditsButtonRect(Vector2 panelOrigin) => new(
+        (int)panelOrigin.X + (PanelWidth - ButtonWidth) / 2,
+        (int)panelOrigin.Y + TopPadding + ButtonHeight + ButtonGap,
+        ButtonWidth, ButtonHeight);
+
     public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
@@ -43,10 +52,14 @@ public sealed class CheatPanel
         spriteBatch.DrawString(_font, "ЧИТ-ПАНЕЛЬ (Ё)", new Vector2(panelOrigin.X + 14, panelOrigin.Y + 10),
             Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
 
-        var buttonRect = GetSpawnEnemyButtonRect(panelOrigin);
+        DrawButton(spriteBatch, GetSpawnEnemyButtonRect(panelOrigin), hoverPoint, "Заспавнить врага рядом");
+        DrawButton(spriteBatch, GetAddCreditsButtonRect(panelOrigin), hoverPoint, "Выдать 100 кредитов");
+    }
+
+    private void DrawButton(SpriteBatch spriteBatch, Rectangle buttonRect, Point hoverPoint, string label)
+    {
         spriteBatch.Draw(_pixel, buttonRect, buttonRect.Contains(hoverPoint) ? ButtonFillHover : ButtonFill);
         ShipRenderer.DrawRectOutline(spriteBatch, _pixel, buttonRect, new Color(40, 40, 40), 1);
-        const string label = "Заспавнить врага рядом";
         var size = _font.MeasureString(label) * 0.45f;
         spriteBatch.DrawString(_font, label, new Vector2(buttonRect.Center.X - size.X / 2f, buttonRect.Center.Y - size.Y / 2f),
             Color.Black, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);

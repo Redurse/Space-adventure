@@ -7,8 +7,8 @@ namespace SpaceAdventure.Client.Rendering;
 
 // One distinct silhouette per GalaxyPointKind, replacing what used to be a single flat coloured
 // square for all four - built from the same primitives (FillPolygon/FillCircle/RingArc) every
-// other procedural icon in this client already uses, sized to the marker's own screen rect
-// (GetPointRect) so hit-testing never has to know these shapes exist.
+// other procedural icon in this client already uses, sized to the marker's own fixed-size screen
+// rect (PointMarkerSize) so hit-testing never has to know these shapes exist.
 public sealed partial class GalaxyMapPanel
 {
     private void DrawPointGlyph(SpriteBatch spriteBatch, GalaxyPointKind kind, Rectangle rect, Color color, float totalSeconds)

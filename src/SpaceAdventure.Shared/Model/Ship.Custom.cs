@@ -24,6 +24,26 @@ public sealed partial class Ship
         var distributionDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Distribution);
         var helmDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Helm);
         var navigationDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Navigation);
+        // Content-каталог отсеков - "bonus, not list" (Ship.cs's own doc comment on ReactorDeviceCount/
+        // ExtraHelmConsoles/etc.): a 2nd+ device of one of these kinds never gets its own physical
+        // object (still just the first one, above), only counts toward World.ShipBuilding.cs's bonus
+        // recompute, PLUS (this session's own bug fix) its own real position - Ship.ToDefinition()
+        // needs that to re-emit a bonus device where it actually is, not collapsed onto the primary's
+        // position, or M63's structural-detachment bounds check can never tell the two apart and the
+        // bonus silently survives destroying the room it's actually built in. Every kind that follows
+        // this "one physical fixture + N bonus copies" shape goes through the ONE helper below -
+        // ExtraPositionsOfKind - rather than each hand-rolling its own Where/Skip(1); a future kind
+        // added the hand-rolled way is exactly how this session's bug happened in the first place.
+        var reactorDeviceCount = def.Devices.Count(d => d.Kind == CustomDeviceKind.Reactor);
+        var distributionDeviceCount = def.Devices.Count(d => d.Kind == CustomDeviceKind.Distribution);
+        var helmDeviceCount = def.Devices.Count(d => d.Kind == CustomDeviceKind.Helm);
+        var navigationDeviceCount = def.Devices.Count(d => d.Kind == CustomDeviceKind.Navigation);
+        var extraReactorPositions = ExtraPositionsOfKind(def, CustomDeviceKind.Reactor);
+        var extraDistributionPositions = ExtraPositionsOfKind(def, CustomDeviceKind.Distribution);
+        var extraHelmConsoles = ExtraPositionsOfKind(def, CustomDeviceKind.Helm)
+            .Select((p, i) => new HelmConsole($"helm-console-extra-{i + 1}", RoomIdAt(rooms, p), p.AsFloat().X, p.AsFloat().Y)).ToList();
+        var extraNavigationConsoles = ExtraPositionsOfKind(def, CustomDeviceKind.Navigation)
+            .Select((p, i) => new NavigationConsole($"navigation-console-extra-{i + 1}", RoomIdAt(rooms, p), p.AsFloat().X, p.AsFloat().Y)).ToList();
 
         var reactorBlock = new ReactorBlock("reactor-block", RoomIdAt(rooms, reactorDevice), reactorDevice.X, reactorDevice.Y);
         var distributionBlock = new PowerDistributionBlock("distribution-block", RoomIdAt(rooms, distributionDevice), distributionDevice.X, distributionDevice.Y);
@@ -45,11 +65,19 @@ public sealed partial class Ship
         var cardTableDevice = def.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.CardTable);
         var cardTable = cardTableDevice is not null
             ? new CardTable("card-table", RoomIdAt(rooms, cardTableDevice), cardTableDevice.X, cardTableDevice.Y)
-            : new CardTable("card-table-auto", rooms[0].Id, rooms[0].Center.X, rooms[0].Center.Y);
+            : new CardTable("card-table-auto", rooms[0].Id, (float)rooms[0].Center.X, (float)rooms[0].Center.Y);
 
-        // No CustomDeviceKind for a camera yet - the Ship Editor doesn't offer placing one (M48
-        // only wires up the hand-authored classes), so a player-built hull simply has none.
-        var cameras = Array.Empty<HullCamera>();
+        // The Ship Editor still doesn't offer placing either of these (M48 only wired up the
+        // hand-authored classes), so an editor-drawn hull simply has none - but CustomDeviceKind.
+        // Camera/ComponentMount (M60 follow-up) let Ship.ToDefinition() round-trip a hand-authored
+        // hull's existing ones instead of silently deleting them the moment it goes through a
+        // build/definition round trip.
+        var cameras = def.Devices.Where(d => d.Kind == CustomDeviceKind.Camera)
+            .Select((d, i) => new HullCamera($"camera-{i + 1}", RoomIdAt(rooms, d), d.X, d.Y, d.CameraSide ?? CameraMountSide.Aft))
+            .ToList();
+        var componentMounts = def.Devices.Where(d => d.Kind == CustomDeviceKind.ComponentMount)
+            .Select((d, i) => new ComponentMount($"mount-{i + 1}", RoomIdAt(rooms, d), d.X, d.Y, d.TargetDoorId))
+            .ToList();
 
         // Unlike CardTable, genuinely optional - a hull the player never dropped one onto simply
         // has no jukebox at all rather than an auto-placed fallback.
@@ -60,11 +88,30 @@ public sealed partial class Ship
 
         return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks,
-            helmConsole.Position, helmConsole.RoomId, cardTable, def.ForwardDegrees, jukebox: jukebox);
+            helmConsole.Position, helmConsole.RoomId, cardTable, def.ForwardDegrees, componentMounts: componentMounts, jukebox: jukebox,
+            reactorDeviceCount: reactorDeviceCount, distributionDeviceCount: distributionDeviceCount,
+            helmDeviceCount: helmDeviceCount, navigationDeviceCount: navigationDeviceCount,
+            extraHelmConsoles: extraHelmConsoles, extraNavigationConsoles: extraNavigationConsoles,
+            extraReactorPositions: extraReactorPositions, extraDistributionPositions: extraDistributionPositions);
     }
 
     private static string RoomIdAt(List<Room> rooms, CustomDeviceDef device) =>
         rooms.First(r => r.Contains(new Vec2(device.X, device.Y))).Id;
+
+    private static string RoomIdAt(List<Room> rooms, Vec2 position) =>
+        rooms.First(r => r.Contains(position)).Id;
+
+    // Content-каталог отсеков - the one shared shape every "bonus, not list" device kind (Reactor,
+    // Distribution, Helm, Navigation - Ship.cs's own doc comment) follows: the FIRST device of a
+    // kind becomes the one physical fixture (built separately, above), every device AFTER it is a
+    // bonus-only extra whose own real position still has to survive Ship.ToDefinition()'s round
+    // trip (this session's own bug: Reactor/Distribution used to lose that position and collapse
+    // onto the fixture's own, so M63's structural detachment could never remove a bonus reactor by
+    // destroying the room it actually lived in). Route any FUTURE bonus-only device kind through
+    // this helper rather than a fresh hand-rolled Where/Skip(1) - that hand-rolling is exactly how
+    // Reactor/Distribution lost their positions in the first place.
+    private static List<Vec2> ExtraPositionsOfKind(CustomShipDefinition def, CustomDeviceKind kind) =>
+        def.Devices.Where(d => d.Kind == kind).Skip(1).Select(d => new Vec2(d.X, d.Y)).ToList();
 
     private static List<Door> BuildDoors(CustomShipDefinition def)
     {
@@ -147,7 +194,11 @@ public sealed partial class Ship
         return blocks;
     }
 
-    private static bool IsUnitCovered(IReadOnlyList<CustomRoomDef> rooms, CustomRoomDef room, EdgeSide side, int unitStart)
+    // unitStart: float, not int (M60 follow-up) - a half-unit hand-authored hull (Ship.Corvette.cs)
+    // round-tripped through a CustomShipDefinition walks this in 1-unit steps starting from a
+    // fractional room edge (e.g. 4.5, 5.5, ...), same as Ship.cs's own GenerateOuterWallBlocks
+    // already does directly - this just needed to stop assuming the start was always whole.
+    private static bool IsUnitCovered(IReadOnlyList<CustomRoomDef> rooms, CustomRoomDef room, EdgeSide side, float unitStart)
     {
         foreach (var other in rooms)
         {
@@ -183,7 +234,8 @@ public sealed partial class Ship
         {
             var placed = def.Devices.Where(d => d.Kind == kind).ToList();
             for (var i = 0; i < placed.Count; i++)
-                devices.Add(new ShipSystemDevice($"system-{system}-{i + 1}".ToLowerInvariant(), RoomIdAt(rooms, placed[i]), placed[i].X, placed[i].Y, system));
+                devices.Add(new ShipSystemDevice($"system-{system}-{i + 1}".ToLowerInvariant(), RoomIdAt(rooms, placed[i]), placed[i].X, placed[i].Y, system,
+                    ThrustBonus: placed[i].ThrustBonus, TurnBonus: placed[i].TurnBonus, CapacityBonus: placed[i].CapacityBonus));
         }
         return devices;
     }
@@ -192,22 +244,30 @@ public sealed partial class Ship
     {
         var turrets = new List<Turret>();
         var index = 0;
-        foreach (var device in def.Devices.Where(d => d.Kind is CustomDeviceKind.TurretBallistic or CustomDeviceKind.TurretLaser))
+        foreach (var device in def.Devices.Where(d => d.Kind is CustomDeviceKind.TurretBallistic or CustomDeviceKind.TurretLaser or CustomDeviceKind.TurretMachineGun))
         {
             var roomId = RoomIdAt(rooms, device);
-            // The editor's own placeable catalog (CustomDeviceKind) still only offers these two slots
-            // - the Magnetic cannon just sits behind the same "ballistic" icon it always has, MachineGun
-            // isn't a placeable option here (it's the Cruiser's own hand-authored 3rd turret for now).
-            turrets.Add(device.Kind == CustomDeviceKind.TurretBallistic
-                ? new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
+            // The editor's own placeable catalog (CustomDeviceKind) still only offers the first two
+            // slots - the Magnetic cannon just sits behind the same "ballistic" icon it always has.
+            // TurretMachineGun (M60 follow-up) isn't offered by the editor either, but round-trips
+            // the Cruiser's own hand-authored 3rd turret (Ship.Cruiser.cs) instead of dropping it.
+            turrets.Add(device.Kind switch
+            {
+                CustomDeviceKind.TurretBallistic => new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
                     DamagePerShot: TurretBalance.MagneticDamage, CooldownSeconds: TurretBalance.MagneticCooldownSeconds,
                     WeaponType: TurretWeaponType.Magnetic, MagazineCapacity: TurretBalance.MagneticMagazineCapacity,
-                    MountSide: device.MountSide)
-                : new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
+                    MountSide: device.MountSide),
+                CustomDeviceKind.TurretMachineGun => new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
+                    DamagePerShot: TurretBalance.MachineGunDamagePerPellet, CooldownSeconds: TurretBalance.MachineGunCooldownSeconds,
+                    WeaponType: TurretWeaponType.MachineGun, MagazineCapacity: TurretBalance.MachineGunMagazineCapacity,
+                    PelletsPerBurst: TurretBalance.MachineGunPelletsPerBurst, PelletSpreadDegrees: TurretBalance.MachineGunPelletSpreadDegrees,
+                    MountSide: device.MountSide),
+                _ => new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
                     DamagePerShot: TurretBalance.LaserDamagePerTick, CooldownSeconds: TurretBalance.LaserTickIntervalSeconds,
                     WeaponType: TurretWeaponType.Laser, MaxCharge: TurretBalance.LaserMaxCharge,
                     ChargePerShot: TurretBalance.LaserChargePerTick,
-                    RechargePerPowerUnitPerSecond: TurretBalance.LaserRechargePerPowerUnitPerSecond, MountSide: device.MountSide));
+                    RechargePerPowerUnitPerSecond: TurretBalance.LaserRechargePerPowerUnitPerSecond, MountSide: device.MountSide),
+            });
         }
         return turrets;
     }

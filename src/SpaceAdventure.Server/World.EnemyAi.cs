@@ -12,7 +12,7 @@ public sealed partial class World
     // now, see ApplyEnemyAttack below) - this stays for whatever else in combat still wants a die
     // roll (dodge decisions, World.EnemyFleet.cs).
     private static int _seedCounter;
-    private readonly Random _random = new(Interlocked.Increment(ref _seedCounter) * 104729);
+    private readonly Random _random = new(DebugNextSeedComponent(ref _seedCounter) * 104729);
 
     // How wide a target box each kind of hittable fixture presents to an incoming shot - all in the
     // same ship-local ("layout") frame as WallBlock.Position/Turret.PeriscopePosition/

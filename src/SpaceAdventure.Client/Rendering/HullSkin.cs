@@ -129,7 +129,7 @@ public static partial class HullSkin
         var spans = new List<(float Aft, float From, float To)>();
         foreach (var room in rooms)
         {
-            var center = new Vector2(room.Center.X, room.Center.Y);
+            var center = new Vector2((float)room.Center.X, (float)room.Center.Y);
             var half = new Vector2(room.Width, room.Height) / 2f;
             var lateral = Vector2.Dot(center, side);
             var reach = MathF.Abs(Vector2.Dot(half, side));
@@ -204,7 +204,7 @@ public static partial class HullSkin
 
         foreach (var room in rooms)
         {
-            var center = new Vector2(room.Center.X, room.Center.Y);
+            var center = new Vector2((float)room.Center.X, (float)room.Center.Y);
             var half = new Vector2(room.Width, room.Height) / 2f;
             var lateral = Vector2.Dot(center, side);
             var reach = MathF.Abs(Vector2.Dot(half, side));
@@ -603,7 +603,7 @@ public static partial class HullSkin
         var bestReach = float.NegativeInfinity;
         foreach (var room in rooms)
         {
-            var reach = Vector2.Dot(new Vector2(room.Center.X, room.Center.Y), bow)
+            var reach = Vector2.Dot(new Vector2((float)room.Center.X, (float)room.Center.Y), bow)
                         + MathF.Abs(Vector2.Dot(new Vector2(room.Width, room.Height) / 2f, bow));
             if (reach > bestReach)
             {
@@ -635,11 +635,11 @@ public static partial class HullSkin
     private static Vector2 HullCenter(IReadOnlyList<Room> rooms, Vector2 origin)
     {
         var center = ShipLocalFrame.GetHullCenter(rooms);
-        return origin + new Vector2(center.X, center.Y) * ShipRenderer.PixelsPerUnit;
+        return origin + new Vector2((float)center.X, (float)center.Y) * ShipRenderer.PixelsPerUnit;
     }
 
     private static Vector2 RoomCenter(Room room, Vector2 origin) =>
-        origin + new Vector2(room.Center.X, room.Center.Y) * ShipRenderer.PixelsPerUnit;
+        origin + new Vector2((float)room.Center.X, (float)room.Center.Y) * ShipRenderer.PixelsPerUnit;
 
     private static Rectangle RoomRect(Room room, Vector2 origin) => new(
         (int)(origin.X + room.X * ShipRenderer.PixelsPerUnit),

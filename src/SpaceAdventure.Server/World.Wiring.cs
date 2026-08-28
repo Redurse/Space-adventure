@@ -111,8 +111,7 @@ public sealed partial class World
             // through to PowerSystemId's default (Oxygen) would mislabel it in the Connections panel.
             var system = Ship.SystemDevices.FirstOrDefault(d => d.Id == deviceId)?.System
                 ?? (Ship.Cameras.Any(cam => cam.Id == deviceId) ? PowerSystemId.Secondary : default);
-            var (percent, tickPosition) = GetSystemRepairDisplay(c.Id);
-            return new ShipSystemState(c.Id, system, IsJunctionDamaged(c.Id), percent, tickPosition);
+            return new ShipSystemState(c.Id, system, IsJunctionDamaged(c.Id), GetSystemRepairDisplay(c.Id));
         }).ToArray();
 
     // Damages a specific wire (the enemy AI's system-damage roll, World.EnemyAi.cs, and tests use

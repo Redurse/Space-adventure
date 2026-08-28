@@ -100,7 +100,7 @@ public sealed class BoardingRenderer
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && c.OnEnemyShip))
         {
             var facing = new Vector2(character.FacingX, character.FacingY);
-            var center = origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit;
+            var center = origin + new Vector2((float)character.X, (float)character.Y) * ShipRenderer.PixelsPerUnit;
             var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.Cutter, character.Inventory, center, facing)
                 ?? center + ShipRenderer.HeldToolOffset(facing);
             FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);
@@ -109,7 +109,7 @@ public sealed class BoardingRenderer
         foreach (var character in snapshot.Characters.Where(c => c.Welding && c.OnEnemyShip))
         {
             var facing = new Vector2(character.FacingX, character.FacingY);
-            var center = origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit;
+            var center = origin + new Vector2((float)character.X, (float)character.Y) * ShipRenderer.PixelsPerUnit;
             var muzzle = ShipRenderer.GetHeldToolMuzzle(ItemType.WeldingTool, character.Inventory, center, facing)
                 ?? center + ShipRenderer.HeldToolOffset(facing);
             FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);

@@ -26,6 +26,21 @@ public sealed class StarSystem
     // controlling faction's do (World.Voyage.cs's Arrive).
     public FactionId? ControllingFaction { get; }
 
+    // The star, its planets, and any moons (M50 - CelestialBody.cs) - generated once here, purely
+    // from this system's own Id, the same determinism AsteroidField's own belts already rely on.
+    // Never mutated: a body's actual position at any moment is CelestialBodyGenerator.PositionAt,
+    // a pure function of time, not something stored per-tick.
+    public IReadOnlyList<CelestialBody> Bodies { get; }
+    public IReadOnlyDictionary<string, CelestialBody> BodiesById { get; }
+
+    // How far from the field's own centre the ship has to fly before a jump becomes possible
+    // (World.StarSystems.cs's CanWarpNow) - kept at the same fraction of the field's own half-size
+    // this constant has always used (2208/2400 = 0.92, from the field's own doubling history
+    // before per-system sizing existed), just derived from THIS system's own (possibly much
+    // bigger, body-driven) field instead of a single shared constant.
+    public const float WarpZoneRadiusFraction = 0.92f;
+    public float WarpZoneRadius => (float)(Field.Center.X * WarpZoneRadiusFraction);
+
     public StarSystem(string id, string name, IReadOnlyList<GalaxyPoint> points, AsteroidField field,
         float galaxyX = 0f, float galaxyY = 0f, FactionId? controllingFaction = null)
     {
@@ -38,5 +53,7 @@ public sealed class StarSystem
         GalaxyX = galaxyX;
         GalaxyY = galaxyY;
         ControllingFaction = controllingFaction;
+        Bodies = CelestialBodyGenerator.Generate(id);
+        BodiesById = Bodies.ToDictionary(b => b.Id);
     }
 }

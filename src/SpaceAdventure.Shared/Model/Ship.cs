@@ -39,6 +39,37 @@ public sealed partial class Ship
     // ship's own unrotated frame.
     public float ForwardDegrees { get; }
 
+    // Content-каталог отсеков ("бонус, не список" - see the plan's own design note): the ONE literal
+    // ReactorBlock/DistributionBlock/HelmConsole/NavigationConsole object stays exactly that even
+    // once a player builds a second reactor/bridge room - Ship.Custom.cs's FromCustomDefinition still
+    // only ever constructs a physical object from the FIRST device of each kind. These counts are
+    // what let the extra ones still contribute a numeric bonus (World.ShipBuilding.cs's own
+    // RecomputeDeviceBonuses) - and, just as importantly, what let Ship.ToDefinition() round-trip the
+    // count losslessly (emitting one CustomDeviceDef per counted instance, not just one) so a LATER
+    // unrelated build/demolish doesn't silently collapse the bonus back down to 1 the next time the
+    // hull passes through ToDefinition()->FromCustomDefinition(). Every hand-authored hull (Ship.cs/
+    // Ship.Scout.cs/Ship.Cruiser.cs/Ship.Corvette.cs) never sets these explicitly, so they default to
+    // the correct "exactly one" - zero behavior change for any existing fixed-class hull.
+    public int ReactorDeviceCount { get; }
+    public int DistributionDeviceCount { get; }
+    public int HelmDeviceCount { get; }
+    public int NavigationDeviceCount { get; }
+    // Extra bridge/cockpit rooms beyond the first (content-каталог отсеков): reuses HelmConsole/
+    // NavigationConsole's own record shape as a plain seat position, not a second physical,
+    // damageable fixture - World.Interact.cs/World.Scanner.cs treat proximity to ANY of these the
+    // same as proximity to the primary HelmConsole/NavigationConsole above.
+    public IReadOnlyList<HelmConsole> ExtraHelmConsoles { get; }
+    public IReadOnlyList<NavigationConsole> ExtraNavigationConsoles { get; }
+    // Extra reactor/distribution rooms beyond the first - a bonus-only device with no seat, so a
+    // plain Vec2 is enough (unlike Helm/Navigation, nothing ever needs to stand at one). Still has
+    // to carry its OWN real position, not just a count: Ship.ToDefinition() (Ship.Convert.cs) needs
+    // it to re-emit the device where it was actually BUILT, not collapsed onto ReactorBlock/
+    // DistributionBlock's own position - otherwise M63's structural detachment (World.ShipDebris.cs's
+    // keptDevices bounds filter) can never tell a bonus reactor device apart from the ship's original
+    // one, and destroying the bonus room's own wall blocks would never actually remove its device.
+    public IReadOnlyList<Vec2> ExtraReactorPositions { get; }
+    public IReadOnlyList<Vec2> ExtraDistributionPositions { get; }
+
     private readonly Dictionary<string, Room> _roomsById;
 
     public Ship(
@@ -62,9 +93,25 @@ public sealed partial class Ship
         CardTable cardTable,
         float forwardDegrees = 0f,
         IReadOnlyList<ComponentMount>? componentMounts = null,
-        Jukebox? jukebox = null)
+        Jukebox? jukebox = null,
+        int reactorDeviceCount = 1,
+        int distributionDeviceCount = 1,
+        int helmDeviceCount = 1,
+        int navigationDeviceCount = 1,
+        IReadOnlyList<HelmConsole>? extraHelmConsoles = null,
+        IReadOnlyList<NavigationConsole>? extraNavigationConsoles = null,
+        IReadOnlyList<Vec2>? extraReactorPositions = null,
+        IReadOnlyList<Vec2>? extraDistributionPositions = null)
     {
         ForwardDegrees = forwardDegrees;
+        ReactorDeviceCount = reactorDeviceCount;
+        DistributionDeviceCount = distributionDeviceCount;
+        HelmDeviceCount = helmDeviceCount;
+        NavigationDeviceCount = navigationDeviceCount;
+        ExtraHelmConsoles = extraHelmConsoles ?? Array.Empty<HelmConsole>();
+        ExtraNavigationConsoles = extraNavigationConsoles ?? Array.Empty<NavigationConsole>();
+        ExtraReactorPositions = extraReactorPositions ?? Array.Empty<Vec2>();
+        ExtraDistributionPositions = extraDistributionPositions ?? Array.Empty<Vec2>();
         ComponentMounts = componentMounts ?? Array.Empty<ComponentMount>();
         Jukebox = jukebox;
         Rooms = rooms;

@@ -42,7 +42,15 @@ internal static partial class TestRunner
 
         MoveCharacterTo(world, 1, 6.75f, 0.9f); // helm console
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
-        for (var i = 0; i < 8 * 30; i++)
+        // 2s of full burn, not the full 8s this used to run for: the asteroid belt around
+        // "asteroid-field-epsilon" now genuinely orbits (M58 follow-up - World.Tick actually
+        // advancing means asteroid positions aren't frozen at their spawn instant any more), and a
+        // rock happens to drift into this straight-line course by ~second 3, trapping the ship in a
+        // repeated hull-collision stall well before the check below ever runs. The dot product this
+        // test cares about already converges to ~0.9999 by well under 2s (verified via a scratch
+        // trace), so a shorter, obstacle-free burn checks the exact same thing without depending on
+        // where a real, moving asteroid happens to be by second 8.
+        for (var i = 0; i < 2 * 30; i++)
         {
             world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
             world.Step(RealtimeStep);

@@ -287,7 +287,7 @@ internal static partial class TestRunner
         {
             var console = world.Ship.HelmConsole.Position;
             MoveCharacterTo(world, playerId, 3f, 3f); // corridor -> reactor -> cockpit, at the doors' shared height
-            MoveCharacterTo(world, playerId, console.X, console.Y);
+            MoveCharacterTo(world, playerId, (float)console.X, (float)console.Y);
             world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
         }
 
@@ -317,8 +317,22 @@ internal static partial class TestRunner
     {
         FlyToward(world, target, () => NearPosition(world, target, 10f), playerId);
         world.ApplyCommand(playerId, new ClientCommand(playerId, HelmStabilizePressed: true));
-        for (var i = 0; i < 10 * 30; i++)
+        // How long this actually takes now depends on how fast the ship got going on the way here
+        // (World.Gravity.cs's dynamic speed cap, M50, can sit far above the old flat ArcMaxSpeed) -
+        // and EXACT zero is no longer reachable even in principle anywhere in the field: real
+        // gravity (M50) acts unconditionally, so auto-stabilize's own decel and that tick's tiny
+        // gravity nudge settle into a small nonzero steady state rather than ever cancelling to
+        // the bit-for-bit 0f the old, gravity-free physics could actually reach. A tight tolerance
+        // instead - negligible next to any real thrust, easily reached at a spot placed far from
+        // every body (AsteroidField.ClusterCenter) - and callers compare their own "before" reading
+        // against this same tolerance rather than exact equality now.
+        for (var i = 0; i < 200 * 30; i++)
+        {
+            var field = world.CreateSnapshot().ShipField;
+            if (MathF.Abs(field.VelocityX) < 0.01f && MathF.Abs(field.VelocityY) < 0.01f)
+                break;
             world.Step(RealtimeStep);
+        }
 
         // The old autopilot's "guaranteed-stationary arrival" was rotation-locked at 0 too, not
         // just velocity-zeroed - several EVA/hull tests calibrated against this helper assume the
@@ -377,9 +391,11 @@ internal static partial class TestRunner
 
         for (var i = 0; i < maxTicks && !until(); i++)
         {
-            var shipPos = new Vec2(world.CreateSnapshot().ShipField.X, world.CreateSnapshot().ShipField.Y);
+            var shipField = world.CreateSnapshot().ShipField;
+            var shipPos = new Vec2(shipField.X, shipField.Y);
             var steerTarget = AvoidIncidentalHazards(world, shipPos, target, targetPointId);
-            world.ApplyCommand(playerId, SteerToward(world, playerId, steerTarget));
+            var command = SteerToward(world, playerId, steerTarget);
+            world.ApplyCommand(playerId, command);
             world.Step(RealtimeStep);
         }
     }
@@ -477,6 +493,16 @@ internal static partial class TestRunner
 
         if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == playerId).IsAtHelm)
             world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
+
+        // A modest baseline of Engine power (M50) - without it, auto-stabilize's own decel scales
+        // to zero (World.ShipField.cs's enginePowerScale), leaving real gravity (World.Gravity.cs)
+        // as the only surviving term for however long the fight actually runs; several callers here
+        // step for minutes of simulated time, long enough for even a small unopposed pull to carry
+        // the ship a real distance. A real crew would have some power allocated before picking a
+        // fight, not none at all, so this is realistic setup, not a workaround.
+        world.ApplyCommand(playerId, new ClientCommand(playerId, PowerSystemIndex: 1, PowerDirection: 1f));
+        for (var i = 0; i < 30; i++)
+            world.Step(RealtimeStep);
     }
 
     private static void StepFor(World world, int ticks)
@@ -491,7 +517,7 @@ internal static partial class TestRunner
     {
         var shipField = world.CreateSnapshot().ShipField;
         var toTarget = target - new Vec2(shipField.X, shipField.Y);
-        var bearingDegrees = MathF.Atan2(toTarget.Y, toTarget.X) * (180f / MathF.PI) - world.Ship.ForwardDegrees;
+        var bearingDegrees = MathF.Atan2((float)toTarget.Y, (float)toTarget.X) * (180f / MathF.PI) - world.Ship.ForwardDegrees;
         var error = ((bearingDegrees - shipField.RotationDegrees) % 360f + 540f) % 360f - 180f;
         return new ClientCommand(playerId,
             HelmThrottle: MathF.Abs(error) < 25f ? 1f : 0f,

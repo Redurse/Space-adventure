@@ -90,8 +90,15 @@ public sealed class GameClient
         bool jukeboxVolumeUpPressed = false,
         bool jukeboxVolumeDownPressed = false,
         bool fireHeld = false,
-        bool debugSpawnEnemyPressed = false) =>
-        Send(new ClientCommand(PlayerId, move.X, move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, clearOwnRolePressed, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed, scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode, jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed, fireHeld, debugSpawnEnemyPressed));
+        bool debugSpawnEnemyPressed = false,
+        bool toggleLandingPressed = false,
+        int? requestedTimeAccelerationLevel = null,
+        string? engineerFocusDeviceId = null,
+        bool flipHeadingPressed = false,
+        BuildRoomRequest? buildRoom = null,
+        string? demolishRoomId = null,
+        bool debugAddCreditsPressed = false) =>
+        Send(new ClientCommand(PlayerId, (float)move.X, (float)move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, purchaseShipKind, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, clearOwnRolePressed, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed, scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode, jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed, fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, engineerFocusDeviceId, flipHeadingPressed, buildRoom, demolishRoomId, debugAddCreditsPressed));
 
     public void PollSnapshots()
     {

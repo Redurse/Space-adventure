@@ -52,7 +52,7 @@ public static class AsteroidShape
     public static float RadiusAt(Asteroid asteroid, Vec2 fromCenter)
     {
         var factors = RadiusFactors(asteroid.Id);
-        var angle = MathF.Atan2(fromCenter.Y, fromCenter.X);
+        var angle = MathF.Atan2((float)fromCenter.Y, (float)fromCenter.X);
         if (angle < 0)
             angle += MathF.PI * 2f;
 
@@ -79,7 +79,7 @@ public static class AsteroidShape
         var length = offset.Length();
         if (length < 0.0001f)
             return -asteroid.Radius;
-        return length - RadiusAt(asteroid, offset);
+        return (float)length - RadiusAt(asteroid, offset);
     }
 
     // Where a point sits once pulled onto the surface, standing `clearance` clear of the rock.

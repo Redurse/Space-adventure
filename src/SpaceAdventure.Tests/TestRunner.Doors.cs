@@ -50,8 +50,10 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 4.9f, 3f); // right at the door, cockpit side
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
 
-        for (var i = 0; i < 30 * 30; i++) // 30s, comfortably past the ~25s a passive-only repair takes
-            world.Step(RealtimeStep);
+        // World.SystemRepair.cs's own real 12-hour elapsed-time timer - see
+        // World_RepairSystem_RequiresWrenchHeldInHand's own comment on DebugFastForwardAllRepairs.
+        world.DebugFastForwardAllRepairs(13.0 * 3600.0);
+        world.Step(RealtimeStep);
 
         var repaired = !world.IsDoorDestroyed("door-cockpit-reactor");
 
@@ -194,13 +196,33 @@ internal static partial class TestRunner
     // VoyagePhase.AsteroidField to fly into any more (M39) - the field is simply wherever the ship
     // already is once it's undocked - but every EVA/mining target below (ore deposits, asteroid
     // positions) is calibrated relative to the field's own asteroid-dense marker, not wherever the
-    // ship happens to undock, so this still has to actually fly there and stop, the same
-    // guaranteed-stationary arrival the old autopilot gave for free. The old autopilot never
-    // needed a human at the helm either, so the pilot stands back up once stopped - every caller
-    // below expects to walk character 1 off to the airlock/suit locker right after this.
+    // ship happens to undock, so this still needs the ship to actually be at rest there, the same
+    // guaranteed-stationary arrival the old autopilot gave for free.
+    //
+    // Used to fly there for real (FlyNearAndStop) - same M53 KSP-scale problem
+    // EnterAsteroidFieldAndManHelm's own doc comment describes: the marker (AsteroidField.
+    // ClusterCenter) now sits far enough out that FlyToward's tick budget stopped reaching it. None
+    // of these EVA/mining callers are testing FLIGHT itself, only needing "at rest at the marker" as
+    // scaffolding, so this teleports there directly instead (World.DebugPlaceShip). The old
+    // autopilot never needed a human at the helm either, so the pilot stands back up once placed -
+    // every caller below expects to walk character 1 off to the airlock/suit locker right after this.
     private static void EnterAsteroidFieldStationary(World world)
     {
-        FlyNearAndStop(world, world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position, 1);
+        if (world.IsDocked)
+        {
+            world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+            world.Step(RealtimeStep);
+        }
+
+        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
+        for (var i = 0; i < 60; i++)
+            world.Step(RealtimeStep);
+
+        SitAtHelm(world, 1);
+        world.DebugPlaceShip(world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position);
+        world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+        world.Step(RealtimeStep);
+
         if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsAtHelm)
             world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
     }
@@ -302,7 +324,7 @@ internal static partial class TestRunner
     {
         const float doorRow = 3f;
         var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        MoveCharacterTo(world, 1, me.X, doorRow);
+        MoveCharacterTo(world, 1, (float)me.X, doorRow);
         MoveCharacterTo(world, 1, x, doorRow);
         MoveCharacterTo(world, 1, x, y);
     }

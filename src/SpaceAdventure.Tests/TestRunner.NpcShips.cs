@@ -30,9 +30,8 @@ internal static partial class TestRunner
         if (cargoId is null)
             return false; // setup problem - sol has multiple stations, so a Cargo hull must exist
 
-        var stationPositions = world.GalaxyMap.GetSystem("sol").Points
+        var stationPoints = world.GalaxyMap.GetSystem("sol").Points
             .Where(p => p.Kind == GalaxyPointKind.Station)
-            .Select(p => p.Position)
             .ToArray();
         var visitedStations = new HashSet<int>();
 
@@ -47,8 +46,12 @@ internal static partial class TestRunner
             if (cargo is null)
                 return false; // ambient hulls never die on their own
             var here = new Vec2(cargo.X, cargo.Y);
-            for (var s = 0; s < stationPositions.Length; s++)
-                if ((stationPositions[s] - here).Length() < 16f)
+            // Resolved fresh every tick, not once up front - a hosted station's own live position
+            // (M52/M53) drifts continuously with its host planet's orbit (and its own sweep around
+            // it), so a position snapshotted once at the start of this 60-simulated-minute window
+            // would drift arbitrarily far from the real, current one well before the loop ends.
+            for (var s = 0; s < stationPoints.Length; s++)
+                if ((world.ResolveGalaxyPointPosition(stationPoints[s]) - here).Length() < 16f)
                     visitedStations.Add(s);
         }
 

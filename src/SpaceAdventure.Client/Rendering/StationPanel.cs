@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -96,6 +98,36 @@ public sealed class StationPanel
         return new Rectangle((int)origin.X, (int)origin.Y, RowWidth + 120, RowHeight - 2);
     }
 
+    // M61 - "снести отсек": no per-room picker yet (same "later milestone" deferral M60's own build
+    // placement made), just one button that demolishes whichever player-built room has the highest
+    // "room-N" suffix - the single most-recently-built one, the only one there usually is to undo.
+    // Sits right below the hull-swap rows and a small gap - the old flat "Построить отсек" list that
+    // used to sit between them moved out to StationBuildPanel (content-каталог отсеков's own
+    // bottom-of-screen category/module UI).
+    private const int DemolishRowOffset = 5; // PurchasableShipKinds.Length(3) + a 2-row gap
+    public static Rectangle GetDemolishLastRoomRect(Vector2 panelOrigin)
+    {
+        var origin = panelOrigin + TradeListOrigin + new Vector2(0, DemolishRowOffset * RowHeight);
+        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth + 120, RowHeight - 2);
+    }
+
+    // Same id-suffix convention World.ShipBuilding.cs's own NextRoomId/Game1.ShipEditor.cs's
+    // NextRoomCounter already use - the highest surviving "room-N" id is the most recently built
+    // room (ids are never reused once freed, so this stays correct even after an earlier demolish).
+    public static string? LastBuiltRoomId(IReadOnlyList<Room> rooms)
+    {
+        string? best = null;
+        var bestN = -1;
+        foreach (var room in rooms)
+        {
+            if (!room.Id.StartsWith("room-") || !int.TryParse(room.Id.AsSpan(5), out var n) || n <= bestN)
+                continue;
+            bestN = n;
+            best = room.Id;
+        }
+        return best;
+    }
+
     // Shown as a small HUD panel (like ReactorPanel/PowerPanel) once the player clicks an NPC
     // physically standing in a station room (StationRenderer draws the room/NPCs themselves) -
     // the sub-lists below (trade/quest/upgrade) are unchanged from when this used to be a
@@ -184,6 +216,22 @@ public sealed class StationPanel
             }
 
             spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), color, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        }
+
+        // Содержательный каталог отсеков's own build UI (StationBuildPanel, the bottom-of-screen
+        // category tabs + module row) replaced this panel's old flat "Построить отсек" text list -
+        // Game1.cs's Draw shows that panel instead, right alongside this one, whenever the player's
+        // talking to the Shipwright. Only "снести" (M61) is still this panel's own job.
+        var platingOrigin = panelOrigin + TradeListOrigin + new Vector2(0, (DemolishRowOffset - 1) * RowHeight - 4);
+        spriteBatch.DrawString(_font, $"Обшивка в трюме: {snapshot.HullPlatingStock}", platingOrigin, Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        // M61 - only shown once there's actually a player-built room to demolish.
+        if (LastBuiltRoomId(snapshot.Rooms) is { } lastRoomId)
+        {
+            var demolishRect = GetDemolishLastRoomRect(panelOrigin);
+            var roomName = snapshot.Rooms.First(r => r.Id == lastRoomId).Name;
+            spriteBatch.DrawString(_font, $"Снести «{roomName}»", new Vector2(demolishRect.X, demolishRect.Y),
+                Color.OrangeRed, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
         }
     }
 

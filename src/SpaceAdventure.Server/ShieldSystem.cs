@@ -6,9 +6,15 @@ namespace SpaceAdventure.Server;
 // than a free default.
 public sealed class ShieldSystem
 {
-    public const float MaxPoints = 100f;
+    private const float BaseMaxPoints = 100f;
     private const float DamagePerHit = 34f; // ~3 absorbed attacks to fully deplete
     private const float RechargePerPowerUnitPerSecond = 0.4f; // full power (60) ~= 24/sec
+
+    // Content-каталог отсеков - a shield-generator room's own contribution, summed in World.
+    // ShipBuilding.cs's RecomputeDeviceBonuses (same "bonus, not a second physical object" shape as
+    // Reactor.OutputBonus). 0 by default - zero change for any hull that never builds one.
+    public float CapacityBonus { get; set; }
+    public float MaxPoints => BaseMaxPoints + CapacityBonus;
 
     public float Points { get; private set; }
 

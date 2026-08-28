@@ -463,10 +463,45 @@ public partial class Game1
 
     // The host is a player like any other - their own session is the same SoloSession solo mode
     // uses, with the listen socket as the only difference.
+    //
+    // Constructing SoloSession means constructing GameServer means constructing World means
+    // GalaxyMap.CreateStarter() (World.Voyage.cs's own field initializer) - which, since real
+    // celestial bodies/belt asteroids (M50) replaced the near-free stub every procedural system
+    // used to be, now does genuinely non-trivial work generating however many systems it takes for
+    // every hand-authored system to have its own starting neighbours. Done inline this used to
+    // freeze the window (no repaint at all - Update/Draw simply don't run again until the
+    // constructor returns) for however long that took. Run on a background Task instead - Update/
+    // Draw keep running every frame on a loading screen (Game1.cs) while _pendingSession is live,
+    // polling GalaxyMap.Current's own live progress, exactly the way the embedded server's tick
+    // loop already runs on its own background thread once the session exists.
+    private System.Threading.Tasks.Task<SoloSession>? _pendingSession;
+
     private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom, CustomShipDefinition? customShip = null, bool isTutorial = false)
     {
-        var session = new SoloSession(shipKind, loadFrom,
-            _openToNetwork ? SpaceAdventure.Shared.Networking.Wire.DefaultPort : null, customShip, isTutorial);
+        var openToNetwork = _openToNetwork;
+        _pendingSession = Task.Run(() => new SoloSession(shipKind, loadFrom,
+            openToNetwork ? SpaceAdventure.Shared.Networking.Wire.DefaultPort : null, customShip, isTutorial));
+    }
+
+    // Polled every frame from Update while _pendingSession is running (Game1.cs) - finishes the
+    // exact same setup StartHostedSession used to do synchronously, the instant the background
+    // construction completes.
+    private void FinishPendingSessionIfReady()
+    {
+        if (_pendingSession is not { IsCompleted: true } task)
+            return;
+        _pendingSession = null;
+
+        if (task.IsFaulted)
+        {
+            // Whatever actually failed (a corrupt save, most plausibly) already has nowhere good to
+            // surface to mid-load - falling back to the main menu is the same recovery a network
+            // join failure already gets (Game1.Menu.cs's HandleJoinScreen), rather than taking the
+            // whole process down on an exception that happened on a background thread.
+            return;
+        }
+
+        var session = task.Result;
         _session = session;
         _client = new GameClient(session.Connection, session.PlayerId);
         _sessionStarted = true;

@@ -232,6 +232,41 @@ internal static partial class TestRunner
         ("World_Shipyard_Buy_FailsWithoutEnoughCredits", World_Shipyard_Buy_FailsWithoutEnoughCredits),
         ("World_Shipyard_Buy_FailsWhileNotDocked", World_Shipyard_Buy_FailsWhileNotDocked),
         ("World_Shipyard_SwapKeepsCreditsAndClearsBreaches", World_Shipyard_SwapKeepsCreditsAndClearsBreaches),
+        ("World_ShipBuilding_BuildsWhenRequested_AddsRoomAndDeductsCreditsAndPlating", World_ShipBuilding_BuildsWhenRequested_AddsRoomAndDeductsCreditsAndPlating),
+        ("World_ShipBuilding_BuildIsNotInstant_ShowsAsPendingGhostUntilComplete", World_ShipBuilding_BuildIsNotInstant_ShowsAsPendingGhostUntilComplete),
+        ("World_ShipBuilding_SucceedsWhileUndockedAndAwayFromAnyShipwright", World_ShipBuilding_SucceedsWhileUndockedAndAwayFromAnyShipwright),
+        ("World_ShipBuilding_FailsWithoutEnoughCredits", World_ShipBuilding_FailsWithoutEnoughCredits),
+        ("World_ShipBuilding_FailsWithoutEnoughPlating", World_ShipBuilding_FailsWithoutEnoughPlating),
+        ("World_ShipBuilding_FailsForUnknownCatalogId", World_ShipBuilding_FailsForUnknownCatalogId),
+        ("World_ShipBuilding_SecondPendingBuild_DoesNotOverlapTheFirstGhost", World_ShipBuilding_SecondPendingBuild_DoesNotOverlapTheFirstGhost),
+        ("World_ShipBuilding_ExplicitPosition_BuildsExactlyThere", World_ShipBuilding_ExplicitPosition_BuildsExactlyThere),
+        ("World_ShipBuilding_ExplicitPosition_RefusesFloatingPlacementWithoutCharge", World_ShipBuilding_ExplicitPosition_RefusesFloatingPlacementWithoutCharge),
+        ("World_ShipBuilding_NewRoomOxygenAndDoorsInitialize", World_ShipBuilding_NewRoomOxygenAndDoorsInitialize),
+        ("World_ShipBuilding_ToDefinitionRoundTrip_PreservesEveryHandAuthoredHull", World_ShipBuilding_ToDefinitionRoundTrip_PreservesEveryHandAuthoredHull),
+        ("RoomGraphConnectivity_DetectsConnectedAndDisconnectedGraphs", RoomGraphConnectivity_DetectsConnectedAndDisconnectedGraphs),
+        ("World_ShipBuilding_BuildRoom_PreservesExistingWireDamage", World_ShipBuilding_BuildRoom_PreservesExistingWireDamage),
+        ("World_ShipBuilding_BuildRoom_PreservesWallBlockHpAndInitializesNewRoom", World_ShipBuilding_BuildRoom_PreservesWallBlockHpAndInitializesNewRoom),
+        ("World_ShipBuilding_BuildRoom_PreservesClosedDoorState", World_ShipBuilding_BuildRoom_PreservesClosedDoorState),
+        ("World_ShipBuilding_DemolishRoom_RemovesTheRoom", World_ShipBuilding_DemolishRoom_RemovesTheRoom),
+        ("World_ShipBuilding_DemolishRoom_BlockedWhenRoomHoldsSoleReactor", World_ShipBuilding_DemolishRoom_BlockedWhenRoomHoldsSoleReactor),
+        ("World_ShipBuilding_DemolishRoom_FailsWhenNotDocked", World_ShipBuilding_DemolishRoom_FailsWhenNotDocked),
+        ("World_ShipBuilding_DemolishRoom_FailsAtStationWithoutShipwright", World_ShipBuilding_DemolishRoom_FailsAtStationWithoutShipwright),
+        ("World_ShipDebris_DestroyingRoomsOwnWallBlocks_DetachesItAsDebris", World_ShipDebris_DestroyingRoomsOwnWallBlocks_DetachesItAsDebris),
+        ("World_ShipDebris_DriftsByInertiaAfterDetaching", World_ShipDebris_DriftsByInertiaAfterDetaching),
+        ("World_ShipDebris_EjectsCrewAndDropsItemsWhenRoomDetaches", World_ShipDebris_EjectsCrewAndDropsItemsWhenRoomDetaches),
+        ("World_ShipDebris_DestroyingReactorRoom_StaysAttachedNoDebris", World_ShipDebris_DestroyingReactorRoom_StaysAttachedNoDebris),
+        ("World_ShipDebris_DestroyingRoomThatWouldInvalidateTheHull_StaysAttached", World_ShipDebris_DestroyingRoomThatWouldInvalidateTheHull_StaysAttached),
+        ("World_ContentCatalog_ReactorRoom_IncreasesOutputBonus", World_ContentCatalog_ReactorRoom_IncreasesOutputBonus),
+        ("World_ContentCatalog_TwoReactorRooms_BonusesSum", World_ContentCatalog_TwoReactorRooms_BonusesSum),
+        ("World_ContentCatalog_DestroyingReactorRoom_LowersBonusBack", World_ContentCatalog_DestroyingReactorRoom_LowersBonusBack),
+        ("World_ContentCatalog_ShieldGeneratorRoom_IncreasesMaxPoints", World_ContentCatalog_ShieldGeneratorRoom_IncreasesMaxPoints),
+        ("World_ContentCatalog_EngineRoom_CarriesThrustBonusOntoADevice", World_ContentCatalog_EngineRoom_CarriesThrustBonusOntoADevice),
+        ("World_ContentCatalog_RcsRoom_CarriesTurnBonusOntoADevice", World_ContentCatalog_RcsRoom_CarriesTurnBonusOntoADevice),
+        ("World_ContentCatalog_TurretRoom_BuildsAWorkingTurret", World_ContentCatalog_TurretRoom_BuildsAWorkingTurret),
+        ("World_ContentCatalog_CameraRoom_BuildsAWorkingCamera", World_ContentCatalog_CameraRoom_BuildsAWorkingCamera),
+        ("World_ContentCatalog_CockpitRoom_AddsExtraHelmAndNavigationConsoles", World_ContentCatalog_CockpitRoom_AddsExtraHelmAndNavigationConsoles),
+        ("World_ContentCatalog_ExtraHelmSeat_LetsACharacterPilot", World_ContentCatalog_ExtraHelmSeat_LetsACharacterPilot),
+        ("CustomShipValidator_AllowsMultipleReactorsHelmsAndNavigationConsoles", CustomShipValidator_AllowsMultipleReactorsHelmsAndNavigationConsoles),
         ("World_Quest_Bounty_CompletesOnKillAndPaysAtIssuer", World_Quest_Bounty_CompletesOnKillAndPaysAtIssuer),
         ("World_Quest_Bounty_TurnIn_FailsBeforeKill", World_Quest_Bounty_TurnIn_FailsBeforeKill),
         ("World_Quest_Mining_ConsumesOreAndPays", World_Quest_Mining_ConsumesOreAndPays),
@@ -341,6 +376,15 @@ internal static partial class TestRunner
         ("Station_Procedural_SamePointIdAlwaysRegeneratesIdentically", Station_Procedural_SamePointIdAlwaysRegeneratesIdentically),
         ("Station_Procedural_DifferentPointIdsGiveDifferentShapes", Station_Procedural_DifferentPointIdsGiveDifferentShapes),
         ("Station_Procedural_ConnectorLandsExactlyOnTheAnchor", Station_Procedural_ConnectorLandsExactlyOnTheAnchor),
+        ("CelestialBodies_SameSystemIdAlwaysProducesIdenticalLayout", CelestialBodies_SameSystemIdAlwaysProducesIdenticalLayout),
+        ("CelestialBodies_PlanetCountWithinAgreedBand", CelestialBodies_PlanetCountWithinAgreedBand),
+        ("CelestialBodies_NoTwoBodiesOverlap", CelestialBodies_NoTwoBodiesOverlap),
+        ("CelestialBodies_BeltGapsAreDeterministicAndWithinCount", CelestialBodies_BeltGapsAreDeterministicAndWithinCount),
+        ("World_PlanetLanding_CanLandNow_TrueWhenTouchingLandableBody_FalseWhenFar", World_PlanetLanding_CanLandNow_TrueWhenTouchingLandableBody_FalseWhenFar),
+        ("World_PlanetLanding_TryLand_EntersSurfaceFieldWithNoGravity", World_PlanetLanding_TryLand_EntersSurfaceFieldWithNoGravity),
+        ("World_PlanetLanding_Obstacles_BlockShipMovement", World_PlanetLanding_Obstacles_BlockShipMovement),
+        ("World_PlanetLanding_TakeOff_ReturnsToSystemFieldNearBodyPosition", World_PlanetLanding_TakeOff_ReturnsToSystemFieldNearBodyPosition),
+        ("World_PlanetLanding_Eva_WalksOnSurfaceAndReturnsInside", World_PlanetLanding_Eva_WalksOnSurfaceAndReturnsInside),
     };
 
     // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via
@@ -349,14 +393,44 @@ internal static partial class TestRunner
     {
     }
 
+    // Every test builds its own fresh World() (sometimes several, in a retry loop) with no shared
+    // mutable state EXCEPT one thing: World.EnemyAi.cs/World.NpcShips.cs seed their own per-instance
+    // combat/NPC RNGs off a shared counter, specifically so a full SEQUENTIAL run stays reproducible
+    // (fixed construction order -> fixed seeds). Running the actual test bodies concurrently is
+    // otherwise safe, but that one seed counter would start racing across threads instead of
+    // following the fixed Tests order, silently turning "unlucky roll" tests flaky.
+    // World.DebugDeterministicSeedBase (set per-thread to this test's own fixed array index, and
+    // reset right after) restores the exact same guarantee under parallel execution - see its own
+    // doc comment in World.cs for why a plain "one fixed seed for the whole test" isn't enough on
+    // its own (a few tests retry `new World()` expecting each attempt to roll differently).
+    // DebugResetSeedSequence() re-zeroes the per-thread call counter each iteration so a given test
+    // always sees the exact same sequence of seeds regardless of which OTHER test last ran on
+    // whichever pooled thread ends up running it this time.
+    //
+    // Only the CONSOLE OUTPUT stays ordered the old way: each slot in `results` is written by
+    // exactly one Task, then printed back in the original `Tests` order afterward, so anyone
+    // grepping/diffing the output sees the same order as the old single-threaded run, just arrives
+    // many times faster.
     public static int Run()
     {
-        int failed = 0;
-        foreach (var (name, test) in Tests)
+        var results = new (bool Ok, string? ExceptionText)[Tests.Length];
+        Parallel.For(0, Tests.Length, i =>
         {
-            bool ok;
-            try { ok = test(); }
-            catch (Exception ex) { ok = false; Console.WriteLine($"  {name}: EXCEPTION {ex}"); }
+            World.DebugDeterministicSeedBase = i;
+            World.DebugDeterministicSeedBase = i;
+            World.DebugResetSeedSequence();
+            try { results[i] = (Tests[i].Run(), null); }
+            catch (Exception ex) { results[i] = (false, ex.ToString()); }
+            finally { World.DebugDeterministicSeedBase = null; }
+        });
+
+        int failed = 0;
+        for (var i = 0; i < Tests.Length; i++)
+        {
+            var name = Tests[i].Name;
+            var (ok, exceptionText) = results[i];
+            if (exceptionText is not null)
+                Console.WriteLine($"  {name}: EXCEPTION {exceptionText}");
 
             Console.WriteLine(ok ? $"OK   {name}" : $"FAIL {name}");
             if (!ok) failed++;

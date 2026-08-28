@@ -17,19 +17,27 @@ namespace SpaceAdventure.Client.Rendering;
 //
 // Split across partials by topic (GalaxyMapPanel.Glyphs.cs's own convention, extended in the same
 // session that added hull cameras): this file holds construction, the shared geometry helpers
-// (ComputeMapOrigin/GetPointRect/ScreenToField/FactionColor), the main Draw() orchestration, and
-// the console's own outer housing/faction-standings/rect-outline helpers. GalaxyMapPanel.Scanner.cs
-// holds the sonar porthole's own geometry/mask/bezel/handle; GalaxyMapPanel.ShipAndStations.cs
-// holds the ship/station schematic markers; GalaxyMapPanel.FieldContent.cs holds the system
-// backdrop/warp ring/asteroid markers/close-range contacts.
+// (ComputeMapOrigin/ScreenToField/FactionColor), the main Draw() orchestration, and the console's
+// own outer housing/faction-standings/rect-outline helpers. GalaxyMapPanel.Scanner.cs holds the
+// sonar porthole's own geometry/mask/bezel/handle; GalaxyMapPanel.ShipAndStations.cs holds the
+// ship/station schematic markers; GalaxyMapPanel.FieldContent.cs holds the system backdrop/warp
+// ring/asteroid markers/close-range contacts.
 public sealed partial class GalaxyMapPanel
 {
     public const float PixelsPerUnit = 6f;
     public const int PointMarkerSize = 20;
 
     private readonly Texture2D _pixel;
+    // "как в KSP" - planets/moons drawn as lit spheres (HudIcons.DrawShadedSphere) instead of flat
+    // FillCircle discs.
+    private readonly Texture2D _softCircle;
+    private readonly Texture2D _shadedSphere;
     private readonly SpriteFont _font;
     private readonly Starfield _starfield;
+    // Where pilotView's free-pan camera anchors the star at panOffset=(0,0) (M52 - "изначально
+    // спавнилась в центре солнечной системы на солнце") - the same design-canvas centre the
+    // starfield backdrop already fills, not a separately hand-picked point.
+    private readonly Vector2 _screenCenter;
 
     // backdrop: the design-canvas area this panel gets drawn into (it takes over the whole
     // ship-interior viewport while open) - the starfield fills exactly that, same idea as
@@ -38,36 +46,28 @@ public sealed partial class GalaxyMapPanel
     {
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
+        _softCircle = HudIcons.CreateSoftCircleTexture(graphicsDevice);
+        _shadedSphere = HudIcons.CreateShadedSphereTexture(graphicsDevice);
         _font = font;
         _starfield = new Starfield(_pixel, backdrop, count: 200);
+        _screenCenter = new Vector2(backdrop.Center.X, backdrop.Center.Y);
     }
 
-    // Auto-fits the map's own bounding box to start right at panelOrigin (before the player's own
-    // zoom/pan camera is applied on top) — used identically by Draw() and by Game1's mouse
-    // hit-testing so click regions always match what's rendered. zoom scales PixelsPerUnit; panOffset
-    // is a raw screen-pixel nudge from right-drag (Game1.cs) - both purely a client view, never sent
-    // to or read from the server.
-    public static Vector2 ComputeMapOrigin(Vector2 panelOrigin, IReadOnlyList<GalaxyPoint> points, float zoom, Vector2 panOffset)
+    // Anchors the STAR (not a bounding box of points, which broke the moment a station could ride
+    // along a moving planet - obsolete now, M59, every point is a fixed coordinate) at screenCenter,
+    // before the player's own zoom/pan camera is applied on top - used identically by Draw() and by
+    // Game1's own zoom-toward-cursor math so both agree on exactly where things land. zoom scales
+    // PixelsPerUnit; panOffset is a raw screen-pixel nudge from right-drag (Game1.cs) - both purely
+    // a client view, never sent to or read from the server.
+    public static Vector2 ComputeMapOrigin(Vector2 screenCenter, Vec2 starPosition, float zoom, Vector2 panOffset)
     {
-        if (points.Count == 0)
-            return panelOrigin + panOffset;
-
-        var minX = points.Min(p => p.X);
-        var minY = points.Min(p => p.Y);
-        return panelOrigin + panOffset - new Vector2(minX, minY) * PixelsPerUnit * zoom;
-    }
-
-    // Marker size stays fixed on screen regardless of zoom - shrinking it with the map would make
-    // distant points progressively harder to click exactly when zooming out to see more of them.
-    public static Rectangle GetPointRect(GalaxyPoint point, Vector2 mapOrigin, float zoom)
-    {
-        var center = mapOrigin + new Vector2(point.X, point.Y) * PixelsPerUnit * zoom;
-        return new Rectangle((int)center.X - PointMarkerSize / 2, (int)center.Y - PointMarkerSize / 2, PointMarkerSize, PointMarkerSize);
+        var scaled = starPosition * (double)PixelsPerUnit * zoom;
+        return screenCenter + panOffset - new Vector2((float)scaled.X, (float)scaled.Y);
     }
 
     // Inverse of the point-placement transform above - what a click on empty map background
     // actually points at in the system's own field space (game_design.md - free-form destination),
-    // rather than one of the fixed markers GetPointRect covers.
+    // rather than one of the fixed markers the map draws.
     public static Vector2 ScreenToField(Vector2 screenPoint, Vector2 mapOrigin, float zoom) =>
         (screenPoint - mapOrigin) / (PixelsPerUnit * zoom);
 
@@ -131,25 +131,23 @@ public sealed partial class GalaxyMapPanel
         // simply not read on this branch - right-drag has nothing left to move here. Game1.cs's own
         // input code calls the same ComputeShipLockedMapOrigin so a click always lands on whatever
         // is actually drawn under the cursor.
-        var mapOrigin = pilotView
-            ? ComputeMapOrigin(panelOrigin, snapshot.GalaxyPoints, zoom, panOffset)
-            : ComputeShipLockedMapOrigin(panelOrigin, snapshot.Voyage.ShipMapPosition, zoom);
-
-        // The field's own centre (StarSystemSummary.Width/Height), not the points' own bounding
-        // box - the sun sits exactly here (M47 - "солнце было в центре"), the same reference point
-        // CanWarpNow itself measures distance from, so the warp ring drawn around it below lines up
-        // with the same spot the server actually gates the jump on, rather than wherever this
-        // system's own points happen to average out to (which drifted off-centre once they were
-        // spread out to use the field's full size instead of huddling near its middle).
+        // The field's own centre (StarSystemSummary.Width/Height), not a bounding box of points -
+        // the sun sits exactly here (M47 - "солнце было в центре"), the same reference point
+        // CanWarpNow itself measures distance from AND (M52) the point pilotView's own free-pan
+        // camera anchors at screen-centre by default.
         var currentSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
-        var fieldCenterScreen = mapOrigin + new Vector2(currentSystem.Width / 2f, currentSystem.Height / 2f) * PixelsPerUnit * zoom;
-        DrawSystemBackdrop(spriteBatch, fieldCenterScreen, zoom, totalSeconds, currentSystem.Id, panelOrigin, pilotView);
+        var fieldCenterReal = new Vec2(currentSystem.Width / 2f, currentSystem.Height / 2f);
+        var mapOrigin = pilotView
+            ? ComputeMapOrigin(_screenCenter, fieldCenterReal, zoom, panOffset)
+            : ComputeShipLockedMapOrigin(panelOrigin, snapshot.Voyage.ShipMapPosition, zoom);
+        DrawSystemBackdrop(spriteBatch, mapOrigin, fieldCenterReal, zoom, totalSeconds, currentSystem.Id, panelOrigin, pilotView);
 
         // The whole edge of the system, not one specific marker (game_design.md - "круг вокруг
         // системы, откуда можно прыгать"): any position past GalaxyMap.WarpZoneRadius from the
         // field's own centre arms the jump - colored gold once CanWarpNow actually agrees, dim
         // purple otherwise.
-        var warpZoneRadiusPixels = GalaxyMap.WarpZoneRadius * PixelsPerUnit * zoom;
+        var fieldCenterScreen = FieldToScreen(mapOrigin, fieldCenterReal, zoom);
+        var warpZoneRadiusPixels = currentSystem.Width / 2f * StarSystem.WarpZoneRadiusFraction * PixelsPerUnit * zoom;
         if (IsRingWithinRadarView(warpZoneRadiusPixels, pilotView))
             DrawWarpZoneRing(spriteBatch, fieldCenterScreen, warpZoneRadiusPixels, snapshot.CanWarpNow, totalSeconds);
 
@@ -163,7 +161,9 @@ public sealed partial class GalaxyMapPanel
             if (point.Kind != GalaxyPointKind.Station)
                 continue;
 
-            var rect = GetPointRect(point, mapOrigin, zoom);
+            // Every point is a plain fixed coordinate now (M59) - no host body to resolve against.
+            var pointScreen = FieldToScreen(mapOrigin, point.Position, zoom);
+            var rect = new Rectangle((int)pointScreen.X - PointMarkerSize / 2, (int)pointScreen.Y - PointMarkerSize / 2, PointMarkerSize, PointMarkerSize);
             if (!IsWithinRadarView(panelOrigin, new Vector2(rect.Center.X, rect.Center.Y), pilotView))
                 continue;
 
@@ -217,13 +217,34 @@ public sealed partial class GalaxyMapPanel
                 Color.LightGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
         }
 
-        var shipCenter = mapOrigin + new Vector2(snapshot.Voyage.ShipMapPosition.X, snapshot.Voyage.ShipMapPosition.Y) * PixelsPerUnit * zoom;
+        // M55 follow-up, second pass - "все еще дергается" even after totalSeconds itself became
+        // smooth: the ship's OWN reported position (snapshot.Voyage.ShipMapPosition) is nothing but
+        // whatever the last-received snapshot said, unchanged for however many render frames pass
+        // before the next one arrives (60fps render against a 30/s tick rate - every snapshot is
+        // shown for roughly two frames, then jumps a whole tick's worth of real motion at once). At
+        // ordinary zoom that jump is a fraction of a pixel; zoomed in on the ship's own hull
+        // schematic it can be tens of pixels, which reads exactly as "дергается". Extrapolating
+        // along the ship's own reported velocity for however long this exact snapshot has already
+        // been on screen (totalSeconds, now smooth, minus the tick this snapshot was actually
+        // taken at) turns that once-per-tick jump into the same continuous glide real client
+        // prediction always uses - cheap and correct to a small fraction of a tick, the only
+        // window this ever needs to cover. Skipped whenever ShipMapPosition is a substituted
+        // docked/landed position instead of the ship's own real coordinate - there is no
+        // meaningful velocity to extrapolate along in either state anyway.
+        const float serverTicksPerSecond = 30f;
+        var isFreeFlying = snapshot.Voyage.DockedPointId is null && snapshot.Voyage.LandedBodyId is null;
+        var extrapolationSeconds = isFreeFlying ? MathF.Max(0f, totalSeconds - snapshot.Tick / serverTicksPerSecond) : 0f;
+        var shipRealPosition = isFreeFlying
+            ? snapshot.Voyage.ShipMapPosition + new Vec2(snapshot.ShipField.VelocityX, snapshot.ShipField.VelocityY) * extrapolationSeconds
+            : snapshot.Voyage.ShipMapPosition;
+
+        var shipCenter = FieldToScreen(mapOrigin, shipRealPosition, zoom);
 
         // Shared with the whole crew (World.Scanner.cs, M44) - drawn before the ship/contacts so a
         // pin sitting right on top of a live blip still reads as two separate marks.
         foreach (var marker in snapshot.ManualScannerMarkers)
         {
-            var markerScreen = mapOrigin + new Vector2(marker.X, marker.Y) * PixelsPerUnit * zoom;
+            var markerScreen = FieldToScreen(mapOrigin, new Vec2(marker.X, marker.Y), zoom);
             if (!IsWithinRadarView(panelOrigin, markerScreen, pilotView))
                 continue;
             DrawGlowDiamond(spriteBatch, markerScreen, 10f, Color.Gold);
@@ -237,7 +258,7 @@ public sealed partial class GalaxyMapPanel
             // position, not necessarily where it actually is right now.
             foreach (var contact in me.ScannerContacts ?? Array.Empty<ScannerContactState>())
             {
-                var contactScreen = mapOrigin + new Vector2(contact.X, contact.Y) * PixelsPerUnit * zoom;
+                var contactScreen = FieldToScreen(mapOrigin, new Vec2(contact.X, contact.Y), zoom);
                 if (!IsWithinRadarView(panelOrigin, contactScreen, pilotView))
                     continue;
                 var color = contact.Kind switch
@@ -315,7 +336,7 @@ public sealed partial class GalaxyMapPanel
         // hold hundreds of them, and at any zoom level far enough out to see a third of the system
         // they'd be indistinguishable clutter - but an already-engaged squadron or a shell in flight
         // is exactly as visible here as it always was, not something a sweep has to find first.
-        DrawCloseRangeContacts(spriteBatch, snapshot, mapOrigin, shipCenter, zoom, panelOrigin, pilotView);
+        DrawCloseRangeContacts(spriteBatch, snapshot, shipCenter, zoom, panelOrigin, pilotView);
         DrawLargestAsteroidMarkers(spriteBatch, snapshot, mapOrigin, zoom, panelOrigin, pilotView);
 
         DrawShipMarker(spriteBatch, snapshot, shipCenter, zoom);

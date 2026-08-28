@@ -34,8 +34,8 @@ public static class CockpitWindows
     {
         var centerX = (room.Left + room.Right) / 2f;
         var centerY = (room.Top + room.Bottom) / 2f;
-        var outwardX = centerX - hullCenter.X;
-        var outwardY = centerY - hullCenter.Y;
+        var outwardX = (float)(centerX - hullCenter.X);
+        var outwardY = (float)(centerY - hullCenter.Y);
         if (outwardX * outwardX + outwardY * outwardY < 0.01f)
         {
             pane = default;

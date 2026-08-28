@@ -27,6 +27,98 @@ public static class HudIcons
         }
     }
 
+    private const int SoftCircleTextureSize = 64;
+
+    // A small pre-baked circular texture (solid out to 85% of its own radius, a short soft fade to
+    // fully transparent past that) for drawing circles at arbitrary - potentially huge - radii in
+    // a single draw call. FillCircle's own per-row loop above costs one Draw per pixel of radius,
+    // which is fine at icon sizes but becomes catastrophic (M50 - a real celestial body's own disc,
+    // or its gravity well, can be tens of thousands of pixels across at real field scale) - this is
+    // O(1) regardless of target size instead. Baked once by whichever renderer needs it
+    // (FieldRenderer/GalaxyMapPanel), reused for the life of the client.
+    public static Texture2D CreateSoftCircleTexture(GraphicsDevice graphicsDevice)
+    {
+        const int size = SoftCircleTextureSize;
+        var data = new Color[size * size];
+        var center = (size - 1) / 2f;
+        var radius = size / 2f;
+        for (var y = 0; y < size; y++)
+            for (var x = 0; x < size; x++)
+            {
+                var dx = x - center;
+                var dy = y - center;
+                var distance = MathF.Sqrt(dx * dx + dy * dy);
+                var edgeStart = radius * 0.85f;
+                var alpha = distance <= edgeStart ? 1f : Math.Clamp(1f - (distance - edgeStart) / (radius - edgeStart), 0f, 1f);
+                data[y * size + x] = Color.White * alpha;
+            }
+        var texture = new Texture2D(graphicsDevice, size, size);
+        texture.SetData(data);
+        return texture;
+    }
+
+    // The O(1) counterpart to FillCircle above, for celestial bodies/gravity spheres specifically
+    // (M50) - a single scaled draw of the pre-baked texture CreateSoftCircleTexture produced,
+    // however large radius actually is.
+    internal static void DrawScaledCircle(SpriteBatch spriteBatch, Texture2D softCircleTexture, Vector2 center, float radius, Color color)
+    {
+        if (radius < 0.5f)
+            return;
+        var scale = radius * 2f / softCircleTexture.Width;
+        var origin = new Vector2(softCircleTexture.Width / 2f, softCircleTexture.Height / 2f);
+        spriteBatch.Draw(softCircleTexture, center, null, color, 0f, origin, scale, SpriteEffects.None, 0f);
+    }
+
+    private const int ShadedSphereTextureSize = 64;
+
+    // "как в KSP" (GalaxyMapPanel follow-up) - planets/moons used to be flat FillCircle discs, one
+    // solid tier colour with no depth at all. A pre-baked pseudo-3D shading, the same "bake once in
+    // white, tint with the draw-time colour" trick CreateSoftCircleTexture already uses for the
+    // plain soft circle: each pixel's height off the disc (dz = sqrt(1-dx²-dy²), a hemisphere facing
+    // the viewer) stands in for a surface normal, lit from the upper-left the way KSP's own map
+    // icons read as lit spheres rather than flat dots. Baked once, reused for every body at whatever
+    // radius DrawShadedSphere below actually needs, the same O(1)-regardless-of-size shape
+    // DrawScaledCircle already relies on.
+    public static Texture2D CreateShadedSphereTexture(GraphicsDevice graphicsDevice)
+    {
+        const int size = ShadedSphereTextureSize;
+        var data = new Color[size * size];
+        var center = (size - 1) / 2f;
+        var light = Vector3.Normalize(new Vector3(-0.55f, -0.55f, 0.65f));
+        const float ambient = 0.4f;
+        const float edgeStart = 0.92f;
+        for (var y = 0; y < size; y++)
+            for (var x = 0; x < size; x++)
+            {
+                var dx = (x - center) / center;
+                var dy = (y - center) / center;
+                var distSq = dx * dx + dy * dy;
+                if (distSq > 1f)
+                {
+                    data[y * size + x] = Color.Transparent;
+                    continue;
+                }
+                var dz = MathF.Sqrt(Math.Max(0f, 1f - distSq));
+                var diffuse = Math.Max(0f, dx * light.X + dy * light.Y + dz * light.Z);
+                var brightness = ambient + diffuse * (1f - ambient);
+                var dist = MathF.Sqrt(distSq);
+                var alpha = dist <= edgeStart ? 1f : Math.Clamp(1f - (dist - edgeStart) / (1f - edgeStart), 0f, 1f);
+                data[y * size + x] = new Color(brightness, brightness, brightness) * alpha;
+            }
+        var texture = new Texture2D(graphicsDevice, size, size);
+        texture.SetData(data);
+        return texture;
+    }
+
+    internal static void DrawShadedSphere(SpriteBatch spriteBatch, Texture2D shadedSphereTexture, Vector2 center, float radius, Color color)
+    {
+        if (radius < 0.5f)
+            return;
+        var scale = radius * 2f / shadedSphereTexture.Width;
+        var origin = new Vector2(shadedSphereTexture.Width / 2f, shadedSphereTexture.Height / 2f);
+        spriteBatch.Draw(shadedSphereTexture, center, null, color, 0f, origin, scale, SpriteEffects.None, 0f);
+    }
+
     internal static void DrawRingArc(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float radius, float startDegrees, float endDegrees, Color color, int segments = 10, float thickness = 1.4f)
     {
         var start = startDegrees * (MathF.PI / 180f);
@@ -243,6 +335,58 @@ public static class HudIcons
         var bottom = center + new Vector2(0, 8f * scale);
         Primitives.FillTriangle(spriteBatch, pixel, top, left, right, color);
         Primitives.FillTriangle(spriteBatch, pixel, left, right, bottom, color);
+    }
+
+    // Content-каталог отсеков - StationBuildPanel's own category-tab row (build-catalog UI). Public
+    // wrappers around the two glyphs above that were previously only reachable from DrawRoleGlyph's
+    // switch - reused here as-is rather than duplicated, same shield/lens shapes just for a
+    // different button.
+    public static void DrawShieldGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color) =>
+        DrawShield(spriteBatch, pixel, center, scale, color);
+
+    public static void DrawSensorGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color) =>
+        DrawMagnifier(spriteBatch, pixel, center, scale, color);
+
+    // Reactor/power category: a core dot with radiating spokes - reads as "energy source" without
+    // needing a literal lightning-bolt polygon (fiddly to keep legible at icon scale).
+    public static void DrawPowerGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
+    {
+        FillCircle(spriteBatch, pixel, center, 4f * scale, color);
+        for (var i = 0; i < 6; i++)
+        {
+            var angle = i * MathF.PI / 3f;
+            var dir = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+            DrawLine(spriteBatch, pixel, center + dir * 6f * scale, center + dir * 10f * scale, color, 1.6f * scale);
+        }
+    }
+
+    // Propulsion category: a nozzle (triangle) with a short exhaust flame trailing behind it.
+    public static void DrawThrusterGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
+    {
+        var nozzleTop = center + new Vector2(0, -9f * scale);
+        Primitives.FillTriangle(spriteBatch, pixel,
+            nozzleTop + new Vector2(-4f * scale, 0), nozzleTop + new Vector2(4f * scale, 0), center + new Vector2(0, 2f * scale), color);
+        Primitives.FillTriangle(spriteBatch, pixel,
+            center + new Vector2(-3f * scale, 2f * scale), center + new Vector2(3f * scale, 2f * scale), center + new Vector2(0, 10f * scale),
+            Color.Lerp(color, Color.OrangeRed, 0.5f));
+    }
+
+    // Weapons category: a crosshair - reads as "targeting" for any turret regardless of its
+    // specific weapon type.
+    public static void DrawCrosshairGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
+    {
+        DrawRingArc(spriteBatch, pixel, center, 7f * scale, 0f, 360f, color, 16, 1.6f * scale);
+        DrawLine(spriteBatch, pixel, center + new Vector2(-10f * scale, 0), center + new Vector2(-4f * scale, 0), color, 1.6f * scale);
+        DrawLine(spriteBatch, pixel, center + new Vector2(4f * scale, 0), center + new Vector2(10f * scale, 0), color, 1.6f * scale);
+        DrawLine(spriteBatch, pixel, center + new Vector2(0, -10f * scale), center + new Vector2(0, -4f * scale), color, 1.6f * scale);
+        DrawLine(spriteBatch, pixel, center + new Vector2(0, 4f * scale), center + new Vector2(0, 10f * scale), color, 1.6f * scale);
+    }
+
+    // Structural category: a plain hollow square - bare hull/corridor, nothing installed in it.
+    public static void DrawStructuralGlyph(SpriteBatch spriteBatch, Texture2D pixel, Vector2 center, float scale, Color color)
+    {
+        var rect = new Rectangle((int)(center.X - 8f * scale), (int)(center.Y - 8f * scale), (int)(16f * scale), (int)(16f * scale));
+        DrawRectOutline(spriteBatch, pixel, rect, color, (int)Math.Max(1, 2f * scale));
     }
 
     // The scientist's own two jobs, medic's healing cross replaced (M42) - a lens for the scanner

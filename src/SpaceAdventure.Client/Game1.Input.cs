@@ -44,7 +44,7 @@ public partial class Game1
         var origin = ComputeCamera(snapshot, me).Origin;
         // Through the same scale the scene batch draws with, or the cursor and the barrel would
         // disagree about where "over there" is.
-        var mountOnScreen = (origin + new Vector2(mount.Position.X, mount.Position.Y) * ShipRenderer.PixelsPerUnit)
+        var mountOnScreen = (origin + new Vector2((float)mount.Position.X, (float)mount.Position.Y) * ShipRenderer.PixelsPerUnit)
             * SceneZoom(snapshot);
 
         // The scene batch is also spun around the screen's center pivot while manning a turret
@@ -554,6 +554,8 @@ public partial class Game1
         {
             if (CheatPanel.GetSpawnEnemyButtonRect(CheatPanelOrigin).Contains(_designMouse))
                 _debugSpawnEnemyClickedThisFrame = true;
+            else if (CheatPanel.GetAddCreditsButtonRect(CheatPanelOrigin).Contains(_designMouse))
+                _debugAddCreditsClickedThisFrame = true;
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
@@ -711,6 +713,62 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
+        // M57 - the 3 tab buttons switch _helmTab (purely client-local, HelmTab.cs's own doc
+        // comment) - available on every tab, not gated to Captain, so anyone can switch away.
+        if (me.IsAtHelm)
+        {
+            foreach (var tab in new[] { HelmTab.Captain, HelmTab.Scientist, HelmTab.Engineer })
+            {
+                if (!HelmTabBar.GetTabRect(tab, HelmTabBarOrigin).Contains(_designMouse))
+                    continue;
+                _helmTab = tab;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+        }
+
+        // The captain tab's own ×1/×10/×100/×1000 selector (M57) - same fixed offset above
+        // _helmWidgetPosition the Draw call above uses.
+        if (me.IsAtHelm && _helmTab == HelmTab.Captain)
+        {
+            var accelOrigin = _helmWidgetPosition + new Vector2(0, -46);
+            for (var levelIndex = 0; levelIndex < 4; levelIndex++)
+            {
+                if (!TimeAccelerationWidget.GetLevelButtonRect(levelIndex, accelOrigin).Contains(_designMouse))
+                    continue;
+                _pendingTimeAccelerationLevel = TimeAccelerationWidget.LevelAt(levelIndex);
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+
+            if (TimeAccelerationWidget.GetFlipButtonRect(accelOrigin).Contains(_designMouse))
+            {
+                _pendingFlipHeading = true;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+        }
+
+        // The Engineer tab's own device list (M57) - clicking a row focuses it (starting/resuming
+        // its remote repair timer, World.SystemRepair.cs), clicking the already-focused row again
+        // clears focus instead of leaving it stuck forever pointed at one device.
+        if (snapshot is not null && me.IsAtHelm && _helmTab == HelmTab.Engineer)
+        {
+            var rows = EngineerDevicePanel.BuildRows(snapshot);
+            for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+            {
+                if (!EngineerDevicePanel.GetRowRect(rowIndex, ShipSchematicPanelOrigin).Contains(_designMouse))
+                    continue;
+                var deviceId = rows[rowIndex].DeviceId;
+                _engineerFocusDeviceId = _engineerFocusDeviceId == deviceId ? null : deviceId;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+        }
+
+        if (me.IsAtHelm && (snapshot.CanLandNow || snapshot.Voyage.LandedBodyId is not null) &&
+            HelmButtonsWidget.GetLandingButtonRect(_helmWidgetPosition).Contains(_designMouse))
+        {
+            _pendingToggleLanding = true;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
         // External cameras (M46, still on the helm's own button widget) - gated on the Secondary
         // power channel the same way ComputeShipPowerMood already reads it for the ship's own
         // lamps; a click while unpowered is a no-op rather than opening onto a view that would
@@ -729,29 +787,18 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
-        // Window 3 (M47 follow-up): the 5 instrument-overlay tabs and the item search box. The
-        // search box only gets keyboard focus from an explicit click on it - clicking anything
-        // else on this panel (or the ship silhouette, or empty space) drops focus so W/A/D/S/X/Z
-        // go back to flying the ship instead of typing.
-        if (me.IsAtHelm)
-        {
-            for (var i = 0; i < 5; i++)
-            {
-                if (!ShipSchematicPanel.GetCategoryIconRect(i, ShipSchematicPanelOrigin).Contains(_designMouse))
-                    continue;
-                _shipSchematicCategory = (ShipSchematicCategory)i;
-                _shipSearchFocused = false;
-                return (-1, -1, null, -1, false, false, null, false, null);
-            }
-
-            if (ShipSchematicPanel.GetSearchBoxRect(ShipSchematicPanelOrigin).Contains(_designMouse))
-            {
-                _shipSearchFocused = true;
-                return (-1, -1, null, -1, false, false, null, false, null);
-            }
-
-            _shipSearchFocused = false;
-        }
+        // M57 - window 3 (M47 follow-up)'s own category tabs/search box used to always share the
+        // screen with windows 1/2 while at helm; now ShipSchematicPanel is only ever drawn for the
+        // Engineer tab specifically (Game1.cs's own _helmTab switch) - EngineerDevicePanel replaced
+        // it there entirely, so ShipSchematicPanel.Draw is never actually called anywhere any more.
+        // This whole block used to click-test its category icons/search box regardless of tab -
+        // with nothing left drawing them, ShipSchematicPanelOrigin's own screen region is exactly
+        // where EngineerDevicePanel's device rows now sit, so a click there could silently set
+        // _shipSearchFocused = true against an invisible hitbox with no way to click it back off
+        // (Escape aside) - and flightControlsLive gates ALL of W/A/S/D/X/Z on that same flag, so
+        // one unlucky click anywhere in the Engineer tab could silently freeze the helm entirely.
+        // Removed rather than re-gated to the Engineer tab, since there is no schematic panel left
+        // to click on there either.
 
         // The scanner console's own toggle switch (M48 follow-up - "радар приводится в действие
         // переключением рычажка") - console-operator only, replaces the old separate "Скан" button:
@@ -824,6 +871,45 @@ public partial class Game1
             }
         }
 
+        // Content-каталог отсеков - StationBuildPanel's own category tabs + module row. Checked
+        // whenever the panel is actually ON SCREEN (Game1.cs's Draw uses this exact same condition),
+        // not only while `_openBlock.Kind == BlockKind.Station` right below - a module already
+        // picked stays selectable/reselectable even after the player has walked off the station and
+        // back aboard their own ship to go point at a spot (the dialogue itself may have closed by
+        // then, but the panel - and the choice it represents - hasn't).
+        var buildPanelShowing = _placingRoomCatalogId is not null ||
+            (snapshot.Station.Npcs.FirstOrDefault(n => n.Id == _talkingToNpcId)?.Kind == NpcKind.Shipwright);
+        if (buildPanelShowing)
+        {
+            for (var i = 0; i < StationBuildPanel.Categories.Length; i++)
+            {
+                if (!StationBuildPanel.GetCategoryTabRect(i, StationBuildPanelOrigin).Contains(_designMouse))
+                    continue;
+                _buildPanelCategory = StationBuildPanel.Categories[i].Category;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+
+            var buildEntries = StationBuildPanel.EntriesInCategory(_buildPanelCategory);
+            for (var i = 0; i < buildEntries.Count; i++)
+            {
+                if (!StationBuildPanel.GetModuleRect(i, StationBuildPanelOrigin).Contains(_designMouse))
+                    continue;
+                // Picking a module no longer buys instantly (M60's own one-click purchase) - it
+                // ENTERS PLACEMENT MODE, confirmed by a later click on the ship's own interior (the
+                // world-click section further down this same method).
+                _placingRoomCatalogId = buildEntries[i].Id;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+
+            // A click that landed inside the panel's own footprint but missed every button above
+            // (padding, gaps between tabs/modules) has to be swallowed here too - otherwise it falls
+            // through to the world hit-tests below (this whole block runs BEFORE the world-vs-panel
+            // "everything above is a panel's own controls" swallow check) and could confirm a
+            // placement or toggle a block right underneath the panel by accident.
+            if (new Rectangle((int)StationBuildPanelOrigin.X, (int)StationBuildPanelOrigin.Y, StationBuildPanel.PanelWidth, StationBuildPanel.PanelHeight).Contains(_designMouse))
+                return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
         if (_openBlock.Kind == BlockKind.Station)
         {
             var talkingToKind = snapshot.Station.Npcs.FirstOrDefault(n => n.Id == _talkingToNpcId)?.Kind;
@@ -892,6 +978,14 @@ public partial class Game1
                     _pendingShipPurchase = StationPanel.PurchasableShipKinds[i];
                     return (-1, -1, null, -1, false, false, null, false, null);
                 }
+
+                // M61 - "Снести <последний построенный>" button.
+                if (snapshot is not null && StationPanel.LastBuiltRoomId(snapshot.Rooms) is { } lastRoomId &&
+                    StationPanel.GetDemolishLastRoomRect(StationPanelOrigin).Contains(_designMouse))
+                {
+                    _pendingDemolishRoomId = lastRoomId;
+                    return (-1, -1, null, -1, false, false, null, false, null);
+                }
             }
 
             if (talkingToKind == NpcKind.Recruiter)
@@ -926,9 +1020,17 @@ public partial class Game1
                 return (-1, -1, null, -1, false, false, null, false, null);
             }
 
-            _openBlock = ClickTarget.None;
-            _talkingToNpcId = null;
-            return (-1, -1, null, -1, false, false, null, false, null);
+            // Content-каталог отсеков - while the Shipwright's own whole-ship overview is showing
+            // (ShipBuildOverviewActive), a click that missed every NPC above is aimed at the now-
+            // visible hull itself (ComputeCamera already re-anchored/zoomed the whole scene to fit
+            // it), not "empty station floor, close the dialogue" - fall through to the world-click
+            // section further down instead of closing it here.
+            if (!ShipBuildOverviewActive(snapshot))
+            {
+                _openBlock = ClickTarget.None;
+                _talkingToNpcId = null;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
         }
 
         // Everything above this point is the open panel's own controls - slots, pins, buttons.
@@ -943,6 +1045,30 @@ public partial class Game1
         var myPosition = new Vec2(me.X, me.Y);
         bool NearEnough(Vec2 blockPosition) => (blockPosition - myPosition).Length() < TurretInteractionRadius;
         var origin = ComputeCamera(snapshot, me).Origin;
+
+        // Content-каталог отсеков - a module is selected, so this click (whether the player is
+        // physically aboard their own ship, or still standing on the station with the Shipwright's
+        // whole-ship overview showing - ShipBuildOverviewActive's own fallthrough above) is aimed at
+        // the placement overlay Game1.cs's own Draw is showing right now. Takes priority over every
+        // other world click below, the same "modal until confirmed or cancelled" shape the wire-lay/
+        // tank-drag flows already use elsewhere in this method.
+        if (_placingRoomCatalogId is { } placingCatalogId && RoomCatalog.Find(placingCatalogId) is { } placingEntry)
+        {
+            var mouseLocal = ScreenToShipLocal(new Vector2(_designMouse.X, _designMouse.Y), origin, SceneZoom(snapshot));
+            var candidates = RoomPlacementPreview.FindCandidates(snapshot, placingEntry);
+            if (RoomPlacementPreview.NearestTo(candidates, mouseLocal) is { } nearest)
+                _pendingBuildRoom = new BuildRoomRequest(placingCatalogId, nearest.X, nearest.Y);
+            _placingRoomCatalogId = null;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
+        // Still physically on the station (no module selected right now) - every check below this
+        // point assumes myPosition/origin are the character's own SHIP-local ones, which they are
+        // not while OnStation (Character.X/Y mean something else there - World.cs's own doc comment
+        // on CharacterState). Nothing past here is reachable from the overview's fallthrough on
+        // purpose; swallow the click instead of letting it misfire against the wrong coordinate frame.
+        if (me.OnStation)
+            return (-1, -1, null, -1, false, false, null, false, null);
 
         // Screwdriver "open the panel" view (World.Wiring.cs's component graph, ConnectionsPanel) -
         // a second click on the same component closes it again, same as every other block below.
@@ -1150,7 +1276,7 @@ public partial class Game1
             foreach (var dropped in snapshot.DroppedItems.Where(d => d.RoomId is null))
             {
                 var local = ShipLocalFrame.ToLocal(dropped.Position, snapshot.ShipField, hullCenter);
-                var screenPos = origin + new Vector2(local.X, local.Y) * ShipRenderer.PixelsPerUnit;
+                var screenPos = origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
                 var rect = new Rectangle(
                     (int)screenPos.X - ShipRenderer.DroppedItemHitSize / 2, (int)screenPos.Y - ShipRenderer.DroppedItemHitSize / 2,
                     ShipRenderer.DroppedItemHitSize, ShipRenderer.DroppedItemHitSize);
@@ -1208,7 +1334,7 @@ public partial class Game1
         // the cursor the same way every hit-test above already lines up with what's drawn there.
         if (me.LayingWireFromPin is not null)
         {
-            _pendingWireBendAt = new Vec2((_designMouse.X - origin.X) / ShipRenderer.PixelsPerUnit, (_designMouse.Y - origin.Y) / ShipRenderer.PixelsPerUnit);
+            _pendingWireBendAt = ScreenToShipLocal(new Vector2(_designMouse.X, _designMouse.Y), origin, SceneZoom(snapshot));
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 

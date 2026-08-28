@@ -37,8 +37,14 @@ public sealed partial class World
 
     public bool IsWallBlockBreached(string blockId) => WallBlockHp(blockId) <= 0f;
 
-    private void DamageWallBlock(string blockId, float amount) =>
+    private void DamageWallBlock(string blockId, float amount)
+    {
         _wallBlockHp[blockId] = Math.Max(0f, WallBlockHp(blockId) - amount);
+        // M63 - the single choke point every source of player-hull wall damage already funnels
+        // through (World.ShipDebris.cs's own doc comment), so this is the one place that needs to
+        // ask "did that just fully breach every wall this room has left".
+        CheckRoomStructuralFailure(blockId);
+    }
 
     private void RepairWallBlock(string blockId, float amount) =>
         _wallBlockHp[blockId] = Math.Min(WallBlockMaxHp, WallBlockHp(blockId) + amount);

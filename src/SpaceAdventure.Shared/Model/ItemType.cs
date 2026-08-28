@@ -51,4 +51,12 @@ public enum ItemType
     AutoDoorController,
     AlarmKlaxon,
     LightToggle,
+    // M62 - the consumable a room build actually burns (World.ShipBuilding.cs's ship-wide
+    // _hullPlatingStock counter, restocked at any station the same way ammo/oxygen/hull already
+    // are) - a physical resource rather than only credits, so building has a real supply-chain limit
+    // in the middle of a fight, not just a price tag. Never actually held in a character's own
+    // Inventory (no pickup path exists for it) - it lives purely as a ship-wide count, the same
+    // "quiet number, not a real Item slot" treatment AmmoStorage's own stock already gets before a
+    // crate is ever taken off the rack.
+    HullPlating,
 }

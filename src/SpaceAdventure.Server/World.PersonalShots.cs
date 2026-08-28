@@ -80,7 +80,7 @@ public sealed partial class World
     private bool ResolvePersonalShot(PersonalShotRuntime shot, Vec2 from)
     {
         var travelled = (shot.Position - from).Length();
-        var samples = Math.Max(1, (int)MathF.Ceiling(travelled / (BulletRadius / 2f)));
+        var samples = Math.Max(1, (int)MathF.Ceiling((float)travelled / (BulletRadius / 2f)));
         for (var i = 1; i <= samples; i++)
         {
             var point = from + (shot.Position - from) * (i / (float)samples);
@@ -141,7 +141,7 @@ public sealed partial class World
 
     private IReadOnlyList<PersonalShotState> CreatePersonalShotStates() =>
         _personalShots
-            .Select(s => new PersonalShotState(s.Id, s.Position.X, s.Position.Y, s.FromEnemy, s.Scene, s.Weapon))
+            .Select(s => new PersonalShotState(s.Id, (float)s.Position.X, (float)s.Position.Y, s.FromEnemy, s.Scene, s.Weapon))
             .ToArray();
 }
 

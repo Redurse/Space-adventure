@@ -1,3 +1,4 @@
+using System;
 using SpaceAdventure.Shared.Model;
 
 namespace SpaceAdventure.Server;
@@ -53,7 +54,10 @@ public sealed partial class World
     public Vec2 GetEvaWorldPosition(Character character) => character.EvaAttachedTo switch
     {
         EvaAttachment.Ship => _shipFieldPosition + RotateLocalToWorld(character.EvaLocalOffset, _shipRotationDegrees),
-        EvaAttachment.Asteroid => AsteroidField.Asteroids.First(a => a.Id == character.EvaAttachedAsteroidId).Position + character.EvaLocalOffset,
+        EvaAttachment.Asteroid => ActiveObstacles.First(a => a.Id == character.EvaAttachedAsteroidId).Position + character.EvaLocalOffset,
+        // The ground never moves or rotates, same as Station below - EvaLocalOffset already IS
+        // the absolute PlanetSurface-local position (M55 - see EvaAttachment.cs's own comment).
+        EvaAttachment.Planet => character.EvaLocalOffset,
         // The station never rotates (WorldOffset is a pure translation, unlike the ship's own
         // _shipFieldPosition/_shipRotationDegrees pair), so its own local offset needs no rotation
         // step back out to world space.
@@ -149,7 +153,16 @@ public sealed partial class World
         // (TryAutoAttach) - walking out doesn't grab you onto the hull for free; EvaLocalOffset's
         // meaning flips from a hull-local offset to an absolute world position the moment there's
         // nothing actually holding you to it (Character.cs's own doc comment on the field).
-        if (character.MagneticBootsOn)
+        if (_landedBodyId is not null)
+        {
+            // M55 - landed on a planet: real gravity holds a suited crew member to the ground the
+            // instant they cross, boots on or off (there's no ship hull to magnetize to out here,
+            // and no zero-g to drift in either) - straight onto EvaAttachment.Planet's own walking
+            // model (StepPlanetSurfaceWalk), never TryAutoAttach's "drift until you touch it" one.
+            character.EvaAttachedTo = EvaAttachment.Planet;
+            character.EvaLocalOffset = _shipFieldPosition + RotateLocalToWorld(exitLocalOffset, _shipRotationDegrees);
+        }
+        else if (character.MagneticBootsOn)
         {
             character.EvaAttachedTo = EvaAttachment.Ship;
             character.EvaLocalOffset = exitLocalOffset;
@@ -178,10 +191,10 @@ public sealed partial class World
     {
         var faces = new (float Distance, Vec2 Direction)[]
         {
-            (MathF.Abs(position.X - room.Left), new Vec2(-1, 0)),
-            (MathF.Abs(position.X - room.Right), new Vec2(1, 0)),
-            (MathF.Abs(position.Y - room.Top), new Vec2(0, -1)),
-            (MathF.Abs(position.Y - room.Bottom), new Vec2(0, 1)),
+            (MathF.Abs((float)(position.X - room.Left)), new Vec2(-1, 0)),
+            (MathF.Abs((float)(position.X - room.Right)), new Vec2(1, 0)),
+            (MathF.Abs((float)(position.Y - room.Top)), new Vec2(0, -1)),
+            (MathF.Abs((float)(position.Y - room.Bottom)), new Vec2(0, 1)),
         };
         var closest = faces[0];
         foreach (var face in faces)
@@ -323,6 +336,39 @@ public sealed partial class World
     private Vec2 SnapToStationSurface(Vec2 localOffset) =>
         HullSilhouette.SnapToSurface(Station.Rooms, localOffset, HullWalkClearance);
 
+    // M55 - walking on a landed planet's own ground (EvaAttachment.Planet): real gravity, not a
+    // "grab on contact" magnetize model, so this is a plain clamped translation blocked by whatever
+    // rocks (ActiveObstacles) happen to be in the way - no sliding needed, unlike the ship's own
+    // hull-box collision, since a person can simply choose to walk around a rock rather than being
+    // steered along it. Also the only way back inside from out here: the ship sits on this exact
+    // same small surface field while landed, so walking onto its still-open airlock (in the ship's
+    // own local frame, since it can still turn on the ground) crosses back in, mirroring
+    // StepShipAttachedWalk's own door check but without that method's hull-silhouette "stepping
+    // inward" gate - there's no silhouette to be magnetized to out here to begin with.
+    private void StepPlanetSurfaceWalk(Character character, Vec2 delta)
+    {
+        var candidate = (character.EvaLocalOffset + delta).Clamp(0, 0, PlanetSurface.Width, PlanetSurface.Height);
+        if (ActiveObstacles.Any(o => AsteroidShape.Contains(o, candidate)))
+            return;
+
+        var (hullCenter, _) = GetHullLocalBounds();
+        var inShipFrame = RotateWorldToLocal(candidate - _shipFieldPosition, _shipRotationDegrees);
+        var absoluteLocalPos = hullCenter + inShipFrame;
+        var outerDoor = Ship.AirlockOuterDoors.FirstOrDefault(d => IsDoorOpen(d.Id) && d.Contains(absoluteLocalPos));
+        if (outerDoor is not null)
+        {
+            var towardHull = (hullCenter - outerDoor.Position).Normalized();
+            character.IsOutside = false;
+            character.RoomId = outerDoor.RoomId;
+            character.Position = absoluteLocalPos + towardHull * EvaEntryNudge;
+            character.EvaAttachedTo = EvaAttachment.None;
+            character.EvaLocalOffset = Vec2.Zero;
+            return;
+        }
+
+        character.EvaLocalOffset = candidate;
+    }
+
     // Same rule again on the currently boardable enemy hull - hull-centre-relative, matching
     // EvaLocalOffset's own convention for EnemyShip attachment (see GetEvaWorldPosition).
     private static float EnemyHullSurfaceDistance(Vec2 localOffset, EnemyShipRuntime enemy) =>
@@ -390,8 +436,14 @@ public sealed partial class World
             return;
         }
 
+        if (character.EvaAttachedTo == EvaAttachment.Planet)
+        {
+            StepPlanetSurfaceWalk(character, delta);
+            return;
+        }
+
         // Asteroid: no rotation, so the world-space input direction applies directly.
-        var asteroid = AsteroidField.Asteroids.First(a => a.Id == character.EvaAttachedAsteroidId);
+        var asteroid = ActiveObstacles.First(a => a.Id == character.EvaAttachedAsteroidId);
         var candidate = SnapToAsteroidSurface(asteroid, character.EvaLocalOffset + delta);
 
         // A rock lying against the hull used to be a way through the walls: walking round it
@@ -419,7 +471,7 @@ public sealed partial class World
 
         var from = character.EvaLocalOffset;
         var worldPos = (from + character.EvaVelocity * (float)deltaSeconds)
-            .Clamp(0, 0, AsteroidField.Width, AsteroidField.Height);
+            .Clamp(0, 0, ActiveFieldWidth, ActiveFieldHeight);
 
         character.EvaLocalOffset = worldPos;
 
@@ -438,7 +490,20 @@ public sealed partial class World
         // rooms instead of leaving it lodged there. Same undocked guard as the station branch
         // below: Station.Position/WorldOffset only tracks the nearest station while undocked
         // (World.Voyage.cs's UpdateNearestStation) - once docked it's frozen at the berth instead.
-        if (character.EvaAttachedTo == EvaAttachment.None && !IsDocked &&
+        // Landed (M55) excluded for the same reason - Station.WorldOffset is frozen/stale then too
+        // (StepVoyage's own early return skips UpdateNearestStation while landed), and points to an
+        // unrelated, system-field-scale coordinate that has nothing to do with this small surface.
+        //
+        // Only fires on a genuine CROSSING into that state this step (was outside a moment ago, is
+        // inside now) - not merely "currently reads as inside", which a docked ship's own airlock
+        // exit point can already satisfy on the very first step a fresh EVA character takes (the
+        // ship parks right up against the station now that M59 made the map static, so the two
+        // structures' local coordinate frames routinely overlap at the berth). Without the "wasn't
+        // already inside" half of this check, that ordinary starting position read as an in-flight
+        // tunnel every single tick, permanently zeroing EvaVelocity the instant a character pushed
+        // off at all near a station - the character never moved again for the rest of the session.
+        if (character.EvaAttachedTo == EvaAttachment.None && !IsDocked && _landedBodyId is null &&
+            !Station.ContainsPoint(from - Station.WorldOffset) &&
             Station.ContainsPoint(character.EvaLocalOffset - Station.WorldOffset))
         {
             character.EvaLocalOffset = from;
@@ -452,7 +517,7 @@ public sealed partial class World
     private void TryAutoAttachAlong(Character character, Vec2 from, Vec2 to)
     {
         var travelled = (to - from).Length();
-        var samples = Math.Max(1, (int)MathF.Ceiling(travelled / 0.25f));
+        var samples = Math.Max(1, (int)MathF.Ceiling((float)travelled / 0.25f));
         for (var i = 1; i <= samples; i++)
         {
             if (TryAutoAttach(character, from + (to - from) * (i / (float)samples)))
@@ -549,7 +614,11 @@ public sealed partial class World
         // above: Station.Position/WorldOffset only tracks the nearest station while undocked
         // (World.Voyage.cs's UpdateNearestStation), so testing it while docked would attach to
         // (or bounce off) the berth's own frozen coordinates instead.
-        if (!IsDocked)
+        // Landed excluded too (M55) - Station.WorldOffset only tracks the nearest SYSTEM-field
+        // station while undocked, which is frozen/stale and numerically meaningless against this
+        // small local surface field's own coordinates once landed (StepVoyage's own early return
+        // skips UpdateNearestStation while landed, the same as it already does while docked).
+        if (!IsDocked && _landedBodyId is null)
         {
             var localToStation = worldPos - Station.WorldOffset;
             if (HullSilhouette.DistanceOutside(Station.Rooms, localToStation) <= StationAttachZoneMargin)
@@ -577,7 +646,7 @@ public sealed partial class World
             }
         }
 
-        foreach (var asteroid in AsteroidField.Asteroids)
+        foreach (var asteroid in ActiveObstacles)
         {
             if (AsteroidShape.DistanceOutside(asteroid, worldPos) > AsteroidAttachZoneMargin)
                 continue;
@@ -639,7 +708,7 @@ public sealed partial class World
         if (character.PushedOffFrom == PushOffOrigin.Station || character.BouncedOffFrom == PushOffOrigin.Station)
         {
             var localToStation = worldPos - Station.WorldOffset;
-            if (HullSilhouette.DistanceOutside(Station.Rooms, localToStation) > StationAttachZoneMargin + PushOffClearMargin)
+            if (_landedBodyId is not null || HullSilhouette.DistanceOutside(Station.Rooms, localToStation) > StationAttachZoneMargin + PushOffClearMargin)
             {
                 if (character.PushedOffFrom == PushOffOrigin.Station)
                     character.PushedOffFrom = PushOffOrigin.None;
@@ -651,7 +720,7 @@ public sealed partial class World
         if (character.PushedOffFrom == PushOffOrigin.Asteroid || character.BouncedOffFrom == PushOffOrigin.Asteroid)
         {
             var rockId = character.PushedOffFrom == PushOffOrigin.Asteroid ? character.PushedOffAsteroidId : character.BouncedOffAsteroidId;
-            var rock = AsteroidField.Asteroids.FirstOrDefault(a => a.Id == rockId);
+            var rock = ActiveObstacles.FirstOrDefault(a => a.Id == rockId);
             if (rock is null || AsteroidShape.DistanceOutside(rock, worldPos) > AsteroidAttachZoneMargin + PushOffClearMargin)
             {
                 if (character.PushedOffFrom == PushOffOrigin.Asteroid)
@@ -698,7 +767,10 @@ public sealed partial class World
 
     private void HandlePushOff(Character character, Vec2 direction)
     {
-        if (!character.IsOutside || character.EvaAttachedTo == EvaAttachment.None || direction == Vec2.Zero)
+        // Planet excluded (M55) - there's nothing to kick off FROM on open ground, just real
+        // gravity holding a suited character to it; "pushing off" flat ground isn't a thing the
+        // way it is off a wall, a hull, or a rock.
+        if (!character.IsOutside || character.EvaAttachedTo is EvaAttachment.None or EvaAttachment.Planet || direction == Vec2.Zero)
             return;
 
         var worldPos = GetEvaWorldPosition(character);
@@ -708,10 +780,14 @@ public sealed partial class World
             EvaAttachment.Station => PushOffOrigin.Station,
             _ => PushOffOrigin.Asteroid,
         };
+        // A character standing magnetically attached co-moves with whatever they're attached to -
+        // only the ship's own hull actually moves (stations and asteroids are fixed, M59), so only
+        // that case needs its current velocity folded into the push-off kick.
+        var originVelocity = character.EvaAttachedTo == EvaAttachment.Ship ? _shipVelocity : Vec2.Zero;
         character.PushedOffAsteroidId = character.EvaAttachedAsteroidId;
         character.EvaAttachedTo = EvaAttachment.None;
         character.EvaAttachedAsteroidId = null;
         character.EvaLocalOffset = worldPos;
-        character.EvaVelocity = direction.Normalized() * PushOffSpeed;
+        character.EvaVelocity = direction.Normalized() * PushOffSpeed + originVelocity;
     }
 }

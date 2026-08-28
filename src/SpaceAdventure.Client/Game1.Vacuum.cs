@@ -188,9 +188,9 @@ public partial class Game1
             return;
         }
 
-        if (MathF.Abs(_evaThrustLocal.X) > 0.01f || MathF.Abs(_evaThrustLocal.Y) > 0.01f)
+        if (MathF.Abs((float)_evaThrustLocal.X) > 0.01f || MathF.Abs((float)_evaThrustLocal.Y) > 0.01f)
         {
-            _rcsLastPush = Vector2.Normalize(new Vector2(_evaThrustLocal.X, _evaThrustLocal.Y));
+            _rcsLastPush = Vector2.Normalize(new Vector2((float)_evaThrustLocal.X, (float)_evaThrustLocal.Y));
             _rcsPushAge = 0f;
         }
         else
@@ -329,7 +329,7 @@ public partial class Game1
         var local = me.IsOutside
             ? ShipLocalFrame.ToLocal(here, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms))
             : here;
-        return origin + new Vector2(local.X, local.Y) * ShipRenderer.PixelsPerUnit;
+        return origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
     }
 
     private void DrawSuitLamp(WorldSnapshot snapshot, CharacterState me, Vector2 origin, Matrix sceneTransform)
@@ -345,7 +345,7 @@ public partial class Game1
         // and has to come back into the ship's frame, exactly like the sight mask's own eye does.
         var facing = ShipLocalFrame.ToLocalDirection(
             new Vec2(me.FacingX, me.FacingY), snapshot.ShipField.RotationDegrees);
-        var aim = new Vector2(facing.X, facing.Y);
+        var aim = new Vector2((float)facing.X, (float)facing.Y);
         if (aim.LengthSquared() < 0.0001f)
             return;
         aim.Normalize();

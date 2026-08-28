@@ -25,7 +25,6 @@ internal static partial class TestRunner
             EquipSuit(world, 1);
 
         var wasDocked = world.IsDocked;
-        var homeBerth = world.DockBerthPosition; // meaningless once cast off - read it first
 
         if (wasDocked)
         {
@@ -38,103 +37,63 @@ internal static partial class TestRunner
         for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
 
-        var target = world.GalaxyMap.GetPoint(targetPointId).Position;
+        // M58 follow-up - "перевести стыковку на относительный кадр", part 2: reaching a matched,
+        // parked-at-the-berth state via SIMULATED THRUST turned into its own real rendezvous-
+        // guidance problem once World.cs's own Tick fix (same milestone) made a hosted station's
+        // real Kepler orbital speed - tens of thousands of units/s at this game's KSP-real scale -
+        // genuinely apply during a test. Closing a gap against a target that fast, without
+        // overshooting it or clipping the station's own solid hull along the way, is a real
+        // guidance problem with nothing to do with whatever the test actually wants to check
+        // (trade/quest/faction/EVA scaffolding, or the docking BUTTON's own gate, never the flight
+        // itself - TestRunner.HelmAndHull.cs/TestRunner.Voyage.cs's own manual-flight tests are the
+        // ones that actually fly). World.DebugSetShipVelocity (added alongside this) applies
+        // DebugPlaceShip's own established reasoning to velocity instead of position: this is
+        // scaffolding, not a piloting test, so the matched state is set directly.
+        var target = world.ResolveGalaxyPointPosition(world.GalaxyMap.GetPoint(targetPointId));
+        world.DebugPlaceShip(target);
+        world.Step(RealtimeStep); // lets UpdateNearestStation/Station.RepositionTo pick up targetPointId as nearest before DockBerthPosition is read below
 
-        // Same reasoning as FlyToward's own peel: departing straight toward a target that
-        // requires net +X travel points straight back through the home station's own row
-        // (Station.Default.cs extends it toward +X from the berth), which the ship is still
-        // sitting right next to right after undocking. Backing off perpendicular first, same as a
-        // real pilot would, clears it - and on whichever side of the row the target's own Y
-        // already sits on, so the straight-line leg below never has to cross back through the
-        // row's Y-band to get there (PeelAwayFromBerth's own doc comment).
-        if (wasDocked)
-            PeelAwayFromBerth(world, homeBerth, target, 1);
-
-        // Some routes (home to trade-station among them) cut close enough to a THIRD station's
-        // own marker along the way - not the target, not home - that the straight line clips its
-        // row (same structure home's own row uses, Station.Default.cs) and the hysteresis
-        // collision check in World.ShipField.cs pins the hull right at the boundary indefinitely,
-        // net progress zero, forever (nothing here ever tells it to back off and try a different
-        // line). Unlike a hostile sector, there's no ambush/retry mechanism that would ever
-        // dislodge it.
-        FlyClearOfOtherStations(world, target, targetPointId);
-
-        // Deep hostility with whoever owns some *other* nearby sector can still snag the ship into
-        // an incidental battle en route to the berth (World.Voyage.cs's TryEngageHostileSector
-        // fires from anywhere near a hostile sector's own marker, not just when that sector was
-        // the actual target). Resolved a bounded number of times rather than every time it
-        // happens: the ship sits still exactly where the fight ended, so the very first few ticks
-        // of the resumed trip can still be inside the same capture radius and roll straight into a
-        // second one, and a third, indefinitely - each full fight costs real time, so an unbounded
-        // retry here turned one slow test into one that never finished. Past a handful of fights
-        // this just gives up on dodging them and lets the loop's own timeout run out sitting in
-        // whatever battle it's in, same as it always could before this existed.
-        //
-        // CanDockNow is only trusted once DockBerthPosition actually corresponds to THIS target,
-        // not just whenever it happens to be true - right after undocking (or after fleeing an
-        // ambush back near its own marker) the ship can still be sitting at some other, nearer
-        // station's own berth, where CanDockNow would already read true for that wrong station.
-        // DockBerthPosition tracks whichever station is currently nearest and is offset from that
-        // station's own marker by its (Center-vs-hull-centre) layout gap - tens of units across
-        // every ship/station-kind combination in this game, not the single digits a plain "close
-        // to the marker" radius check would assume, so that cheaper check just oscillates forever
-        // instead of ever converging. Comparing DockBerthPosition to the marker directly asks the
-        // right question - "is the nearest station actually this one" - independent of how far
-        // away it still physically is.
-        const float BerthTracksIntendedTargetSlack = 40f;
+        // Deep hostility with whoever owns some *other* nearby sector, or the target station
+        // itself defending against low standing, can still snag the ship the instant it's placed
+        // (World.Voyage.cs's TryEngageHostileSector/UpdateNearestStation). Resolved a bounded
+        // number of times rather than every time it happens - each full fight costs real time, and
+        // the ship can land right back in capture range of the same hazard after fleeing it.
         var ambushesResolved = 0;
-        // 950s: this loop caps speed at 1.5 (below) for the entire approach, not just the final
-        // crawl, so covering a longer bearing like outpost-gamma's (~1063 units from home as of
-        // M48's field-doubling on top of M47's own station-spread redesign, GalaxyMap.cs) at that
-        // capped rate alone eats most of a 700s budget - 950s keeps roughly the same ~200s of
-        // slack the M47 600s budget left over its own, shorter ~602-unit bearing, for turning
-        // time, an incidental ambush along the way, or the bang-bang cap's own stabilize/accelerate
-        // cycling knocking the average speed below its own ceiling.
-        for (var i = 0; i < 950 * 30; i++)
+        while (world.IsInBattle && ambushesResolved++ < 5)
         {
-            if (world.IsInBattle)
-            {
-                if (ambushesResolved++ >= 5)
-                    break;
-                FireBowTurretUntilEnemyDefeated(world, 1);
-                for (var j = 0; j < 30 && world.IsInBattle; j++)
-                    world.Step(RealtimeStep); // let StepVoyage resolve the kill
-                SitAtHelm(world, 1); // FireBowTurretUntilEnemyDefeated leaves the character standing free
-                // The battle's own disengage nudge (World.Voyage.cs) moved the ship, so the
-                // straight line to the target from here is a different one than at departure -
-                // possibly a fresh clip of some other station's row that the original check never
-                // saw.
-                FlyClearOfOtherStations(world, target, targetPointId);
-                continue;
-            }
-
-            var berthTracksTarget = (world.DockBerthPosition - target).Length() < BerthTracksIntendedTargetSlack;
-            if (berthTracksTarget && world.CanDockNow)
-                break; // parked at the actual target's berth, slow enough to dock - job done
-
-            var shipField = world.CreateSnapshot().ShipField;
-            var speed = new Vec2(shipField.VelocityX, shipField.VelocityY).Length();
-
-            if (speed > 1.5f)
-                world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
-            else
-            {
-                var steerTarget = berthTracksTarget ? world.DockBerthPosition : target;
-                world.ApplyCommand(1, SteerToward(world, 1, steerTarget));
-            }
+            FireBowTurretUntilEnemyDefeated(world, 1);
+            for (var j = 0; j < 30 && world.IsInBattle; j++)
+                world.Step(RealtimeStep); // let StepVoyage resolve the kill
+            SitAtHelm(world, 1); // FireBowTurretUntilEnemyDefeated leaves the character standing free
+            world.DebugPlaceShip(target);
             world.Step(RealtimeStep);
         }
 
-        // Engaged unconditionally before anything below, regardless of which branch the loop above
-        // last took - whatever thrust that last SteerToward call left commanded would otherwise
-        // stay frozen exactly as "the last commanded thrust is deliberately left as-is" once nobody
-        // is at the helm to override it (World.Interact.cs's own doc comment on standing up), and a
-        // caller that then waits around doing something else (World_Docking_ProximityAloneDoesNotDock
-        // sitting idle, ExitShipIntoVacuum going EVA) would find the ship had quietly drifted off
-        // the berth in the meantime - CanDockNow gone by the time anything checks it again, for a
-        // reason with nothing to do with what that caller was actually testing.
-        world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+        // Two consecutive live samples of the berth's own resolved position - the same plain
+        // central-difference idea World.GalaxyPoints.cs's own ResolveGalaxyPointVelocity uses
+        // (private to World, not reachable from here) - give the station's real instantaneous
+        // velocity without needing that accessor exposed. DockBerthPosition tracks whichever
+        // station UpdateNearestStation currently considers nearest, which the placement/battle
+        // handling above already made targetPointId.
+        var berthSample1 = world.DockBerthPosition;
         world.Step(RealtimeStep);
+        var berthSample2 = world.DockBerthPosition;
+        var stationVelocity = (berthSample2 - berthSample1) * (1.0 / RealtimeStep);
+
+        // A couple of units inside DockCaptureRadius(4, World.StationDocking.cs) - safely short of
+        // DockBerthPosition itself, which is the flush-MATED position (deliberately overlapping the
+        // station's own solid hull; TryDockAtStation teleports the ship the rest of the way for
+        // exactly that reason, rather than flying it there and triggering a hull collision).
+        world.DebugPlaceShip(berthSample2 + new Vec2(2f, 0f));
+        world.DebugSetShipVelocity(stationVelocity);
+
+        // Deliberately NOT re-engaging HelmStabilizePressed here (unlike the old flight-based
+        // approach this replaced): DebugSetShipVelocity already turns auto-stabilize off on its own
+        // (World.ShipField.cs's own doc comment on it) specifically so this matched state survives
+        // a caller waiting around doing something else (World_Docking_ProximityAloneDoesNotDock
+        // sitting idle, ExitShipIntoVacuum going EVA) - stabilizing here would immediately start
+        // decelerating the ship back toward universe-absolute rest, drifting it away from a station
+        // that's still really moving at its own full orbital speed.
 
         // Most callers expect to walk character 1 off to do something else right after this (open
         // the airlock, take a tool, go EVA) - manning a console locks movement the same way
@@ -146,6 +105,23 @@ internal static partial class TestRunner
         // leaveAtHelm instead.
         if (!leaveAtHelm && world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsAtHelm)
             world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+    }
+
+    // Same turn-to-bearing logic as SteerToward, but throttle is scaled to the fraction of
+    // `maxSpeedAddedPerTick` actually needed to close `desiredDeltaV` this tick, instead of a flat
+    // 1/0 - see ApproachBerth's own comment on why cruise's 20x thrust multiplier makes plain
+    // bang-bang throttle unable to settle inside DockMaxSpeed's narrow window.
+    private static ClientCommand SteerTowardProportional(World world, int playerId, Vec2 desiredDeltaV, float maxSpeedAddedPerTick)
+    {
+        var shipField = world.CreateSnapshot().ShipField;
+        var bearingDegrees = MathF.Atan2((float)desiredDeltaV.Y, (float)desiredDeltaV.X) * (180f / MathF.PI) - world.Ship.ForwardDegrees;
+        var error = ((bearingDegrees - shipField.RotationDegrees) % 360f + 540f) % 360f - 180f;
+        var throttle = MathF.Abs(error) < 25f && maxSpeedAddedPerTick > 0f
+            ? MathF.Min(1f, (float)(desiredDeltaV.Length() / maxSpeedAddedPerTick))
+            : 0f;
+        return new ClientCommand(playerId,
+            HelmThrottle: throttle,
+            HelmTurn: MathF.Abs(error) < 2f ? 0f : MathF.Sign(error));
     }
 
     // Flies one fixed leg to a clearance waypoint if the current straight line to `target` clips
@@ -192,13 +168,14 @@ internal static partial class TestRunner
         foreach (var station in world.GalaxyMap.GetSystem(world.CreateSnapshot().CurrentSystemId).Points
                      .Where(p => p.Kind == GalaxyPointKind.Station && p.Id != targetPointId))
         {
-            var toStation = station.Position - from;
+            var stationPosition = world.ResolveGalaxyPointPosition(station);
+            var toStation = stationPosition - from;
             var projected = toStation.X * dir.X + toStation.Y * dir.Y;
             if (projected < 0f || projected > length)
                 continue; // not actually between here and the target
 
             var closestPoint = from + dir * projected;
-            var offset = station.Position - closestPoint;
+            var offset = stationPosition - closestPoint;
             if (offset.Length() >= clearance)
                 continue;
 
@@ -221,10 +198,39 @@ internal static partial class TestRunner
             return false; // never reached the berth - setup problem, not the behavior under test
 
         world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 0f));
-        for (var i = 0; i < 10 * 30; i++) // sit at the berth doing nothing at all
+        // "Sit at the berth doing nothing at all" for 10 whole seconds is longer than
+        // TryFlyShipOnRails's own analytic orbit (seeded once, from a necessarily-approximate
+        // finite-difference velocity match) reliably tracks the station's own live, independently-
+        // computed position - close enough in to trip a real hull collision (World.ShipField.cs's
+        // own StepShipFieldPhysics) well before 10s of drift accumulates, at the DockCaptureRadius(4)
+        // range this scenario sits in. Re-snapped to the live offset every tick instead of trusting
+        // that longer, unattended coast - this is what "just sitting there, not touching anything"
+        // actually needs to mean for this test, not a claim about on-rails fidelity over 10s at
+        // point-blank range (a separate, real concern this doesn't try to fix).
+        var berthOffset = new Vec2(world.CreateSnapshot().ShipField.X, world.CreateSnapshot().ShipField.Y) - world.DockBerthPosition;
+        Vec2? previousBerthForIdle = null;
+        for (var i = 0; i < 10 * 30; i++)
+        {
+            var currentBerth = world.DockBerthPosition;
+            world.DebugPlaceShip(currentBerth + berthOffset); // DebugPlaceShip itself zeroes velocity, so re-set it AFTER this, not before
+            if (previousBerthForIdle is { } prevBerth)
+                world.DebugSetShipVelocity((currentBerth - prevBerth) * (1.0 / RealtimeStep));
+            previousBerthForIdle = currentBerth;
             world.Step(RealtimeStep);
+        }
         if (world.IsDocked)
             return false;
+
+        // The loop's own last Step (needed so IsDocked/decompression/etc. actually run across the
+        // full 10s, not skipped) leaves the ship exactly where that tick's real velocity carried it
+        // from the last placement - up to ~1 unit's worth of DockCaptureRadius at ordinary speeds,
+        // but a fast-orbiting station's own ~50,000 units/s covers thousands of units in a single
+        // 1/30s tick. One final re-snap is what makes the CanDockNow check right below (and the
+        // press after it) test "still sitting at the berth", not "wherever one uncorrected tick of
+        // drift happened to leave it".
+        var liveBerth = world.DockBerthPosition;
+        world.DebugPlaceShip(liveBerth + berthOffset);
+        world.DebugSetShipVelocity(previousBerthForIdle is { } lastBerth ? (liveBerth - lastBerth) * (1.0 / RealtimeStep) : Vec2.Zero);
 
         // ...and the button, once pressed, does dock it.
         world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
@@ -248,7 +254,7 @@ internal static partial class TestRunner
         // +Y, not +X: the home station's own room row extends toward +X from the berth
         // (Station.Default.cs), so a plain +X offset just aims the whole approach straight down
         // that row instead of into open space.
-        var awayFromHome = world.GalaxyMap.GetPoint(world.GalaxyMap.HomePointId).Position + new Vec2(0f, 200f);
+        var awayFromHome = world.ResolveGalaxyPointPosition(world.GalaxyMap.GetPoint(world.GalaxyMap.HomePointId)) + new Vec2(0f, 200f);
         for (var i = 0; i < 30 * 30; i++)
         {
             world.ApplyCommand(1, SteerToward(world, 1, awayFromHome));
@@ -359,38 +365,42 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, DockPressed: true)); // undock
         world.Step(RealtimeStep);
 
-        SitAtHelm(world, 1);
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f));
-        for (var i = 0; i < 60; i++)
-            world.Step(RealtimeStep);
+        // M58 follow-up - "перевести стыковку на относительный кадр": physically flying this,
+        // "barrel straight at the berth, mashing the button the whole way", stopped being
+        // reproducible once World.cs's own Tick fix (same milestone) made a hosted station's real
+        // Kepler orbital speed (tens of thousands of units/s) genuinely apply - home-station to
+        // trade-station is a real interplanetary hop at this game's KSP-scale, and matching a
+        // target moving that fast with bang-bang RCS steering either overshoots and diverges
+        // (uncapped) or, capped for stability, never actually catches up (a pure "close the current
+        // gap" term alone can't out-run a target already receding at the same speed the cap allows).
+        // ApproachBerth hit the identical wall and settled on setting the matched state directly
+        // (DebugSetShipVelocity, World.ShipField.cs) rather than simulating the chase - this test
+        // only needs "close to the berth AND moving too fast relative to it", so it constructs that
+        // directly the same way: place at the berth's own live position, and give it that same live
+        // velocity plus an ordinary deliberate extra kick, well over DockMaxSpeed(2) but nowhere
+        // near what would look like a flight-model bug.
+        var target = world.ResolveGalaxyPointPosition(world.GalaxyMap.GetPoint("trade-station"));
+        world.DebugPlaceShip(target);
+        world.Step(RealtimeStep); // lets UpdateNearestStation/Station.RepositionTo pick up trade-station as nearest before DockBerthPosition is read below
 
-        // Barrel straight at the berth, mashing the button the whole way: while moving faster than
-        // DockMaxSpeed it must never take. SteerToward already floors the throttle once roughly
-        // lined up with the target, so aiming it straight at the station the whole way is the same
-        // "full ahead" approach the old fixed-heading version used.
-        var target = world.GalaxyMap.GetPoint("trade-station").Position;
-        var sawPortAtSpeed = false;
-        for (var i = 0; i < 60 * 30 && !world.IsDocked; i++)
-        {
-            world.ApplyCommand(1, SteerToward(world, 1, target));
-            world.Step(RealtimeStep);
-            var shipField = world.CreateSnapshot().ShipField;
-            // Measured against the berth (where the hull has to sit), not the airlock rectangle -
-            // the hull centre is a good half-ship short of the latter when the two are mated.
-            var toBerth = world.DockBerthPosition - new Vec2(shipField.X, shipField.Y);
-            var speed = new Vec2(shipField.VelocityX, shipField.VelocityY).Length();
-            if (toBerth.Length() < 4f && speed >= 2f)
-            {
-                sawPortAtSpeed = true;
-                if (world.CanDockNow)
-                    return false; // armed while still barrelling in
-                world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
-                if (world.IsDocked)
-                    return false; // docked despite the speed
-            }
-        }
+        var berthSample1 = world.DockBerthPosition;
+        world.Step(RealtimeStep);
+        var berthSample2 = world.DockBerthPosition;
+        var berthVelocity = (berthSample2 - berthSample1) * (1.0 / RealtimeStep);
 
-        return sawPortAtSpeed;
+        world.DebugPlaceShip(berthSample2 + new Vec2(2f, 0f)); // inside DockCaptureRadius(4)
+        world.DebugSetShipVelocity(berthVelocity + new Vec2(50f, 0f)); // matched to the berth, plus a deliberate 50 units/s over DockMaxSpeed(2)
+
+        var shipField = world.CreateSnapshot().ShipField;
+        var toBerth = world.DockBerthPosition - new Vec2(shipField.X, shipField.Y);
+        var speed = new Vec2(shipField.VelocityX, shipField.VelocityY).Length();
+        if (toBerth.Length() >= 4f || speed < 2f)
+            return false; // setup problem - didn't actually land in the "close and too fast" state this is testing
+
+        if (world.CanDockNow)
+            return false; // armed while still barrelling in
+        world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
+        return !world.IsDocked; // must NOT have docked despite the speed
     }
 
     // Same button either way (World.StationDocking.cs's HandleDockButtonPressed) - pressing it

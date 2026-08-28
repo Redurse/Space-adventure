@@ -52,7 +52,7 @@ public sealed partial class GalaxyMapPanel
 
     // The "navigator" glyph - a small triangle pointing along the hull's real heading (RotationDegrees
     // + the hull's own ForwardDegrees offset, same convention World.ShipField.cs itself steers by),
-    // constant screen size regardless of zoom like every other marker on this map (GetPointRect's
+    // constant screen size regardless of zoom like every other marker on this map (PointMarkerSize's
     // own doc comment).
     private void DrawShipHeadingArrow(SpriteBatch spriteBatch, Vector2 shipCenter, float noseDegrees)
     {
@@ -113,7 +113,7 @@ public sealed partial class GalaxyMapPanel
 
         foreach (var room in station.Rooms)
         {
-            var local = new Vector2(room.Center.X, room.Center.Y) - boundsCenter;
+            var local = new Vector2((float)room.Center.X, (float)room.Center.Y) - boundsCenter;
             var size = new Vector2(room.Width, room.Height) * scale;
             var screenCenter = markerScreen + local * scale;
             spriteBatch.Draw(_pixel, screenCenter, null, Color.SteelBlue * 0.85f, 0f,
@@ -138,7 +138,7 @@ public sealed partial class GalaxyMapPanel
         foreach (var room in snapshot.Rooms)
         {
             var local = room.Center - hullCenter;
-            var rotated = new Vector2(local.X * cos - local.Y * sin, local.X * sin + local.Y * cos);
+            var rotated = new Vector2((float)(local.X * cos - local.Y * sin), (float)(local.X * sin + local.Y * cos));
             var size = new Vector2(room.Width, room.Height) * scale;
             var breached = snapshot.WallBlockStates.Any(s =>
                 s.Breached && snapshot.WallBlocks.FirstOrDefault(b => b.Id == s.Id)?.RoomId == room.Id);
@@ -156,7 +156,9 @@ public sealed partial class GalaxyMapPanel
     // The ship's own course, not its heading - the two only agree while flying straight ahead in
     // Arc mode. Length is a fixed screen distance driven by speed alone (not zoom), same reasoning
     // as the heading arrow's constant size: it needs to read at a glance at any zoom level, not be
-    // measured against the map's own scale.
+    // measured against the map's own scale. Bodies/stations are all fixed now (M59), so the ship's
+    // own absolute velocity IS its velocity relative to everything drawn around it - no host to
+    // subtract.
     private void DrawShipVelocityVector(SpriteBatch spriteBatch, ShipFieldState shipField, Vector2 shipCenter)
     {
         var velocity = new Vector2(shipField.VelocityX, shipField.VelocityY);

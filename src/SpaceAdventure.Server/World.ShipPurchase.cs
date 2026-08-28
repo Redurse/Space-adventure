@@ -24,6 +24,8 @@ public sealed partial class World
         InitializeSuitLockers();
         InitializeWallBlocks();
         RestockAmmoStorages();
+        RestockHullPlating();
+        RecomputeDeviceBonuses(); // content-каталог отсеков - a bought/starting hull's own bonus is 0, but this is the shared recompute point every caller (constructor/purchase/save/detach) goes through
 
         _roomOxygen.Clear();
         foreach (var room in Ship.Rooms)

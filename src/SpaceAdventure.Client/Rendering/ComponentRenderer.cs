@@ -295,7 +295,7 @@ public static class ComponentRenderer
             if (anchor is null)
                 continue;
             var flicker = 0.6f + 0.4f * MathF.Sin(totalSeconds * 8f);
-            var characterPoint = origin + new Vector2(character.X, character.Y) * ShipRenderer.PixelsPerUnit;
+            var characterPoint = origin + new Vector2((float)character.X, (float)character.Y) * ShipRenderer.PixelsPerUnit;
             DrawWirePath(spriteBatch, pixel, anchor.Value, character.LayingWireBends, characterPoint, origin, Color.CadetBlue * flicker, 2);
         }
     }
@@ -310,7 +310,7 @@ public static class ComponentRenderer
         {
             foreach (var bend in bends)
             {
-                var bendScreen = origin + new Vector2(bend.X, bend.Y) * ShipRenderer.PixelsPerUnit;
+                var bendScreen = origin + new Vector2((float)bend.X, (float)bend.Y) * ShipRenderer.PixelsPerUnit;
                 DrawLine(spriteBatch, pixel, previous, bendScreen, color, thickness);
                 previous = bendScreen;
             }

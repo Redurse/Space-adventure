@@ -137,7 +137,7 @@ public sealed class ExternalCameraPanel
         // Anchored on the mount's own physical position, not the hull centre (ExternalCameraPanel's
         // own doc comment) - real parallax, same formula Game1.ComputeCamera uses for a manned
         // turret's muzzle-anchored view.
-        var origin = center - new Vector2(mount.Position.X, mount.Position.Y) * ShipRenderer.PixelsPerUnit;
+        var origin = center - new Vector2((float)mount.Position.X, (float)mount.Position.Y) * ShipRenderer.PixelsPerUnit;
 
         var previousScissor = device.ScissorRectangle;
         device.ScissorRectangle = DeviceSpaceRect(area, outerTransform, device.Viewport);

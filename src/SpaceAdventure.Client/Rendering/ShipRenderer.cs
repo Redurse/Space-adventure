@@ -146,7 +146,7 @@ public sealed class ShipRenderer
         // in step with real flight instead of a fake ambient scroll, and hold still the instant the
         // ship does.
         var travelled = ShipLocalFrame.ToLocalDirection(new Vec2(snapshot.ShipField.X, snapshot.ShipField.Y), snapshot.ShipField.RotationDegrees);
-        var starDrift = new Vector2(travelled.X, travelled.Y) * PixelsPerUnit;
+        var starDrift = new Vector2((float)travelled.X, (float)travelled.Y) * PixelsPerUnit;
         _starfield.Draw(spriteBatch, totalSeconds, starDrift);
 
         // The armour the compartments sit inside, under everything else - what shows of it is the
@@ -198,6 +198,14 @@ public sealed class ShipRenderer
             if (block is not null && room is not null)
                 DrawBreachedWallBlock(spriteBatch, block, room, origin, totalSeconds);
         }
+
+        // M62 - a room under construction (World.ShipBuilding.cs's StepRoomBuilds) isn't part of
+        // Rooms above yet, so it needs its own draw pass - a translucent outline over whatever's
+        // already there (open space through a window, or genuinely nothing) plus a progress
+        // readout, the plan's own "не проходима, не герметична, не запитана" made visible.
+        if (snapshot.PendingRoomBuilds is { Count: > 0 } pendingBuilds)
+            foreach (var pending in pendingBuilds)
+                DrawPendingRoomBuild(spriteBatch, pending, origin);
 
         foreach (var storage in snapshot.AmmoStorages)
         {
@@ -275,7 +283,7 @@ public sealed class ShipRenderer
         foreach (var character in snapshot.Characters.Where(c => c.Cutting && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
         {
             var facing = new Vector2(character.FacingX, character.FacingY);
-            var center = origin + new Vector2(character.X, character.Y) * PixelsPerUnit;
+            var center = origin + new Vector2((float)character.X, (float)character.Y) * PixelsPerUnit;
             var muzzle = GetHeldToolMuzzle(ItemType.Cutter, character.Inventory, center, facing) ?? center + HeldToolOffset(facing);
             FieldRenderer.DrawCuttingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);
         }
@@ -283,7 +291,7 @@ public sealed class ShipRenderer
         foreach (var character in snapshot.Characters.Where(c => c.Welding && !c.IsOutside && !c.OnStation && !c.OnEnemyShip))
         {
             var facing = new Vector2(character.FacingX, character.FacingY);
-            var center = origin + new Vector2(character.X, character.Y) * PixelsPerUnit;
+            var center = origin + new Vector2((float)character.X, (float)character.Y) * PixelsPerUnit;
             var muzzle = GetHeldToolMuzzle(ItemType.WeldingTool, character.Inventory, center, facing) ?? center + HeldToolOffset(facing);
             FieldRenderer.DrawWeldingFlame(spriteBatch, _pixel, muzzle, facing, totalSeconds);
         }
@@ -292,7 +300,7 @@ public sealed class ShipRenderer
             // Cut and Explosion are both in AsteroidField world space, not this ship-local frame -
             // FieldRenderer draws those instead.
             foreach (var effect in effects.Where(e => e.Kind is not EffectKind.Cut and not EffectKind.Explosion))
-                DrawSparkBurst(spriteBatch, origin + new Vector2(effect.Position.X, effect.Position.Y) * PixelsPerUnit, effect.Progress, effect.Kind == EffectKind.Weld ? Color.White : Color.PaleGreen);
+                DrawSparkBurst(spriteBatch, origin + new Vector2((float)effect.Position.X, (float)effect.Position.Y) * PixelsPerUnit, effect.Progress, effect.Kind == EffectKind.Weld ? Color.White : Color.PaleGreen);
 
         if (atmosphere is not null)
             foreach (var particle in atmosphere)
@@ -304,7 +312,7 @@ public sealed class ShipRenderer
     // (AtmosphereParticle.Progress) instead of DrawSparkBurst's radiating rays.
     private void DrawAtmosphereParticle(SpriteBatch spriteBatch, AtmosphereParticle particle, Vector2 origin)
     {
-        var center = origin + new Vector2(particle.Position.X, particle.Position.Y) * PixelsPerUnit;
+        var center = origin + new Vector2((float)particle.Position.X, (float)particle.Position.Y) * PixelsPerUnit;
         var alpha = 1f - particle.Progress;
         var color = particle.Kind switch
         {
@@ -648,7 +656,7 @@ public sealed class ShipRenderer
             if (dropped.RoomId is not { } roomId || !rooms.Contains(roomId))
                 continue;
 
-            var center = origin + new Vector2(dropped.X, dropped.Y) * PixelsPerUnit;
+            var center = origin + new Vector2((float)dropped.X, (float)dropped.Y) * PixelsPerUnit;
             var pulse = 0.8f + 0.2f * MathF.Sin(totalSeconds * 4f + center.X);
             const int size = 14;
             var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
@@ -1000,7 +1008,7 @@ public sealed class ShipRenderer
             return;
 
         var mount = TurretMount.For(rooms, allTurrets, turret);
-        var mountPx = origin + new Vector2(mount.Position.X, mount.Position.Y) * PixelsPerUnit;
+        var mountPx = origin + new Vector2((float)mount.Position.X, (float)mount.Position.Y) * PixelsPerUnit;
         var rotation = mount.FireDegrees(state.AimDegrees) * (MathF.PI / 180f);
 
         // Two sprites, and only the second one turns: a barbette bolted through the plating, and the
@@ -1028,7 +1036,7 @@ public sealed class ShipRenderer
         DrawAimArcEdge(spriteBatch, mountPx, mount.FireDegrees(turret.MaxAimDegrees));
 
         var muzzleLocal = mount.Muzzle(state.AimDegrees);
-        var muzzle = origin + new Vector2(muzzleLocal.X, muzzleLocal.Y) * PixelsPerUnit;
+        var muzzle = origin + new Vector2((float)muzzleLocal.X, (float)muzzleLocal.Y) * PixelsPerUnit;
         spriteBatch.Draw(_pixel, muzzle, null, Color.Gold * 0.45f, rotation, new Vector2(0f, 0.5f), new Vector2(900f, 2f), SpriteEffects.None, 0f);
 
         var readout = $"{state.AimDegrees:0}°";
@@ -1348,7 +1356,7 @@ public sealed class ShipRenderer
     internal void DrawRoomFloor(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin, Color? accentOverride = null)
     {
         var rect = GetRoomRect(room, origin);
-        var accent = accentOverride ?? RoomDecor.Accent(room.Id);
+        var accent = accentOverride ?? RoomDecor.Accent(room.Id, room.Name);
 
         // Plates rather than one repeated stamp, and the seams are cut into them rather than drawn
         // over the top - which is why DrawFloorGrating is gone: its hairline grid had no depth, so
@@ -1364,6 +1372,10 @@ public sealed class ShipRenderer
         DeckPlates.DrawGrime(spriteBatch, _deckGrime, rect, room.Id);
         RoomDecor.DrawLightPool(spriteBatch, _pixel, rect, accent);
         RoomDecor.DrawFurniture(spriteBatch, _pixel, rect, room.Id, accent);
+        // Content-каталог отсеков - a built room's own id is always a plain "room-N" (never matches
+        // DrawFurniture's id-substring switch above), so this is never a double-draw: it only ever
+        // fires for the 13 catalog room types DrawFurniture already silently skips.
+        RoomDecor.DrawCatalogDecor(spriteBatch, _pixel, rect, room.Name, accent);
 
         var deficit = Math.Clamp((100f - oxygen) / 100f, 0f, 1f);
         if (deficit > 0f)
@@ -1395,7 +1407,7 @@ public sealed class ShipRenderer
     {
         var rect = GetRoomRect(room, origin);
         var alarmed = oxygen < 70f;
-        var accent = accentOverride ?? RoomDecor.Accent(room.Id);
+        var accent = accentOverride ?? RoomDecor.Accent(room.Id, room.Name);
         const int half = WallThickness / 2;
 
         RoomDecor.DrawWallLamps(spriteBatch, _pixel, rect, accent, alarmed);
@@ -1510,6 +1522,78 @@ public sealed class ShipRenderer
         (int)origin.Y + (int)(room.Y * PixelsPerUnit),
         (int)(room.Width * PixelsPerUnit),
         (int)(room.Height * PixelsPerUnit));
+
+    // M62 - the "ghost" for a room still under construction: a translucent cyan fill (deliberately
+    // not the hazard-red DrawBreachedWallBlock's pulse uses, since an in-progress build isn't a
+    // problem to fix) plus a dashed-looking border (drawn as short segments rather than one solid
+    // line, cheap enough with just _pixel and reads as a blueprint/holographic outline) and a
+    // percentage readout centered in the footprint.
+    private void DrawPendingRoomBuild(SpriteBatch spriteBatch, PendingRoomBuildState pending, Vector2 origin)
+    {
+        var rect = new Rectangle(
+            (int)origin.X + (int)(pending.X * PixelsPerUnit),
+            (int)origin.Y + (int)(pending.Y * PixelsPerUnit),
+            (int)(pending.Width * PixelsPerUnit),
+            (int)(pending.Height * PixelsPerUnit));
+
+        spriteBatch.Draw(_pixel, rect, Color.CornflowerBlue * 0.28f);
+
+        const int dash = 10, gap = 6, thickness = 2;
+        for (var x = rect.Left; x < rect.Right; x += dash + gap)
+        {
+            var w = Math.Min(dash, rect.Right - x);
+            spriteBatch.Draw(_pixel, new Rectangle(x, rect.Top, w, thickness), Color.CornflowerBlue);
+            spriteBatch.Draw(_pixel, new Rectangle(x, rect.Bottom - thickness, w, thickness), Color.CornflowerBlue);
+        }
+        for (var y = rect.Top; y < rect.Bottom; y += dash + gap)
+        {
+            var h = Math.Min(dash, rect.Bottom - y);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.Left, y, thickness, h), Color.CornflowerBlue);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.Right - thickness, y, thickness, h), Color.CornflowerBlue);
+        }
+
+        var text = $"{pending.Name}\n{(int)(pending.ProgressFraction * 100)}%";
+        var size = _font.MeasureString(text) * 0.6f;
+        var center = new Vector2(rect.Center.X, rect.Center.Y) - size * 0.5f;
+        spriteBatch.DrawString(_font, text, center, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+    }
+
+    // Content-каталог отсеков - click-to-place UI's own overlay while a module is selected
+    // (Game1.cs's own _placingRoomCatalogId): a light 1-tile (3-unit) grid across the hull's own
+    // footprint, every currently valid attach spot (RoomPlacementPreview.FindCandidates) outlined
+    // faintly, and whichever one is closest to the cursor right now filled solid green - the one a
+    // click would actually confirm.
+    public void DrawPlacementOverlay(SpriteBatch spriteBatch, WorldSnapshot snapshot,
+        IReadOnlyList<RoomPlacementPreview.Candidate> candidates, RoomPlacementPreview.Candidate? nearest, Vector2 origin)
+    {
+        const float tileUnits = 3f;
+        var minX = snapshot.Rooms.Min(r => r.X) - tileUnits;
+        var maxX = snapshot.Rooms.Max(r => r.X + r.Width) + tileUnits;
+        var minY = snapshot.Rooms.Min(r => r.Y) - tileUnits;
+        var maxY = snapshot.Rooms.Max(r => r.Y + r.Height) + tileUnits;
+
+        Color gridLine = new(120, 160, 190, 60);
+        for (var x = MathF.Floor(minX / tileUnits) * tileUnits; x <= maxX; x += tileUnits)
+        {
+            var screenX = (int)origin.X + (int)(x * PixelsPerUnit);
+            spriteBatch.Draw(_pixel, new Rectangle(screenX, (int)origin.Y + (int)(minY * PixelsPerUnit), 1, (int)((maxY - minY) * PixelsPerUnit)), gridLine);
+        }
+        for (var y = MathF.Floor(minY / tileUnits) * tileUnits; y <= maxY; y += tileUnits)
+        {
+            var screenY = (int)origin.Y + (int)(y * PixelsPerUnit);
+            spriteBatch.Draw(_pixel, new Rectangle((int)origin.X + (int)(minX * PixelsPerUnit), screenY, (int)((maxX - minX) * PixelsPerUnit), 1), gridLine);
+        }
+
+        foreach (var candidate in candidates)
+        {
+            var rect = new Rectangle(
+                (int)origin.X + (int)(candidate.X * PixelsPerUnit), (int)origin.Y + (int)(candidate.Y * PixelsPerUnit),
+                (int)(candidate.Width * PixelsPerUnit), (int)(candidate.Height * PixelsPerUnit));
+            var isNearest = nearest is { } n && n.X == candidate.X && n.Y == candidate.Y;
+            spriteBatch.Draw(_pixel, rect, Color.LightGreen * (isNearest ? 0.35f : 0.1f));
+            DrawRectOutline(spriteBatch, _pixel, rect, Color.LightGreen * (isNearest ? 1f : 0.4f), isNearest ? 2 : 1);
+        }
+    }
 
     private static float RoomOxygen(WorldSnapshot snapshot, string roomId) =>
         snapshot.RoomOxygen.FirstOrDefault(o => o.RoomId == roomId)?.Oxygen ?? 100f;
@@ -1697,7 +1781,7 @@ public sealed class ShipRenderer
     internal void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin)
     {
         var size = (int)(CharacterDiameter * PixelsPerUnit);
-        var center = new Vector2(origin.X + character.X * PixelsPerUnit, origin.Y + character.Y * PixelsPerUnit);
+        var center = new Vector2(origin.X + (float)character.X * PixelsPerUnit, origin.Y + (float)character.Y * PixelsPerUnit);
         var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
 
         var facing = new Vector2(character.FacingX, character.FacingY);

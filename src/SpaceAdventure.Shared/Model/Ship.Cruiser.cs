@@ -112,7 +112,7 @@ public sealed partial class Ship
         var hold = rooms.First(r => r.Id == "hold");
         var storageRacks = new[]
         {
-            new StorageRack("rack-hold", hold.Id, X: hold.Center.X, Y: hold.Top + 1.5f),
+            new StorageRack("rack-hold", hold.Id, X: (float)hold.Center.X, Y: hold.Top + 1.5f),
             new StorageRack("rack-quarters", "quarters", X: 16.5f, Y: 5f),
         };
 

@@ -45,4 +45,18 @@ public static class ShipCatalog
     };
 
     public static int TradeInValue(ShipKind kind) => (int)(Price(kind) * TradeInFraction);
+
+    // F = m*a (World.ShipField.cs's IntegrateShipFieldMotion): a fixed per-hull-kind constant, no
+    // fuel/depletion involved (there is no tank to drain - thrust stays inexhaustible either way).
+    // Dimensionless relative scale, not real kg - the thrust FORCE constants are tuned to match
+    // this, not the other way round. Frigate = 1.0 is the baseline every existing thrust constant
+    // was already tuned against before mass existed, so it stays exactly 1.0 - today's flat-constant
+    // feel is preserved for that one hull, unchanged.
+    public static float Mass(ShipKind kind) => kind switch
+    {
+        ShipKind.Scout => 0.6f,
+        ShipKind.Corvette => 1.3f,
+        ShipKind.Cruiser => 1.8f,
+        _ => 1.0f, // Frigate, and Custom - same catch-all Price/TradeInValue above already use
+    };
 }

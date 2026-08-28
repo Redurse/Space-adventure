@@ -28,7 +28,7 @@ internal static partial class TestRunner
 
         var exitPos = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var pushDir = new Vec2(targetWorld.X - exitPos.X, targetWorld.Y - exitPos.Y).Normalized();
-        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: pushDir.X, PushOffDirectionY: pushDir.Y));
+        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: (float)pushDir.X, PushOffDirectionY: (float)pushDir.Y));
         world.Step(RealtimeStep);
 
         // A straight push aimed right at the block's own position passes through the attach
@@ -67,7 +67,7 @@ internal static partial class TestRunner
 
         var exitPos = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var pushDir = new Vec2(targetWorld.X - exitPos.X, targetWorld.Y - exitPos.Y).Normalized();
-        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: pushDir.X, PushOffDirectionY: pushDir.Y));
+        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: (float)pushDir.X, PushOffDirectionY: (float)pushDir.Y));
 
         // Coasting on the push-off alone, same as flying into a wall and letting physics answer
         // back - no jetpack correction, which would just fly a second attempt straight back at
