@@ -58,15 +58,29 @@ public sealed partial class World
         foreach (var (roomId, delta) in deltas)
             _roomOxygen[roomId] += delta;
 
+        // M72 (humble-soaring-cat.md) - leak now reads Ship.Tiles instead of trusting the
+        // WallBlock.IsInterior flag: a block "borders vacuum" (leaks) exactly when at least one of
+        // its own tile's four neighbors has no floor at all (true open space), and "doesn't"
+        // (interior bulkhead, both sides already pressurized) when every neighbor is itself part of
+        // the hull - a direct, geometric re-derivation of the same distinction IsInterior used to
+        // hard-code at generation time, kept in sync with live damage via World.TileSync.cs. Oxygen
+        // storage/diffusion above is untouched (still keyed by Room.Id, still walks Ship.Doors
+        // directly) - Room.Id stays the authoritative room identity everywhere else in World until
+        // M73, and Ship.Doors already encodes exactly the right room pairs, so migrating that half
+        // too would be pure churn with no behavior difference for today's rectangular hulls.
         foreach (var room in Ship.Rooms)
         {
-            // Scales with how badly each block is actually hurt, not just whether it's fully
-            // breached - a wall dented but not yet through leaks a little, one punched clean
-            // through leaks the full rate, and everything in between is a straight ramp. Interior
-            // bulkheads (WallBlock.IsInterior) are excluded - both sides are already pressurized,
-            // there's nothing to decompress into.
-            var leak = Ship.WallBlocks.Where(b => b.RoomId == room.Id && !b.IsInterior)
-                .Sum(b => OxygenLeakPerBreachPerSecond * (1f - WallBlockHp(b.Id) / WallBlockMaxHp));
+            var leak = 0f;
+            foreach (var block in Ship.WallBlocks.Where(b => b.RoomId == room.Id))
+            {
+                var coord = TileGridRasterizer.WallBlockTileCoord(block, room);
+                if (Ship.Tiles.CellAt(coord) is not { Wall: TileWallKind.Solid } cell)
+                    continue;
+                var bordersVacuum = TileSideExtensions.All.Any(side => Ship.Tiles.CellAt(side.Offset(coord)) is not { HasFloor: true });
+                if (!bordersVacuum)
+                    continue;
+                leak += OxygenLeakPerBreachPerSecond * (1f - cell.WallHp / WallBlockMaxHp);
+            }
             var oxygen = _roomOxygen[room.Id] - leak * (float)deltaSeconds;
             _roomOxygen[room.Id] = Math.Clamp(oxygen, 0f, FullOxygen);
         }

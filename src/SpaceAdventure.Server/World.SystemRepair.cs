@@ -23,6 +23,45 @@ public sealed partial class World
 
     private readonly Dictionary<string, SystemRepairProgress> _systemRepairProgress = new();
 
+    // M74 (humble-soaring-cat.md) - generalizes what used to be 5 separately hardcoded fields
+    // (ReactorBlock/DistributionBlock/BatteryBlock/HelmConsole/NavigationConsole) into one small
+    // per-kind lookup, reused by World.Interact.cs/World.EnemyAi.cs and this file. Devices.First(...)
+    // rather than iterating every instance of a kind on purpose: each of these five kinds still only
+    // ever has ONE tracked Broken flag for the whole ship, even on a hull with extra reactor/helm/
+    // navigation rooms (Ship.cs's own ExtraReactorPositions doc comment) - letting every instance
+    // report/repair the same shared flag would need PowerGrid itself to track per-instance state,
+    // not just per-system-wide-flag, which stays a deliberately deferred follow-up, not something
+    // this milestone invents.
+    private static readonly DeviceKind[] RepairableBlockKinds =
+    {
+        DeviceKind.Reactor, DeviceKind.Distribution, DeviceKind.Battery, DeviceKind.Helm, DeviceKind.Navigation,
+    };
+
+    private ShipDevice RepairableBlock(DeviceKind kind) => Ship.Devices.First(d => d.Kind == kind);
+
+    private bool IsBlockBroken(DeviceKind kind) => kind switch
+    {
+        DeviceKind.Reactor => PowerGrid.Reactor.Broken,
+        DeviceKind.Distribution => PowerGrid.DistributionBroken,
+        DeviceKind.Battery => PowerGrid.Battery.Broken,
+        DeviceKind.Helm => HelmConsoleBroken,
+        DeviceKind.Navigation => NavigationConsoleBroken,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    private void SetBlockBroken(DeviceKind kind, bool broken)
+    {
+        switch (kind)
+        {
+            case DeviceKind.Reactor: PowerGrid.Reactor.Broken = broken; break;
+            case DeviceKind.Distribution: PowerGrid.DistributionBroken = broken; break;
+            case DeviceKind.Battery: PowerGrid.Battery.Broken = broken; break;
+            case DeviceKind.Helm: HelmConsoleBroken = broken; break;
+            case DeviceKind.Navigation: NavigationConsoleBroken = broken; break;
+            default: throw new ArgumentOutOfRangeException(nameof(kind));
+        }
+    }
+
     // Called every tick for every currently-damaged device, every currently-damaged Junction box
     // (game_design.md - "щитки" are their own breakable device too), and every destroyed door on
     // the player's own ship - all driven by the same elapsed-time timer, only advancing while at
@@ -45,23 +84,16 @@ public sealed partial class World
         foreach (var (doorId, connects, position) in AllShipDoors())
             StepSystemRepairFor(doorId, connects, position, !IsDoorDestroyed(doorId), deltaSeconds);
 
-        // The reactor and its two sibling "boxes" (enemy/weapon overhaul - "реактор и коробки
-        // могли быть сломаны") - each a single physical fixture with a plain bool Damaged state
-        // (Reactor.Broken/PowerGrid.DistributionBroken/Battery.Broken), same minigame as everything
-        // else above.
-        StepSystemRepairFor(Ship.ReactorBlock.Id, r => r == Ship.ReactorBlock.RoomId, Ship.ReactorBlock.Position,
-            !PowerGrid.Reactor.Broken, deltaSeconds);
-        StepSystemRepairFor(Ship.DistributionBlock.Id, r => r == Ship.DistributionBlock.RoomId, Ship.DistributionBlock.Position,
-            !PowerGrid.DistributionBroken, deltaSeconds);
-        StepSystemRepairFor(Ship.BatteryBlock.Id, r => r == Ship.BatteryBlock.RoomId, Ship.BatteryBlock.Position,
-            !PowerGrid.Battery.Broken, deltaSeconds);
-
-        // The helm and the scanner console (enemy/weapon overhaul - "штурвал, сонар можно было
-        // сломать") - same plain bool Damaged state, same minigame.
-        StepSystemRepairFor(Ship.HelmConsole.Id, r => r == Ship.HelmConsole.RoomId, Ship.HelmConsole.Position,
-            !HelmConsoleBroken, deltaSeconds);
-        StepSystemRepairFor(Ship.NavigationConsole.Id, r => r == Ship.NavigationConsole.RoomId, Ship.NavigationConsole.Position,
-            !NavigationConsoleBroken, deltaSeconds);
+        // The reactor/distribution/battery "boxes" plus the helm and scanner console (enemy/weapon
+        // overhaul - "реактор и коробки могли быть сломаны", "штурвал, сонар можно было сломать") -
+        // each a single physical fixture with a plain bool Damaged state, same minigame as everything
+        // else above. See RepairableBlockKinds's own doc comment for why this is "one instance per
+        // kind" rather than looping every Devices entry of a repairable kind.
+        foreach (var kind in RepairableBlockKinds)
+        {
+            var block = RepairableBlock(kind);
+            StepSystemRepairFor(block.Id, r => r == block.RoomId, block.Position, !IsBlockBroken(kind), deltaSeconds);
+        }
     }
 
     // matchesRoom is a predicate rather than a plain room id because a door (unlike a SystemDevice/
@@ -111,16 +143,8 @@ public sealed partial class World
     {
         if (_doorHp.ContainsKey(id))
             _doorHp[id] = DoorMaxHp;
-        else if (id == Ship.ReactorBlock.Id)
-            PowerGrid.Reactor.Broken = false;
-        else if (id == Ship.DistributionBlock.Id)
-            PowerGrid.DistributionBroken = false;
-        else if (id == Ship.BatteryBlock.Id)
-            PowerGrid.Battery.Broken = false;
-        else if (id == Ship.HelmConsole.Id)
-            HelmConsoleBroken = false;
-        else if (id == Ship.NavigationConsole.Id)
-            NavigationConsoleBroken = false;
+        else if (RepairableBlockKinds.Where(k => RepairableBlock(k).Id == id).Cast<DeviceKind?>().FirstOrDefault() is { } blockKind)
+            SetBlockBroken(blockKind, false);
         else
             RepairDeviceWiring(id);
         _systemRepairProgress.Remove(id);
@@ -132,14 +156,12 @@ public sealed partial class World
     // repair state read locally by World.Interact.cs's own proximity check before now, never
     // resent every tick. Reuses ShipSystemState's exact shape; System is never actually read for
     // these five client-side (the Engineer panel labels them by DeviceId, not by power system).
-    private IReadOnlyList<ShipSystemState> CreateBlockRepairStates() => new[]
+    private IReadOnlyList<ShipSystemState> CreateBlockRepairStates() => RepairableBlockKinds.Select(kind =>
     {
-        new ShipSystemState(Ship.ReactorBlock.Id, PowerSystemId.Engine, PowerGrid.Reactor.Broken, GetSystemRepairDisplay(Ship.ReactorBlock.Id)),
-        new ShipSystemState(Ship.DistributionBlock.Id, PowerSystemId.Engine, PowerGrid.DistributionBroken, GetSystemRepairDisplay(Ship.DistributionBlock.Id)),
-        new ShipSystemState(Ship.BatteryBlock.Id, PowerSystemId.Engine, PowerGrid.Battery.Broken, GetSystemRepairDisplay(Ship.BatteryBlock.Id)),
-        new ShipSystemState(Ship.HelmConsole.Id, PowerSystemId.Secondary, HelmConsoleBroken, GetSystemRepairDisplay(Ship.HelmConsole.Id)),
-        new ShipSystemState(Ship.NavigationConsole.Id, PowerSystemId.Secondary, NavigationConsoleBroken, GetSystemRepairDisplay(Ship.NavigationConsole.Id)),
-    };
+        var block = RepairableBlock(kind);
+        var system = kind is DeviceKind.Helm or DeviceKind.Navigation ? PowerSystemId.Secondary : PowerSystemId.Engine;
+        return new ShipSystemState(block.Id, system, IsBlockBroken(kind), GetSystemRepairDisplay(block.Id));
+    }).ToList();
 
     // Test-only convenience, same convention as World.ShipField.cs's DebugPlaceShip: the 12-hour
     // duration above is deliberate real content (this file's own doc comment), not something a

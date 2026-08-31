@@ -101,7 +101,52 @@ public static class RoomCatalog
             DeviceKinds: new[] { CustomDeviceKind.Camera }, CameraSide: CameraMountSide.Aft),
 
         new RoomCatalogEntry("corridor", "Коридор", 3f, 3f, 60, PlatingCost: 2, Category: RoomCategory.Structural),
+
+        // Редактор корабля в духе Cosmoteer (humble-soaring-cat.md) - до этих двух записей каталог
+        // никогда не производил Distribution/Oxygen/SuitLocker/StorageRack, а CustomShipValidator
+        // требует хотя бы один каждого - корабль, собранный ТОЛЬКО из модулей каталога, физически не
+        // мог пройти проверку. Размер/цена - первое приближение по аналогии с остальным каталогом
+        // (см. открытый вопрос №1 в плане), не финальный баланс.
+        new RoomCatalogEntry("utility-bay", "Служебный отсек", 6f, 6f, 380, PlatingCost: 10, Category: RoomCategory.Power,
+            DeviceKinds: new[] { CustomDeviceKind.Distribution, CustomDeviceKind.Oxygen }),
+
+        new RoomCatalogEntry("storage-bay", "Склад", 6f, 6f, 320, PlatingCost: 9, Category: RoomCategory.Crew,
+            DeviceKinds: new[] { CustomDeviceKind.SuitLocker, CustomDeviceKind.StorageRack }),
     };
 
     public static RoomCatalogEntry? Find(string id) => Entries.FirstOrDefault(e => e.Id == id);
+
+    // Which catalog rooms have real hand-drawn reference art (RoomDecor.Catalog.cs, Client-only -
+    // the actual textures live there) instead of the generic procedural floor. Kept here too,
+    // duplicated by name rather than referenced, because Ship.DeviceObstacles is a SHARED physics
+    // rule (the server enforces it for real, not just the client's own rendering) and needs this
+    // same fact without depending on Client at all - a reactor room's own "big machine" obstacle
+    // only makes sense sized to match a picture that's actually there; every other reactor room
+    // (every hand-authored hull, or a custom room the player names differently) gets no such
+    // obstacle. Keep this list in sync with RoomDecor.CatalogTextureNames's own room-name column.
+    public static readonly IReadOnlySet<string> NamesWithReferenceArt = new HashSet<string>
+    {
+        "Реакторный отсек", "Кокпит (малый)", "Двигатель маршевый (малый)", "Турель лазерная",
+        "Капитанский мостик (большой)", "Турель пушечная", "Каюта", "Манёвровый двигатель (однонаправленный)",
+        "Манёвровый двигатель (двусторонний)", "Камера", "Двигатель маршевый (большой)",
+        "Манёвровый двигатель (трёхсторонний)", "Генератор щита",
+    };
+
+    // Moved here from World.ShipBuilding.cs's own (formerly private) DevicesForCatalogEntry (see the
+    // plan's own Cosmoteer-редактор branch, Step 2) - the offline Ship Editor (Client project) needs
+    // the exact same "module -> device(s) centred in its own room" logic the in-game Shipwright
+    // build path already uses, and neither project can see the other's private server-side code.
+    // Every device a catalog entry carries lands at the room's own centre (point-containment is all
+    // Ship.FromCustomDefinition's own RoomIdAt needs, and several devices sharing one exact position
+    // - a cockpit's Helm+Navigation pair - is harmless). ThrustBonus/TurnBonus only ever apply to the
+    // Engine kind, CapacityBonus only to Shields - RoomCatalogEntry never mixes them on one entry.
+    public static IReadOnlyList<CustomDeviceDef> DevicesFor(RoomCatalogEntry entry, CustomRoomDef room)
+    {
+        var centerX = room.X + room.Width / 2f;
+        var centerY = room.Y + room.Height / 2f;
+        return entry.Devices.Select(kind => new CustomDeviceDef(kind, centerX, centerY, MountSide: entry.MountSide, CameraSide: entry.CameraSide,
+            ThrustBonus: kind == CustomDeviceKind.Engine ? entry.ThrustBonus : 0f,
+            TurnBonus: kind == CustomDeviceKind.Engine ? entry.TurnBonus : 0f,
+            CapacityBonus: kind == CustomDeviceKind.Shields ? ShieldRoomCapacityBonus : 0f)).ToList();
+    }
 }

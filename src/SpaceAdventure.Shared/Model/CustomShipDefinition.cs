@@ -61,6 +61,59 @@ public enum CustomDeviceKind
     // hand-authored hull the moment it went through a build/definition round trip.
     Camera,
     ComponentMount,
+    // Placeable but inert for now (humble-soaring-cat.md's own M70+ plan: "короб проводки... без
+    // какой-либо функции в этой фазе") - Ship.FromCustomDefinition has no case for it, so placing
+    // one is purely cosmetic in the built Ship today, the same "заготовка под будущий редактор"
+    // status DeviceKind.Junction (ShipDevice.cs, M74) already carries in the shared ECS list.
+    Junction,
+    // The one physical fixture (BatteryBlock) that had no CustomDeviceKind at all before this -
+    // Ship.Custom.cs used to always auto-place it right next to the reactor rather than let the
+    // player choose. Now genuinely optional/positioned like CardTable: a placed one wins, otherwise
+    // the old auto-placement is the fallback - so an editor-drawn hull that never places one keeps
+    // working exactly as before.
+    Battery,
+
+    // Everything below is genuinely new - none of these have any Ship.FromCustomDefinition case,
+    // so placing one is purely cosmetic today (same "заготовка, функционал добавим поэтапно" status
+    // Junction already carries). Grouped by the tab they'll live under once the Space Haven-style
+    // tabbed palette (a separate, later step) replaces the flat device list - "управление кораблём":
+    EngineSmall,
+    EngineMedium,
+    EngineLarge,
+    WarpEngine,
+    // "шлюз" (шлюз/airlock itself reuses the existing Door tool - no device needed for it):
+    ShuttleHangar,
+    DroneHangar,
+    // "хранение":
+    SmallStorage,
+    LargeStorage,
+    Morgue,
+    FuelRodStorage,
+    // "производство":
+    ConstructionBench,
+    Fabricator,
+    Deconstructor,
+    WeaponWorkbench,
+    // "электроэнергия" - a placeable conduit tile for a future proper wiring rework; today's actual
+    // WireSpool-based wire-laying (World.Wiring.cs) is unrelated and untouched by this.
+    PowerConduit,
+    // "мебель" (Terminal reuses the existing Terminal tool - no device needed for it):
+    Table,
+    Chair,
+    Sofa,
+    Bed,
+    Nightstand,
+    WallLamp,
+    Spotlight,
+    Lamp,
+    DecorativePlant,
+    // "оружие" - лазерное орудие/автопушка/рельсотрон map onto the existing TurretLaser/
+    // TurretMachineGun/TurretBallistic (just newly categorized under this tab, no rename); these
+    // four are the genuinely new additions this tab needs.
+    DefensiveTurret,
+    ShieldGeneratorSmall,
+    ShieldGeneratorLarge,
+    WeaponPanel,
 }
 
 public sealed record CustomDeviceDef(

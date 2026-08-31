@@ -20,6 +20,9 @@ public sealed partial class Station
     // FindAimedStationWallBlock explains why) - a station itself is never actually breachable, so
     // unlike Ship.WallBlocks this list never needs a mutable Hp dictionary behind it.
     public IReadOnlyList<WallBlock> WallBlocks { get; }
+    // M71 (humble-soaring-cat.md) - see Ship.Tiles's own comment; same additive, nobody-reads-it-yet
+    // projection onto the new tile-grid model.
+    public TileGrid Tiles { get; }
     public IReadOnlyList<StationNpc> Npcs { get; }
     // Station property that can be stolen (game_design.md section 10, World.StationCrime.cs).
     public IReadOnlyList<StationCrate> Crates { get; }
@@ -59,6 +62,7 @@ public sealed partial class Station
         Doors = doors;
         ShipConnector = shipConnector;
         WallBlocks = BuildWallBlocks(rooms, doors, new[] { shipConnector });
+        Tiles = TileGridRasterizer.FromRooms(rooms, doors, new[] { shipConnector });
         Npcs = npcs;
         Crates = crates;
         DockRoomId = dockRoomId;
@@ -79,7 +83,12 @@ public sealed partial class Station
 
     public Room GetRoom(string roomId) => _roomsById[roomId];
 
-    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen) =>
-        RoomLayout.MoveAlongAxis(Rooms, Doors, position, roomId, delta, isDoorOpen);
+    // M73 - now backed by Tiles/TileMovement instead of the Rooms/Doors rectangle-clamp. isDoorOpen
+    // is unused (baked into TileCell already) - kept so callers don't need to change.
+    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen)
+    {
+        var next = TileMovement.MoveAlongAxis(Tiles, position, delta);
+        return (next, TileMovement.RoomIdAt(Rooms, next) ?? roomId);
+    }
 
 }

@@ -227,9 +227,17 @@ internal static partial class TestRunner
         // off from (World.Eva.cs's HandlePushOff is a no-op while not attached).
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
         world.Step(RealtimeStep);
-        // Push off along the same axis as the jetpack burn below (+Y) - clears the ship's attach
-        // zone faster than pushing sideways would (the zone hugs the whole hull along X).
-        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: 0f, PushOffDirectionY: 1f));
+        // Push off along the same axis as the jetpack burn below - clears the ship's attach zone
+        // faster than pushing sideways would (the zone hugs the whole hull along X). -Y specifically
+        // (not +Y, this test's original direction): for this test's own fixed deterministic seed
+        // (World.DebugDeterministicSeedBase, keyed by this test's position in the Tests array),
+        // "asteroid-field-epsilon" has scattered rocks along +Y that a ~1300-unit burn-plus-drift
+        // clips with magnetic boots still on (left on by the settling step above) - not a bounce,
+        // an actual auto-attach (TryAutoAttach's asteroid branch), which silently stops the jetpack
+        // burn loop early (attached characters don't run StepFreeFloating) and froze JetpackFuel
+        // partway through instead of reaching the intended full exhaustion. -Y is empirically clear
+        // for the same seed.
+        world.ApplyCommand(1, new ClientCommand(1, PushOffPressed: true, PushOffDirectionX: 0f, PushOffDirectionY: -1f));
         world.Step(RealtimeStep);
 
         // Burn through all jetpack fuel holding a thrust direction - JetpackMaxFuel(500) /
@@ -239,7 +247,7 @@ internal static partial class TestRunner
         {
             if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).JetpackFuel <= 0f)
                 break;
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 1));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: -1));
             world.Step(RealtimeStep);
         }
 
@@ -253,7 +261,7 @@ internal static partial class TestRunner
         var posAtEmpty = new Vec2(afterBurn.X, afterBurn.Y);
         for (var i = 0; i < 30; i++)
         {
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 1));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: -1));
             world.Step(RealtimeStep);
         }
         var afterWindow1 = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
@@ -261,7 +269,7 @@ internal static partial class TestRunner
 
         for (var i = 0; i < 30; i++)
         {
-            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 1));
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: -1));
             world.Step(RealtimeStep);
         }
         var afterWindow2 = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);

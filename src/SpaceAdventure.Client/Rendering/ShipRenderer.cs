@@ -41,6 +41,11 @@ public sealed class ShipRenderer
     public const int MediumBlockSize = 32;
     public const int BigBlockSize = 40;
 
+    // Direct user request ("реактор это устройство 4 на 4 тайла") - a real, fixed 4x4-game-unit
+    // footprint everywhere in the game, not just a bigger icon; independent of BigBlockSize (still
+    // used unchanged for Engine system devices, which this request never touched).
+    public const int ReactorBlockSize = (int)(4 * PixelsPerUnit);
+
     // Bulkhead slab, in screen pixels, centred on the room boundary. Deliberately narrower than a
     // door's 1-unit (48px) span so a doorway still cuts cleanly through it, and narrower than twice
     // RoomLayout.CharacterRadius (33.6px) so a character stopped at the collision clearance never
@@ -55,6 +60,17 @@ public sealed class ShipRenderer
     private readonly Texture2D _floorNormals;
     private readonly Texture2D _hullNormals;
     private readonly Texture2D _faceShade;
+    // Hand-made wall panel art (Content/Textures/Walls) - optional, set post-construction via
+    // SetWallTextures once Game1.LoadContent has loaded them, same "load real art, fall back to the
+    // procedural plate if missing" convention RoomDecor.SetCatalogTexture already uses. Null (the
+    // default until LoadContent runs, or if the PNGs are ever removed) means DrawWallBand/
+    // DrawCornerPlate keep drawing the old procedural _hullPlates exactly as before.
+    private Texture2D? _wallVerticalTexture;
+    private Texture2D? _wallHorizontalTexture;
+    private Texture2D? _wallCornerTexture;
+    private Texture2D? _wallEndCapTexture;
+    private Texture2D? _wallTJunctionTexture;
+    private Texture2D? _reactorTexture;
     private readonly SpriteFont _font;
     private readonly Starfield _starfield;
 
@@ -90,6 +106,23 @@ public sealed class ShipRenderer
         _starfield = new Starfield(_pixel, worldViewport);
     }
 
+    // Called once from Game1.LoadContent after the real PNGs (or lack of them) are known - see
+    // this class's own doc comment on _wallVerticalTexture for why this is a post-construction
+    // setter rather than a ContentManager passed into the constructor (ShipRenderer builds every
+    // other texture procedurally and never touches Content itself).
+    internal void SetWallTextures(Texture2D? vertical, Texture2D? horizontal, Texture2D? corner, Texture2D? endCap,
+        Texture2D? tJunction = null)
+    {
+        _wallVerticalTexture = vertical;
+        _wallHorizontalTexture = horizontal;
+        _wallCornerTexture = corner;
+        _wallEndCapTexture = endCap;
+        _wallTJunctionTexture = tJunction;
+    }
+
+    // Same "load real art, fall back to procedural if missing" convention as SetWallTextures.
+    internal void SetReactorTexture(Texture2D? reactor) => _reactorTexture = reactor;
+
     // Shared by Draw() and by Game1's mouse hit-testing so click regions always match what's
     // actually rendered.
     public static Rectangle GetBlockRect(Vec2 worldPosition, int size, Vector2 origin)
@@ -101,12 +134,16 @@ public sealed class ShipRenderer
         return new Rectangle(centerX - size / 2, centerY - size / 2, size, size);
     }
 
+    // Reactor housing size in real screen pixels - a fixed 4x4-game-unit footprint (ReactorBlockSize)
+    // times whatever per-hull-class SizeScale flavor a ship's own ReactorBlock still carries.
+    public static int ReactorSize(ReactorBlock block) => (int)(ReactorBlockSize * block.SizeScale);
+
     // The reactor's 3 physical levers (light / reactor power / door lock — ReactorLeverState),
     // stacked down its left flank just outside the main housing rect, same "shared by drawing and
     // hit-testing" convention as GetBlockRect above.
     public static Rectangle GetReactorLeverRect(int index, ReactorBlock block, Vector2 origin)
     {
-        var size = (int)(BigBlockSize * block.SizeScale);
+        var size = ReactorSize(block);
         var rect = GetBlockRect(block.Position, size, origin);
         var leverWidth = Math.Max(10, size / 4);
         var leverHeight = Math.Max(8, size / 5);
@@ -159,8 +196,12 @@ public sealed class ShipRenderer
         // wall slab.
         foreach (var room in snapshot.Rooms)
             DrawRoomFloor(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
+        // M75 - the actual wall art is now a real per-tile pass (DrawShipWalls), not one band per
+        // room edge; DrawRoomWallLamps keeps only the per-room lamp decor that used to ride along
+        // with DrawRoomWalls (still called in full by BoardingRenderer/StationRenderer, unchanged).
         foreach (var room in snapshot.Rooms)
-            DrawRoomWalls(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
+            DrawRoomWallLamps(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
+        DrawShipWalls(spriteBatch, snapshot, origin);
 
         // A frame over the metal plus a plain unpainted pane, only for the crew station that
         // actually faces open space - deliberately left blank rather than filled with any painted
@@ -245,10 +286,11 @@ public sealed class ShipRenderer
             DrawCameraJunctionBox(spriteBatch, camera, camDamaged, origin, shipPowered);
         }
 
-        DrawReactorBlock(spriteBatch, snapshot.ReactorBlock, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds);
+        DrawReactorBlock(spriteBatch, snapshot.ReactorBlock, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds,
+            snapshot.Rooms.FirstOrDefault(r => r.Id == snapshot.ReactorBlock.RoomId)?.Name);
         DrawDistributionBlock(spriteBatch, snapshot.DistributionBlock, openBlock.Kind == BlockKind.Distribution, origin, shipPowered);
         DrawReactorTrunkWires(spriteBatch,
-            GetBlockRect(snapshot.ReactorBlock.Position, (int)(BigBlockSize * snapshot.ReactorBlock.SizeScale), origin),
+            GetBlockRect(snapshot.ReactorBlock.Position, ReactorSize(snapshot.ReactorBlock), origin),
             GetBlockRect(snapshot.DistributionBlock.Position, MediumBlockSize, origin),
             snapshot.Reactor.CurrentOutput > 0);
         DrawBatteryBlock(spriteBatch, snapshot.BatteryBlock, snapshot.Power, openBlock.Kind == BlockKind.Battery, origin, shipPowered);
@@ -722,85 +764,79 @@ public sealed class ShipRenderer
                 Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
     }
 
-    private void DrawReactorBlock(SpriteBatch spriteBatch, ReactorBlock block, ReactorState reactor, ReactorLeverState levers, bool isOpen, Vector2 origin, float totalSeconds)
+    // Redesigned as one big spinning reactor core (the previous "Hullwright's Bench" housing -
+    // chamfered box, terminal strip, twin tubes, mini transformer panels - was hand-tuned for the
+    // old fixed ~40px icon and stopped reading as one machine once SizeScale started tracking a
+    // catalog/editor room's own size (Ship.Custom.cs) instead: at several times that scale the
+    // pieces just floated apart, worst of all the old cooling turbine drawn hanging off the
+    // housing's OWN bottom edge, which at a big SizeScale lands well outside the housing entirely
+    // and reads as a second, disconnected object in the middle of the room. This version is a
+    // single circle centred on block.Position (matching Ship.DeviceObstacles' own centre exactly),
+    // sized to fill its own square rect - simple enough to actually scale.
+    private void DrawReactorBlock(SpriteBatch spriteBatch, ReactorBlock block, ReactorState reactor, ReactorLeverState levers, bool isOpen, Vector2 origin, float totalSeconds, string? roomName)
     {
-        var rect = GetBlockRect(block.Position, (int)(BigBlockSize * block.SizeScale), origin);
-        var running = reactor.CurrentOutput > 0;
-        var glowColor = running ? new Color(63, 184, 232) : new Color(40, 50, 55);
-        var faceColor = running ? Color.DarkOrange * 0.55f : Color.DimGray * 0.6f;
-        var borderColor = isOpen ? Color.Gold : running ? Color.Orange : Color.Gray;
-
-        // Chamfered octagon housing — the Hullwright's Bench concept's "elongated octagon, long
-        // straight flanks" silhouette, shared with every other device now (DrawChamferedHousing).
-        DrawChamferedHousing(spriteBatch, rect, faceColor, borderColor, isOpen ? 2.4f : 1.6f);
-        var chamfer = Math.Max(2, Math.Min(rect.Width, rect.Height) / 6);
-
-        // 3 flat control terminals braced against the top edge, same spacing/idea as the concept's
-        // lecterns — small, so just a stepped block plus a coloured screen-glow line each. Dimmed
-        // from the concept's own brightness so they read as lit without competing with the
-        // "Реактор" label drawn over the housing just below them.
-        var terminalWidth = (rect.Width - chamfer * 2) / 3f;
-        var terminalColors = new[] { Color.Gold, glowColor, Color.Gold };
-        for (var i = 0; i < 3; i++)
+        // A catalog/editor room with its own reference art already draws the whole machine baked
+        // into the room's own texture (RoomDecor's own "texture doubles as the device" rule, same
+        // as an engine/turret/camera room) - no separate icon, housing or levers drawn on top of it,
+        // just a plain outline around the exact same rect the click-to-open check (Game1.Input.cs)
+        // and the walking obstacle (Ship.DeviceObstacles) already use, so the interactive area the
+        // art doubles as is visible at a glance instead of an invisible zone floating over the room.
+        if (RoomDecor.HasCatalogTexture(roomName))
         {
-            var tx = rect.X + chamfer + terminalWidth * i;
-            var baseRect = new Rectangle((int)tx + 1, rect.Y - 2, (int)terminalWidth - 2, 3);
-            spriteBatch.Draw(_pixel, baseRect, Color.SlateGray * 0.8f);
-            HudIcons.DrawLine(spriteBatch, _pixel,
-                new Vector2(baseRect.X + 1, baseRect.Y + 1), new Vector2(baseRect.Right - 1, baseRect.Y + 1),
-                terminalColors[i] * (running ? 0.6f : 0.3f), 1f);
+            var artRect = GetBlockRect(block.Position, ReactorSize(block), origin);
+            DrawComplexReactorOutline(spriteBatch, artRect, isOpen ? Color.Gold : Color.White * 0.85f, isOpen ? 3f : 2f);
+            return;
         }
 
-        // Twin glow tubes flanking the core (Hullwright's Bench concept) — the same electric-blue,
-        // dimmed to a cold dead color once the emergency lever cuts output, and dimmed overall from
-        // the concept's own brightness so it stays a background detail, not a wash of light.
-        var tubeWidth = Math.Max(2, rect.Width / 10);
-        var tubeInset = rect.Width / 6;
-        var tubeY = rect.Y + rect.Height / 5;
-        var tubeHeight = rect.Height * 3 / 5;
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X + tubeInset, tubeY, tubeWidth, tubeHeight), glowColor * (running ? 0.55f : 0.35f));
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - tubeInset - tubeWidth, tubeY, tubeWidth, tubeHeight), glowColor * (running ? 0.55f : 0.35f));
+        var rect = GetBlockRect(block.Position, ReactorSize(block), origin);
+        var running = reactor.CurrentOutput > 0;
+        var glowColor = running ? new Color(63, 184, 232) : new Color(40, 50, 55);
+        var borderColor = isOpen ? Color.Gold : running ? Color.Orange : Color.Gray;
 
-        // Core glow: a small inset square that reads as the fuel core, brighter while running.
-        var coreSize = rect.Width / 3;
-        var coreRect = new Rectangle(rect.Center.X - coreSize / 2, rect.Center.Y - coreSize / 2, coreSize, coreSize);
-        spriteBatch.Draw(_pixel, coreRect, (running ? Color.Yellow : Color.DarkSlateGray) * (running ? 0.55f : 0.4f));
-        DrawRectOutline(spriteBatch, coreRect, glowColor * 0.6f, 1);
+        var center = new Vector2(rect.Center.X, rect.Center.Y);
+        var radius = Math.Min(rect.Width, rect.Height) / 2f;
+
+        // Direct user request - a real reactor texture (Content/Textures/Devices/Reactor.png, filling
+        // the whole 4x4-unit block) instead of the old procedural rings/turbine, everywhere in the
+        // game. Its own glowing cells already read as "running"; when the reactor is off, tinting it
+        // down (rather than trying to fake a separate lit/unlit texture) reads as "the same machine,
+        // powered down" - same idea the old procedural glowColor swap already used.
+        if (_reactorTexture is { } reactorTex)
+        {
+            var tint = running ? Color.White : new Color(90, 90, 90);
+            spriteBatch.Draw(reactorTex, rect, tint);
+            DrawRectOutline(spriteBatch, rect, borderColor, isOpen ? 3 : 2);
+        }
+        else
+        {
+            // Outer ring (border colour showing through) behind a slightly smaller face - reads as a
+            // rimmed housing without a separate outline draw call.
+            HudIcons.FillCircle(spriteBatch, _pixel, center, radius, borderColor);
+            HudIcons.FillCircle(spriteBatch, _pixel, center, radius - Math.Max(2f, radius * 0.05f),
+                running ? Color.DarkOrange * 0.55f : Color.DimGray * 0.6f);
+
+            // Cooling turbine, unchanged in spirit from the old design (blades spin while running,
+            // freeze the instant the reactor lever cuts output) - now the reactor's own core instead of
+            // a separate part hanging off its housing.
+            HudIcons.FillCircle(spriteBatch, _pixel, center, radius * 0.62f, glowColor * (running ? 0.22f : 0.1f));
+            HudIcons.FillCircle(spriteBatch, _pixel, center, radius * 0.42f, Color.Black * 0.75f);
+            if (running)
+            {
+                var spin = totalSeconds * 3f;
+                for (var i = 0; i < 4; i++)
+                {
+                    var angle = spin + i * MathF.PI / 2f;
+                    var tip = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius * 0.38f;
+                    HudIcons.DrawLine(spriteBatch, _pixel, center, tip, glowColor, Math.Max(2f, radius * 0.06f));
+                }
+            }
+            HudIcons.FillCircle(spriteBatch, _pixel, center, radius * 0.14f,
+                (running ? Color.Yellow : Color.DarkSlateGray) * (running ? 0.7f : 0.4f));
+        }
+
         var reactorLabelPos = new Vector2(rect.X + 4, rect.Y + 4);
         DrawLabelBacking(spriteBatch, "Реактор", reactorLabelPos, 0.6f);
         spriteBatch.DrawString(_font, "Реактор", reactorLabelPos, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-
-        // Mini transformer sub-panels along the right flank (concept's 5, trimmed to 3 to stay
-        // legible at ship-icon scale) — a distinct department colour each, purely decorative.
-        var miniColors = new[] { new Color(46, 158, 134), new Color(176, 61, 130), new Color(138, 154, 58) };
-        var miniSize = Math.Max(3, rect.Width / 8);
-        var miniGap = (rect.Height - chamfer * 2) / 4f;
-        for (var i = 0; i < 3; i++)
-        {
-            var my = rect.Y + chamfer + miniGap * (i + 0.6f);
-            var miniRect = new Rectangle(rect.Right - miniSize / 2, (int)my, miniSize, miniSize);
-            spriteBatch.Draw(_pixel, miniRect, Color.Black * 0.6f);
-            HudIcons.FillCircle(spriteBatch, _pixel, new Vector2(miniRect.Center.X, miniRect.Center.Y), miniSize * 0.3f, miniColors[i] * (running ? 0.7f : 0.35f));
-        }
-
-        // Cooling turbine hanging off the bottom edge — blades actually spin while running, freeze
-        // instantly the moment the reactor lever cuts output (the concept sketch's own
-        // animation-play-state:paused, done here by simply not advancing the angle).
-        var turbineCenter = new Vector2(rect.Center.X, rect.Bottom + rect.Height * 0.16f);
-        var turbineRadius = rect.Width * 0.16f;
-        HudIcons.FillCircle(spriteBatch, _pixel, turbineCenter, turbineRadius * 1.6f, glowColor * (running ? 0.22f : 0.1f));
-        HudIcons.FillCircle(spriteBatch, _pixel, turbineCenter, turbineRadius, Color.Black * 0.75f);
-        if (running)
-        {
-            var spin = totalSeconds * 3f;
-            for (var i = 0; i < 4; i++)
-            {
-                var angle = spin + i * MathF.PI / 2f;
-                var tip = turbineCenter + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * turbineRadius * 0.85f;
-                HudIcons.DrawLine(spriteBatch, _pixel, turbineCenter, tip, glowColor, 2f);
-            }
-        }
-        HudIcons.FillCircle(spriteBatch, _pixel, turbineCenter, turbineRadius * 0.3f, Color.Black * 0.9f);
 
         // The 3 levers themselves (ShipRenderer.GetReactorLeverRect) — each a little handle that
         // physically leans one way when on, the other when off, tipped with its own state color.
@@ -949,7 +985,7 @@ public sealed class ShipRenderer
         var rect = GetBlockRect(console.Position, MediumBlockSize, origin);
         DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Helm, powered, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2);
         DrawHood(spriteBatch, rect);
-        DrawDeviceLabel(spriteBatch, rect, "Штурвал");
+        DrawDeviceLabel(spriteBatch, rect, "Навигационная панель");
     }
 
     // A quiet card table - not clickable, just a felt surface bolted to the deck; two crew
@@ -1358,24 +1394,29 @@ public sealed class ShipRenderer
         var rect = GetRoomRect(room, origin);
         var accent = accentOverride ?? RoomDecor.Accent(room.Id, room.Name);
 
-        // Plates rather than one repeated stamp, and the seams are cut into them rather than drawn
-        // over the top - which is why DrawFloorGrating is gone: its hairline grid had no depth, so
-        // it read as printed on. The gunnery and reactor compartments get their own field inside the
-        // same frame, so they are recognisably different rooms on recognisably the same ship.
-        //
-        // Indexed from the ship's own origin, so which plate lands where belongs to the ship and the
-        // pattern does not crawl across the deck when the camera moves.
-        DeckPlates.DrawTiled(spriteBatch, _deckPlates[DeckPlates.For(room.Id)], rect, Color.White,
-            new Point((int)origin.X, (int)origin.Y));
-        // Dirt across the plates, which is the one thing that hides the tile grid - nothing painted
-        // inside a tile can, because it repeats with the tile.
-        DeckPlates.DrawGrime(spriteBatch, _deckGrime, rect, room.Id);
-        RoomDecor.DrawLightPool(spriteBatch, _pixel, rect, accent);
-        RoomDecor.DrawFurniture(spriteBatch, _pixel, rect, room.Id, accent);
-        // Content-каталог отсеков - a built room's own id is always a plain "room-N" (never matches
-        // DrawFurniture's id-substring switch above), so this is never a double-draw: it only ever
-        // fires for the 13 catalog room types DrawFurniture already silently skips.
-        RoomDecor.DrawCatalogDecor(spriteBatch, _pixel, rect, room.Name, accent);
+        // Content-каталог отсеков - a catalog room with real reference art draws that instead of
+        // the procedural stack below: the whole floor/walls/equipment are already baked into the
+        // one image. Falls through to the ordinary procedural room for every hand-authored hull
+        // (room.Name never matches a catalog entry there) and for the 2 plain "empty" catalog
+        // shells, which never got reference art.
+        if (!RoomDecor.TryDrawCatalogTexture(spriteBatch, rect, room.Name))
+        {
+            // Plates rather than one repeated stamp, and the seams are cut into them rather than
+            // drawn over the top - which is why DrawFloorGrating is gone: its hairline grid had no
+            // depth, so it read as printed on. The gunnery and reactor compartments get their own
+            // field inside the same frame, so they are recognisably different rooms on recognisably
+            // the same ship.
+            //
+            // Indexed from the ship's own origin, so which plate lands where belongs to the ship and
+            // the pattern does not crawl across the deck when the camera moves.
+            DeckPlates.DrawTiled(spriteBatch, _deckPlates[DeckPlates.For(room.Id)], rect, Color.White,
+                new Point((int)origin.X, (int)origin.Y));
+            // Dirt across the plates, which is the one thing that hides the tile grid - nothing
+            // painted inside a tile can, because it repeats with the tile.
+            DeckPlates.DrawGrime(spriteBatch, _deckGrime, rect, room.Id);
+            RoomDecor.DrawLightPool(spriteBatch, _pixel, rect, accent);
+            RoomDecor.DrawFurniture(spriteBatch, _pixel, rect, room.Id, accent);
+        }
 
         var deficit = Math.Clamp((100f - oxygen) / 100f, 0f, 1f);
         if (deficit > 0f)
@@ -1403,6 +1444,11 @@ public sealed class ShipRenderer
     // texturing the genuinely exterior sides once read as inconsistent (interior corridors kept
     // the plain, flatter wall pattern right next to compartments that got the heavier plate look),
     // so the one texture that actually reads well wins everywhere a wall is drawn.
+    // Kept fully intact for BoardingRenderer/StationRenderer (an enemy hull's/station's own rooms
+    // aren't part of the client's per-tile grid - ClientTileGrid.Build only ever rasterizes the
+    // player's OWN Ship.Rooms/Doors/AirlockOuterDoors from WorldSnapshot). The player's own ship no
+    // longer calls this for its walls (M75, humble-soaring-cat.md) - see DrawRoomWallLamps/
+    // DrawShipWalls below and this method's own call site in Draw().
     internal void DrawRoomWalls(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin, Color? accentOverride = null)
     {
         var rect = GetRoomRect(room, origin);
@@ -1423,8 +1469,175 @@ public sealed class ShipRenderer
         DrawCornerPlate(spriteBatch, rect.Right, rect.Bottom);
     }
 
+    // M75 - the player's own ship's wall LAMPS only (still per-room decor, unaffected by the tile
+    // rework); the actual wall art is now DrawShipWalls below, driven by a real per-tile grid instead
+    // of one band per room edge.
+    internal void DrawRoomWallLamps(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin, Color? accentOverride = null)
+    {
+        var rect = GetRoomRect(room, origin);
+        var alarmed = oxygen < 70f;
+        var accent = accentOverride ?? RoomDecor.Accent(room.Id, room.Name);
+        RoomDecor.DrawWallLamps(spriteBatch, _pixel, rect, accent, alarmed);
+    }
+
+    // M75 (humble-soaring-cat.md) - real per-tile wall rendering: rebuilds the exact same tile shape
+    // Ship.Tiles has (ClientTileGrid.Build, a pure function of Rooms/Doors/AirlockOuterDoors - no new
+    // protocol field needed) and draws one tile-sized square per Solid wall cell, oriented by which
+    // of its 4 neighbors are also wall-kind (a door counts as "wall" for orientation - same material
+    // either side of it). Door tiles themselves are skipped entirely - DrawDoor already draws them,
+    // unchanged. Breached walls are also skipped nothing special here either - DrawBreachedWallBlock
+    // already punches its own hole/hazard-stripe visual on top of whatever's drawn underneath, at the
+    // WallBlock's own position, so it reads correctly over the new art with no changes on its side.
+    internal void DrawShipWalls(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
+    {
+        var tiles = ClientTileGrid.Build(snapshot);
+        foreach (var (coord, cell) in tiles.Cells)
+        {
+            if (cell.Wall != TileWallKind.Solid)
+                continue; // None = no wall; Door is drawn separately by the existing DrawDoor calls
+            DrawWallTile(spriteBatch, tiles, coord, origin);
+        }
+    }
+
+    private void DrawWallTile(SpriteBatch spriteBatch, TileGrid tiles, TileCoord coord, Vector2 origin)
+    {
+        bool HasWall(TileSide side) => tiles.CellAt(side.Offset(coord)) is { Wall: TileWallKind.Solid or TileWallKind.Door };
+
+        var north = HasWall(TileSide.North);
+        var south = HasWall(TileSide.South);
+        var east = HasWall(TileSide.East);
+        var west = HasWall(TileSide.West);
+
+        var unit = (int)PixelsPerUnit;
+        var center = origin + new Vector2((coord.X + 0.5f) * PixelsPerUnit, (coord.Y + 0.5f) * PixelsPerUnit);
+
+        // A T-junction (exactly 3 wall-kind neighbors - the free-form tile editor can produce these
+        // even though no rectangular hand-authored hull ever did) has to be checked BEFORE the plain
+        // straight-run tests below, since 3 neighbors always include one opposite pair and would
+        // otherwise silently read as a plain straight tile, ignoring the third branch entirely.
+        var neighborCount = (north ? 1 : 0) + (south ? 1 : 0) + (east ? 1 : 0) + (west ? 1 : 0);
+        if (neighborCount == 3 && _wallTJunctionTexture is { } tTex)
+        {
+            // Base art has the missing/open side facing North (a horizontal run continuing East+West
+            // with a spur branching South) - rotate 90° per step clockwise to whichever side is
+            // actually the open one here, same convention as the corner/end-cap rotations above.
+            var tRotation = !north ? 0f : !east ? MathHelper.PiOver2 : !south ? MathHelper.Pi : -MathHelper.PiOver2;
+            var tOrigin = new Vector2(tTex.Width / 2f, tTex.Height / 2f);
+            spriteBatch.Draw(tTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, Color.White,
+                tRotation, tOrigin, SpriteEffects.None, 0f);
+            return;
+        }
+        if (north && south && _wallVerticalTexture is { } vTex)
+        {
+            spriteBatch.Draw(vTex, new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit), Color.White);
+            return;
+        }
+        if (east && west && _wallHorizontalTexture is { } hTex)
+        {
+            spriteBatch.Draw(hTex, new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit), Color.White);
+            return;
+        }
+        // A dead end (exactly one wall-kind neighbor) reads wrong with the corner texture (a "turn"
+        // where the wall actually just stops) - direct user report. Base end-cap art connects South,
+        // caps at North; rotate the same 90°-per-step clockwise convention the corner uses.
+        if (neighborCount == 1 && _wallEndCapTexture is { } capTex)
+        {
+            var capRotation = south ? 0f : west ? MathHelper.PiOver2 : north ? MathHelper.Pi : -MathHelper.PiOver2;
+            var capOrigin = new Vector2(capTex.Width / 2f, capTex.Height / 2f);
+            spriteBatch.Draw(capTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, Color.White,
+                capRotation, capOrigin, SpriteEffects.None, 0f);
+            return;
+        }
+        if (_wallCornerTexture is { } cTex)
+        {
+            // Base art turns South-then-East (a room's own top-left corner, per the corner tile's
+            // own construction - vertical texture bottom-left, horizontal top-right). Rotate 90° per
+            // corner clockwise from there; a fully isolated tile (zero neighbors - vanishingly rare)
+            // has no better single answer yet, so it falls back to the same base orientation.
+            var rotation = (south, east, west, north) switch
+            {
+                (true, true, _, _) => 0f,
+                (true, _, true, _) => MathHelper.PiOver2,
+                (_, _, true, true) => MathHelper.Pi,
+                (_, true, _, true) => -MathHelper.PiOver2,
+                _ => 0f,
+            };
+            var texOrigin = new Vector2(cTex.Width / 2f, cTex.Height / 2f);
+            spriteBatch.Draw(cTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, Color.White,
+                rotation, texOrigin, SpriteEffects.None, 0f);
+            return;
+        }
+
+        // No new art loaded at all (Content missing) - a single procedural tile-sized square, same
+        // material HullSkin/the old wall band used, just without the per-room alarm/conduit overlay
+        // that band drawing had (this path is only ever reached if the .mgcb build is broken, so it's
+        // not worth threading room/alarm context through a tile loop for it).
+        var fallbackRect = new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit);
+        TileTextures.DrawSquares(spriteBatch, _hullPlates, TileTextures.HullTileSize, unit, fallbackRect, Color.White, new Point((int)origin.X, (int)origin.Y));
+    }
+
+    // Debug aid (M74 follow-up, humble-soaring-cat.md) - draws a bold outline around every 1-unit
+    // tile cell within each room, held up by the Ъ key (Game1.cs). Computed straight from Room
+    // rectangles (1 tile = 1 world unit, by design) rather than reading Ship.Tiles itself, which the
+    // client has no access to at all - WorldSnapshot never sends it, nothing outside tests reads it
+    // yet (Ship.cs's own doc comment on Tiles) - so this stays a pure visualization, not a read of
+    // the real tile grid's actual wall/floor/device content.
+    internal void DrawTileGridOverlay(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
+    {
+        const int thickness = 3;
+        var unit = (int)PixelsPerUnit;
+        foreach (var room in snapshot.Rooms)
+        {
+            var rect = GetRoomRect(room, origin);
+            for (var x = rect.X; x <= rect.Right; x += unit)
+                spriteBatch.Draw(_pixel, new Rectangle(x - thickness / 2, rect.Y, thickness, rect.Height), Color.Black);
+            for (var y = rect.Y; y <= rect.Bottom; y += unit)
+                spriteBatch.Draw(_pixel, new Rectangle(rect.X, y - thickness / 2, rect.Width, thickness), Color.Black);
+        }
+    }
+
+    // M75 (humble-soaring-cat.md) - one full panel per REAL 1-unit tile along the band's length,
+    // not a cosmetic repeat period of its own (the old TileTextures.DrawTiled(..., WallThickness, ...)
+    // call repeated every 28px, which doesn't correspond to anything - visually the panel motif never
+    // lined up with an actual game tile). A room's own edges always start on an exact tile boundary
+    // (Room.X/Y are whole or half units, scaled by PixelsPerUnit), so starting the repeat at the
+    // band's own origin - no extra phase correction - already lines up with the real grid. Each cell
+    // samples the texture's FULL source square stretched to fill the destination, same "whole design
+    // in miniature" idea TileTextures.DrawSquares already uses for the procedural plate.
+    private void DrawWallPanels(SpriteBatch spriteBatch, Texture2D texture, Rectangle band, bool horizontal)
+    {
+        var unit = (int)PixelsPerUnit;
+        var source = new Rectangle(0, 0, texture.Width, texture.Height);
+        if (horizontal)
+        {
+            for (var x = band.X; x < band.Right; x += unit)
+            {
+                var w = Math.Min(unit, band.Right - x);
+                spriteBatch.Draw(texture, new Rectangle(x, band.Y, w, band.Height), source, Color.White);
+            }
+        }
+        else
+        {
+            for (var y = band.Y; y < band.Bottom; y += unit)
+            {
+                var h = Math.Min(unit, band.Bottom - y);
+                spriteBatch.Draw(texture, new Rectangle(band.X, y, band.Width, h), source, Color.White);
+            }
+        }
+    }
+
     private void DrawWallBand(SpriteBatch spriteBatch, Rectangle band, bool horizontal, bool alarmed, Vector2 origin)
     {
+        // Hand-made panel art, once loaded (SetWallTextures) - drawn as its own complete design, no
+        // alarm/conduit/rib overlay (that dressing was built for the flat procedural plate below, and
+        // would just clutter artwork that already carries its own detail).
+        var wallTexture = horizontal ? _wallHorizontalTexture : _wallVerticalTexture;
+        if (wallTexture is not null)
+        {
+            DrawWallPanels(spriteBatch, wallTexture, band, horizontal);
+            return;
+        }
+
         // Untinted, same as HullSkin's own use of this texture - it already bakes its real
         // gunmetal colour in, so multiplying it by an alarmed/normal wall tint would just darken
         // it towards black instead of recolouring it. The alarmed conduit/rib overlay drawn below
@@ -1459,6 +1672,18 @@ public sealed class ShipRenderer
 
     private void DrawCornerPlate(SpriteBatch spriteBatch, int x, int y)
     {
+        if (_wallCornerTexture is not null)
+        {
+            // M75 - sized to one full real tile (matching DrawWallPanels's straight-run pitch), not
+            // the old procedural corner's own smaller WallThickness+6 footprint, so the corner reads
+            // as the same size tile as the straight runs either side of it. A single stamp, not
+            // tiled - a corner only ever appears once per corner.
+            var unit = (int)PixelsPerUnit;
+            var texRect = new Rectangle(x - unit / 2, y - unit / 2, unit, unit);
+            spriteBatch.Draw(_wallCornerTexture, texRect, Color.White);
+            return;
+        }
+
         const int size = WallThickness + 6;
         var rect = new Rectangle(x - size / 2, y - size / 2, size, size);
         TileTextures.DrawSquares(spriteBatch, _hullPlates, TileTextures.HullTileSize, size, rect, Color.White, new Point(x, y));
@@ -1835,6 +2060,46 @@ public sealed class ShipRenderer
 
     private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness) =>
         DrawRectOutline(spriteBatch, _pixel, rect, color, thickness);
+
+    // Traces the reference art's own actual panel silhouette (visible up close in reactor.png) -
+    // chamfered corners PLUS a stepped notch cut into the middle of each straight edge, not a plain
+    // rectangle/octagon/rounded-rect. For a device whose face is already fully drawn by something
+    // else (a room's own reference art) and only needs its own interactive footprint traced, not a
+    // second housing drawn on top of the picture.
+    private void DrawComplexReactorOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, float thickness)
+    {
+        var chamfer = Math.Max(3, Math.Min(rect.Width, rect.Height) / 6);
+        var notchDepth = Math.Max(2, chamfer / 2);
+        var notchWidth = Math.Max(4, chamfer);
+        var cx = rect.Center.X;
+        var cy = rect.Center.Y;
+
+        Span<Vector2> vertices = stackalloc Vector2[]
+        {
+            // Top edge: left chamfer -> centred notch (dips down into the panel) -> right chamfer.
+            new(rect.X + chamfer, rect.Y),
+            new(cx - notchWidth / 2f, rect.Y), new(cx - notchWidth / 2f, rect.Y + notchDepth),
+            new(cx + notchWidth / 2f, rect.Y + notchDepth), new(cx + notchWidth / 2f, rect.Y),
+            new(rect.Right - chamfer, rect.Y),
+            // Top-right chamfer, then right edge with its own centred notch (dips left).
+            new(rect.Right, rect.Y + chamfer),
+            new(rect.Right, cy - notchWidth / 2f), new(rect.Right - notchDepth, cy - notchWidth / 2f),
+            new(rect.Right - notchDepth, cy + notchWidth / 2f), new(rect.Right, cy + notchWidth / 2f),
+            new(rect.Right, rect.Bottom - chamfer),
+            // Bottom-right chamfer, then bottom edge with its own centred notch (dips up).
+            new(rect.Right - chamfer, rect.Bottom),
+            new(cx + notchWidth / 2f, rect.Bottom), new(cx + notchWidth / 2f, rect.Bottom - notchDepth),
+            new(cx - notchWidth / 2f, rect.Bottom - notchDepth), new(cx - notchWidth / 2f, rect.Bottom),
+            new(rect.X + chamfer, rect.Bottom),
+            // Bottom-left chamfer, then left edge with its own centred notch (dips right).
+            new(rect.X, rect.Bottom - chamfer),
+            new(rect.X, cy + notchWidth / 2f), new(rect.X + notchDepth, cy + notchWidth / 2f),
+            new(rect.X + notchDepth, cy - notchWidth / 2f), new(rect.X, cy - notchWidth / 2f),
+            new(rect.X, rect.Y + chamfer),
+        };
+        for (var i = 0; i < vertices.Length; i++)
+            HudIcons.DrawLine(spriteBatch, _pixel, vertices[i], vertices[(i + 1) % vertices.Length], color, thickness);
+    }
 
     internal static void DrawRectOutline(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, Color color, int thickness)
     {

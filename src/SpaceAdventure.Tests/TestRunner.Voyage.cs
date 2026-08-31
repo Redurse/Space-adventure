@@ -327,6 +327,21 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 6.5f, 3f); // laser turret periscope, reactor room
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it — no crate needed
 
+        // The enemy sways instead of sitting still (World.EnemyFleet.cs's ambient sway) - aim onto
+        // it first, same retry-until-lined-up shape World_Fire_DamagesEnemyAndRespectsCooldown
+        // already uses for the bow turret, or the beam can fire (draining charge) and still miss.
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            for (var aimTick = 0; aimTick < 10; aimTick++)
+            {
+                var error = TurretAimErrorToEnemy(world, "turret-laser");
+                if (MathF.Abs(error) < 1f)
+                    break;
+                world.ApplyCommand(1, new ClientCommand(1, TurretAimDirection: MathF.Sign(error)));
+                world.Step(RealtimeStep);
+            }
+        }
+
         var before = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-laser").Charge; // starts full
         world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
         StepFor(world, 60);

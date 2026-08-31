@@ -70,7 +70,10 @@ public sealed partial class World
         if (def.Rooms.All(r => r.Id != roomId))
             return;
 
-        var anchorRoomId = Ship.ReactorBlock.RoomId;
+        // M74 - generic Devices query instead of the ReactorBlock field directly; still just the
+        // first/primary reactor (multiple reactors' anchor-choice is an open question for M77, not
+        // this milestone - humble-soaring-cat.md's own "Риски" section).
+        var anchorRoomId = Ship.Devices.First(d => d.Kind == DeviceKind.Reactor).RoomId;
         if (anchorRoomId == roomId)
             return; // the reactor's own compartment was the one destroyed - not something a room-
                      // by-room detachment can sensibly resolve; leave it breached-but-attached

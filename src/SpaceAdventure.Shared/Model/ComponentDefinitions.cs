@@ -91,7 +91,7 @@ public static class ComponentDefinitions
     public static string DisplayName(ComponentKind kind) => kind switch
     {
         ComponentKind.Distribution => "распределительный блок",
-        ComponentKind.Junction => "распределительная коробка",
+        ComponentKind.Junction => "щиток",
         ComponentKind.Device => "потребитель",
         ComponentKind.GateAnd => "логический элемент И",
         ComponentKind.GateOr => "логический элемент ИЛИ",

@@ -16,6 +16,8 @@ internal static partial class TestRunner
         ("Ship_MoveAlongAxis_BlocksAtWallWithoutDoor", Ship_MoveAlongAxis_BlocksAtWallWithoutDoor),
         ("Ship_MoveAlongAxis_PassesThroughAlignedDoor", Ship_MoveAlongAxis_PassesThroughAlignedDoor),
         ("Ship_MoveAlongAxis_BlockedWhenMisalignedWithDoor", Ship_MoveAlongAxis_BlockedWhenMisalignedWithDoor),
+        ("Ship_MoveAlongAxis_HandAuthoredReactorRoomHasNoObstacle", Ship_MoveAlongAxis_HandAuthoredReactorRoomHasNoObstacle),
+        ("Ship_MoveAlongAxis_CatalogReactorRoomBlocksObstacle", Ship_MoveAlongAxis_CatalogReactorRoomBlocksObstacle),
         ("Reactor_Step_DepletesFuelProportionalToUsage", Reactor_Step_DepletesFuelProportionalToUsage),
         ("Reactor_CurrentOutput_DropsToZeroWhenFuelDepleted", Reactor_CurrentOutput_DropsToZeroWhenFuelDepleted),
         ("World_NewCampaign_StartsWithAnEqualShareForEverySystem", World_NewCampaign_StartsWithAnEqualShareForEverySystem),
@@ -267,6 +269,9 @@ internal static partial class TestRunner
         ("World_ContentCatalog_CockpitRoom_AddsExtraHelmAndNavigationConsoles", World_ContentCatalog_CockpitRoom_AddsExtraHelmAndNavigationConsoles),
         ("World_ContentCatalog_ExtraHelmSeat_LetsACharacterPilot", World_ContentCatalog_ExtraHelmSeat_LetsACharacterPilot),
         ("CustomShipValidator_AllowsMultipleReactorsHelmsAndNavigationConsoles", CustomShipValidator_AllowsMultipleReactorsHelmsAndNavigationConsoles),
+        ("CustomShipValidator_AcceptsAShipBuiltEntirelyFromCatalogModules", CustomShipValidator_AcceptsAShipBuiltEntirelyFromCatalogModules),
+        ("CustomShipStore_SavesListsAndDeletesMultipleNamedShips", CustomShipStore_SavesListsAndDeletesMultipleNamedShips),
+        ("CustomShipStore_MigratesLegacySingleSlotFileOnFirstAccess", CustomShipStore_MigratesLegacySingleSlotFileOnFirstAccess),
         ("World_Quest_Bounty_CompletesOnKillAndPaysAtIssuer", World_Quest_Bounty_CompletesOnKillAndPaysAtIssuer),
         ("World_Quest_Bounty_TurnIn_FailsBeforeKill", World_Quest_Bounty_TurnIn_FailsBeforeKill),
         ("World_Quest_Mining_ConsumesOreAndPays", World_Quest_Mining_ConsumesOreAndPays),
@@ -385,6 +390,24 @@ internal static partial class TestRunner
         ("World_PlanetLanding_Obstacles_BlockShipMovement", World_PlanetLanding_Obstacles_BlockShipMovement),
         ("World_PlanetLanding_TakeOff_ReturnsToSystemFieldNearBodyPosition", World_PlanetLanding_TakeOff_ReturnsToSystemFieldNearBodyPosition),
         ("World_PlanetLanding_Eva_WalksOnSurfaceAndReturnsInside", World_PlanetLanding_Eva_WalksOnSurfaceAndReturnsInside),
+        ("TileGrid_AdjacentFloorTilesMergeIntoOneRegion", TileGrid_AdjacentFloorTilesMergeIntoOneRegion),
+        ("TileGrid_SolidWallSplitsRegionThenNoneMergesItBack", TileGrid_SolidWallSplitsRegionThenNoneMergesItBack),
+        ("TileGrid_OpenDoorNeverMergesRegionsButIsWalkable", TileGrid_OpenDoorNeverMergesRegionsButIsWalkable),
+        ("TileGrid_LeaksToVacuumOnlyAtGenuinelyOpenEdge", TileGrid_LeaksToVacuumOnlyAtGenuinelyOpenEdge),
+        ("TileGrid_PartialWallDamageKeepsTopologyBreachMergesRepairSplitsAgain", TileGrid_PartialWallDamageKeepsTopologyBreachMergesRepairSplitsAgain),
+        ("TileGrid_TerminalRequiresAdjacentWallAndNeverAffectsRegionsOrWalkability", TileGrid_TerminalRequiresAdjacentWallAndNeverAffectsRegionsOrWalkability),
+        ("TileGrid_DevicePlacementBlocksWalkableButNotRegionMembership", TileGrid_DevicePlacementBlocksWalkableButNotRegionMembership),
+        ("TileGrid_RemovingFloorFromLargeCorridorSplitsProportionally", TileGrid_RemovingFloorFromLargeCorridorSplitsProportionally),
+        ("TileGridRasterizer_HandAuthoredShipHulls_OneRegionPerRoom", TileGridRasterizer_HandAuthoredShipHulls_OneRegionPerRoom),
+        ("TileGridRasterizer_EveryEnemyHull_OneRegionPerRoom", TileGridRasterizer_EveryEnemyHull_OneRegionPerRoom),
+        ("TileGridRasterizer_ProceduralStation_OneRegionPerRoom", TileGridRasterizer_ProceduralStation_OneRegionPerRoom),
+        ("TileGridRasterizer_FrigateCockpit_ExactInteriorTileCount", TileGridRasterizer_FrigateCockpit_ExactInteriorTileCount),
+        ("World_TileSync_ToggleDoor_UpdatesShipTiles", World_TileSync_ToggleDoor_UpdatesShipTiles),
+        ("World_TileSync_DestroyedDoor_ForcesTileOpenAndZeroesTileHp", World_TileSync_DestroyedDoor_ForcesTileOpenAndZeroesTileHp),
+        ("World_TileSync_BreachedWallBlock_ZeroesTileHpAndRejoinsRegion", World_TileSync_BreachedWallBlock_ZeroesTileHpAndRejoinsRegion),
+        ("Ship_Devices_StarterHull_HasExpectedCountsPerKind", Ship_Devices_StarterHull_HasExpectedCountsPerKind),
+        ("Ship_Devices_Turrets_MapToDistinctEntriesWithMatchingKindAndPosition", Ship_Devices_Turrets_MapToDistinctEntriesWithMatchingKindAndPosition),
+        ("Ship_Devices_ExtraReactor_GetsOwnIdAndCorrectRoom", Ship_Devices_ExtraReactor_GetsOwnIdAndCorrectRoom),
     };
 
     // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via
@@ -416,7 +439,6 @@ internal static partial class TestRunner
         var results = new (bool Ok, string? ExceptionText)[Tests.Length];
         Parallel.For(0, Tests.Length, i =>
         {
-            World.DebugDeterministicSeedBase = i;
             World.DebugDeterministicSeedBase = i;
             World.DebugResetSeedSequence();
             try { results[i] = (Tests[i].Run(), null); }

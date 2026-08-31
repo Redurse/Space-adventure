@@ -22,7 +22,12 @@ public sealed partial class World
     private const float WallHitRadius = 0.6f;
     private const float DeviceHitRadius = 0.6f;
 
-    private enum HitCandidateKind { WallBlock, Turret, SystemDevice, Door, ReactorBlock, DistributionBlock, BatteryBlock, HelmConsole, NavigationConsole }
+    // M74 (humble-soaring-cat.md) - the five "boxes" (reactor/distribution/battery/helm/navigation)
+    // collapse into one RepairableBlock candidate kind, generalized over World.SystemRepair.cs's
+    // RepairableBlockKinds/RepairableBlock/IsBlockBroken/SetBlockBroken instead of five separately
+    // hardcoded HitCandidateKind members - see that file's own doc comment on why this stays
+    // "one instance per kind" rather than iterating every Devices entry of a repairable kind.
+    private enum HitCandidateKind { WallBlock, Turret, SystemDevice, Door, RepairableBlock }
     private readonly record struct HitCandidate(Vec2 LocalPosition, float Radius, HitCandidateKind Kind, string Id);
 
     // Every physical thing an enemy shell can run into once it's past the shield, in one flat list:
@@ -47,11 +52,11 @@ public sealed partial class World
         foreach (var door in AllShipDoors())
             yield return new HitCandidate(door.Position, DeviceHitRadius, HitCandidateKind.Door, door.Id);
 
-        yield return new HitCandidate(Ship.ReactorBlock.Position, DeviceHitRadius, HitCandidateKind.ReactorBlock, Ship.ReactorBlock.Id);
-        yield return new HitCandidate(Ship.DistributionBlock.Position, DeviceHitRadius, HitCandidateKind.DistributionBlock, Ship.DistributionBlock.Id);
-        yield return new HitCandidate(Ship.BatteryBlock.Position, DeviceHitRadius, HitCandidateKind.BatteryBlock, Ship.BatteryBlock.Id);
-        yield return new HitCandidate(Ship.HelmConsole.Position, DeviceHitRadius, HitCandidateKind.HelmConsole, Ship.HelmConsole.Id);
-        yield return new HitCandidate(Ship.NavigationConsole.Position, DeviceHitRadius, HitCandidateKind.NavigationConsole, Ship.NavigationConsole.Id);
+        foreach (var kind in RepairableBlockKinds)
+        {
+            var block = RepairableBlock(kind);
+            yield return new HitCandidate(block.Position, DeviceHitRadius, HitCandidateKind.RepairableBlock, block.Id);
+        }
     }
 
     // What an enemy shell does once it's past the shield (World.Projectiles.cs) - resolved by where
@@ -126,42 +131,11 @@ public sealed partial class World
                     }
                     continue; // forced open already - a gap, not an obstacle
 
-                case HitCandidateKind.ReactorBlock:
-                    if (!PowerGrid.Reactor.Broken)
+                case HitCandidateKind.RepairableBlock:
+                    var blockKind = Ship.Devices.First(d => d.Id == candidate.Id).Kind;
+                    if (!IsBlockBroken(blockKind))
                     {
-                        PowerGrid.Reactor.Broken = true;
-                        return true;
-                    }
-                    continue;
-
-                case HitCandidateKind.DistributionBlock:
-                    if (!PowerGrid.DistributionBroken)
-                    {
-                        PowerGrid.DistributionBroken = true;
-                        return true;
-                    }
-                    continue;
-
-                case HitCandidateKind.BatteryBlock:
-                    if (!PowerGrid.Battery.Broken)
-                    {
-                        PowerGrid.Battery.Broken = true;
-                        return true;
-                    }
-                    continue;
-
-                case HitCandidateKind.HelmConsole:
-                    if (!HelmConsoleBroken)
-                    {
-                        HelmConsoleBroken = true;
-                        return true;
-                    }
-                    continue;
-
-                case HitCandidateKind.NavigationConsole:
-                    if (!NavigationConsoleBroken)
-                    {
-                        NavigationConsoleBroken = true;
+                        SetBlockBroken(blockKind, true);
                         return true;
                     }
                     continue;

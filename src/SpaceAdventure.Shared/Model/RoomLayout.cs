@@ -22,19 +22,33 @@ public static class RoomLayout
 
     public static Room GetRoom(IReadOnlyList<Room> rooms, string roomId) => rooms.First(r => r.Id == roomId);
 
-    // wallBlocks/isPassableBreach are optional (default null = no breach crossing at all, exactly
-    // today's behaviour) so every existing caller - Station's own wrapper (a station is never
-    // actually breachable), EnemyShipLayout, and every test that only cares about doors - keeps
-    // compiling and behaving unchanged. Only Ship's own wrapper, wired from World.Movement.cs, ever
-    // passes real ones.
+    // A big physical fixture inside a room (so far: Ship.DeviceObstacles - the reactor's own console,
+    // see that property's doc comment) that a character's own body can't stand inside of, distinct
+    // from a WallBlock breach (which is about the room's OUTER hull, not furniture in its middle).
+    // HalfExtents is the obstacle's own half-size in world units; CharacterRadius is added on top at
+    // the check site below, the same clearance rule the room's own outer walls already get.
+    public readonly record struct RoomObstacle(string RoomId, Vec2 Center, Vec2 HalfExtents);
+
+    private static bool BlocksPosition(IReadOnlyList<RoomObstacle>? obstacles, string roomId, Vec2 p) =>
+        obstacles is not null && obstacles.Any(o => o.RoomId == roomId &&
+            p.X >= o.Center.X - o.HalfExtents.X - CharacterRadius && p.X <= o.Center.X + o.HalfExtents.X + CharacterRadius &&
+            p.Y >= o.Center.Y - o.HalfExtents.Y - CharacterRadius && p.Y <= o.Center.Y + o.HalfExtents.Y + CharacterRadius);
+
+    // wallBlocks/isPassableBreach/obstacles are optional (default null = no breach crossing and no
+    // interior fixtures, exactly today's behaviour) so every existing caller - Station's own wrapper
+    // (a station is never actually breachable and has no such fixtures), EnemyShipLayout, and every
+    // test that only cares about doors - keeps compiling and behaving unchanged. Only Ship's own
+    // wrapper, wired from World.Movement.cs, ever passes real ones.
     public static (Vec2 Position, string RoomId) MoveAlongAxis(
         IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen,
-        IReadOnlyList<WallBlock>? wallBlocks = null, Func<WallBlock, bool>? isPassableBreach = null)
+        IReadOnlyList<WallBlock>? wallBlocks = null, Func<WallBlock, bool>? isPassableBreach = null,
+        IReadOnlyList<RoomObstacle>? obstacles = null)
     {
         var room = GetRoom(rooms, roomId);
         var next = position + delta;
+        var withinRoom = ContainsWithClearance(room, next);
 
-        if (ContainsWithClearance(room, next))
+        if (withinRoom && !BlocksPosition(obstacles, roomId, next))
             return (next, roomId);
 
         // Door crossing is checked against the door's own rectangle, not the clearance-shrunk room
@@ -55,6 +69,13 @@ public static class RoomLayout
             if (breach is not null)
                 return (next, breach.RoomId == roomId ? breach.OtherRoomId! : breach.RoomId);
         }
+
+        // Blocked by an interior obstacle specifically (not the room's own outer bounds) - stand
+        // still rather than clamp to a wall edge that has nothing to do with why this move failed;
+        // there's no "nearest free spot" search here, same simplicity the wall-clamp below already
+        // accepts for a straight bump into a solid boundary.
+        if (withinRoom)
+            return (position, roomId);
 
         return (new Vec2(
             Math.Clamp(next.X, room.Left + CharacterRadius, room.Right - CharacterRadius),

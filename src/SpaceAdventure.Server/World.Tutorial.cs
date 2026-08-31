@@ -67,7 +67,7 @@ public sealed partial class World
     {
         TutorialStage.ReachReactor => "ОБУЧЕНИЕ: дойдите до реакторного отсека (WASD)",
         TutorialStage.AllocatePower => "ОБУЧЕНИЕ: откройте распределительный блок (E) и подайте энергию на любую систему (Q/E)",
-        TutorialStage.ManHelm => "ОБУЧЕНИЕ: дойдите до штурвала, встаньте за него (E) и подвигайте корабль (WASD)",
+        TutorialStage.ManHelm => "ОБУЧЕНИЕ: дойдите до навигационной панели, встаньте за неё (E) и подвигайте корабль (WASD)",
         TutorialStage.ToggleDoor => "ОБУЧЕНИЕ: откройте или закройте дверь (ЛКМ)",
         TutorialStage.Complete => "ОБУЧЕНИЕ ЗАВЕРШЕНО! Возвращайтесь в главное меню, когда будете готовы.",
         _ => null,

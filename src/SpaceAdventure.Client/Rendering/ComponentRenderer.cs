@@ -42,7 +42,7 @@ public static class ComponentRenderer
             var rect = ShipRenderer.GetBlockRect(junction.Position, ShipRenderer.NormalBlockSize, origin);
             ShipRenderer.DrawPanel(spriteBatch, pixel, rect, damaged ? Color.DarkRed * 0.8f : Color.SlateGray * 0.7f,
                 damaged ? Color.OrangeRed : Color.LightSteelBlue, 1);
-            spriteBatch.DrawString(font, "Кор", new Vector2(rect.X + 1, rect.Y + 4), Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+            spriteBatch.DrawString(font, "Щит", new Vector2(rect.X + 1, rect.Y + 4), Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
         }
     }
 
@@ -207,7 +207,7 @@ public static class ComponentRenderer
         var name = owner.Kind switch
         {
             ComponentKind.Distribution => "шина",
-            ComponentKind.Junction => "коробка",
+            ComponentKind.Junction => "щиток",
             ComponentKind.Device => "устройство",
             _ => ComponentDefinitions.ShortLabel(owner.Kind),
         };
@@ -225,7 +225,7 @@ public static class ComponentRenderer
         return component.Kind switch
         {
             ComponentKind.Distribution => "Распределительный блок",
-            ComponentKind.Junction => "Распределительная коробка",
+            ComponentKind.Junction => "Щиток",
             ComponentKind.Device => snapshot.SystemDevices.FirstOrDefault(d => d.Id == componentId) is { } device
                 ? $"Устройство: {SystemLabel(device.System)}"
                 : snapshot.Cameras.Any(c => c.Id == componentId)

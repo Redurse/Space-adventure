@@ -49,6 +49,19 @@ internal static partial class TestRunner
             && ship.SuitLockers.Single().RoomId == "b";
     }
 
+    // The reactor now always draws its own fixed 4x4-tile texture (ShipRenderer.ReactorBlockSize) -
+    // SizeScale must stay at its default 1f for a custom ship regardless of how big the room the
+    // player drew around it is. Before this fix, SizeScale was derived from the room's own
+    // dimensions (Min(Width,Height)*0.6/(40/48)) - a leftover from when the reactor was a small
+    // icon meant to visually fill its room; on room "a" (4x4) that leftover formula gave ~2.88,
+    // over 11 tiles wide once applied to the new fixed 4x4 texture - exactly the "huge glowing
+    // reactor" bug reported when playing a Ship-Editor-built ship.
+    private static bool CustomShip_FromDefinition_ReactorSizeScaleStaysDefault()
+    {
+        var ship = Ship.FromCustomDefinition(BuildSimpleCustomShipDefinition());
+        return ship.ReactorBlock.SizeScale == 1f;
+    }
+
     // Room "a"'s shared side with "b" (X=4) and "b"'s airlock side (right) must carry no OUTER
     // WallBlocks (Ship.Custom.cs's BuildWallBlocks skips exactly those) - only the three plain
     // exterior sides of each room (top/bottom/left of "a", top/bottom of "b") get one. The shared

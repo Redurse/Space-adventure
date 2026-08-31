@@ -120,7 +120,7 @@ public partial class Game1
             eye = new Vector2((float)camera.Anchor.X, (float)camera.Anchor.Y);
 
             var mood = ComputeShipPowerMood(snapshot);
-            lights = BuildShipRoomLights(snapshot.Rooms, mood.PowerFraction, snapshot.Power, totalSeconds);
+            lights = BuildShipRoomLights(snapshot.Rooms, mood.PowerFraction);
             // A docked station has its own external power - always lit regardless of what shape the
             // player's own ship's grid is in.
             if (docked)
@@ -187,11 +187,22 @@ public partial class Game1
     }
 
     // One lamp per compartment, tinted with the same department colour RoomDecor paints the floor
-    // with, plus the reactor's own glow (present even with the lights off, as long as it's actually
-    // producing power) - flickering once its fuel runs critically low.
-    private static List<PointLight> BuildShipRoomLights(IReadOnlyList<Room> rooms, float powerFraction, PowerState power, float totalSeconds)
+    // with.
+    //
+    // Direct user request ("уменьши его визуальный вид до 4 тайлов... как он показывается в
+    // редакторе") - this used to ALSO add a second, separate additive light pool for the reactor/
+    // engine room specifically ("the reactor's own glow, present even with the lights off"), on top
+    // of this same per-room lamp. Shrinking that extra light's own radius wasn't enough - a point
+    // light isn't clipped to its own room's walls, so its glow bled straight through the doorway
+    // into whichever room the reactor compartment connects to (confirmed live: the wash reached all
+    // the way to the cockpit's own helm/scanner, well past any single room). Removed entirely - the
+    // reactor's own device texture (ShipRenderer.DrawReactorBlock) already reads as a lit, glowing
+    // machine on its own, the same flat, self-contained way it renders in the Ship Editor; a second
+    // light source drawn over it was never needed to sell that. The reactor/engine room keeps the
+    // same one ordinary per-room lamp every other compartment gets, nothing extra.
+    private static List<PointLight> BuildShipRoomLights(IReadOnlyList<Room> rooms, float powerFraction)
     {
-        var lights = new List<PointLight>(rooms.Count + 1);
+        var lights = new List<PointLight>(rooms.Count);
         var lampIntensity = MathHelper.Lerp(0.05f, 0.55f, powerFraction);
         foreach (var room in rooms)
         {
@@ -199,20 +210,6 @@ public partial class Game1
             var radius = MathF.Max(room.Width, room.Height) * 0.9f + 1.5f;
             lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius, tint * lampIntensity));
         }
-
-        var reactorRoom = rooms.FirstOrDefault(r => r.Id.Contains("reactor") || r.Id.Contains("engine"));
-        if (reactorRoom is not null && power.ReactorMaxOutput > 0f)
-        {
-            var outputFraction = MathHelper.Clamp(power.ReactorOutput / power.ReactorMaxOutput, 0f, 1f);
-            var fuelFraction = power.ReactorMaxFuel > 0f ? power.ReactorFuel / power.ReactorMaxFuel : 1f;
-            var flicker = fuelFraction < 0.15f
-                ? 0.7f + 0.3f * MathF.Sin(totalSeconds * 17f) * MathF.Sin(totalSeconds * 6.1f)
-                : 1f;
-            var radius = MathF.Max(reactorRoom.Width, reactorRoom.Height) * 0.75f + 1f;
-            lights.Add(new PointLight(new Vector2((float)reactorRoom.Center.X, (float)reactorRoom.Center.Y), radius,
-                new Color(255, 150, 70) * (0.35f * outputFraction * flicker)));
-        }
-
         return lights;
     }
 

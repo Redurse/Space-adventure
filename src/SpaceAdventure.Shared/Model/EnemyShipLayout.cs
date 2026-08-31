@@ -35,6 +35,9 @@ public sealed partial class EnemyShipLayout
     // structure with a real hull, not just a hatch you fly up to: any exterior wall can be cut open
     // from EVA (World.Cutting.cs) exactly like the player's own ship, and climbed through once open.
     public IReadOnlyList<WallBlock> WallBlocks { get; }
+    // M71 (humble-soaring-cat.md) - see Ship.Tiles's own comment; same additive, nobody-reads-it-yet
+    // projection onto the new tile-grid model.
+    public TileGrid Tiles { get; }
 
     public EnemyShipLayout(EnemyShipClass kind, string name, IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors,
         IReadOnlyList<AirlockOuterDoor> airlockOuterDoors, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId,
@@ -49,6 +52,7 @@ public sealed partial class EnemyShipLayout
         BoardingRoomId = boardingRoomId;
         WeaponLoadout = weaponLoadout;
         WallBlocks = Station.BuildWallBlocks(rooms, doors, airlockOuterDoors);
+        Tiles = TileGridRasterizer.FromRooms(rooms, doors, airlockOuterDoors);
     }
 
     // Bounding box of the hull's own Rooms in its local frame - the same "centre + rotate" anchor

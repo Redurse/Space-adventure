@@ -109,6 +109,37 @@ public partial class Game1
             return;
         }
 
+        // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
+        // Step 6) - "Сохранить как"'s own text box, same free-typing rule the Nickname screen uses
+        // above (a ship's save-slot name isn't restricted to the Join screen's host/port alphabet).
+        if (_menuScreen == MenuScreen.ShipEditor && _editorSaveAsPrompting)
+        {
+            if (e.Character == '\b')
+            {
+                if (_editorSaveAsInput.Length > 0)
+                    _editorSaveAsInput = _editorSaveAsInput[..^1];
+                return;
+            }
+            if (!char.IsControl(e.Character) && _editorSaveAsInput.Length < 30)
+                _editorSaveAsInput += e.Character;
+            return;
+        }
+
+        // Tile-painting redo (M76 follow-up) - the Zone tool's own naming prompt, same free-typing
+        // text box as "Сохранить как" above.
+        if (_menuScreen == MenuScreen.ShipEditor && _editorZoneNamePrompting)
+        {
+            if (e.Character == '\b')
+            {
+                if (_editorZoneNameInput.Length > 0)
+                    _editorZoneNameInput = _editorZoneNameInput[..^1];
+                return;
+            }
+            if (!char.IsControl(e.Character) && _editorZoneNameInput.Length < 30)
+                _editorZoneNameInput += e.Character;
+            return;
+        }
+
         if (_menuScreen != MenuScreen.Join)
             return;
 
@@ -207,6 +238,16 @@ public partial class Game1
     // go, so Escape there falls through to Exit(), same as it always has.
     private bool LeaveSubScreen()
     {
+        // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
+        // Step 6) - Escape while a "Сохранить как"/"Загрузить" overlay is open closes just the
+        // overlay, same as it closes any other sub-screen; falling through to the ShipEditor case
+        // below would kick the player all the way back to the main menu instead.
+        if (_menuScreen == MenuScreen.ShipEditor && (_editorSaveAsPrompting || _editorLoadListOpen))
+        {
+            _editorSaveAsPrompting = false;
+            _editorLoadListOpen = false;
+            return true;
+        }
         if (_menuScreen == MenuScreen.Join && _joinTask is null)
         {
             _menuScreen = MenuScreen.Main;
@@ -383,6 +424,15 @@ public partial class Game1
     // so it has to be known before the session starts.
     private void HandleShipSelect(KeyboardState keyboard)
     {
+        // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
+        // Step 7) - the only mouse-driven part of an otherwise keyboard-only screen, since a saved
+        // ship is identified by name, not a single digit key the way the 4 fixed classes are.
+        var mouse = Mouse.GetState();
+        var clicked = mouse.LeftButton == ButtonState.Pressed && _prevMenuLeftMouseButton == ButtonState.Released;
+        _prevMenuLeftMouseButton = mouse.LeftButton;
+        if (clicked)
+            HandleShipSelectCustomShipClick(_designMouse);
+
         // Toggled before starting, not after: the listen socket opens together with the server, and
         // a crew joins the ship its host already chose.
         if (Pressed(keyboard, Keys.H))
@@ -418,6 +468,28 @@ public partial class Game1
         // prologue (Game1.Prologue.cs), which only starts the session once it has played out.
         BeginPrologue(SelectableShipKinds[index]);
     }
+
+    // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
+    // Step 7) - same entry point the editor's own "Играть" button uses (Game1.ShipEditor.cs's
+    // HandleShipEditorPlayClicked): no prologue, straight into a session with ShipKind.Custom. An
+    // invalid design (broken by hand-editing the JSON, or never finished) is simply not clickable -
+    // no error message, exactly like a disabled "Играть" button in the editor itself.
+    private void HandleShipSelectCustomShipClick(Point point)
+    {
+        var names = CustomShipStore.ListShips();
+        for (var i = 0; i < names.Count; i++)
+        {
+            if (!GetShipSelectCustomRowRect(i).Contains(point))
+                continue;
+            if (CustomShipStore.LoadShip(names[i]) is not { } definition || CustomShipValidator.Validate(definition).Count > 0)
+                return;
+            SaveStore.Delete();
+            StartHostedSession(ShipKind.Custom, loadFrom: null, customShip: definition);
+            return;
+        }
+    }
+
+    private static Rectangle GetShipSelectCustomRowRect(int index) => new(650, 110 + index * 30, 300, 26);
 
     private void HandleJoinScreen(KeyboardState keyboard)
     {
@@ -1269,6 +1341,8 @@ public partial class Game1
             _spriteBatch.DrawString(_font, ShipCatalog.Description(kind), new Vector2(80, y + 24), Color.LightSteelBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
         }
 
+        DrawShipSelectCustomShipList();
+
         if (_existingSave is { } save)
         {
             _spriteBatch.DrawString(_font, $"[C] Продолжить: {ShipCatalog.Name(save.ShipKind)}, {save.Credits} кред.",
@@ -1284,6 +1358,33 @@ public partial class Game1
             _openToNetwork ? Color.LightGreen : Color.LightGray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
         _spriteBatch.DrawString(_font, "[J] Присоединиться к чужому кораблю", new Vector2(60, 488),
             Color.LightSkyBlue, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
+    }
+
+    // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
+    // Step 7) - alongside the 4 fixed classes on the left (which stay keyboard-driven, 1-4), not
+    // instead of them. An invalid design still shows up here (so the player can see it exists and go
+    // fix it in the editor) but greyed out and unclickable, rather than hidden entirely.
+    private void DrawShipSelectCustomShipList()
+    {
+        _spriteBatch.DrawString(_font, "Ваши корабли:", new Vector2(650, 80), Color.White, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+
+        var names = CustomShipStore.ListShips();
+        if (names.Count == 0)
+        {
+            _spriteBatch.DrawString(_font, "(соберите свой в редакторе корабля)", new Vector2(650, 110), Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            return;
+        }
+
+        for (var i = 0; i < names.Count; i++)
+        {
+            var rect = GetShipSelectCustomRowRect(i);
+            var definition = CustomShipStore.LoadShip(names[i]);
+            var valid = definition is not null && CustomShipValidator.Validate(definition).Count == 0;
+            var hovered = valid && rect.Contains(_designMouse);
+            _spriteBatch.Draw(_pixel, rect, hovered ? new Color(120, 92, 30) : Color.DimGray * (valid ? 0.5f : 0.25f));
+            _spriteBatch.DrawString(_font, names[i], new Vector2(rect.X + 8, rect.Y + 4),
+                valid ? Color.Gold : Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        }
     }
 
     private void DrawJoinScreen()

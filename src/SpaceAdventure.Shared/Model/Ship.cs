@@ -15,6 +15,17 @@ public sealed partial class Ship
     public IReadOnlyList<SuitLocker> SuitLockers { get; }
     public IReadOnlyList<ShipSystemDevice> SystemDevices { get; }
     public IReadOnlyList<WallBlock> WallBlocks { get; }
+    // M71 (humble-soaring-cat.md) - additive projection of Rooms/Doors/AirlockOuterDoors/WallBlocks
+    // onto the new tile-grid model (TileGrid.cs). Nobody reads this yet outside tests; it exists
+    // purely to prove the projection is lossless before any dependent system (atmosphere, movement,
+    // rendering...) migrates to it one milestone at a time.
+    public TileGrid Tiles { get; }
+    // M74 (humble-soaring-cat.md) - flattened ECS-style view over every physical device fixture
+    // below (ReactorBlock/DistributionBlock/BatteryBlock/HelmConsole/NavigationConsole/CardTable/
+    // Jukebox/SystemDevices/Turrets/AmmoStorages/SuitLockers/StorageRacks/Cameras/ComponentMounts,
+    // plus every Extra*Position/Console beyond the first) - purely additive, built once below from
+    // those same fields (ShipDevice.cs's own doc comment), so nothing about them changes.
+    public IReadOnlyList<ShipDevice> Devices { get; }
     public ReactorBlock ReactorBlock { get; }
     public PowerDistributionBlock DistributionBlock { get; }
     public BatteryBlock BatteryBlock { get; }
@@ -141,9 +152,78 @@ public sealed partial class Ship
         SpawnPoint = spawnPoint;
         SpawnRoomId = spawnRoomId;
         _roomsById = rooms.ToDictionary(r => r.Id);
+        Tiles = TileGridRasterizer.FromRooms(Rooms, Doors, AirlockOuterDoors);
+        Devices = BuildDevices();
     }
 
     public Room GetRoom(string roomId) => _roomsById[roomId];
+
+    // M74 - see Devices's own doc comment above. Runs once at construction time (device fixtures
+    // are never added/removed after a Ship is built - Ship.Custom.cs.FromCustomDefinition always
+    // constructs a brand new Ship rather than mutating one), same lifecycle as Tiles just above.
+    private List<ShipDevice> BuildDevices()
+    {
+        var devices = new List<ShipDevice>
+        {
+            new(ReactorBlock.Id, DeviceKind.Reactor, ReactorBlock.RoomId, ReactorBlock.X, ReactorBlock.Y),
+            new(DistributionBlock.Id, DeviceKind.Distribution, DistributionBlock.RoomId, DistributionBlock.X, DistributionBlock.Y),
+            new(BatteryBlock.Id, DeviceKind.Battery, BatteryBlock.RoomId, BatteryBlock.X, BatteryBlock.Y),
+            new(HelmConsole.Id, DeviceKind.Helm, HelmConsole.RoomId, HelmConsole.X, HelmConsole.Y),
+            new(NavigationConsole.Id, DeviceKind.Navigation, NavigationConsole.RoomId, NavigationConsole.X, NavigationConsole.Y),
+            new(CardTable.Id, DeviceKind.CardTable, CardTable.RoomId, CardTable.X, CardTable.Y),
+        };
+
+        // Extra reactor/distribution rooms beyond the first only ever carry a bare Vec2 (no Id, no
+        // RoomId - Ship.cs's own doc comment on ExtraReactorPositions) - synthesize both here so
+        // each still becomes a fully independent Devices entry rather than being dropped.
+        devices.AddRange(ExtraReactorPositions.Select((p, i) =>
+            new ShipDevice($"{ReactorBlock.Id}-extra-{i + 1}", DeviceKind.Reactor, RoomIdAt(p), (float)p.X, (float)p.Y)));
+        devices.AddRange(ExtraDistributionPositions.Select((p, i) =>
+            new ShipDevice($"{DistributionBlock.Id}-extra-{i + 1}", DeviceKind.Distribution, RoomIdAt(p), (float)p.X, (float)p.Y)));
+        devices.AddRange(ExtraHelmConsoles.Select(c => new ShipDevice(c.Id, DeviceKind.Helm, c.RoomId, c.X, c.Y)));
+        devices.AddRange(ExtraNavigationConsoles.Select(c => new ShipDevice(c.Id, DeviceKind.Navigation, c.RoomId, c.X, c.Y)));
+
+        if (Jukebox is { } jukebox)
+            devices.Add(new ShipDevice(jukebox.Id, DeviceKind.Jukebox, jukebox.RoomId, jukebox.X, jukebox.Y));
+
+        // PowerSystemId.Secondary has no DeviceKind counterpart (ShipDevice.cs's own doc comment) -
+        // a hull's "system-secondary" fixture stays on SystemDevices untouched, just absent here.
+        foreach (var device in SystemDevices)
+        {
+            DeviceKind? kind = device.System switch
+            {
+                PowerSystemId.Oxygen => DeviceKind.Oxygen,
+                PowerSystemId.Engine => DeviceKind.Engine,
+                PowerSystemId.Shields => DeviceKind.Shields,
+                PowerSystemId.WeaponCharger => DeviceKind.WeaponCharger,
+                _ => null,
+            };
+            if (kind is { } k)
+                devices.Add(new ShipDevice(device.Id, k, device.RoomId, device.X, device.Y,
+                    ThrustBonus: device.ThrustBonus, TurnBonus: device.TurnBonus, CapacityBonus: device.CapacityBonus));
+        }
+
+        foreach (var turret in Turrets)
+        {
+            var kind = turret.WeaponType switch
+            {
+                TurretWeaponType.Magnetic => DeviceKind.TurretBallistic,
+                TurretWeaponType.MachineGun => DeviceKind.TurretMachineGun,
+                _ => DeviceKind.TurretLaser,
+            };
+            devices.Add(new ShipDevice(turret.Id, kind, turret.RoomId, turret.PeriscopeX, turret.PeriscopeY, MountSide: turret.MountSide));
+        }
+
+        devices.AddRange(AmmoStorages.Select(a => new ShipDevice(a.Id, DeviceKind.AmmoStorage, a.RoomId, a.X, a.Y)));
+        devices.AddRange(SuitLockers.Select(s => new ShipDevice(s.Id, DeviceKind.SuitLocker, s.RoomId, s.X, s.Y)));
+        devices.AddRange(StorageRacks.Select(s => new ShipDevice(s.Id, DeviceKind.StorageRack, s.RoomId, s.X, s.Y)));
+        devices.AddRange(Cameras.Select(c => new ShipDevice(c.Id, DeviceKind.Camera, c.RoomId, c.X, c.Y, CameraSide: c.MountSide)));
+        devices.AddRange(ComponentMounts.Select(m => new ShipDevice(m.Id, DeviceKind.ComponentMount, m.RoomId, m.X, m.Y, TargetDoorId: m.TargetDoorId)));
+
+        return devices;
+    }
+
+    private string RoomIdAt(Vec2 position) => Rooms.FirstOrDefault(r => r.Contains(position))?.Id ?? SpawnRoomId;
 
     public static Ship Create(ShipKind kind) => kind switch
     {
@@ -225,9 +305,42 @@ public sealed partial class Ship
     // solid hull (game_design.md Phase 3, M16 - airtight compartments). No walls yet block crossing
     // outside a room's own bounds if it isn't adjacent to any room at all (open space / outside the
     // hull) - that transition is World.Eva.cs's own, separate exterior-hull-breach path.
+    // M73 - now backed by Tiles/TileMovement instead of the Rooms/Doors rectangle-clamp.
+    // isDoorOpen/isPassableBreach are unused here (door-open state and breach passability are
+    // already baked into TileCell via World.TileSync.cs/TileGrid.IsWalkable) - kept as parameters
+    // purely so World.Movement.cs's existing call site doesn't need to change.
     public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen,
-        Func<WallBlock, bool>? isPassableBreach = null) =>
-        RoomLayout.MoveAlongAxis(Rooms, Doors, position, roomId, delta, isDoorOpen, WallBlocks, isPassableBreach);
+        Func<WallBlock, bool>? isPassableBreach = null)
+    {
+        var next = TileMovement.MoveAlongAxis(Tiles, position, delta, DeviceObstacles);
+        return (next, TileMovement.RoomIdAt(Rooms, next) ?? roomId);
+    }
+
+    // The reactor's own machine (a catalog/editor room's reference art bakes the whole thing right
+    // into the room's own floor texture - RoomDecor's "texture doubles as the device" rule, so
+    // ShipRenderer.DrawReactorBlock draws nothing extra there any more) - a character's own body has
+    // to actually be blocked by it rather than walking straight through the artwork. Sized to 60% of
+    // the room's own width/height (a tighter fit than the room itself, matching just the machine's
+    // own outline in the art, not the surrounding floor/wall-frame around it), which still leaves a
+    // walkway around all four sides for the crew to reach it from any direction. Only the reactor
+    // for now (RoomLayout.RoomObstacle is meant to grow one entry per "big fixture" module as each is
+    // worked through the same way, not just this one).
+    private IReadOnlyList<RoomLayout.RoomObstacle> DeviceObstacles
+    {
+        get
+        {
+            var room = GetRoom(ReactorBlock.RoomId);
+            // Only where there's actually a big machine drawn to match (RoomCatalog.
+            // NamesWithReferenceArt) - every hand-authored hull's own reactor room (a plain
+            // procedural floor, no reference art) gets no obstacle at all, same as before this
+            // feature existed. Without this gate the obstacle used to swallow the room's only door
+            // on a normal hull (e.g. the Frigate's 5x6 "reactor" room), stranding anyone trying to
+            // walk through it - found via several tests hanging on exactly that stuck pathing.
+            if (!RoomCatalog.NamesWithReferenceArt.Contains(room.Name))
+                return Array.Empty<RoomLayout.RoomObstacle>();
+            return new[] { new RoomLayout.RoomObstacle(ReactorBlock.RoomId, ReactorBlock.Position, new Vec2(room.Width * 0.3, room.Height * 0.3)) };
+        }
+    }
 
     public static Ship CreateStarter()
     {

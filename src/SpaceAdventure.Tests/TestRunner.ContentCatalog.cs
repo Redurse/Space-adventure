@@ -193,4 +193,34 @@ internal static partial class TestRunner
 
         return CustomShipValidator.Validate(doubled).Count == 0;
     }
+
+    // Редактор корабля в духе Cosmoteer (humble-soaring-cat.md, "Отдельная ветка: редактор корабля...")
+    // - a ship assembled from NOTHING but catalog modules (no hand-authored hull underneath at all)
+    // has to pass validation, or the editor's own "Играть" button could never unlock once the old
+    // freeform room+device tools are gone. Before utility-bay/storage-bay existed, no catalog entry
+    // ever produced Distribution/Oxygen/SuitLocker/StorageRack, so this was structurally impossible -
+    // this test is the guard against that gap ever reopening (e.g. someone renaming/removing one of
+    // the two new entries without noticing what depends on it).
+    private static bool CustomShipValidator_AcceptsAShipBuiltEntirelyFromCatalogModules()
+    {
+        var catalogIds = new[] { "reactor", "utility-bay", "cockpit-small", "engine-small", "storage-bay" };
+        var rooms = new List<CustomRoomDef>();
+        var devices = new List<CustomDeviceDef>();
+        var cursorX = 0f;
+        foreach (var id in catalogIds)
+        {
+            var entry = RoomCatalog.Find(id)!;
+            var room = new CustomRoomDef(id, entry.Name, cursorX, 0f, entry.Width, entry.Height);
+            rooms.Add(room);
+            var centerX = room.X + room.Width / 2f;
+            var centerY = room.Y + room.Height / 2f;
+            devices.AddRange(entry.Devices.Select(kind => new CustomDeviceDef(kind, centerX, centerY)));
+            cursorX += entry.Width;
+        }
+
+        var airlocks = new[] { new CustomAirlockDef("reactor", EdgeSide.Left) }; // leftmost room's own outer wall, nothing built there to conflict
+        var def = new CustomShipDefinition("Каталожный корабль", rooms, Array.Empty<CustomDoorDef>(), airlocks, devices, ForwardDegrees: 0f);
+
+        return CustomShipValidator.Validate(def).Count == 0;
+    }
 }

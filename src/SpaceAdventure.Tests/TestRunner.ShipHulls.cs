@@ -178,10 +178,16 @@ internal static partial class TestRunner
         // ring neighbours are to its right and below it (Station.Procedural.cs's own doc comment on
         // why Dock always lands on the perimeter's top-left corner).
         var room = station.GetRoom(dockRoomId);
-        var start = new Vec2(room.Center.X, room.Top + 1f);
+        // room.Top+1f (not +2f) used to be clear of the wall, back when a wall was a zero-width line
+        // sitting exactly on the room's own Top edge; now the room's own Top row is itself a real,
+        // solid wall tile (TileGridRasterizer.FromRooms - every room's own leading Left/Top edge is
+        // walled unconditionally), so the start position has to sit a full tile further in to avoid
+        // starting inside that wall tile.
+        var start = new Vec2(room.Center.X, room.Top + 2f);
         var (pos, roomId) = station.MoveAlongAxis(start, dockRoomId, new Vec2(0, -1f), _ => true);
-        // Clamped CharacterRadius short of the top hull wall, not exactly on it (see RoomLayout.cs).
-        return roomId == dockRoomId && Math.Abs(pos.Y - (room.Top + RoomLayout.CharacterRadius)) < 0.01f;
+        // Clamped CharacterRadius short of the top hull wall's face - one tile deeper into the room
+        // than the old zero-width-wall model, since the wall now consumes the room's own Top row.
+        return roomId == dockRoomId && Math.Abs(pos.Y - (room.Top + 1f + RoomLayout.CharacterRadius)) < 0.01f;
     }
 
 }

@@ -484,6 +484,9 @@ public sealed partial class World
         StepScanners(deltaSeconds);
         StepCampaign();
         StepTutorial();
+        // M72 - before atmosphere, so it reads this tick's already-synced door/wall tile state, not
+        // whatever was true a tick behind.
+        SyncShipTiles();
         StepAtmosphere(deltaSeconds);
         StepInjuries(deltaSeconds);
         // After everything else so a bot reacts to this tick's state (a fresh breach, a target that

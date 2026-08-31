@@ -28,6 +28,15 @@ public sealed partial class World
             FactionDefinitions.MaxStanding);
     }
 
+    // Sets standing directly (same "Debug*" convention as DebugAddCredits/DebugSetHullPlatingStock
+    // etc.) - a test that needs a station's own faction already hostile BEFORE docking there can't
+    // grind to that standing by fighting in the open first, since a station's own defensive squadron
+    // now intercepts an approach at exactly that standing (World.Voyage.cs's UpdateNearestStation) -
+    // there is no longer a way to physically dock at a station whose faction you've already angered
+    // enough. Setting it directly after docking friendly avoids that chicken-and-egg problem.
+    public void DebugSetStanding(FactionId faction, int value) =>
+        _factionStanding[faction] = Math.Clamp(value, FactionDefinitions.MinStanding, FactionDefinitions.MaxStanding);
+
     // Who currently controls a point - GalaxyPoint.Faction (Shared's static starting data) unless
     // the war below (WarEffort/ContestedPointId) has flipped it, the same reason _factionStanding
     // itself lives here rather than as a mutable field on FactionDefinitions.

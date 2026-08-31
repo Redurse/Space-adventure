@@ -45,11 +45,19 @@ public sealed partial class Ship
         var extraNavigationConsoles = ExtraPositionsOfKind(def, CustomDeviceKind.Navigation)
             .Select((p, i) => new NavigationConsole($"navigation-console-extra-{i + 1}", RoomIdAt(rooms, p), p.AsFloat().X, p.AsFloat().Y)).ToList();
 
+        // The reactor now always draws its own fixed 4x4-tile texture (ShipRenderer.ReactorBlockSize),
+        // guaranteed by the Ship Editor's own footprint placement rules - so SizeScale stays at its
+        // default 1f here too, same as every hand-authored hull except Corvette's own hand-tuned
+        // SizeScale: 1.8f (untouched by this, that hull is built directly, never through here).
         var reactorBlock = new ReactorBlock("reactor-block", RoomIdAt(rooms, reactorDevice), reactorDevice.X, reactorDevice.Y);
         var distributionBlock = new PowerDistributionBlock("distribution-block", RoomIdAt(rooms, distributionDevice), distributionDevice.X, distributionDevice.Y);
-        // No dedicated CustomDeviceKind for it (the Ship Editor doesn't offer placing one) - it
-        // rides along next to the reactor block instead, same room, offset just enough not to overlap.
-        var batteryBlock = new BatteryBlock("battery-block", RoomIdAt(rooms, reactorDevice), reactorDevice.X + 1f, reactorDevice.Y + 1f);
+        // Genuinely optional like CardTable/Jukebox: a placed CustomDeviceKind.Battery wins; a hull
+        // that never places one falls back to the old auto-placement right next to the reactor, so
+        // an editor-drawn hull from before this device kind existed keeps working unchanged.
+        var batteryDevice = def.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.Battery);
+        var batteryBlock = batteryDevice is not null
+            ? new BatteryBlock("battery-block", RoomIdAt(rooms, batteryDevice), batteryDevice.X, batteryDevice.Y)
+            : new BatteryBlock("battery-block", RoomIdAt(rooms, reactorDevice), reactorDevice.X + 1f, reactorDevice.Y + 1f);
         var helmConsole = new HelmConsole("helm-console", RoomIdAt(rooms, helmDevice), helmDevice.X, helmDevice.Y);
         var navigationConsole = new NavigationConsole("navigation-console", RoomIdAt(rooms, navigationDevice), navigationDevice.X, navigationDevice.Y);
 

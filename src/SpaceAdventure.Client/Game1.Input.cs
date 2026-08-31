@@ -1096,8 +1096,14 @@ public partial class Game1
             }
         }
 
-        if (NearEnough(snapshot.ReactorBlock.Position) &&
-            ShipRenderer.GetBlockRect(snapshot.ReactorBlock.Position, ShipRenderer.BigBlockSize, origin).Contains(_designMouse))
+        // Content-каталог отсеков/Ship Editor - a catalog-built reactor's own console can be much
+        // bigger than the hand-authored default (Ship.Custom.cs scales SizeScale to roughly fill
+        // half its room, matching the physical obstacle placed around the same block), so standing
+        // near any part of that footprint has to count as "near enough" to open it - not just the
+        // one exact point ReactorBlock.Position itself sits at, which NearEnough alone still tests.
+        var reactorHalfWorldSize = ShipRenderer.BigBlockSize * snapshot.ReactorBlock.SizeScale / ShipRenderer.PixelsPerUnit / 2f;
+        if ((myPosition - snapshot.ReactorBlock.Position).Length() < TurretInteractionRadius + reactorHalfWorldSize &&
+            ShipRenderer.GetBlockRect(snapshot.ReactorBlock.Position, (int)(ShipRenderer.BigBlockSize * snapshot.ReactorBlock.SizeScale), origin).Contains(_designMouse))
         {
             _openBlock = _openBlock.Kind == BlockKind.Reactor ? ClickTarget.None : ClickTarget.Reactor;
             return (-1, -1, null, -1, false, false, null, false, null);
@@ -1671,7 +1677,7 @@ public partial class Game1
 
         var nearHelm = (snapshot.HelmConsole.Position - myPosition).Length() < TurretInteractionRadius;
         if (nearHelm)
-            return "[E] встать за штурвал";
+            return "[E] встать за навигационную панель";
 
         var nearDamagedSystem = snapshot.SystemDevices.FirstOrDefault(d =>
             (d.Position - myPosition).Length() < TurretInteractionRadius &&
@@ -1690,7 +1696,7 @@ public partial class Game1
             var junctionDamaged = snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == nearJunction.Id)?.Damaged ?? false;
             if (junctionDamaged)
                 return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                    ? "[E] почини распределительную коробку"
+                    ? "[E] почини щиток"
                     : "Нужен гаечный ключ или отвёртка в руке";
         }
 

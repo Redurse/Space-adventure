@@ -26,10 +26,25 @@ public static class RoomPlacementPreview
         var existingRooms = snapshot.Rooms.Select(r => new CustomRoomDef(r.Id, r.Name, r.X, r.Y, r.Width, r.Height)).ToList();
         var occupied = existingRooms.Concat((snapshot.PendingRoomBuilds ?? System.Array.Empty<PendingRoomBuildState>())
             .Select(p => new CustomRoomDef(p.Id, p.Name, p.X, p.Y, p.Width, p.Height))).ToList();
+        return FindCandidates(existingRooms, occupied, entry);
+    }
 
+    // Редактор корабля в духе Cosmoteer (humble-soaring-cat.md, Step 3) - the offline Ship Editor has
+    // no WorldSnapshot/PendingRoomBuilds at all, only its own local room list, and for it every
+    // already-placed room is simultaneously the anchor set AND the occupied set (nothing is "still
+    // under construction" there - a placed module is placed).
+    public static IReadOnlyList<Candidate> FindCandidates(IReadOnlyList<CustomRoomDef> rooms, RoomCatalogEntry entry) =>
+        FindCandidates(rooms, rooms, entry);
+
+    // Core geometry, unchanged from the original WorldSnapshot-only version - anchorRooms is what a
+    // candidate must touch the edge of (a floating, disconnected compartment isn't valid), occupiedRooms
+    // is what a candidate must not overlap (anchor rooms plus anything else that already claims the
+    // footprint, e.g. a build still in progress).
+    private static IReadOnlyList<Candidate> FindCandidates(IReadOnlyList<CustomRoomDef> anchorRooms, IReadOnlyList<CustomRoomDef> occupiedRooms, RoomCatalogEntry entry)
+    {
         var results = new List<Candidate>();
         var previewIndex = 0;
-        foreach (var anchor in existingRooms)
+        foreach (var anchor in anchorRooms)
         {
             var attempts = new (float X, float Y)[]
             {
@@ -41,10 +56,10 @@ public static class RoomPlacementPreview
             foreach (var (x, y) in attempts)
             {
                 var attempt = new CustomRoomDef($"preview-{previewIndex++}", entry.Name, x, y, entry.Width, entry.Height);
-                if (occupied.Any(r => Overlaps(r, attempt)))
+                if (occupiedRooms.Any(r => Overlaps(r, attempt)))
                     continue;
 
-                var withAttempt = existingRooms.Append(attempt).ToList();
+                var withAttempt = anchorRooms.Append(attempt).ToList();
                 var overlaps = ShipLayoutGeometry.FindRoomPairOverlaps(withAttempt);
                 if (!overlaps.Any(o => o.RoomAId == attempt.Id || o.RoomBId == attempt.Id))
                     continue; // doesn't actually touch anything - a floating compartment isn't valid

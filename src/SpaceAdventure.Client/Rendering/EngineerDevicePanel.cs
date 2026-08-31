@@ -38,11 +38,12 @@ public sealed class EngineerDevicePanel
                 rows.Add(new Row(state.DeviceId, $"Камера {++cameraNumber}", state.Damaged, state.RepairProgress));
         }
         foreach (var junction in snapshot.JunctionStates)
-            rows.Add(new Row(junction.DeviceId, "Распред. коробка", junction.Damaged, junction.RepairProgress));
+            rows.Add(new Row(junction.DeviceId, "Щиток", junction.Damaged, junction.RepairProgress));
         foreach (var door in snapshot.DoorStates.Where(d => d.Destroyed))
             rows.Add(new Row(door.DoorId, "Дверь", true, door.RepairProgress));
 
-        var blockLabels = new[] { "Реактор", "Распределение", "Батарея", "Штурвал", "Навигация" };
+        // Renamed by direct user request - see CustomDeviceCatalog.Name's own comment on Helm/Navigation.
+        var blockLabels = new[] { "Реактор", "Распределение", "Батарея", "Навигационная панель", "Сканер" };
         var blocks = snapshot.BlockStates ?? Array.Empty<ShipSystemState>();
         for (var i = 0; i < blocks.Count && i < blockLabels.Length; i++)
             rows.Add(new Row(blocks[i].DeviceId, blockLabels[i], blocks[i].Damaged, blocks[i].RepairProgress));

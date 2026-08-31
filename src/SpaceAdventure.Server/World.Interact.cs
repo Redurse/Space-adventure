@@ -119,17 +119,12 @@ public sealed partial class World
         // The reactor and its sibling "boxes" plus the helm/scanner consoles (enemy/weapon overhaul -
         // "реактор и коробки могли быть сломаны", "штурвал, сонар можно было сломать") - same
         // minigame, same plain bool Damaged state as a turret rather than a wire (World.SystemRepair.cs
-        // already steps/finishes all five via PowerGrid/HelmConsoleBroken/NavigationConsoleBroken).
-        var nearbyBrokenBlock = new[]
-        {
-            (Ship.ReactorBlock.Id, Ship.ReactorBlock.Position, (Func<bool>)(() => PowerGrid.Reactor.Broken)),
-            (Ship.DistributionBlock.Id, Ship.DistributionBlock.Position, (Func<bool>)(() => PowerGrid.DistributionBroken)),
-            (Ship.BatteryBlock.Id, Ship.BatteryBlock.Position, (Func<bool>)(() => PowerGrid.Battery.Broken)),
-            (Ship.HelmConsole.Id, Ship.HelmConsole.Position, (Func<bool>)(() => HelmConsoleBroken)),
-            (Ship.NavigationConsole.Id, Ship.NavigationConsole.Position, (Func<bool>)(() => NavigationConsoleBroken)),
-        }.FirstOrDefault(b => b.Item3() && (b.Position - character.Position).Length() < InteractionRadius);
+        // already steps/finishes all five via RepairableBlockKinds/IsBlockBroken/SetBlockBroken).
+        var nearbyBrokenBlock = RepairableBlockKinds
+            .Select(RepairableBlock)
+            .FirstOrDefault(b => IsBlockBroken(b.Kind) && (b.Position - character.Position).Length() < InteractionRadius);
 
-        if (nearbyBrokenBlock.Id is not null)
+        if (nearbyBrokenBlock is not null)
         {
             if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
                 AttemptSystemRepair(nearbyBrokenBlock.Id);

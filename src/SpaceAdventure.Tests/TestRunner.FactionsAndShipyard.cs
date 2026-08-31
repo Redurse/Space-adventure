@@ -180,28 +180,30 @@ internal static partial class TestRunner
         return false; // never landed on a rival-having destination in 10 tries - setup problem
     }
 
-    // Three kills in Consortium space put standing past the hostile threshold (-18 each vs. a -40
-    // threshold), at which point their stations stop offering work at all.
+    // A hostile-standing faction's station won't offer work at all - but by the same standing
+    // that blocks the quest, its own defensive squadron now also intercepts any approach before the
+    // ship can actually reach dock range (World.Voyage.cs's UpdateNearestStation, exercised by the
+    // sibling World_Station_HostileStandingTriggersDefensiveSquadronOnApproach). Grinding standing
+    // hostile via real combat FIRST, then trying to dock, can therefore never reach the docked state
+    // this test actually wants to exercise - the approach itself gets pulled into a fight instead.
+    // Docking while still friendly, then setting the standing hostile directly afterward
+    // (DebugSetStanding, same convention as DebugAddCredits/DebugSetHullPlatingStock) sidesteps that
+    // chicken-and-egg problem entirely, and is also more direct: this test cares about "IS the
+    // Administrator refusing work at hostile standing," not about how standing GOT there (that part
+    // is already covered by GrindStandingHostile-based siblings like RaisesPrices/SendsABiggerSquadron).
     private static bool World_Faction_HostileStanding_BlocksQuestOffers()
     {
         var world = new World();
         world.SpawnCharacter(1);
-        // Three fights pile up enough hull breaches to suffocate an unsuited character long before
-        // the third one ends - and a dead character can't walk to the helm to dock afterwards.
-        // Suiting up first makes the whole run deterministic (World.Atmosphere.cs skips suited
-        // characters entirely).
-        EquipSuit(world, 1);
-        GrindStandingHostile(world, "sector-delta", FactionId.Consortium);
-
-        if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.HostileThreshold)
-            return false; // didn't actually anger them enough - setup problem, not the behavior under test
 
         // trade-station, not outpost-gamma: it's Consortium-held *and* actually has an
         // Administrator to refuse you (outpost-gamma is a Shipyard - no quests there at all, so
         // it would pass for the wrong reason).
         DockAtStation(world, "trade-station");
         if (!world.IsDocked)
-            return false;
+            return false; // setup problem, not the behavior under test
+
+        world.DebugSetStanding(FactionId.Consortium, FactionDefinitions.HostileThreshold - 1);
 
         world.ApplyCommand(1, new ClientCommand(1, AcceptCargoQuestPressed: true, AcceptQuestKind: QuestKind.Delivery));
         return world.CreateSnapshot().ActiveQuest is null;

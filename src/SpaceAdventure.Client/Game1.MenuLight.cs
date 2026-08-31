@@ -21,6 +21,18 @@ public partial class Game1
         if (!_scenePost.BeginOwnLight(Color.White))
             return;
 
+        // The pools below (planet glow, cabin rim light, top sliver) are hand-placed for the actual
+        // main menu's own planet backdrop - direct user report ("непонятное размытие") traced to
+        // these still lighting up a screen that has nothing to do with them, like the Ship Editor's
+        // own flat grid. A neutral, evenly-white mask (the BeginOwnLight call above) is still correct
+        // everywhere else - see this file's own doc comment on why every non-session screen needs
+        // SOME baseline light mask - just without any of the decorative pools added on top of it.
+        if (_menuScreen != MenuScreen.Main)
+        {
+            _scenePost.EndOwnLight();
+            return;
+        }
+
         var blob = _scenePost.Blob;
         _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, SamplerState.LinearClamp, transformMatrix: _renderScale);
 

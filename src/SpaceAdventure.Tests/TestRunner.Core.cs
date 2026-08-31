@@ -91,9 +91,12 @@ internal static partial class TestRunner
     private static bool Ship_MoveAlongAxis_BlocksAtWallWithoutDoor()
     {
         var ship = Ship.CreateStarter();
-        var (pos, roomId) = ship.MoveAlongAxis(new Vec2(2.5f, 0.5f), "cockpit", new Vec2(0, -1f), _ => true);
-        // Clamped CharacterRadius short of the top hull wall, not exactly on it (see RoomLayout.cs).
-        return roomId == "cockpit" && Math.Abs(pos.Y - RoomLayout.CharacterRadius) < 0.01f;
+        // Start deep enough in the room that the start position itself isn't inside the top wall's
+        // own tile (cockpit's Top row is now a real, solid tile - see TileGridRasterizer.FromRooms).
+        var (pos, roomId) = ship.MoveAlongAxis(new Vec2(2.5f, 2f), "cockpit", new Vec2(0, -1f), _ => true);
+        // Clamped CharacterRadius short of the top hull wall's face, one tile deeper into the room
+        // than the old zero-width-wall model (the wall now consumes the room's own leading/Top row).
+        return roomId == "cockpit" && Math.Abs(pos.Y - (1f + RoomLayout.CharacterRadius)) < 0.01f;
     }
 
     private static bool Ship_MoveAlongAxis_PassesThroughAlignedDoor()
@@ -107,10 +110,75 @@ internal static partial class TestRunner
     private static bool Ship_MoveAlongAxis_BlockedWhenMisalignedWithDoor()
     {
         var ship = Ship.CreateStarter();
-        // Same wall, but y=0.5 is outside the door's 2.1..3.9 opening — should hit the wall, stopping
-        // CharacterRadius short of it rather than exactly on it (see RoomLayout.cs).
-        var (pos, roomId) = ship.MoveAlongAxis(new Vec2(4.9f, 0.5f), "cockpit", new Vec2(0.3f, 0), _ => true);
+        // Same wall, but y=1.5 is outside the door's opening (tile rows 2-3) — should hit the wall,
+        // stopping CharacterRadius short of it rather than exactly on it (see RoomLayout.cs). y=1.5
+        // instead of the old y=0.5 so the start position itself isn't sitting inside the cockpit's
+        // own top wall tile (row 0, always walled - see TileGridRasterizer.FromRooms).
+        // Also start further back on X (4.5, not the old 4.9): at y=1.5 (a non-door row) column 5
+        // is solid, and a start of x=4.9 already has its own clearance box (±0.35) touching that
+        // solid column - TileMovement.MoveAlongAxis treats an already-non-clear start as a special
+        // case and returns the raw, uncollided position instead of running the blocking logic (see
+        // that file's own doc comment), which would make this test pass or fail for the wrong
+        // reason. x=4.5 is comfortably clear of column 5, and the 0.3 delta still carries it far
+        // enough to hit the wall. This boundary itself is unchanged from the old model since the
+        // wall tile at x=5 belongs to the NEIGHBORING reactor room's leading edge, not cockpit's
+        // own trailing edge.
+        var (pos, roomId) = ship.MoveAlongAxis(new Vec2(4.5f, 1.5f), "cockpit", new Vec2(0.3f, 0), _ => true);
         return roomId == "cockpit" && Math.Abs(pos.X - (5f - RoomLayout.CharacterRadius)) < 0.01f;
+    }
+
+    // Regression guard: the obstacle used to apply unconditionally to EVERY ship's reactor room,
+    // hand-authored hulls included - on the Frigate's own 5x6 "reactor" room that swallowed the
+    // room's only door, stranding any crew pathing through it (several unrelated tests hung on
+    // exactly this before RoomCatalog.NamesWithReferenceArt gated the obstacle to rooms that
+    // actually have the reference art it's meant to match).
+    private static bool Ship_MoveAlongAxis_HandAuthoredReactorRoomHasNoObstacle()
+    {
+        var ship = Ship.CreateStarter();
+        var (pos, roomId) = ship.MoveAlongAxis(new Vec2(9.5f, 1f), "reactor", new Vec2(0f, 1f), _ => true);
+        return roomId == "reactor" && Math.Abs(pos.Y - 2f) < 0.01f; // moved freely, no obstacle
+    }
+
+    private static Ship BuildCatalogReactorTestShip()
+    {
+        var rooms = new[]
+        {
+            new CustomRoomDef("reactor-room", "Реакторный отсек", 0f, 0f, 9f, 9f),
+            new CustomRoomDef("utility-room", "Служебный отсек", 9f, 0f, 12f, 9f),
+        };
+        var doors = new[] { new CustomDoorDef("reactor-room", "utility-room") };
+        var airlocks = new[] { new CustomAirlockDef("utility-room", EdgeSide.Right) };
+        var devices = new[]
+        {
+            new CustomDeviceDef(CustomDeviceKind.Reactor, 4.5f, 4.5f),
+            new CustomDeviceDef(CustomDeviceKind.Distribution, 12f, 2f),
+            new CustomDeviceDef(CustomDeviceKind.Oxygen, 16f, 2f),
+            new CustomDeviceDef(CustomDeviceKind.Helm, 12f, 5f),
+            new CustomDeviceDef(CustomDeviceKind.Navigation, 14f, 5f),
+            new CustomDeviceDef(CustomDeviceKind.Engine, 16f, 5f),
+            new CustomDeviceDef(CustomDeviceKind.SuitLocker, 12f, 8f),
+            new CustomDeviceDef(CustomDeviceKind.StorageRack, 16f, 8f),
+        };
+        var def = new CustomShipDefinition("Тест", rooms, doors, airlocks, devices, ForwardDegrees: 0f);
+        return Ship.FromCustomDefinition(def);
+    }
+
+    // The other side of the same guard: a room whose NAME does match real reference art
+    // (RoomCatalog.NamesWithReferenceArt) still gets the obstacle, sized to 80% of that room.
+    private static bool Ship_MoveAlongAxis_CatalogReactorRoomBlocksObstacle()
+    {
+        var ship = BuildCatalogReactorTestShip();
+        // reactor-room is 9x9 at (0,0), Reactor device centred at (4.5,4.5) - obstacle half-extent
+        // (room.Width*0.3, room.Height*0.3) = (2.7,2.7) plus clearance covers roughly [1.45,7.55]
+        // on both axes. Start y=1.4 sits in the narrow band that's both clear of the room's own top
+        // wall tile (row 0, walled unconditionally - needs y >= 1.35) and clear of the obstacle
+        // (needs y < 1.45) - the old y=1 start would now land inside that top wall tile instead.
+        // TileMovement.MoveAlongAxis slides right up to whichever boundary is nearer (wall or
+        // obstacle, by design - see that file's own doc comment) rather than refusing outright the
+        // way the old RoomLayout model did, so the expected stop is the obstacle's own clearance
+        // edge (1.45), not the unchanged start position.
+        var (pos, roomId) = ship.MoveAlongAxis(new Vec2(4.5f, 1.4f), "reactor-room", new Vec2(0f, 1f), _ => true);
+        return roomId == "reactor-room" && Math.Abs(pos.Y - 1.45f) < 0.01f;
     }
 
     private static bool Reactor_Step_DepletesFuelProportionalToUsage()
@@ -382,11 +450,12 @@ internal static partial class TestRunner
         if (wasDocked)
             PeelAwayFromBerth(world, berth, target, playerId);
 
-        // AvoidIncidentalHazards below only ever steers clear of hostile sectors - a station's own
-        // row (Station.Default.cs) sitting on the straight line to `target` is a different, solid
-        // obstacle it never accounts for, and the collision it causes has no ambush/retry mechanism
-        // to ever dislodge the ship from (TestRunner.StationDocking.cs's own doc comment on this).
-        // One fixed leg to a clearance waypoint first, the same fix ApproachBerth already needed.
+        // AvoidIncidentalHazards below steers clear of hostile sectors and asteroids - a station's
+        // own row (Station.Default.cs) sitting on the straight line to `target` is a different,
+        // solid obstacle it never accounts for, and the collision it causes has no ambush/retry
+        // mechanism to ever dislodge the ship from (TestRunner.StationDocking.cs's own doc comment
+        // on this). One fixed leg to a clearance waypoint first, the same fix ApproachBerth already
+        // needed.
         FlyClearOfOtherStations(world, target, targetPointId);
 
         for (var i = 0; i < maxTicks && !until(); i++)
@@ -405,13 +474,39 @@ internal static partial class TestRunner
     // some other target can otherwise clip a sector it was never actually headed for, starting a
     // fight that has nothing to do with whatever the test is checking.
     private const float HazardClearance = 20f;
+    // Ships aren't points - clear an asteroid's own radius plus this margin, not just its bare
+    // centre (found the hard way: a docking-position bugfix elsewhere shifted every flight's own
+    // starting point by a couple hundred units, which was enough for a straight-line course that
+    // used to miss a rock to graze it instead - this dumb test autopilot had no recovery from that
+    // at all, unlike a real player who'd just steer around it).
+    private const float AsteroidClearanceMargin = 15f;
 
-    // If the straight line from `from` to `target` would pass within HazardClearance of some
-    // hostile sector OTHER than targetPointId in the ship's current system, returns a waypoint
-    // that clears it with the smallest possible sideways detour instead; otherwise returns
-    // `target` unchanged. Recomputed fresh every tick (FlyToward's own loop) off the ship's actual
-    // current position, so the course keeps curving smoothly around the hazard rather than
-    // committing to one fixed detour point regardless of how the approach angle changes.
+    // If the straight line from `from` to `target` would pass within clearance of some hazard,
+    // returns a waypoint that clears it with the smallest possible sideways detour instead; null if
+    // the line is already clear of it. Shared by both hazard kinds below - only what counts as a
+    // hazard and its own clearance radius differ between them.
+    private static Vec2? DetourAround(Vec2 hazardPosition, float clearance, Vec2 from, Vec2 dir, double length)
+    {
+        var toHazard = hazardPosition - from;
+        var projected = toHazard.X * dir.X + toHazard.Y * dir.Y;
+        if (projected < 0f || projected > length)
+            return null; // not actually between here and the target
+
+        var closestPoint = from + dir * projected;
+        var offset = hazardPosition - closestPoint;
+        if (offset.Length() >= clearance)
+            return null;
+
+        var perpendicular = new Vec2(-dir.Y, dir.X);
+        var side = offset.X * perpendicular.X + offset.Y * perpendicular.Y >= 0f ? -1f : 1f;
+        return closestPoint + perpendicular * (side * clearance);
+    }
+
+    // Hostile sectors (marked points) and asteroids (solid rocks with a real radius) both get
+    // steered around here - recomputed fresh every tick (FlyToward's own loop) off the ship's
+    // actual current position, so the course keeps curving smoothly around whichever hazard is
+    // closest rather than committing to one fixed detour point regardless of how the approach
+    // angle changes.
     private static Vec2 AvoidIncidentalHazards(World world, Vec2 from, Vec2 target, string? targetPointId)
     {
         var toTarget = target - from;
@@ -423,19 +518,17 @@ internal static partial class TestRunner
         foreach (var hazard in world.GalaxyMap.GetSystem(world.CreateSnapshot().CurrentSystemId).Points
                      .Where(p => p.Kind == GalaxyPointKind.HostileSector && p.Id != targetPointId))
         {
-            var toHazard = hazard.Position - from;
-            var projected = toHazard.X * dir.X + toHazard.Y * dir.Y;
-            if (projected < 0f || projected > length)
-                continue; // not actually between here and the target
+            if (DetourAround(hazard.Position, HazardClearance, from, dir, length) is { } detour)
+                return detour;
+        }
 
-            var closestPoint = from + dir * projected;
-            var offset = hazard.Position - closestPoint;
-            if (offset.Length() >= HazardClearance)
-                continue;
-
-            var perpendicular = new Vec2(-dir.Y, dir.X);
-            var side = offset.X * perpendicular.X + offset.Y * perpendicular.Y >= 0f ? -1f : 1f;
-            return closestPoint + perpendicular * (side * HazardClearance);
+        // Same straight-line blind spot as the hostile-sector check above, just for solid rocks -
+        // World.EnemyFleet.cs's own HasLineOfSight already treats these as real obstacles for
+        // gunfire, so a dumb test pilot flying straight through one is exactly as wrong.
+        foreach (var asteroid in world.AsteroidField.Asteroids)
+        {
+            if (DetourAround(asteroid.Position, asteroid.Radius + AsteroidClearanceMargin, from, dir, length) is { } detour)
+                return detour;
         }
 
         return target;

@@ -105,14 +105,23 @@ public sealed partial class World
     // Where a role's bot stands for the rest of the game - the same fixture a live player would
     // walk up to and use for that job (World.Interact.cs), so it reads as "someone is already at
     // their post" rather than a body dropped in the corridor.
+    // M74 - Captain/Engineer/Mechanic now go through the same Ship.Devices query as Security's own
+    // list-aware fallback below, instead of separately hardcoded HelmConsole/DistributionBlock/
+    // ReactorBlock fields (each of these kinds is still always exactly one, per RepairableBlockKinds's
+    // own doc comment - the FirstOrDefault fallback exists for uniformity with Security, not because
+    // it's expected to ever actually miss).
     private (Vec2 Position, string RoomId) CrewPostFor(CrewRole role) => role switch
     {
-        CrewRole.Captain => (Ship.HelmConsole.Position, Ship.HelmConsole.RoomId),
-        CrewRole.Engineer => (Ship.DistributionBlock.Position, Ship.DistributionBlock.RoomId),
-        CrewRole.Mechanic => (Ship.ReactorBlock.Position, Ship.ReactorBlock.RoomId),
-        CrewRole.Security => Ship.Turrets.Count > 0
-            ? (Ship.Turrets[0].PeriscopePosition, Ship.Turrets[0].RoomId)
-            : (Ship.SpawnPoint, Ship.SpawnRoomId),
+        CrewRole.Captain => PostForKind(DeviceKind.Helm),
+        CrewRole.Engineer => PostForKind(DeviceKind.Distribution),
+        CrewRole.Mechanic => PostForKind(DeviceKind.Reactor),
+        CrewRole.Security => PostForKind(DeviceKind.TurretBallistic, DeviceKind.TurretLaser, DeviceKind.TurretMachineGun),
         _ => (Ship.SpawnPoint, Ship.SpawnRoomId), // Scientist: no sickbay/scanner fixture exists, tends the crew from wherever it stands
     };
+
+    private (Vec2 Position, string RoomId) PostForKind(params DeviceKind[] kinds)
+    {
+        var device = Ship.Devices.FirstOrDefault(d => kinds.Contains(d.Kind));
+        return device is not null ? (device.Position, device.RoomId) : (Ship.SpawnPoint, Ship.SpawnRoomId);
+    }
 }

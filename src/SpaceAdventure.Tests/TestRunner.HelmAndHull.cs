@@ -92,10 +92,19 @@ internal static partial class TestRunner
 
         world.DebugPlaceShip(berthSample2); // re-snap onto THIS station's own hull-centre offset
         world.DebugSetShipVelocity(stationVelocity); // keep pace with the berth through ResolveStationDefenseIfAny below
-        ResolveStationDefenseIfAny(world, playerId);
 
-        world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
-        world.Step(RealtimeStep);
+        // A still-hostile station re-engages every tick it finds the ship within CaptureRadius and
+        // no battle already running (World.Voyage.cs's UpdateNearestStation) - beating the defenders
+        // once is not the same as staying clear of them, since the very next Step (including the one
+        // that processes DockPressed itself) can re-arm a fresh squadron before the press actually
+        // lands. Retried rather than a single try: sitting exactly on the correct berth (unlike a
+        // slightly-off approach) makes this reliably reproducible, not a rare race.
+        for (var attempt = 0; attempt < 5 && !world.IsDocked; attempt++)
+        {
+            ResolveStationDefenseIfAny(world, playerId);
+            world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));
+            world.Step(RealtimeStep);
+        }
     }
 
     // A station whose owner has fallen to hostile standing meets an approach with its own

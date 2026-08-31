@@ -29,9 +29,9 @@ public static class CustomShipValidator
         if (Count(CustomDeviceKind.Distribution) < 1)
             errors.Add("Нужен хотя бы один распределительный блок.");
         if (Count(CustomDeviceKind.Helm) < 1)
-            errors.Add("Нужна хотя бы одна консоль штурвала.");
+            errors.Add("Нужна хотя бы одна навигационная панель.");
         if (Count(CustomDeviceKind.Navigation) < 1)
-            errors.Add("Нужна хотя бы одна консоль навигации.");
+            errors.Add("Нужен хотя бы один сканер.");
         if (Count(CustomDeviceKind.Engine) == 0)
             errors.Add("Нужен хотя бы один двигательный блок.");
         // World.StepAtmosphere looks up the single Oxygen device unconditionally (World.

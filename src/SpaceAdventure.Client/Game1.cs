@@ -228,6 +228,13 @@ public partial class Game1 : Game
     private RoomLighting _roomLighting = null!;
     private ScenePost _scenePost = null!;
     private Texture2D? _menuBackdrop;
+    private Texture2D? _editorFloorTexture; // Ship Editor tile-painting - crude placeholder, see LoadContent's own comment
+    private Texture2D? _editorWallVerticalTexture;
+    private Texture2D? _editorWallHorizontalTexture;
+    private Texture2D? _editorWallCornerTexture;
+    private Texture2D? _editorWallEndCapTexture;
+    private Texture2D? _editorWallTJunctionTexture;
+    private Texture2D? _editorReactorTexture;
     private bool _roomLightingReady;
     // What ApplyGraphicsSettings last actually applied - the Settings screen (Game1.Settings.cs)
     // reads this to seed its staged edits when opened, and to know what "Отмена" should revert to.
@@ -477,6 +484,11 @@ public partial class Game1 : Game
     private Vector2 _renderOffset = Vector2.Zero;
     private float _renderZoom = 1f;
     private bool _prevFullscreenToggleDown;
+    private bool _showTileGridOverlay;
+    // F3 toggles the top-left diagnostic HUD (fps/tick/timing text) - hidden by default, edge-
+    // triggered the same way F11's fullscreen toggle is above.
+    private bool _prevDiagOverlayToggleDown;
+    private bool _showDiagOverlay;
     private Point _designMouse; // cursor in design pixels, refreshed once per Update
 
     public Game1()
@@ -633,6 +645,46 @@ public partial class Game1 : Game
         catch { _menuBackdrop = null; } // missing content build falls back to the procedural scene
         try { ItemIcons.SetScrewdriverTexture(Content.Load<Texture2D>("Textures/Screwdriver")); }
         catch { /* ItemIcons.Draw falls back to the procedural silhouette when this is null */ }
+        // Content-каталог отсеков - one reference-art texture per catalog room type (the player's
+        // own screenshots), keyed by the exact catalog display name. Loaded defensively per entry,
+        // same reasoning as every texture above: a room whose own .xnb didn't build for whatever
+        // reason falls back to the ordinary procedural room rather than taking the whole load down.
+        foreach (var (catalogName, textureName) in RoomDecor.CatalogTextureNames)
+        {
+            try { RoomDecor.SetCatalogTexture(catalogName, Content.Load<Texture2D>($"Textures/RoomCatalog/{textureName}")); }
+            catch { /* ShipRenderer.DrawRoomFloor falls back to the procedural room when this is missing */ }
+        }
+        // Hand-made wall panel art (M74 follow-up, humble-soaring-cat.md) - same defensive load as
+        // everything else here: a missing/unbuilt .xnb leaves the textures null, and
+        // ShipRenderer.DrawWallBand/DrawCornerPlate fall back to the old procedural hull plate.
+        try
+        {
+            // Content.Load caches by asset name, so loading the same three assets again below (for
+            // the Ship Editor's own tile renderer, Game1.ShipEditor.Draw.cs's DrawEditorWallTile) is
+            // free - not a second disk read, just a second reference to the same Texture2D.
+            _editorWallVerticalTexture = Content.Load<Texture2D>("Textures/Walls/WallVertical");
+            _editorWallHorizontalTexture = Content.Load<Texture2D>("Textures/Walls/WallHorizontal");
+            _editorWallCornerTexture = Content.Load<Texture2D>("Textures/Walls/WallCorner");
+            _editorWallEndCapTexture = Content.Load<Texture2D>("Textures/Walls/WallEndCap");
+            _editorWallTJunctionTexture = Content.Load<Texture2D>("Textures/Walls/WallTJunction");
+            _shipRenderer.SetWallTextures(_editorWallVerticalTexture, _editorWallHorizontalTexture, _editorWallCornerTexture, _editorWallEndCapTexture, _editorWallTJunctionTexture);
+        }
+        catch { /* ShipRenderer.DrawWallBand/DrawCornerPlate fall back to the procedural hull plate */ }
+        // Reactor texture (direct user request, "поменяем размер и текстуру реактора") - same
+        // defensive load; ShipRenderer.DrawReactorBlock falls back to the old procedural rings/
+        // turbine if this .xnb is missing/unbuilt.
+        try
+        {
+            _editorReactorTexture = Content.Load<Texture2D>("Textures/Devices/Reactor");
+            _shipRenderer.SetReactorTexture(_editorReactorTexture);
+        }
+        catch { /* ShipRenderer.DrawReactorBlock falls back to the procedural design */ }
+        // Ship Editor tile-painting redo - a deliberately crude placeholder floor tile (the user's
+        // own words: "просто text текстуру пока что, потом заменим"), just so a painted floor tile
+        // reads as something rather than a flat colour rectangle. Falls back to the flat rectangle
+        // Game1.ShipEditor.Draw.cs already draws if this one PNG doesn't build.
+        try { _editorFloorTexture = Content.Load<Texture2D>("Textures/Tiles/FloorPlaceholder"); }
+        catch { _editorFloorTexture = null; }
         // Overrides the two volume-knob/window lines above with whatever the player last saved on
         // the Settings screen (Game1.Settings.cs) - defaults (WindowMode.Borderless, VSync on,
         // full volume, no particle cap change) exactly match the behavior above, so a machine that
@@ -771,6 +823,16 @@ public partial class Game1 : Game
         if (fullscreenToggleDown && !_prevFullscreenToggleDown)
             ToggleFullscreen();
         _prevFullscreenToggleDown = fullscreenToggleDown;
+
+        // F3 toggles the diagnostic HUD - edge-triggered, or holding the key would flip it every frame.
+        var diagOverlayToggleDown = keyboard.IsKeyDown(Keys.F3);
+        if (diagOverlayToggleDown && !_prevDiagOverlayToggleDown)
+            _showDiagOverlay = !_showDiagOverlay;
+        _prevDiagOverlayToggleDown = diagOverlayToggleDown;
+
+        // Debug aid (M74 follow-up) - held, not toggled: the grid shows only while the physical key
+        // under Ъ on a Russian layout (OemCloseBrackets - the same key as US "]") is actually down.
+        _showTileGridOverlay = keyboard.IsKeyDown(Keys.OemCloseBrackets);
 
         _designMouse = ToDesignSpace(Mouse.GetState().Position);
 
@@ -1478,9 +1540,21 @@ public partial class Game1 : Game
             {
                 DrawMenuLightMask(menuSeconds);
                 DrawMenuDistortion(menuSeconds);
-                var savedLook = ApplyMenuPostLook();
-                _scenePost.Present(_spriteBatch, menuSeconds);
-                RestorePostLook(savedLook);
+                // The bright "poster" grading (high exposure/bloom/aberration) is tuned for the
+                // actual main menu's planet backdrop, same as DrawMenuDistortion already restricts
+                // itself to - applying it to a flat working screen like the Ship Editor's grid reads
+                // as an unexplained haze/blur (direct user report) rather than a look, so other
+                // screens just use Present with whatever look is already active (same as in-session).
+                if (_menuScreen == MenuScreen.Main)
+                {
+                    var savedLook = ApplyMenuPostLook();
+                    _scenePost.Present(_spriteBatch, menuSeconds);
+                    RestorePostLook(savedLook);
+                }
+                else
+                {
+                    _scenePost.Present(_spriteBatch, menuSeconds);
+                }
             }
             base.Draw(gameTime);
             return;
@@ -1692,6 +1766,9 @@ public partial class Game1 : Game
                 _diagShipMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
                 diagSubStopwatch.Restart();
                 // TEMP-DIAG-END
+
+                if (_showTileGridOverlay)
+                    _shipRenderer.DrawTileGridOverlay(_spriteBatch, snapshot, origin);
 
                 // Content-каталог отсеков - the click-to-place grid/ghost overlay, drawn in this
                 // same ship-local frame right on top of the real geometry so it lines up exactly
@@ -2010,7 +2087,7 @@ public partial class Game1 : Game
                         var repairState = hudSnapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == nearbyDamagedJunction.Id);
                         var cardOrigin = wallToolOrigin + new Vector2(nearbyDamagedJunction.X, nearbyDamagedJunction.Y) * ShipRenderer.PixelsPerUnit
                             + new Vector2(-SystemRepairPanel.PanelWidth / 2f, -SystemRepairPanel.PanelHeight - 30);
-                        _systemRepairPanel.Draw(_spriteBatch, "Распред. коробка", holdingRepairTool,
+                        _systemRepairPanel.Draw(_spriteBatch, "Щиток", holdingRepairTool,
                             repairState?.RepairProgress ?? 0f, cardOrigin);
                     }
 
@@ -2121,30 +2198,33 @@ public partial class Game1 : Game
         // TEMP-DIAG-END
 
         // TEMP-DIAG-BEGIN (M51 slowdown investigation - see _diagDisplayedFps's own comment)
-        var diagServer = GameServer.Current;
-        var diagServerLine = diagServer is null
-            ? "Сервер: нет"
-            : $"Тик {diagServer.LastTickTotalMs:0.0}мс  Шаг {diagServer.LastStepMs:0.0}мс  Снап {diagServer.LastSnapshotMs:0.0}мс";
-        var diagClientLine = $"Обновл {_diagLastUpdateMs:0.0}мс  Рендер {_diagLastDrawMs:0.0}мс";
-        var diagPhaseLine = $"Маска {_diagMaskMs:0.0}мс  Сцена {_diagSceneMs:0.0}мс  Пост {_diagPostMs:0.0}мс  Хад {_diagHudMs:0.0}мс";
-        var diagSceneSubLine = $"Корабль {_diagShipMs:0.0}мс  Станция {_diagStationMs:0.0}мс  Поле {_diagFieldMs:0.0}мс";
-        var diagGcLine = $"ГК0/с {_diagGc0PerSecond}  ГК1/с {_diagGc1PerSecond}  ГК2/с {_diagGc2PerSecond}  Выд {_diagAllocMbPerSecond:0}МБ/с";
-        // TEMP-DIAG-BEGIN
-        var diagOrbitLine = _client.LatestSnapshot is { } diagOrbitSnapshot
-            ? $"Тик {diagOrbitSnapshot.Tick}  Ускр x{diagOrbitSnapshot.TimeAccelerationLevel}  X {diagOrbitSnapshot.ShipField.X:0}  Y {diagOrbitSnapshot.ShipField.Y:0}  " +
-              $"VX {diagOrbitSnapshot.ShipField.VelocityX:0}  VY {diagOrbitSnapshot.ShipField.VelocityY:0}"
-            : "нет снапшота";
-        // "До причала" (HelmButtonsWidget) measures against DockBerthPosition, shown raw here -
-        // whether it's actually tracking live (changing frame to frame roughly like ShipField.X/Y
-        // does) or frozen/stale is the first thing to rule in or out.
-        var diagBerthLine = _client.LatestSnapshot is { } diagBerthSnapshot
-            ? $"DockBerth X {diagBerthSnapshot.DockBerthPosition.X:0} Y {diagBerthSnapshot.DockBerthPosition.Y:0}  " +
-              $"CanDock={diagBerthSnapshot.CanDock}  Docked={diagBerthSnapshot.Voyage.DockedPointId ?? "null"}  " +
-              $"BerthPointId={diagBerthSnapshot.DockBerthPointId ?? "null"}"
-            : "";
-        // TEMP-DIAG-END
-        _spriteBatch.DrawString(_font, $"Кадры/с {_diagDisplayedFps:0}  Тики {_diagDisplayedTicksPerSecond}/30\n{diagServerLine}\n{diagClientLine}\n{diagPhaseLine}\n{diagSceneSubLine}\n{diagGcLine}\n{diagOrbitLine}\n{diagBerthLine}",
-            new Vector2(10, 10), Color.Yellow, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        // Hidden by default (direct user request) - toggled on with F3, see _showDiagOverlay's own
+        // field comment.
+        if (_showDiagOverlay)
+        {
+            var diagServer = GameServer.Current;
+            var diagServerLine = diagServer is null
+                ? "Сервер: нет"
+                : $"Тик {diagServer.LastTickTotalMs:0.0}мс  Шаг {diagServer.LastStepMs:0.0}мс  Снап {diagServer.LastSnapshotMs:0.0}мс";
+            var diagClientLine = $"Обновл {_diagLastUpdateMs:0.0}мс  Рендер {_diagLastDrawMs:0.0}мс";
+            var diagPhaseLine = $"Маска {_diagMaskMs:0.0}мс  Сцена {_diagSceneMs:0.0}мс  Пост {_diagPostMs:0.0}мс  Хад {_diagHudMs:0.0}мс";
+            var diagSceneSubLine = $"Корабль {_diagShipMs:0.0}мс  Станция {_diagStationMs:0.0}мс  Поле {_diagFieldMs:0.0}мс";
+            var diagGcLine = $"ГК0/с {_diagGc0PerSecond}  ГК1/с {_diagGc1PerSecond}  ГК2/с {_diagGc2PerSecond}  Выд {_diagAllocMbPerSecond:0}МБ/с";
+            var diagOrbitLine = _client.LatestSnapshot is { } diagOrbitSnapshot
+                ? $"Тик {diagOrbitSnapshot.Tick}  Ускр x{diagOrbitSnapshot.TimeAccelerationLevel}  X {diagOrbitSnapshot.ShipField.X:0}  Y {diagOrbitSnapshot.ShipField.Y:0}  " +
+                  $"VX {diagOrbitSnapshot.ShipField.VelocityX:0}  VY {diagOrbitSnapshot.ShipField.VelocityY:0}"
+                : "нет снапшота";
+            // "До причала" (HelmButtonsWidget) measures against DockBerthPosition, shown raw here -
+            // whether it's actually tracking live (changing frame to frame roughly like ShipField.X/Y
+            // does) or frozen/stale is the first thing to rule in or out.
+            var diagBerthLine = _client.LatestSnapshot is { } diagBerthSnapshot
+                ? $"DockBerth X {diagBerthSnapshot.DockBerthPosition.X:0} Y {diagBerthSnapshot.DockBerthPosition.Y:0}  " +
+                  $"CanDock={diagBerthSnapshot.CanDock}  Docked={diagBerthSnapshot.Voyage.DockedPointId ?? "null"}  " +
+                  $"BerthPointId={diagBerthSnapshot.DockBerthPointId ?? "null"}"
+                : "";
+            _spriteBatch.DrawString(_font, $"Кадры/с {_diagDisplayedFps:0}  Тики {_diagDisplayedTicksPerSecond}/30\n{diagServerLine}\n{diagClientLine}\n{diagPhaseLine}\n{diagSceneSubLine}\n{diagGcLine}\n{diagOrbitLine}\n{diagBerthLine}",
+                new Vector2(10, 10), Color.Yellow, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        }
         // TEMP-DIAG-END
 
         _spriteBatch.End();

@@ -150,6 +150,71 @@
 /processorParam:PremultiplyAlpha=False
 /build:Textures/PlanetSurface.png
 
+#begin Textures/RoomCatalog/reactor.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/reactor.png
+
+#begin Textures/RoomCatalog/cockpit-small.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/cockpit-small.png
+
+#begin Textures/RoomCatalog/engine-small.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/engine-small.png
+
+#begin Textures/RoomCatalog/turret-laser.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/turret-laser.png
+
+#begin Textures/RoomCatalog/bridge-large.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/bridge-large.png
+
+#begin Textures/RoomCatalog/turret-ballistic.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/turret-ballistic.png
+
+#begin Textures/RoomCatalog/quarters.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/quarters.png
+
+#begin Textures/RoomCatalog/rcs-1way.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/rcs-1way.png
+
+#begin Textures/RoomCatalog/rcs-2way.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/rcs-2way.png
+
+#begin Textures/RoomCatalog/camera.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/camera.png
+
+#begin Textures/RoomCatalog/engine-big.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/engine-big.png
+
+#begin Textures/RoomCatalog/rcs-3way.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/rcs-3way.png
+
+#begin Textures/RoomCatalog/shield-generator.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/RoomCatalog/shield-generator.png
+
 #begin Shaders/Planet.fx
 /importer:EffectImporter
 /processor:EffectProcessor
@@ -336,3 +401,38 @@
 /processor:SongProcessor
 /processorParam:Quality=Best
 /build:Music/Jukebox/jukebox_25_glory_to_arstotzka.mp3
+
+#begin Textures/Walls/WallVertical.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Walls/WallVertical.png
+
+#begin Textures/Walls/WallHorizontal.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Walls/WallHorizontal.png
+
+#begin Textures/Walls/WallCorner.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Walls/WallCorner.png
+
+#begin Textures/Walls/WallEndCap.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Walls/WallEndCap.png
+
+#begin Textures/Walls/WallTJunction.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Walls/WallTJunction.png
+
+#begin Textures/Tiles/FloorPlaceholder.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Tiles/FloorPlaceholder.png
+
+#begin Textures/Devices/Reactor.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Devices/Reactor.png

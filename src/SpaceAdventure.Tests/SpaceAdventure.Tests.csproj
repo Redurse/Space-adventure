@@ -3,11 +3,19 @@
   <ItemGroup>
     <ProjectReference Include="..\SpaceAdventure.Shared\SpaceAdventure.Shared.csproj" />
     <ProjectReference Include="..\SpaceAdventure.Server\SpaceAdventure.Server.csproj" />
+    <!-- CustomShipStore.cs (редактор корабля, humble-soaring-cat.md Step 5) has no MonoGame
+         dependency of its own - only System.IO/Text.Json/SpaceAdventure.Shared - so it's worth
+         referencing Client just for that one class's own storage-level test, rather than
+         duplicating its write-to-temp-then-move logic a second time just to keep it out of Tests. -->
+    <ProjectReference Include="..\SpaceAdventure.Client\SpaceAdventure.Client.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- windows, not plain net9.0 - CustomShipStore.cs's own test (below) needs to reference
+         SpaceAdventure.Client, which targets net9.0-windows (MonoGame/WinForms) - this project has
+         always only ever been run on Windows, so this changes nothing about how it actually runs. -->
+    <TargetFramework>net9.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

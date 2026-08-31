@@ -30,6 +30,7 @@ public sealed partial class Ship
         devices.AddRange(ExtraReactorPositions.Select(p => new CustomDeviceDef(CustomDeviceKind.Reactor, p.AsFloat().X, p.AsFloat().Y)));
         devices.Add(new CustomDeviceDef(CustomDeviceKind.Distribution, DistributionBlock.X, DistributionBlock.Y));
         devices.AddRange(ExtraDistributionPositions.Select(p => new CustomDeviceDef(CustomDeviceKind.Distribution, p.AsFloat().X, p.AsFloat().Y)));
+        devices.Add(new CustomDeviceDef(CustomDeviceKind.Battery, BatteryBlock.X, BatteryBlock.Y));
         // Helm/Navigation extras DO carry their own real position (ExtraHelmConsoles/
         // ExtraNavigationConsoles, Ship.cs's own doc comment) - a second bridge room is somewhere a
         // player can actually walk to and pilot from, unlike a bonus-only extra reactor.

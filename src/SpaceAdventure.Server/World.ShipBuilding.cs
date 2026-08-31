@@ -141,7 +141,7 @@ public sealed partial class World
             var attempt = new CustomRoomDef(NextRoomId(occupiedRooms), entry.Name, x, y, entry.Width, entry.Height);
             newRoom = occupiedRooms.Any(r => RoomsOverlap(r, attempt))
                 ? null
-                : AppendRoomIfValid(def, attempt, DevicesForCatalogEntry(entry, attempt)) is null ? null : attempt;
+                : AppendRoomIfValid(def, attempt, RoomCatalog.DevicesFor(entry, attempt)) is null ? null : attempt;
         }
         else
         {
@@ -152,7 +152,7 @@ public sealed partial class World
 
         Credits -= entry.Price;
         _hullPlatingStock -= entry.PlatingCost;
-        _pendingRoomBuilds.Add(new PendingRoomBuild { Room = newRoom, Devices = DevicesForCatalogEntry(entry, newRoom) });
+        _pendingRoomBuilds.Add(new PendingRoomBuild { Room = newRoom, Devices = RoomCatalog.DevicesFor(entry, newRoom) });
     }
 
     // M60's original placement search, kept as the fallback for a BuildRoomRequest with no explicit
@@ -185,28 +185,13 @@ public sealed partial class World
                 var attempt = new CustomRoomDef(NextRoomId(occupiedRooms), entry.Name, x, y, entry.Width, entry.Height);
                 if (occupiedRooms.Any(r => RoomsOverlap(r, attempt)))
                     continue;
-                var attemptDevices = DevicesForCatalogEntry(entry, attempt);
+                var attemptDevices = RoomCatalog.DevicesFor(entry, attempt);
                 if (AppendRoomIfValid(def, attempt, attemptDevices) is null)
                     continue;
                 return attempt;
             }
         }
         return null;
-    }
-
-    // Content-каталог отсеков - every device a catalog entry carries, positioned at the room's own
-    // centre (point-containment is all Ship.FromCustomDefinition's RoomIdAt needs, and several
-    // devices sharing one exact position - a cockpit's Helm+Navigation pair - is harmless, nothing
-    // requires distinct positions). ThrustBonus/TurnBonus only ever apply to the Engine kind,
-    // CapacityBonus only to Shields - RoomCatalogEntry never mixes them on one entry.
-    private static IReadOnlyList<CustomDeviceDef> DevicesForCatalogEntry(RoomCatalogEntry entry, CustomRoomDef room)
-    {
-        var centerX = room.X + room.Width / 2f;
-        var centerY = room.Y + room.Height / 2f;
-        return entry.Devices.Select(kind => new CustomDeviceDef(kind, centerX, centerY, MountSide: entry.MountSide, CameraSide: entry.CameraSide,
-            ThrustBonus: kind == CustomDeviceKind.Engine ? entry.ThrustBonus : 0f,
-            TurnBonus: kind == CustomDeviceKind.Engine ? entry.TurnBonus : 0f,
-            CapacityBonus: kind == CustomDeviceKind.Shields ? RoomCatalog.ShieldRoomCapacityBonus : 0f)).ToList();
     }
 
     // Ticked from World.Step(), before every other system (the plan's own "в начале, до кислородной

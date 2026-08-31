@@ -76,14 +76,26 @@ public sealed partial class World
         // paper over that with a one-time "catch up to the station's current position" snap right
         // at the moment of casting off - correct in that it kept the two together, but it read as a
         // sudden teleport to a genuinely different point along the same orbit, which is exactly
-        // what it was. Keeping the ship's own field position pinned to the docked point's LIVE
-        // position every tick instead - not just once at Undock() - means there's nothing left to
-        // catch up on: the ship was already sitting exactly where the station now is, the whole
-        // time, so undocking is a smooth continuation instead of a jump.
+        // what it was. Keeping the ship's own field position pinned to the berth every tick instead
+        // - not just once at Undock() - means there's nothing left to catch up on.
+        //
+        // Bug fix (found while testing a minimal one-room custom ship - a normal hand-authored hull
+        // never showed it because its own airlock-to-hull-centre offset happens to roughly match a
+        // typical station's own footprint, by coincidence, not by any guarantee): this used to
+        // re-pin to ResolveGalaxyPointPosition(dockedId) directly - the GalaxyPoint's raw map
+        // position, i.e. Station.WorldOffset + Station.Center. That's only the same place
+        // TryDockAtStation's own DockBerthPosition (WorldOffset + the SHIP's OWN hull-local centre)
+        // parks the ship if the hull's own bounding-box centre happens to coincide with the
+        // station's - true for a long, roughly station-sized hull like every fixed-class ship, false
+        // in general (a small hull, or one whose airlock isn't near its own geometric middle, ends up
+        // re-pinned somewhere inside the station's own footprint instead of at its actual berth).
+        // Re-pinning to DockBerthPosition itself keeps the exact same live-tracking behavior (it
+        // already reads Station.WorldOffset, which itself follows the docked point) while staying
+        // correctly aligned to THIS hull's own airlock regardless of its shape.
         if (IsDocked)
         {
-            if (_dockedPointId is { } dockedId)
-                _shipFieldPosition = ResolveGalaxyPointPosition(GalaxyMap.GetPoint(dockedId));
+            if (_dockedPointId is not null)
+                _shipFieldPosition = DockBerthPosition;
             return; // still sits at the berth until the "Стыковка" button casts off (Undock)
         }
 

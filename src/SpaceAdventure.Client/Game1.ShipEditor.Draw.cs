@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -10,90 +11,443 @@ public partial class Game1
 {
     private void DrawShipEditorScreen()
     {
-        _spriteBatch.DrawString(_font, "Редактор корабля", new Vector2(20, 36), Color.White, 0f, Vector2.Zero, 1.1f, SpriteEffects.None, 0f);
+        var title = "Редактор корабля" + (_editorCurrentSlotName is { } slot ? $" - {slot}" : "");
+        _spriteBatch.DrawString(_font, title, new Vector2(20, 8), Color.White, 0f, Vector2.Zero, 1.1f, SpriteEffects.None, 0f);
 
         DrawEditorCanvas();
         DrawEditorSidebar();
         DrawEditorBottomBar();
+
+        if (_editorZoneNamePrompting)
+            DrawEditorZoneNamePrompt();
+        else if (_editorSaveAsPrompting)
+            DrawEditorSaveAsPrompt();
+        else if (_editorLoadListOpen)
+            DrawEditorLoadList();
+    }
+
+    // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
+    // Step 6) - a small modal over everything else, same idea as InventoryPanel's own tooltip box
+    // (a PanelFrame-bordered rect anchored at a fixed spot, not draggable).
+    private void DrawEditorSaveAsPrompt()
+    {
+        var box = GetEditorSaveAsBoxRect();
+        _spriteBatch.Draw(_pixel, box, new Color(24, 26, 34));
+        DrawRectOutline(box, Color.LightGray, 2f);
+        _spriteBatch.DrawString(_font, "Сохранить как:", new Vector2(box.X + 16, box.Y + 12), Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        var inputRect = GetEditorSaveAsInputRect();
+        _spriteBatch.Draw(_pixel, inputRect, new Color(40, 44, 54));
+        DrawRectOutline(inputRect, Color.White, 1f);
+        _spriteBatch.DrawString(_font, _editorSaveAsInput, new Vector2(inputRect.X + 6, inputRect.Y + 5), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        DrawEditorModalButton(GetEditorSaveAsConfirmRect(), "СОХРАНИТЬ", true);
+        DrawEditorModalButton(GetEditorSaveAsCancelRect(), "ОТМЕНА", true);
+    }
+
+    // Tile-painting redo - the Zone tool's own naming prompt, same small-modal convention as
+    // "Сохранить как" above (they never show at the same time, so sharing screen position is fine).
+    private void DrawEditorZoneNamePrompt()
+    {
+        var box = GetEditorZoneNameBoxRect();
+        _spriteBatch.Draw(_pixel, box, new Color(24, 26, 34));
+        DrawRectOutline(box, Color.LightGray, 2f);
+        _spriteBatch.DrawString(_font, "Название отсека:", new Vector2(box.X + 16, box.Y + 12), Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        var inputRect = GetEditorZoneNameInputRect();
+        _spriteBatch.Draw(_pixel, inputRect, new Color(40, 44, 54));
+        DrawRectOutline(inputRect, Color.White, 1f);
+        _spriteBatch.DrawString(_font, _editorZoneNameInput, new Vector2(inputRect.X + 6, inputRect.Y + 5), Color.White, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        DrawEditorModalButton(GetEditorZoneNameConfirmRect(), "OK", true);
+        DrawEditorModalButton(GetEditorZoneNameCancelRect(), "ОТМЕНА", true);
+    }
+
+    private void DrawEditorLoadList()
+    {
+        var box = GetEditorLoadBoxRect();
+        _spriteBatch.Draw(_pixel, box, new Color(24, 26, 34));
+        DrawRectOutline(box, Color.LightGray, 2f);
+        _spriteBatch.DrawString(_font, "Сохранённые корабли:", new Vector2(box.X + 16, box.Y + 10), Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        var names = CustomShipStore.ListShips();
+        if (names.Count == 0)
+            _spriteBatch.DrawString(_font, "(пока ничего не сохранено)", new Vector2(box.X + 16, GetEditorLoadRowRect(0).Y), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+
+        for (var i = 0; i < names.Count; i++)
+        {
+            var rowRect = GetEditorLoadRowRect(i);
+            var current = names[i] == _editorCurrentSlotName;
+            _spriteBatch.Draw(_pixel, rowRect, current ? new Color(120, 92, 30) * 0.6f : Color.DimGray * 0.4f);
+            DrawRectOutline(rowRect, current ? Color.White : Color.DimGray, 1f);
+            _spriteBatch.DrawString(_font, names[i], new Vector2(rowRect.X + 8, rowRect.Y + 4), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+
+            var deleteRect = GetEditorLoadRowDeleteRect(i);
+            _spriteBatch.Draw(_pixel, deleteRect, new Color(120, 50, 50));
+            DrawRectOutline(deleteRect, Color.OrangeRed, 1f);
+            _spriteBatch.DrawString(_font, "X", new Vector2(deleteRect.X + 14, deleteRect.Y + 4), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        }
+
+        DrawEditorModalButton(GetEditorLoadCloseRect(), "ЗАКРЫТЬ", true);
+    }
+
+    private void DrawEditorModalButton(Rectangle rect, string label, bool enabled)
+    {
+        var hovered = enabled && rect.Contains(_designMouse);
+        _spriteBatch.Draw(_pixel, rect, hovered ? new Color(120, 92, 30) : Color.DimGray * 0.6f);
+        DrawRectOutline(rect, Color.LightGray, 1f);
+        _spriteBatch.DrawString(_font, label, new Vector2(rect.X + 8, rect.Y + 6), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
     private void DrawEditorCanvas()
     {
         _spriteBatch.Draw(_pixel, ShipEditorCanvas, new Color(18, 20, 28));
 
-        for (var x = 0; x <= ShipEditorGridCols; x++)
+        // Panning (direct user request) means grid lines/tiles can now compute to a screen position
+        // outside ShipEditorCanvas - without a scissor clip that would bleed straight over the
+        // sidebar/bottom bar, since SpriteBatch draws aren't clipped to any rectangle on their own.
+        // Same nested End/scissor/Begin convention ExternalCameraPanel.DrawOneCamera already
+        // established for its own clipped viewport. Also switches to point (nearest-neighbor)
+        // filtering here - SpriteBatch's own default is linear/bilinear, which reads as a soft,
+        // "мыльный" blur on this flat painted pixel-art wall/floor style the moment a 60px tile
+        // texture gets stretched to any zoom level that isn't an exact 1:1 match (direct user
+        // report) - the rest of the editor screen (buttons/text) is untouched, still on the default
+        // sampler, which is fine for those.
+        var previousScissor = GraphicsDevice.ScissorRectangle;
+        GraphicsDevice.ScissorRectangle = EditorCanvasDeviceRect();
+        _spriteBatch.End();
+        _spriteBatch.Begin(rasterizerState: new RasterizerState { ScissorTestEnable = true },
+            samplerState: SamplerState.PointClamp, transformMatrix: _renderScale);
+
+        // Line count derived from the fixed canvas pixel size divided by the current (zoomed) cell
+        // size, not the old fixed ShipEditorGridCols/Rows - so the grid still fully covers the
+        // canvas at any zoom level rather than stopping short (zoomed in) or leaving a gap (zoomed
+        // out). Starting column/row is whichever world tile the pan offset currently lines up with
+        // the canvas's own left/top edge, with a one-tile margin on each side so a partially panned
+        // tile at the border still gets its line drawn (the scissor rect crops the rest).
+        var startCol = FloorDiv(_editorPanOffset.X, EditorCellSize) - 1;
+        var startRow = FloorDiv(_editorPanOffset.Y, EditorCellSize) - 1;
+        var cols = ShipEditorCanvas.Width / EditorCellSize + 2;
+        var rows = ShipEditorCanvas.Height / EditorCellSize + 2;
+        for (var i = 0; i <= cols; i++)
+        {
+            var x = ShipEditorCanvas.X + (startCol + i) * EditorCellSize - _editorPanOffset.X;
             HudIcons.DrawLine(_spriteBatch, _pixel,
-                new Vector2(ShipEditorCanvas.X + x * ShipEditorCellSize, ShipEditorCanvas.Top),
-                new Vector2(ShipEditorCanvas.X + x * ShipEditorCellSize, ShipEditorCanvas.Bottom),
+                new Vector2(x, ShipEditorCanvas.Top), new Vector2(x, ShipEditorCanvas.Bottom),
                 new Color(50, 54, 64), 1f);
-        for (var y = 0; y <= ShipEditorGridRows; y++)
+        }
+        for (var i = 0; i <= rows; i++)
+        {
+            var y = ShipEditorCanvas.Y + (startRow + i) * EditorCellSize - _editorPanOffset.Y;
             HudIcons.DrawLine(_spriteBatch, _pixel,
-                new Vector2(ShipEditorCanvas.Left, ShipEditorCanvas.Y + y * ShipEditorCellSize),
-                new Vector2(ShipEditorCanvas.Right, ShipEditorCanvas.Y + y * ShipEditorCellSize),
+                new Vector2(ShipEditorCanvas.Left, y), new Vector2(ShipEditorCanvas.Right, y),
                 new Color(50, 54, 64), 1f);
+        }
 
-        foreach (var room in _editorRooms)
-            DrawEditorRoom(room);
+        DrawEditorTiles();
 
-        if (_editorRoomDragStart is { } start)
-            DrawEditorRoomDragPreview(start);
+        if (_editorTool == EditorTool.Floor)
+            DrawEditorFloorDragPreview();
+        if (_editorTool == EditorTool.Wall)
+            DrawEditorWallDragPreview();
+        if (_editorTool == EditorTool.Door)
+            DrawEditorDoorHoverPreview();
+        if (_editorTool == EditorTool.Zone)
+            DrawEditorZoneDragPreview();
+        if (_editorTool == EditorTool.Device)
+            DrawEditorDevicePlacementPreview();
 
-        foreach (var candidate in GetEditorDoorCandidates())
-            DrawEditorDoorMarker(candidate.ScreenPos, candidate.HasDoor, isDoor: true);
-        foreach (var candidate in GetEditorAirlockCandidates())
-            DrawEditorDoorMarker(candidate.ScreenPos, candidate.HasAirlock, isDoor: false);
-
-        foreach (var device in _editorDevices)
-            DrawEditorDevice(device);
+        _spriteBatch.End();
+        GraphicsDevice.ScissorRectangle = previousScissor;
+        _spriteBatch.Begin(transformMatrix: _renderScale);
     }
 
-    private void DrawEditorRoom(CustomRoomDef room)
+    // ScissorRectangle is always in real backbuffer pixels, unlike every other coordinate this whole
+    // screen works in (design-space, mapped up by _renderScale) - transform the canvas's own corners
+    // through that same matrix rather than assuming design space equals device space (same technique
+    // ExternalCameraPanel.DeviceSpaceRect already uses for its own clipped viewport).
+    private Rectangle EditorCanvasDeviceRect()
     {
+        var topLeft = Vector2.Transform(new Vector2(ShipEditorCanvas.X, ShipEditorCanvas.Y), _renderScale);
+        var bottomRight = Vector2.Transform(new Vector2(ShipEditorCanvas.Right, ShipEditorCanvas.Bottom), _renderScale);
+        var viewport = GraphicsDevice.Viewport;
+        var x = Math.Clamp((int)MathF.Round(topLeft.X), 0, viewport.Width);
+        var y = Math.Clamp((int)MathF.Round(topLeft.Y), 0, viewport.Height);
+        var right = Math.Clamp((int)MathF.Round(bottomRight.X), 0, viewport.Width);
+        var bottom = Math.Clamp((int)MathF.Round(bottomRight.Y), 0, viewport.Height);
+        return new Rectangle(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
+    }
+
+    // Same rectangle the release will actually fill (HandleFloorToolInput) - a line-shaped drag
+    // previews as a thin rectangle, a square-shaped drag as a square, no separate code path for either.
+    private void DrawEditorFloorDragPreview()
+    {
+        if (_editorFloorDragStart is not { } start)
+            return;
+        var endCell = GridCellAt(_designMouse) ?? start;
+        var minX = Math.Min(start.X, endCell.X);
+        var minY = Math.Min(start.Y, endCell.Y);
+        var maxX = Math.Max(start.X, endCell.X);
+        var maxY = Math.Max(start.Y, endCell.Y);
         var rect = new Rectangle(
-            (int)(ShipEditorCanvas.X + room.X * ShipEditorCellSize), (int)(ShipEditorCanvas.Y + room.Y * ShipEditorCellSize),
-            (int)(room.Width * ShipEditorCellSize), (int)(room.Height * ShipEditorCellSize));
-        _spriteBatch.Draw(_pixel, rect, new Color(46, 52, 66));
-        DrawRectOutline(rect, new Color(120, 130, 150), 2f);
-
-        var labelSize = _font.MeasureString(room.Name) * 0.55f;
-        _spriteBatch.DrawString(_font, room.Name,
-            new Vector2(rect.Center.X - labelSize.X / 2f, rect.Y + 4), Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+            ShipEditorCanvas.X + minX * EditorCellSize - _editorPanOffset.X,
+            ShipEditorCanvas.Y + minY * EditorCellSize - _editorPanOffset.Y,
+            (maxX - minX + 1) * EditorCellSize, (maxY - minY + 1) * EditorCellSize);
+        _spriteBatch.Draw(_pixel, rect, new Color(90, 160, 110) * 0.35f);
+        DrawRectOutline(rect, Color.LightGreen, 2f);
     }
 
-    private void DrawEditorRoomDragPreview((int X, int Y) start)
+    private Rectangle EditorTileRect(TileCoord coord) => new(
+        ShipEditorCanvas.X + coord.X * EditorCellSize - _editorPanOffset.X,
+        ShipEditorCanvas.Y + coord.Y * EditorCellSize - _editorPanOffset.Y,
+        EditorCellSize, EditorCellSize);
+
+    // Tile-painting redo (humble-soaring-cat.md, M76 follow-up) - floors first (so a wall/device/
+    // terminal drawn after always sits visibly on top, same "floor then walls" order the real ship
+    // renderer uses), then walls/doors/terminals/devices, then zone overlays on top of everything so
+    // a zone's translucent tint reads clearly even over a busy tile.
+    private void DrawEditorTiles()
     {
-        var cell = GridCellAt(_designMouse) ?? start;
-        var x0 = System.Math.Min(start.X, cell.X);
-        var y0 = System.Math.Min(start.Y, cell.Y);
-        var w = System.Math.Abs(cell.X - start.X) + 1;
-        var h = System.Math.Abs(cell.Y - start.Y) + 1;
-        var rect = new Rectangle(
-            ShipEditorCanvas.X + x0 * ShipEditorCellSize, ShipEditorCanvas.Y + y0 * ShipEditorCellSize,
-            w * ShipEditorCellSize, h * ShipEditorCellSize);
-        var overlaps = _editorRooms.Any(r => RoomsOverlap(r, x0, y0, w, h));
-        _spriteBatch.Draw(_pixel, rect, (overlaps ? new Color(200, 60, 60) : new Color(90, 160, 110)) * 0.35f);
-        DrawRectOutline(rect, overlaps ? Color.OrangeRed : Color.LightGreen, 2f);
+        foreach (var (coord, cell) in _editorTiles.Cells)
+        {
+            if (!cell.HasFloor)
+                continue;
+            var rect = EditorTileRect(coord);
+            if (_editorFloorTexture is { } floorTex)
+                _spriteBatch.Draw(floorTex, rect, Color.White);
+            else
+                _spriteBatch.Draw(_pixel, rect, new Color(46, 52, 66));
+        }
+
+        foreach (var (coord, cell) in _editorTiles.Cells)
+        {
+            if (cell.Wall == TileWallKind.Solid)
+                DrawEditorWallTile(coord);
+            else if (cell.Wall == TileWallKind.Door)
+                DrawEditorDoorTile(coord);
+            if (cell.TerminalId is not null && cell.TerminalWallSide is { } side)
+                DrawEditorTerminalMark(coord, side);
+            if (cell.DeviceId is not null && _editorDeviceKinds.TryGetValue(coord, out var kind))
+                DrawEditorDeviceAt(coord, kind);
+        }
+
+        foreach (var zone in _editorZones)
+            DrawEditorZone(zone);
     }
 
-    private void DrawEditorDoorMarker(Vector2 screenPos, bool active, bool isDoor)
+    // Same neighbor-based orientation ShipRenderer.DrawWallTile uses in the real game (M75,
+    // humble-soaring-cat.md) - opposite wall-kind neighbors read as a straight run, perpendicular
+    // ones as a corner (rotated 0/90/180/270deg from the corner art's own South+East base
+    // orientation). Kept as a separate copy rather than shared with ShipRenderer since the two work
+    // at different pixel scales (ShipRenderer.PixelsPerUnit=48 vs EditorCellSize, base 24) and read
+    // from different data (a live WorldSnapshot's rooms vs this editor's own in-memory TileGrid).
+    private void DrawEditorWallTile(TileCoord coord)
     {
-        var color = active
-            ? (isDoor ? new Color(120, 200, 255) : new Color(255, 200, 90))
-            : new Color(90, 90, 100);
-        HudIcons.FillCircle(_spriteBatch, _pixel, screenPos, active ? 6f : 4f, color);
-    }
+        bool HasWall(TileSide side) => _editorTiles.CellAt(side.Offset(coord)) is { Wall: TileWallKind.Solid or TileWallKind.Door };
+        var north = HasWall(TileSide.North);
+        var south = HasWall(TileSide.South);
+        var east = HasWall(TileSide.East);
+        var west = HasWall(TileSide.West);
+        var rect = EditorTileRect(coord);
 
-    private void DrawEditorDevice(CustomDeviceDef device)
-    {
-        var pos = WorldToEditorScreen(device.X, device.Y);
-        var size = 18;
-        var rect = new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size);
-        _spriteBatch.Draw(_pixel, rect, CustomDeviceCatalog.Tint(device.Kind));
+        // A T-junction (exactly 3 wall-kind neighbors - a straight tile-drawn wall can meet another
+        // one at 3 sides in a way no rectangular hand-authored hull ever produced) has to be checked
+        // BEFORE the plain straight-run tests below, since 3 neighbors always include one opposite
+        // pair and would otherwise silently read as a plain straight tile, ignoring the third branch.
+        var neighborCount = (north ? 1 : 0) + (south ? 1 : 0) + (east ? 1 : 0) + (west ? 1 : 0);
+        if (neighborCount == 3 && _editorWallTJunctionTexture is { } tTex)
+        {
+            // Base art has the missing/open side facing North (a horizontal run continuing East+West
+            // with a spur branching South) - rotate 90° per step clockwise to whichever side is
+            // actually the open one here, same convention as the corner/end-cap rotations below.
+            var tRotation = !north ? 0f : !east ? MathHelper.PiOver2 : !south ? MathHelper.Pi : -MathHelper.PiOver2;
+            var tOrigin = new Vector2(tTex.Width / 2f, tTex.Height / 2f);
+            _spriteBatch.Draw(tTex, new Rectangle(rect.Center.X, rect.Center.Y, EditorCellSize, EditorCellSize),
+                null, Color.White, tRotation, tOrigin, SpriteEffects.None, 0f);
+            return;
+        }
+        if (north && south && _editorWallVerticalTexture is { } vTex)
+        {
+            _spriteBatch.Draw(vTex, rect, Color.White);
+            return;
+        }
+        if (east && west && _editorWallHorizontalTexture is { } hTex)
+        {
+            _spriteBatch.Draw(hTex, rect, Color.White);
+            return;
+        }
+        // A dead end (exactly one wall-kind neighbor) reads wrong with the corner texture (a "turn"
+        // where the wall actually just stops) - direct user report. Base end-cap art connects South,
+        // caps at North; rotate the same 90°-per-step clockwise convention the corner uses.
+        if (neighborCount == 1 && _editorWallEndCapTexture is { } capTex)
+        {
+            var capRotation = south ? 0f : west ? MathHelper.PiOver2 : north ? MathHelper.Pi : -MathHelper.PiOver2;
+            var capOrigin = new Vector2(capTex.Width / 2f, capTex.Height / 2f);
+            _spriteBatch.Draw(capTex, new Rectangle(rect.Center.X, rect.Center.Y, EditorCellSize, EditorCellSize),
+                null, Color.White, capRotation, capOrigin, SpriteEffects.None, 0f);
+            return;
+        }
+        if (_editorWallCornerTexture is { } cTex)
+        {
+            var rotation = (south, east, west, north) switch
+            {
+                (true, true, _, _) => 0f,
+                (true, _, true, _) => MathHelper.PiOver2,
+                (_, _, true, true) => MathHelper.Pi,
+                (_, true, _, true) => -MathHelper.PiOver2,
+                _ => 0f,
+            };
+            var texOrigin = new Vector2(cTex.Width / 2f, cTex.Height / 2f);
+            _spriteBatch.Draw(cTex, new Rectangle(rect.Center.X, rect.Center.Y, EditorCellSize, EditorCellSize),
+                null, Color.White, rotation, texOrigin, SpriteEffects.None, 0f);
+            return;
+        }
+
+        _spriteBatch.Draw(_pixel, rect, new Color(120, 130, 150));
         DrawRectOutline(rect, Color.Black, 1f);
-        var glyph = CustomDeviceCatalog.ShortGlyph(device.Kind);
+    }
+
+    private void DrawEditorDoorTile(TileCoord coord)
+    {
+        var rect = EditorTileRect(coord);
+        _spriteBatch.Draw(_pixel, rect, new Color(120, 200, 255) * 0.5f);
+        DrawRectOutline(rect, new Color(120, 200, 255), 2f);
+    }
+
+    private void DrawEditorTerminalMark(TileCoord coord, TileSide side)
+    {
+        var rect = EditorTileRect(coord);
+        var (from, to) = side switch
+        {
+            TileSide.North => (new Vector2(rect.Left, rect.Top), new Vector2(rect.Right, rect.Top)),
+            TileSide.South => (new Vector2(rect.Left, rect.Bottom), new Vector2(rect.Right, rect.Bottom)),
+            TileSide.East => (new Vector2(rect.Right, rect.Top), new Vector2(rect.Right, rect.Bottom)),
+            _ => (new Vector2(rect.Left, rect.Top), new Vector2(rect.Left, rect.Bottom)),
+        };
+        HudIcons.DrawLine(_spriteBatch, _pixel, from, to, Color.Gold, 3f);
+    }
+
+    // Direct user request ("подсвечивалась его площадь как в rimworld") - a live ghost outline over
+    // whatever the Device tool would actually place at the cursor right now, green where every tile
+    // qualifies (TileGrid.PlaceDevice's own precondition, same check HandleDeviceToolInput itself
+    // makes before committing) and red the instant any tile in the footprint doesn't - exactly the
+    // valid/invalid colour convention the Wall tool's own drag preview already uses. Centred on the
+    // cursor's own tile (FootprintAnchorFor), not cornered on it, per the user's own follow-up.
+    private void DrawEditorDevicePlacementPreview()
+    {
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var hovered = new TileCoord(cell.X, cell.Y);
+        var size = DeviceFootprintSize(_editorSelectedDeviceKind);
+        var anchor = FootprintAnchorFor(hovered, size);
+        var footprint = DeviceFootprintTiles(anchor, size).ToList();
+        var valid = footprint.All(t => _editorTiles.CellAt(t) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null });
+
+        var topLeft = EditorTileRect(anchor);
+        var bottomRight = EditorTileRect(new TileCoord(anchor.X + size - 1, anchor.Y + size - 1));
+        var rect = new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
+        _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
+        DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
+    }
+
+    // A multi-tile device (today, only Reactor - DeviceFootprintSize) draws its own real texture
+    // stretched across its WHOLE footprint instead of the plain small icon every other device still
+    // gets - direct user request ("сама текстура должна занимать все 4 на 4 тайла").
+    private void DrawEditorDeviceAt(TileCoord anchor, CustomDeviceKind kind)
+    {
+        var footprintSize = DeviceFootprintSize(kind);
+        if (footprintSize > 1 && kind == CustomDeviceKind.Reactor && _editorReactorTexture is { } reactorTex)
+        {
+            var topLeft = EditorTileRect(anchor);
+            var bottomRight = EditorTileRect(new TileCoord(anchor.X + footprintSize - 1, anchor.Y + footprintSize - 1));
+            var fullRect = new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
+            _spriteBatch.Draw(reactorTex, fullRect, Color.White);
+            return;
+        }
+
+        var rect = EditorTileRect(anchor);
+        const int size = 18;
+        var box = new Rectangle(rect.Center.X - size / 2, rect.Center.Y - size / 2, size, size);
+        _spriteBatch.Draw(_pixel, box, CustomDeviceCatalog.Tint(kind));
+        DrawRectOutline(box, Color.Black, 1f);
+        var glyph = CustomDeviceCatalog.ShortGlyph(kind);
         var glyphSize = _font.MeasureString(glyph) * 0.5f;
-        _spriteBatch.DrawString(_font, glyph, new Vector2(pos.X - glyphSize.X / 2f, pos.Y - glyphSize.Y / 2f),
+        _spriteBatch.DrawString(_font, glyph, new Vector2(box.Center.X - glyphSize.X / 2f, box.Center.Y - glyphSize.Y / 2f),
             Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+    }
+
+    private void DrawEditorZone(EditorZone zone)
+    {
+        if (zone.Tiles.Count == 0)
+            return;
+        var tint = new Color(255, 200, 90) * 0.15f;
+        foreach (var coord in zone.Tiles)
+            _spriteBatch.Draw(_pixel, EditorTileRect(coord), tint);
+
+        var avgX = (float)zone.Tiles.Average(t => t.X + 0.5f);
+        var avgY = (float)zone.Tiles.Average(t => t.Y + 0.5f);
+        var pos = WorldToEditorScreen(avgX, avgY);
+        var labelSize = _font.MeasureString(zone.Name) * 0.5f;
+        _spriteBatch.DrawString(_font, zone.Name, pos - labelSize / 2f, Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+    }
+
+    // Live preview while dragging - green where the tile has floor (and no device already sitting on
+    // it, direct user request - "на месте которое занимает устройство уже ничего нельзя было
+    // построить") and would actually take a wall, red where it wouldn't, same colour convention the
+    // old Room-rectangle preview used for "would this placement be valid."
+    private void DrawEditorWallDragPreview()
+    {
+        if (_editorWallDragStart is not { } start)
+            return;
+        var endCell = GridCellAt(_designMouse) is { } ec ? new TileCoord(ec.X, ec.Y) : start;
+        foreach (var coord in LineBetween(start, endCell))
+        {
+            var rect = EditorTileRect(coord);
+            var valid = _editorTiles.CellAt(coord) is { HasFloor: true, DeviceId: null };
+            _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.4f);
+            DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
+        }
+    }
+
+    // Door tool has no drag, just a single hovered tile - shown even before a click (unlike Wall's
+    // drag-only preview above) so hovering an occupied device tile reads as blocked right away, same
+    // guard HandleDoorToolInput itself checks.
+    private void DrawEditorDoorHoverPreview()
+    {
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var coord = new TileCoord(cell.X, cell.Y);
+        var rect = EditorTileRect(coord);
+        var current = _editorTiles.CellAt(coord);
+        var valid = current is { HasFloor: true, DeviceId: null };
+        var removable = current is { Wall: TileWallKind.Door };
+        if (!valid && !removable)
+        {
+            _spriteBatch.Draw(_pixel, rect, new Color(160, 90, 90) * 0.4f);
+            DrawRectOutline(rect, Color.OrangeRed, 2f);
+        }
+        else
+        {
+            _spriteBatch.Draw(_pixel, rect, new Color(90, 160, 110) * 0.35f);
+            DrawRectOutline(rect, Color.LightGreen, 2f);
+        }
+    }
+
+    private void DrawEditorZoneDragPreview()
+    {
+        if (_editorZoneDragStart is not { } start)
+            return;
+        var endCell = GridCellAt(_designMouse) ?? start;
+        var minX = Math.Min(start.X, endCell.X);
+        var minY = Math.Min(start.Y, endCell.Y);
+        var maxX = Math.Max(start.X, endCell.X);
+        var maxY = Math.Max(start.Y, endCell.Y);
+        var rect = new Rectangle(
+            ShipEditorCanvas.X + minX * EditorCellSize - _editorPanOffset.X,
+            ShipEditorCanvas.Y + minY * EditorCellSize - _editorPanOffset.Y,
+            (maxX - minX + 1) * EditorCellSize, (maxY - minY + 1) * EditorCellSize);
+        _spriteBatch.Draw(_pixel, rect, new Color(255, 200, 90) * 0.25f);
+        DrawRectOutline(rect, Color.Gold, 2f);
     }
 
     private void DrawRectOutline(Rectangle rect, Color color, float thickness)
@@ -104,69 +458,41 @@ public partial class Game1
         HudIcons.DrawLine(_spriteBatch, _pixel, new Vector2(rect.Right, rect.Top), new Vector2(rect.Right, rect.Bottom), color, thickness);
     }
 
-    private static readonly string[] EditorToolLabels = { "Отсеки", "Двери/люки", "Устройства" };
-
+    // Direct user request ("сделай чтобы игрок всегда находился в режиме строительства где все
+    // блоки, а текущие 6 вкладок справа полностью удали") - the old vertical Пол/Стена/Дверь/
+    // Терминал/Устройства/Зоны tool-picker sidebar is gone; the bottom device-tab panel (Game1.
+    // ShipEditor.DeviceTabs.cs) is now the ONLY way to pick what gets placed, always visible, never
+    // gated behind selecting "Устройства" first. Floor and Zone (which never had a CustomDeviceKind
+    // or even a tab of their own before) now live under that panel's own "МОДИФИКАЦИИ" mode instead
+    // of "ОБЪЕКТЫ" - see DrawDeviceTabs's own doc comment for why the split.
     private void DrawEditorSidebar()
     {
-        for (var i = 0; i < EditorToolLabels.Length; i++)
+        var hint = _editorTool switch
         {
-            var rect = GetEditorToolButtonRect(i);
-            var selected = (int)_editorTool == i;
-            _spriteBatch.Draw(_pixel, rect, selected ? new Color(120, 92, 30) : Color.DimGray * 0.6f);
-            _spriteBatch.DrawString(_font, EditorToolLabels[i], new Vector2(rect.X + 6, rect.Y + 5),
-                selected ? Color.White : Color.LightGray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-        }
+            EditorTool.Floor => "Клик - поставить пол. ПКМ - убрать.",
+            EditorTool.Wall => "Клик - стена (нужен пол под ней). Зажать и протянуть - линия стен. ПКМ - убрать.",
+            EditorTool.Door => "Клик по полу или стене - дверь. ПКМ по двери - убрать.",
+            EditorTool.Terminal => "Клик по полу рядом со стеной - терминал. ПКМ - убрать.",
+            EditorTool.Device => "Клик внутри отсека - поставить устройство. ПКМ рядом - убрать.",
+            EditorTool.Zone => "Зажмите и протяните по клеткам с полом, затем впишите название отсека.",
+            _ => "",
+        };
+        _spriteBatch.DrawString(_font, hint, new Vector2(DevicePanelLeft, DeviceItemsTop - 22), Color.Gray, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
 
-        if (_editorTool == EditorTool.Room)
-        {
-            _spriteBatch.DrawString(_font, "Тащите по сетке, чтобы построить отсек.\nПКМ по отсеку - удалить.",
-                new Vector2(EditorSidebarX, 168), Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-            return;
-        }
-
-        if (_editorTool == EditorTool.DoorAirlock)
-        {
-            _spriteBatch.DrawString(_font,
-                "Клик у общей стены - дверь между отсеками.\nКлик у внешней стены - шлюзовой люк.\nПовторный клик убирает.",
-                new Vector2(EditorSidebarX, 168), Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-            return;
-        }
-
-        _spriteBatch.DrawString(_font, "Палитра (клик - поставить, ПКМ - убрать):",
-            new Vector2(EditorSidebarX, 178), Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-        for (var i = 0; i < CustomDeviceCatalog.All.Length; i++)
-        {
-            var kind = CustomDeviceCatalog.All[i];
-            var rect = GetEditorPaletteRect(i);
-            var selected = kind == _editorDeviceKind;
-            _spriteBatch.Draw(_pixel, rect, selected ? CustomDeviceCatalog.Tint(kind) * 0.5f : Color.DimGray * 0.4f);
-            DrawRectOutline(rect, selected ? Color.White : Color.DimGray, 1f);
-            _spriteBatch.DrawString(_font, CustomDeviceCatalog.Name(kind), new Vector2(rect.X + 4, rect.Y + 3),
-                Color.White, 0f, Vector2.Zero, 0.48f, SpriteEffects.None, 0f);
-        }
-
-        if (_editorDeviceKind is CustomDeviceKind.TurretBallistic or CustomDeviceKind.TurretLaser)
-        {
-            _spriteBatch.DrawString(_font, "Борт установки:", new Vector2(EditorSidebarX, 380), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
-            var labels = new[] { "Корма", "Нос", "Левый", "Правый" };
-            for (var i = 0; i < EditorMountSides.Length; i++)
-            {
-                var rect = GetEditorMountSideRect(i);
-                var selected = EditorMountSides[i] == _editorTurretMountSide;
-                _spriteBatch.Draw(_pixel, rect, selected ? new Color(120, 92, 30) : Color.DimGray * 0.5f);
-                _spriteBatch.DrawString(_font, labels[i], new Vector2(rect.X + 4, rect.Y + 3),
-                    Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
-            }
-        }
+        DrawDeviceTabs();
     }
 
     private static readonly string[] EditorForwardArrowLabels = { "→", "↓", "←", "↑" };
 
+    // Direct user request ("часть меню на скрине была сверху, а менюшка со всеми блоками в самом
+    // низу") - Название/Нос/статус/action buttons moved up near the title, out of the device-tab
+    // panel's way at the bottom (ShipEditorCanvas's own doc comment). Still called
+    // "DrawEditorBottomBar" for history's sake - nothing about what it draws changed, only where.
     private void DrawEditorBottomBar()
     {
-        _spriteBatch.DrawString(_font, $"Название: {_editorShipName}", new Vector2(20, 502), Color.LightGray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, $"Название: {_editorShipName}", new Vector2(20, 34), Color.LightGray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
 
-        _spriteBatch.DrawString(_font, "Нос:", new Vector2(300, 502), Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, "Нос:", new Vector2(300, 34), Color.Gray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
         for (var i = 0; i < EditorForwardOptions.Length; i++)
         {
             var rect = GetEditorForwardArrowRect(i);
@@ -176,14 +502,16 @@ public partial class Game1
                 Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
         }
 
-        var errors = CustomShipValidator.Validate(BuildEditorDefinition());
+        var (_, errors) = BuildAndValidateEditorDefinition();
         var status = errors.Count == 0 ? "Готов к игре!" : errors[0];
-        _spriteBatch.DrawString(_font, status, new Vector2(500, 502),
+        _spriteBatch.DrawString(_font, status, new Vector2(500, 34),
             errors.Count == 0 ? Color.LightGreen : Color.OrangeRed, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
 
         DrawEditorActionButton(EditorAction.Back, "НАЗАД", enabled: true);
-        DrawEditorActionButton(EditorAction.Clear, "ОЧИСТИТЬ", enabled: true);
+        DrawEditorActionButton(EditorAction.New, "НОВЫЙ", enabled: true);
         DrawEditorActionButton(EditorAction.Save, "СОХРАНИТЬ", enabled: true);
+        DrawEditorActionButton(EditorAction.SaveAs, "СОХР. КАК", enabled: true);
+        DrawEditorActionButton(EditorAction.Load, "ЗАГРУЗИТЬ", enabled: true);
         DrawEditorActionButton(EditorAction.Play, "ИГРАТЬ", enabled: errors.Count == 0);
     }
 
@@ -196,5 +524,5 @@ public partial class Game1
             enabled ? Color.White : Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
     }
 
-    private static bool MathHelperNearlyEqual(float a, float b) => System.Math.Abs(a - b) < 0.01f;
+    private static bool MathHelperNearlyEqual(float a, float b) => Math.Abs(a - b) < 0.01f;
 }

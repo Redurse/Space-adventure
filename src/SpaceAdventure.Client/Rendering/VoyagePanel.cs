@@ -21,7 +21,7 @@ public sealed class VoyagePanel
         {
             { DockedPointId: { } dockedId } => $"На станции: {PointName(snapshot, dockedId)}",
             { IsInBattle: true } => "Бой на месте прибытия",
-            _ => "В открытом космосе - штурвал на ручном управлении",
+            _ => "В открытом космосе - навигационная панель на ручном управлении",
         };
 
         spriteBatch.DrawString(_font, text, origin, Color.White, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
