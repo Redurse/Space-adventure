@@ -15,6 +15,10 @@ public sealed partial class Ship
     public IReadOnlyList<SuitLocker> SuitLockers { get; }
     public IReadOnlyList<ShipSystemDevice> SystemDevices { get; }
     public IReadOnlyList<WallBlock> WallBlocks { get; }
+    // Direct user request (Cosmoteer-style marching engines, ShipEngine.cs's own doc comment) -
+    // empty for every hand-authored hull (CreateStarter/.Scout/.Cruiser/.Corvette never place one),
+    // only ever populated by a Ship Editor-built hull (Ship.Custom.cs's FromCustomDefinition).
+    public IReadOnlyList<ShipEngine> Engines { get; }
     // M71 (humble-soaring-cat.md) - additive projection of Rooms/Doors/AirlockOuterDoors/WallBlocks
     // onto the new tile-grid model (TileGrid.cs). Nobody reads this yet outside tests; it exists
     // purely to prove the projection is lossless before any dependent system (atmosphere, movement,
@@ -49,6 +53,7 @@ public sealed partial class Ship
     // that matches the current velocity (World.ShipField.cs) - everything else still works in the
     // ship's own unrotated frame.
     public float ForwardDegrees { get; }
+    public bool IsCustomBuilt { get; }
 
     // Content-каталог отсеков ("бонус, не список" - see the plan's own design note): the ONE literal
     // ReactorBlock/DistributionBlock/HelmConsole/NavigationConsole object stays exactly that even
@@ -112,8 +117,18 @@ public sealed partial class Ship
         IReadOnlyList<HelmConsole>? extraHelmConsoles = null,
         IReadOnlyList<NavigationConsole>? extraNavigationConsoles = null,
         IReadOnlyList<Vec2>? extraReactorPositions = null,
-        IReadOnlyList<Vec2>? extraDistributionPositions = null)
+        IReadOnlyList<Vec2>? extraDistributionPositions = null,
+        IReadOnlyList<ShipEngine>? engines = null,
+        // True only for a Ship Editor-built hull (Ship.Custom.cs's FromCustomDefinition sets this) -
+        // every hand-authored hull (CreateStarter/.Scout/.Cruiser/.Corvette) leaves it false. Gates
+        // the Reactor's own zone-name penalty (World.Upgrades.cs's RecomputeReactorZonePenalty):
+        // hand-authored hulls already use their own flavor room names ("Реакторная", "Реакторный
+        // отсек" - never derived from this feature's zone picker), so checking those names against
+        // the canonical zone label would misfire and penalize ships that were never built with zones
+        // at all. Only a custom hull's room name is actually driven by the zone-type picker.
+        bool isCustomBuilt = false)
     {
+        IsCustomBuilt = isCustomBuilt;
         ForwardDegrees = forwardDegrees;
         ReactorDeviceCount = reactorDeviceCount;
         DistributionDeviceCount = distributionDeviceCount;
@@ -139,8 +154,14 @@ public sealed partial class Ship
         // whole length with no idea where a door was cut into it (e.g. the Corvette's shield-bay/
         // life-support flanks, each with an AirlockOuterDoor on an otherwise-solid side), so any
         // block that lands exactly on a door's own footprint is dropped here, once, for every hull.
+        Engines = engines ?? Array.Empty<ShipEngine>();
+        // A marching engine's own Bulkhead tile IS the hull plating at that spot (ShipEngine.cs's
+        // own doc comment) - drops the ordinary WallBlock the room's own outer-wall generation would
+        // otherwise ALSO place there, the same way a door's footprint already excludes one, so the
+        // two don't silently coexist at (almost) the same position.
         WallBlocks = wallBlocks
-            .Where(b => !doors.Any(d => d.Contains(b.Position)) && !airlockOuterDoors.Any(d => d.Contains(b.Position)))
+            .Where(b => !doors.Any(d => d.Contains(b.Position)) && !airlockOuterDoors.Any(d => d.Contains(b.Position))
+                && !Engines.Any(e => (e.BulkheadPosition - b.Position).Length() < 0.1))
             .ToList();
         ReactorBlock = reactorBlock;
         DistributionBlock = distributionBlock;

@@ -101,7 +101,14 @@ internal static partial class TestRunner
     {
         MoveCharacterTo(world, 1, 19f, 3f);
         MoveCharacterTo(world, 1, 7f, 3f); // reactor room
-        MoveCharacterTo(world, 1, 6f, 1.5f); // junction-oxygen's own spot on the left wall
+        // Bug fix follow-up (humble-soaring-cat.md, docked-movement tile collision) - x=6 used to be
+        // a safe "0.5 in from the old zero-thickness wall line at x=5" stand, but the reactor's own
+        // left wall is a real tile now (occupying [5,6)) with only a 2-row-tall door cut into it at
+        // y=[2,4) - y=1.5 sits one row ABOVE that door, where the wall is solid, so x=6 (only 0.35
+        // shy of the 6.35 clearance a solid wall face there requires) is no longer reachable. x=6.5
+        // is comfortably clear of the wall while staying well inside World.Interact.cs's own
+        // InteractionRadius (1.0) of junction-oxygen's fixed position.
+        MoveCharacterTo(world, 1, 6.5f, 1.5f); // junction-oxygen's own spot on the left wall
     }
 
     // junction-system-engine: Engine has two devices on this hull, so it gets one junction per

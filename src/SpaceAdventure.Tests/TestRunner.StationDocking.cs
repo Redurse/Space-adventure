@@ -452,4 +452,31 @@ internal static partial class TestRunner
         var distanceToCentre = (world.Station.Position - new Vec2(final.X, final.Y)).Length();
         return !world.IsDocked && distanceToCentre >= 4.5f; // never got inside the hull
     }
+
+    // Regression guard (humble-soaring-cat.md, "стены не имеют коллизии") - a fresh campaign starts
+    // docked (World.cs's own constructor comment), so this is the movement path an ordinary new game
+    // actually exercises first. World.Movement.cs used to send docked movement through the old,
+    // pre-M73 RoomLayout system, whose walls are zero-thickness (clamped to the room's own rectangle
+    // edge) - a full tile short of where M75's renderer actually draws the wall's own plating
+    // (TileGridRasterizer's room-edge tile). Walking into the corridor's own Top wall (row 0, always
+    // solid) while docked must now stop at the SAME place Ship.MoveAlongAxis/TileMovement would once
+    // undocked - one tile in from the hull, not right at its outer face.
+    private static bool World_MoveAlongAxis_WhileDocked_BlocksAtTileWallNotOldZeroWidthEdge()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        if (!world.IsDocked)
+            return false; // setup problem - a fresh campaign should always start docked
+
+        for (var i = 0; i < 300; i++) // 10 simulated seconds - far more than enough to converge
+        {
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: -1));
+            world.Step(RealtimeStep);
+        }
+
+        var after = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        // Row 0 (the corridor's own leading Top edge) is a full tile of solid wall - clearance stops
+        // at y=1+CharacterRadius, not at the old y=CharacterRadius the zero-thickness model gave.
+        return Math.Abs(after.X - 11.5) < 0.01 && Math.Abs(after.Y - (1.0 + RoomLayout.CharacterRadius)) < 0.01;
+    }
 }

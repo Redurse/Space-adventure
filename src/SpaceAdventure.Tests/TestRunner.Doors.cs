@@ -69,11 +69,23 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // starts open -> closed
-
         var axeSlot = TakeFromRack(world, ItemType.Axe);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: axeSlot));
-        MoveCharacterTo(world, 1, 5f, 3f); // right at the door
+        // Bug fix follow-up (humble-soaring-cat.md, docked-movement tile collision) - cross into
+        // cockpit FIRST, while the door is still open, then close it from that side - not the other
+        // way around any more. The door's own wall TILE (a real, one-unit-thick TileWallKind.Door
+        // now, not the old zero-thickness line at Door.X) is owned by reactor's own leading edge
+        // (TileGridRasterizer's leading/trailing rule), sitting at world x=[5,6) - so once closed, the
+        // cockpit side's reachable clearance (x<=4.65) sits only 0.35 from the door's own nominal
+        // centre (Door.X=5, what World.Doors.cs's InteractionRadius reach check still measures
+        // against), while the reactor side's clearance (x>=6.35) sits 1.35 away - past that 1.0
+        // reach entirely. Approaching from the OTHER side, as this test used to when it closed the
+        // door before ever crossing it, is a real "can't reach a closed door from every direction any
+        // more" gap the wall's new physical thickness opened up - out of scope for this fix; picking
+        // the side that was always going to work is enough to keep this test honest about what it's
+        // actually checking (a two-hit chop), without also re-litigating InteractionRadius itself.
+        MoveCharacterTo(world, 1, 4.5f, 3f);
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // now close it behind us
 
         world.ApplyCommand(1, new ClientCommand(1, AxeSwingHeld: true));
         world.Step(RealtimeStep);

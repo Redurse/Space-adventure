@@ -140,13 +140,50 @@ public static class RoomCatalog
     // Ship.FromCustomDefinition's own RoomIdAt needs, and several devices sharing one exact position
     // - a cockpit's Helm+Navigation pair - is harmless). ThrustBonus/TurnBonus only ever apply to the
     // Engine kind, CapacityBonus only to Shields - RoomCatalogEntry never mixes them on one entry.
+    // A single-direction RCS room converts to a real ShipEngine too (direct user request - "по его
+    // образу сделаем все остальные") - "rcs-2way"/"rcs-3way" don't, see EnginesFor's own doc comment.
+    private static bool ConvertsToRealEngine(RoomCatalogEntry entry) => entry.ThrustBonus > 0f || entry.Id == "rcs-1way";
+
     public static IReadOnlyList<CustomDeviceDef> DevicesFor(RoomCatalogEntry entry, CustomRoomDef room)
     {
         var centerX = room.X + room.Width / 2f;
         var centerY = room.Y + room.Height / 2f;
-        return entry.Devices.Select(kind => new CustomDeviceDef(kind, centerX, centerY, MountSide: entry.MountSide, CameraSide: entry.CameraSide,
-            ThrustBonus: kind == CustomDeviceKind.Engine ? entry.ThrustBonus : 0f,
-            TurnBonus: kind == CustomDeviceKind.Engine ? entry.TurnBonus : 0f,
-            CapacityBonus: kind == CustomDeviceKind.Shields ? ShieldRoomCapacityBonus : 0f)).ToList();
+        return entry.Devices
+            // A room that converts to a real ShipEngine (ConvertsToRealEngine) has its own Engine
+            // device go through EnginesFor/ShipEngine below instead (direct user request -
+            // Cosmoteer-style engines) - keeping both would double-count its own thrust/turn.
+            .Where(kind => !(kind == CustomDeviceKind.Engine && ConvertsToRealEngine(entry)))
+            .Select(kind => new CustomDeviceDef(kind, centerX, centerY, MountSide: entry.MountSide, CameraSide: entry.CameraSide,
+                ThrustBonus: kind == CustomDeviceKind.Engine ? entry.ThrustBonus : 0f,
+                TurnBonus: kind == CustomDeviceKind.Engine ? entry.TurnBonus : 0f,
+                CapacityBonus: kind == CustomDeviceKind.Shields ? ShieldRoomCapacityBonus : 0f)).ToList();
+    }
+
+    // Direct user request (Cosmoteer-style engines, ShipEngine.cs's own doc comment) - a real 3-tile
+    // engine for every marching-engine catalog entry (ThrustBonus > 0f: "engine-small"/"engine-big")
+    // and for "rcs-1way" (a single straight line of thrusters fits a 3x3 room the same way a marching
+    // engine fits its own room). "rcs-2way"/"rcs-3way" deliberately DON'T convert yet - thrusters in
+    // more than one direction need more than one straight line of tiles, and a 3x3 room has no clean
+    // way to fit two 1x3 engines without them sharing tiles; still the old flat TurnBonus device
+    // (DevicesFor above) until that's actually designed, not guessed at here.
+    //
+    // Control sits 1 tile in from the room's own LEFT edge, Facing West - matches the hand-authored
+    // hulls' own "ship travels nose-first along +X" convention (Ship.cs's ForwardDegrees doc
+    // comment), so a marching engine's exhaust naturally points aft (and rcs-1way's own single port
+    // faces the same way - the player picks WHICH room to place it in for whichever turn direction
+    // they actually want, same responsibility an Aft-mounted turret room already carries). Control's
+    // own Y lands exactly on a wall-segment CENTER (row index + 0.5, the same convention Ship.cs's
+    // GenerateOuterWallBlocks/BuildWallBlocks already place every WallBlock at) so BulkheadPosition
+    // (one tile further out, on the room's own left wall) coincides exactly with the WallBlock it
+    // needs to replace (Ship.cs's own doc comment on why that WallBlock gets dropped).
+    public static IReadOnlyList<CustomEngineDef> EnginesFor(RoomCatalogEntry entry, CustomRoomDef room)
+    {
+        if (!ConvertsToRealEngine(entry))
+            return Array.Empty<CustomEngineDef>();
+        var rowIndex = (int)(room.Height / 2f) - 1;
+        var rowCenterY = room.Y + rowIndex + 0.5f;
+        return entry.Id == "rcs-1way"
+            ? new[] { new CustomEngineDef(room.X + 1f, rowCenterY, TileSide.West, entry.TurnBonus, EngineRole.Rcs) }
+            : new[] { new CustomEngineDef(room.X + 1f, rowCenterY, TileSide.West, entry.ThrustBonus) };
     }
 }

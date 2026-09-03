@@ -152,4 +152,57 @@ internal static partial class TestRunner
         return world.Ship.Rooms.Count == roomsBefore && world.Ship.Rooms.Any(r => r.Id == "quarters")
             && (snapshot.ShipDebris?.Count ?? 0) == 0;
     }
+
+    // M77 (humble-soaring-cat.md) - proves the tile-region BFS actually walks INDIRECT connectivity,
+    // not just "was the destroyed room itself involved": builds a two-room chain (a plain "empty-
+    // small" room flush against the hull, then a "camera" room - a device-carrying catalog entry,
+    // RoomCatalog.cs - flush against THAT room's own far side, so it connects to the rest of the ship
+    // ONLY through the first one), then destroys the first room's wall blocks. The second room - and
+    // its camera device - were never touched directly, but must detach too, because the only path
+    // from them to the reactor now runs through a room that no longer exists.
+    private static bool World_ShipDebris_DestroyingRoomWithChainedNeighbor_DetachesBothIndirectly()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        DockAtStation(world, "outpost-gamma");
+
+        var innerEntry = world.GetBuildableRoomCatalog().First(e => e.Id == "empty-small");
+        var hullAnchor = world.Ship.Rooms[0];
+        var innerX = hullAnchor.X;
+        var innerY = hullAnchor.Y + hullAnchor.Height;
+        world.ApplyCommand(1, new ClientCommand(1, BuildRoom: new BuildRoomRequest(innerEntry.Id, innerX, innerY)));
+        CompletePendingRoomBuilds(world);
+        var innerRoom = world.Ship.Rooms.FirstOrDefault(r => r.X == innerX && r.Y == innerY);
+        if (innerRoom is null)
+            return false; // setup problem - the first room didn't actually land where expected
+
+        var outerEntry = world.GetBuildableRoomCatalog().First(e => e.Id == "camera");
+        var outerX = innerX;
+        var outerY = innerY + innerRoom.Height;
+        world.ApplyCommand(1, new ClientCommand(1, BuildRoom: new BuildRoomRequest(outerEntry.Id, outerX, outerY)));
+        CompletePendingRoomBuilds(world);
+        var outerRoom = world.Ship.Rooms.FirstOrDefault(r => r.X == outerX && r.Y == outerY);
+        if (outerRoom is null)
+            return false; // setup problem - the chained room didn't actually land where expected
+        var camerasBefore = world.Ship.Cameras.Count;
+        if (camerasBefore == 0)
+            return false; // setup problem - the camera room's own device didn't actually get built
+                           // (every hand-authored hull already carries its own camera(s) - World.
+                           // Cameras.cs's own tests - so this is a delta check, not an absolute one)
+
+        var roomsBefore = world.Ship.Rooms.Count;
+        var debrisBefore = world.CreateSnapshot().ShipDebris?.Count ?? 0;
+
+        world.DebugDestroyRoomWallBlocks(innerRoom.Id);
+        world.Step(RealtimeStep);
+
+        var snapshot = world.CreateSnapshot();
+        var bothRoomsGone = world.Ship.Rooms.Count == roomsBefore - 2
+            && world.Ship.Rooms.All(r => r.Id != innerRoom.Id && r.Id != outerRoom.Id);
+        var cameraDeviceGone = world.Ship.Cameras.Count == camerasBefore - 1;
+        var gotOneFragmentWithBothRooms = (snapshot.ShipDebris?.Count ?? 0) == debrisBefore + 1
+            && snapshot.ShipDebris is { Count: > 0 } && snapshot.ShipDebris[^1].Rooms.Count == 2;
+
+        return bothRoomsGone && cameraDeviceGone && gotOneFragmentWithBothRooms;
+    }
 }

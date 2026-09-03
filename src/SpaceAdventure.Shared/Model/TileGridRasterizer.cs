@@ -171,17 +171,32 @@ public static class TileGridRasterizer
     // center against its OWNING room's own boundary; each block matches exactly one edge by
     // construction (Ship.GenerateOuterWallBlocks/.GenerateInteriorWallBlocks/Station.BuildWallBlocks
     // each place every block by stepping along exactly one edge).
-    public static TileCoord WallBlockTileCoord(WallBlock block, Room room)
+    //
+    // Bug fix (humble-soaring-cat.md, "стены не имеют коллизии" follow-up) - used to take only the
+    // block's OWN room and blindly apply "Left/Top -> no adjustment, Right/Bottom -> -1", the same
+    // shortcut that's only valid for a room's OWN outer edges. Ship.GenerateInteriorWallBlocks
+    // assigns an interior block's RoomId to whichever of the two rooms happens to come first in the
+    // hull's own room list - NOT necessarily the one whose LEADING edge is what actually placed the
+    // wall tile (TileGridRasterizer.FromRooms's own leading-always/trailing-only-if-uncovered rule).
+    // Whenever the block's room lost that coin flip (its own edge here is really a COVERED trailing
+    // edge, the neighbor's leading edge owns the tile instead), the old "-1" blindly fired anyway,
+    // computing a coordinate one tile off from where the wall/breach genuinely lives - so a fully cut
+    // interior bulkhead never actually opened up in Ship.Tiles (TileMovement kept treating it as
+    // solid) and World.Atmosphere.cs's leak-rate read the wrong tile's HP too. Now routed through the
+    // same room-list-aware PerpendicularCoord logic the Door/AirlockOuterDoor case above already
+    // uses for exactly this leading/trailing ambiguity - needs every room in the hull, not just the
+    // block's own, to know whether a neighbor's leading edge actually claimed this boundary first.
+    public static TileCoord WallBlockTileCoord(WallBlock block, IReadOnlyList<Room> rooms, Room room)
     {
         const float epsilon = 0.01f;
         if (MathF.Abs(block.Y - room.Top) < epsilon)
-            return new TileCoord(RoundToInt(block.X - 0.5f), RoundToInt(room.Top));
+            return new TileCoord(RoundToInt(block.X - 0.5f), PerpendicularCoord(rooms, room.Top, vertical: false));
         if (MathF.Abs(block.Y - room.Bottom) < epsilon)
-            return new TileCoord(RoundToInt(block.X - 0.5f), RoundToInt(room.Bottom) - 1);
+            return new TileCoord(RoundToInt(block.X - 0.5f), PerpendicularCoord(rooms, room.Bottom, vertical: false));
         if (MathF.Abs(block.X - room.Left) < epsilon)
-            return new TileCoord(RoundToInt(room.Left), RoundToInt(block.Y - 0.5f));
+            return new TileCoord(PerpendicularCoord(rooms, room.Left, vertical: true), RoundToInt(block.Y - 0.5f));
         if (MathF.Abs(block.X - room.Right) < epsilon)
-            return new TileCoord(RoundToInt(room.Right) - 1, RoundToInt(block.Y - 0.5f));
+            return new TileCoord(PerpendicularCoord(rooms, room.Right, vertical: true), RoundToInt(block.Y - 0.5f));
         throw new InvalidOperationException($"WallBlock {block.Id} doesn't lie on any edge of room {room.Id}.");
     }
 

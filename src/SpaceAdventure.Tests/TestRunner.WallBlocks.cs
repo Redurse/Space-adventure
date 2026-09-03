@@ -207,18 +207,27 @@ internal static partial class TestRunner
             return false; // didn't make it onto the station
 
         var room = world.CreateSnapshot().Station.Rooms.First(r => r.Contains(new Vec2(me.X, me.Y)));
-        var block = world.CreateSnapshot().Station.WallBlocks.First(b => b.RoomId == room.Id);
+        // Bug fix follow-up (humble-soaring-cat.md, docked-movement tile collision) - excludes a
+        // block sitting at one of the room's own corners: reaching it now means clearing TWO
+        // perpendicular walls at once (both real, one-unit-thick tiles now, not the old zero-
+        // thickness lines), not just the one this block's own edge is on - the plain single-axis
+        // "in from the wall" stand position below only ever clears the one it's aiming at.
+        var block = world.CreateSnapshot().Station.WallBlocks.First(b => b.RoomId == room.Id &&
+            (b.Y == room.Top || b.Y == room.Bottom ? b.X > room.Left + 0.6f && b.X < room.Right - 0.6f
+                : b.Y > room.Top + 0.6f && b.Y < room.Bottom - 0.6f));
 
-        // Stand half a unit in from whichever edge this block sits on and aim straight at it - the
-        // same "walk up to the known block, look the one way that hits it" shape every ship wall
-        // test above uses, just derived from the room's own bounds instead of a hand-picked literal
-        // (a station's room coordinates shift with wherever the ship's own airlock door happens to
-        // be, unlike the ship's own fixed layout).
+        // Stand 1.5 in from whichever edge this block sits on (was 0.5 under the old zero-thickness
+        // wall model) and aim straight at it - the same "walk up to the known block, look the one
+        // way that hits it" shape every ship wall test above uses, just derived from the room's own
+        // bounds instead of a hand-picked literal (a station's room coordinates shift with wherever
+        // the ship's own airlock door happens to be, unlike the ship's own fixed layout). 1.5 rather
+        // than 0.5 because the wall this block sits on is now a genuine one-unit-thick tile
+        // (TileGridRasterizer), one tile further in than the old model's zero-width boundary line.
         var (standX, standY, aimX, aimY) =
-            block.Y == room.Top ? (block.X, block.Y + 0.5f, 0f, -1f) :
-            block.Y == room.Bottom ? (block.X, block.Y - 0.5f, 0f, 1f) :
-            block.X == room.Left ? (block.X + 0.5f, block.Y, -1f, 0f) :
-            (block.X - 0.5f, block.Y, 1f, 0f);
+            block.Y == room.Top ? (block.X, block.Y + 1.5f, 0f, -1f) :
+            block.Y == room.Bottom ? (block.X, block.Y - 1.5f, 0f, 1f) :
+            block.X == room.Left ? (block.X + 1.5f, block.Y, -1f, 0f) :
+            (block.X - 1.5f, block.Y, 1f, 0f);
         MoveCharacterTo(world, 1, standX, standY);
 
         for (var i = 0; i < 60; i++) // 2 seconds - long enough real damage/repair would show if it existed
@@ -239,6 +248,23 @@ internal static partial class TestRunner
     // Two adjacent fully-broken blocks (the corridor's top wall tiles in exact 1-unit steps, so
     // 11.5 and 12.5 sit right next to each other) are wide enough to fit through - works exactly
     // like walking out an open airlock (World.Eva.cs's IsPassableBreach).
+    // M73 (humble-soaring-cat.md) turned a wall from the old model's zero-thickness boundary line
+    // into a genuine full 1-unit-thick tile, so the row directly under the top wall is only walkable
+    // where a block has already been breached - this test's original "walk right up against the wall
+    // and slide along it from one block to the next" approach gets physically stopped at the column
+    // boundary of the still-solid second block. The fix (matching the interior-bulkhead case in
+    // World_Eva_PassableInteriorBreach_WalksIntoAdjacentRoomNotVacuum) is to cut each block from
+    // safely inside the room instead, never touching the wall row until the final walk-out.
+    //
+    // That alone still isn't enough for the SECOND block, though (confirmed live via a temporary
+    // FindAimedCutTarget diagnostic): corridor's right edge (X=13) carries its own interior bulkhead
+    // to "quarters" with a wall segment at (13, 1.5), and FindAimedCutTarget returns the FIRST sample
+    // point that lands within WallCutPointRadius (0.85) of ANY wall block - a straight-up aim from
+    // right under the second block (X~12.5) puts an early sample point close enough to that unrelated
+    // bulkhead segment (distance ~0.66-0.98 depending on exact Y) to latch onto it instead, burning
+    // the whole cut budget on a wall that was never the target. Standing at X=12.0 instead keeps every
+    // sample point comfortably clear of the bulkhead (never closer than 1.0 in X alone) while still
+    // catching the second block by its own third sample (~0.71 away, safely under the 0.85 radius).
     private static bool World_Eva_TwoAdjacentBrokenBlocks_ArePassable()
     {
         var world = new World();
@@ -246,11 +272,17 @@ internal static partial class TestRunner
         EnterAsteroidFieldStationary(world);
         EquipCutterWithTank(world);
 
-        WalkAcrossShipTo(world, 11.5f, 0.5f);
+        WalkAcrossShipTo(world, 11.5f, 0.5f); // clamps to ~Y=1.35 - the wall row itself isn't walkable yet
         if (CutWallBlockAt(world, 11.5f, 0f, new Vec2(0, -1), 4 * 30) >= 4 * 30)
             return false;
-        MoveCharacterTo(world, 1, 12.5f, 0.5f); // same room, no door to cross
-        if (CutWallBlockAt(world, 12.5f, 0f, new Vec2(0, -1), 4 * 30) >= 4 * 30)
+        // Not directly under the second block (12.5) - that's exactly equidistant from the FIRST
+        // block too (11.5, already breached but still a live FindAimedCutTarget candidate) and close
+        // enough to the corridor/quarters interior bulkhead at (13, 1.5) for a straight-up aim's own
+        // early samples to latch onto one of those instead. A diagonal aim from off to the side
+        // avoids all three: every early sample stays clearly outside every wrong target's own
+        // cutting radius, only converging onto the second block itself partway along the ray.
+        MoveCharacterTo(world, 1, 11.9f, 1.35f);
+        if (CutWallBlockAt(world, 12.5f, 0f, new Vec2(0.6, -1.35).Normalized(), 4 * 30) >= 4 * 30)
             return false;
 
         EquipSuit(world, 1);
@@ -276,8 +308,18 @@ internal static partial class TestRunner
         // same-tick tie against the intended target often enough to stall it at 0 damage forever -
         // Y=1.0 clears both target blocks (0.5 away from each) while staying well clear (1.0 away)
         // of that top wall.
+        // Bug fix follow-up (humble-soaring-cat.md, docked-movement tile collision) - Y=1.0 itself
+        // is no longer reachable (cockpit's own top wall, row 0, is a real tile now - clearance
+        // stops at 1+CharacterRadius); WalkAcrossShipTo actually lands at ~1.35. That leaves this
+        // spot only 0.35 from the SECOND block (row 1, y=1.5) but 0.85 from the intended FIRST one
+        // (row 0, y=0.5) - a straight horizontal aim used to land almost exactly between both blocks
+        // (both ~0.5 away under the old zero-thickness model) but now favors the wrong one, cutting
+        // block 2 by accident and leaving block 1 untouched. Aiming up-and-over instead (same
+        // diagonal-aim fix the second cut in World_Eva_TwoAdjacentBrokenBlocks_ArePassable already
+        // needed for its own equivalent case) keeps every early sample closer to block 1 than to
+        // block 2 or the top wall.
         WalkAcrossShipTo(world, 4.5f, 1.0f); // cockpit, right up against the interior bulkhead
-        if (CutWallBlockAt(world, 5f, 0.5f, new Vec2(1, 0), 4 * 30) >= 4 * 30)
+        if (CutWallBlockAt(world, 5f, 0.5f, new Vec2(0.6, -1f).Normalized(), 4 * 30) >= 4 * 30)
             return false;
         MoveCharacterTo(world, 1, 4.5f, 1.5f); // same room, no door to cross
         if (CutWallBlockAt(world, 5f, 1.5f, new Vec2(1, 0), 4 * 30) >= 4 * 30)

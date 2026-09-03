@@ -159,4 +159,14 @@ public sealed record WorldSnapshot(
     int HullPlatingStock = 0,
     // M63 - every free-flying hull fragment that has structurally detached so far this session
     // (World.ShipDebris.cs) - drifting debris, drawn by FieldRenderer alongside asteroids/ships.
-    IReadOnlyList<ShipDebrisState>? ShipDebris = null);
+    IReadOnlyList<ShipDebrisState>? ShipDebris = null,
+    // Cosmoteer-style marching engines (direct user request, ShipEngine.cs's own doc comment) - null/
+    // empty for every hull with none (every hand-authored hull, every custom ship built before this
+    // existed).
+    IReadOnlyList<EngineState>? EngineStates = null,
+    // One crew-wide text channel (direct user request, "как в Баротравме") - no radio device, no
+    // proximity gating, everyone connected always sees every message (World.Chat.cs).
+    IReadOnlyList<ChatLogEntry>? ChatLog = null,
+    // Push-to-talk voice chunks relayed THIS tick only (World.Voice.cs) - not an append-only log
+    // like ChatLog above, see VoiceChunkMessage's own doc comment for why.
+    IReadOnlyList<VoiceChunkMessage>? VoiceChunks = null);

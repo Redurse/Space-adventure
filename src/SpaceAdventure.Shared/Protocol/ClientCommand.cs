@@ -261,4 +261,12 @@ public sealed record ClientCommand(
     // DebugAddCredits, already used by the test suite) instead of spawning a raider. Appended at the
     // very end for the same never-insert-in-the-middle reason every other field's own comment here
     // explains.
-    bool DebugAddCreditsPressed = false);
+    bool DebugAddCreditsPressed = false,
+    // One crew-wide text chat (direct user request, "как в Баротравме") - edge-triggered like
+    // DoorToggleId: non-null/non-empty only on the frame a message is actually sent. No proximity
+    // check server-side, same trusted-client reasoning as the other click-driven fields above.
+    string? ChatMessage = null,
+    // Push-to-talk voice chat (direct user request, "как в Баротравме" - local + radio), edge/
+    // one-shot like ChatMessage above: non-null only on the specific tick a mic buffer became
+    // ready and is being sent (Game1.cs's _pendingVoiceChunk, same capture-send-clear lifecycle).
+    VoiceChunkPayload? VoiceChunk = null);

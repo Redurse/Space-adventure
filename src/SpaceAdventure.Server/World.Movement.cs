@@ -76,8 +76,15 @@ public sealed partial class World
             return EnemyShipLayout.MoveAlongAxis(position, roomId, delta, IsDoorOpen);
         if (IsDocked)
         {
-            var (rooms, doors) = GetDockedLayout();
-            return RoomLayout.MoveAlongAxis(rooms, doors, position, roomId, delta, IsDoorOpen, Ship.WallBlocks, IsPassableBreach);
+            // Bug fix (humble-soaring-cat.md, "стены не имеют коллизии") - was RoomLayout.MoveAlongAxis
+            // against GetDockedLayout's merged Room/Door rectangles (the OLD, pre-M73, zero-thickness
+            // wall model); switched to the same tile-based TileMovement every other structure already
+            // uses, against GetDockedTileGrid's merged Ship+Station TileGrid - see that method's own
+            // doc comment for why this was actually reachable in ordinary play (a fresh campaign
+            // starts docked), not just a rare corner case.
+            var (rooms, _) = GetDockedLayout();
+            var next = TileMovement.MoveAlongAxis(GetDockedTileGrid(), position, delta);
+            return (next, TileMovement.RoomIdAt(rooms, next) ?? roomId);
         }
         if (character.OnStation)
             return Station.MoveAlongAxis(position, roomId, delta, IsDoorOpen);

@@ -49,7 +49,24 @@ public sealed partial class Ship
         if (Jukebox is { } jukebox)
             devices.Add(new CustomDeviceDef(CustomDeviceKind.Jukebox, jukebox.X, jukebox.Y));
 
-        return new CustomShipDefinition("Мой корабль", rooms, doors, airlocks, devices, ForwardDegrees);
+        // Cosmoteer-style marching engines (direct user request) - without this, ToDefinition would
+        // silently drop every already-built ShipEngine the moment World.ShipBuilding.cs builds or
+        // demolishes ANY other room afterward (it always starts from ToDefinition's own output).
+        var engines = Engines.Select(e => new CustomEngineDef(e.X, e.Y, e.Facing, e.MaxThrust, e.Role)).ToList();
+
+        // Same round-trip gap, same fix, for a painted Reinforced/Window wall (WallMaterial.cs) -
+        // it would otherwise vanish the moment ANY room is built/demolished on a hull that has one.
+        var wallMaterials = WallBlocks
+            .Where(b => b.Material != WallMaterial.Standard)
+            .Select(b =>
+            {
+                var coord = TileGridRasterizer.WallBlockTileCoord(b, Rooms, GetRoom(b.RoomId));
+                return new CustomWallMaterialDef(coord.X, coord.Y, b.Material);
+            })
+            .ToList();
+
+        return new CustomShipDefinition("Мой корабль", rooms, doors, airlocks, devices, ForwardDegrees,
+            WallMaterialsRaw: wallMaterials, EnginesRaw: engines);
     }
 
     private static readonly IReadOnlyDictionary<PowerSystemId, CustomDeviceKind> SystemDeviceKindsReverse =

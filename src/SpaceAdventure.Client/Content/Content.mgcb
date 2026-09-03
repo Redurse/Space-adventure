@@ -436,3 +436,18 @@
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:Textures/Devices/Reactor.png
+
+#begin Textures/Devices/EngineControl.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Devices/EngineControl.png
+
+#begin Textures/Devices/EngineBulkhead.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Devices/EngineBulkhead.png
+
+#begin Textures/Devices/EngineNozzle.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:Textures/Devices/EngineNozzle.png

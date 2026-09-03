@@ -69,7 +69,7 @@ public partial class Game1
     private bool _editorPanDragEngaged;
     private const int EditorPanDragThreshold = 6;
 
-    private enum EditorTool { Floor, Wall, Door, Terminal, Device, Zone }
+    private enum EditorTool { Floor, Wall, Door, Terminal, Device, Zone, Engine, Compartment }
     private enum EditorAction { Back, New, Save, SaveAs, Load, Play }
 
     private static readonly float[] EditorForwardOptions = { 0f, 90f, 180f, -90f };
@@ -77,6 +77,14 @@ public partial class Game1
     private EditorTool _editorTool = EditorTool.Floor;
     private static readonly CustomDeviceKind[] EditorDeviceKinds = Enum.GetValues<CustomDeviceKind>();
     private CustomDeviceKind _editorSelectedDeviceKind = EditorDeviceKinds[0];
+    // Which Wall-tool variant is currently selected (direct user request - "усиленная стена"/
+    // "иллюминатор") - a palette sub-choice, not its own EditorTool, same as _editorSelectedDeviceKind
+    // is for the Device tool. Applied by HandleWallToolInput to every tile SetWall places.
+    private WallMaterial _editorWallMaterial = WallMaterial.Standard;
+    // Which Door-tool variant is selected (direct user request - "дверь занимающая 1 на 2 тайла"):
+    // false places one ordinary 1-tile door per click/drag-endpoint, true links exactly the first 2
+    // tiles of a drag into one wide door via TileGrid.LinkDoors. See HandleDoorToolInput.
+    private bool _editorDoorWide;
 
     // The tile canvas itself, plus a couple of things TileCell doesn't carry that the editor still
     // needs to know for rendering/removal: which CustomDeviceKind a given device tile actually is
@@ -90,7 +98,10 @@ public partial class Game1
     // _editorDeviceKinds only ever holds ONE entry per device, keyed by that same anchor, so drawing/
     // export/removal all look the device up by anchor and its full occupied-tile set via this map.
     private readonly Dictionary<TileCoord, TileCoord> _editorDeviceFootprint = new();
-    private sealed record EditorZone(string Name, HashSet<TileCoord> Tiles);
+    // Kind (direct user request - all 4 described zone types, not just one) is set by picking one of
+    // the 4 quick-select buttons in the naming prompt instead of typing a name; null means the player
+    // typed a free-form name instead - purely cosmetic, exactly like every zone before this existed.
+    private sealed record EditorZone(string Name, HashSet<TileCoord> Tiles, ShipZoneKind? Kind = null);
     private readonly List<EditorZone> _editorZones = new();
 
     // 1x1 for every kind except the Reactor, which is now a real 4x4-tile footprint everywhere in
@@ -99,12 +110,55 @@ public partial class Game1
     // one more entry here.
     private static int DeviceFootprintSize(CustomDeviceKind kind) => kind == CustomDeviceKind.Reactor ? 4 : 1;
 
+    // Real Cosmoteer-style engine (ShipEngine.cs) - a directional 3-tile line (Control/Bulkhead/
+    // Nozzle), NOT the generic NxN device footprint above, so it gets its own parallel bookkeeping
+    // rather than being forced through _editorDeviceKinds/_editorDeviceFootprint (direct user
+    // decision, see the session context: the 3 tiles have different per-tile placement preconditions,
+    // fighting the generic machinery instead of reusing it). Keyed by the Control tile (the anchor the
+    // player actually clicks) - _editorEngineFacing holds one entry per placed engine,
+    // _editorEngineFootprint maps every one of its 3 occupied tiles back to that same anchor, same
+    // "anchor vs full footprint" split _editorDeviceFootprint already uses for devices.
+    private readonly Dictionary<TileCoord, TileSide> _editorEngineFacing = new();
+    private readonly Dictionary<TileCoord, TileCoord> _editorEngineFootprint = new();
+    // Facing is chosen with a rotate key BEFORE placing, not per-click drag (direct user decision) -
+    // this is the tool's own live "what would placing right now produce" state, like
+    // _editorSelectedDeviceKind is for the Device tool.
+    private TileSide _editorEnginePendingFacing = TileSide.West;
+    private bool _prevEngineRotateKeyDown;
+    // A middling single constant (RoomCatalog.EnginesFor's own engine-small=5f/engine-big=12f) since
+    // the editor only gets ONE engine tool, not several size tiers.
+    private const float EngineMaxThrust = 8f;
+
+    // M81 (humble-soaring-cat.md) - wires the already-built CompartmentCatalog/CompartmentPlacer
+    // (M80) into the free-tile Ship Editor as its own placeable palette category: pick a variant,
+    // rotate with R (same pending-rotation-before-placement convention _editorEnginePendingFacing
+    // already uses), click to stamp the whole pre-baked compartment, right-click any of its own tiles
+    // to remove the whole thing at once. _editorCompartmentAt/_editorCompartmentTiles are the "anchor
+    // vs full footprint" split every other multi-tile placement here already uses (_editorDeviceFootprint,
+    // _editorEngineFootprint) - every tile of a placed compartment maps to its own instance id, and
+    // that id maps back to the full set of tiles it occupies (floor + wall ring) for removal.
+    // _editorCompartmentProtected tracks each instance's own ProtectedTiles (CompartmentPlacer's own
+    // core-device/engine/airlock tiles) for a LATER milestone's outfit-mode UI to refuse removing -
+    // this milestone only records them, it doesn't enforce anything against them yet.
+    private string? _editorSelectedCompartmentId;
+    private int _editorCompartmentPendingRotation; // 0-3, cycles on R while EditorTool.Compartment is active
+    private bool _prevCompartmentRotateKeyDown;
+    private readonly Dictionary<TileCoord, string> _editorCompartmentAt = new();
+    private readonly Dictionary<string, HashSet<TileCoord>> _editorCompartmentTiles = new();
+    private readonly Dictionary<string, HashSet<TileCoord>> _editorCompartmentProtected = new();
+    private int _editorNextCompartmentInstance;
+
     private (int X, int Y)? _editorFloorDragStart;
     private TileCoord? _editorWallDragStart;
     private (int X, int Y)? _editorZoneDragStart;
     private HashSet<TileCoord>? _editorPendingZoneTiles;
     private bool _editorZoneNamePrompting;
     private string _editorZoneNameInput = "";
+    // Set by clicking one of the 4 type quick-select buttons in the naming prompt (direct user
+    // request); cleared back to null the moment the player edits the text field by hand, so a typed
+    // zone whose name is then hand-edited away from the canonical label doesn't silently keep acting
+    // as that type.
+    private ShipZoneKind? _editorZonePendingKind;
 
     // Left over from the old Room-rectangle editor - still written by EnterShipEditor/
     // HandleShipEditorNewClicked below so the Save/Load slot machinery (Game1.ShipEditor.Ships.cs)
@@ -147,12 +201,21 @@ public partial class Game1
             _editorDeviceKinds.Clear();
             _editorDeviceFootprint.Clear();
             _editorZones.Clear();
+            _editorEngineFacing.Clear();
+            _editorEngineFootprint.Clear();
+            _editorCompartmentAt.Clear();
+            _editorCompartmentTiles.Clear();
+            _editorCompartmentProtected.Clear();
         }
         _editorTool = EditorTool.Floor;
+        _editorWallMaterial = WallMaterial.Standard;
+        _editorDoorWide = false;
+        _editorDoorDragStart = null;
         _editorCurrentSlotName = null; // the scratch slot isn't necessarily saved under any name yet
         _editorSaveAsPrompting = false;
         _editorLoadListOpen = false;
         _editorZoneNamePrompting = false;
+        _editorZonePendingKind = null;
         _menuScreen = MenuScreen.ShipEditor;
     }
 
@@ -257,7 +320,7 @@ public partial class Game1
                 HandleWallToolInput(leftClicked, leftReleased, rightClicked);
                 break;
             case EditorTool.Door:
-                HandleDoorToolInput(leftClicked, rightClicked);
+                HandleDoorToolInput(leftClicked, leftReleased, rightClicked);
                 break;
             case EditorTool.Terminal:
                 HandleTerminalToolInput(leftClicked, rightClicked);
@@ -267,6 +330,12 @@ public partial class Game1
                 break;
             case EditorTool.Zone:
                 HandleZoneToolInput(leftClicked, leftReleased);
+                break;
+            case EditorTool.Engine:
+                HandleEngineToolInput(leftClicked, rightClicked, keyboard);
+                break;
+            case EditorTool.Compartment:
+                HandleCompartmentToolInput(leftClicked, rightClicked, keyboard);
                 break;
         }
     }
@@ -315,7 +384,15 @@ public partial class Game1
         if (rightClicked)
         {
             if (GridCellAt(_designMouse) is { } cell && _editorTiles.CellAt(new TileCoord(cell.X, cell.Y)) is { Wall: not TileWallKind.None })
-                _editorTiles.SetWall(new TileCoord(cell.X, cell.Y), TileWallKind.None);
+            {
+                var coord = new TileCoord(cell.X, cell.Y);
+                // Removing a wall tile that's currently serving as some engine's Bulkhead (see
+                // HandleEngineToolInput's own doc comment) would otherwise leave that engine facing a
+                // non-wall - a dangling invalid state. Take the engine with it instead.
+                if (_editorEngineFootprint.TryGetValue(coord, out var engineAnchor))
+                    RemoveEngineAt(engineAnchor);
+                _editorTiles.SetWall(coord, TileWallKind.None);
+            }
             return;
         }
 
@@ -339,7 +416,7 @@ public partial class Game1
             // нельзя было построить").
             if (_editorTiles.CellAt(coord) is not { HasFloor: true, DeviceId: null })
                 continue;
-            _editorTiles.SetWall(coord, TileWallKind.Solid);
+            _editorTiles.SetWall(coord, TileWallKind.Solid, material: _editorWallMaterial);
             EvictTerminalsAtJunctions(coord);
         }
     }
@@ -365,25 +442,156 @@ public partial class Game1
         }
     }
 
+    private TileCoord? _editorDoorDragStart;
+
     // A door is its own toggleable wall variant (TileGrid.cs) - can go straight onto bare floor, or
     // replace an existing solid wall. Clicking an existing door removes it back to bare floor
     // (there's nothing else for this tool to do to a door tile, so both directions share one button).
-    private void HandleDoorToolInput(bool leftClicked, bool rightClicked)
+    // Wide mode (_editorDoorWide, direct user request - "дверь занимающая 1 на 2 тайла") reuses the
+    // Wall tool's own drag-a-line gesture, but only ever links the FIRST 2 tiles of that drag into
+    // one door (TileGrid.LinkDoors) - a longer drag doesn't chain more doors, and a bare click (no
+    // real drag) still places one ordinary single-tile door.
+    private void HandleDoorToolInput(bool leftClicked, bool leftReleased, bool rightClicked)
     {
-        if (GridCellAt(_designMouse) is not { } cell)
-            return;
-        var coord = new TileCoord(cell.X, cell.Y);
-        var current = _editorTiles.CellAt(coord);
         if (rightClicked)
         {
-            if (current is { Wall: TileWallKind.Door })
-                _editorTiles.SetWall(coord, TileWallKind.None);
+            if (GridCellAt(_designMouse) is not { } removeCell)
+                return;
+            var removeCoord = new TileCoord(removeCell.X, removeCell.Y);
+            if (_editorTiles.CellAt(removeCoord) is not { Wall: TileWallKind.Door } current)
+                return;
+            // M83 - a Docking compartment's own airlock door tile is a protected core tile (per
+            // CompartmentPlacer.Stamp's own ProtectedTiles) and must never be touched by this tool at
+            // all - not converted to None, not "restored" to Solid either (M82's own RestoreKind logic
+            // below), it just can't be removed while the compartment stands.
+            if (IsProtectedCompartmentCore(removeCoord))
+                return;
+            // M82 - a door that replaced one of a compartment's own wall-ring tiles (still tracked in
+            // _editorCompartmentAt from M81's placement bookkeeping) reseals back to a Solid wall on
+            // removal, not bare None - None would punch a permanent hole straight through the hull
+            // between the two compartments' own interiors, silently merging their regions. An ordinary
+            // free-tile-painted door with no compartment involvement at all keeps today's plain-floor
+            // behavior exactly as before. Each tile of a linked wide-door pair is judged independently
+            // by its OWN membership, not a single shared decision for the pair.
+            TileWallKind RestoreKind(TileCoord tile) =>
+                _editorCompartmentAt.ContainsKey(tile) ? TileWallKind.Solid : TileWallKind.None;
+
+            // Removing one tile of a linked wide door takes its partner with it - the pair reads as
+            // ONE door to the player, not two narrow ones that happen to touch.
+            if (current.DoorGroupId is { } groupId)
+                foreach (var partner in _editorTiles.Cells
+                    .Where(kv => kv.Value.DoorGroupId == groupId && kv.Key != removeCoord)
+                    .Select(kv => kv.Key).ToList())
+                    _editorTiles.SetWall(partner, RestoreKind(partner));
+            _editorTiles.SetWall(removeCoord, RestoreKind(removeCoord));
             return;
         }
-        if (!leftClicked || current is not { HasFloor: true, DeviceId: null })
+
+        if (!_editorDoorWide)
+        {
+            if (!leftClicked || GridCellAt(_designMouse) is not { } cell)
+                return;
+            var coord = new TileCoord(cell.X, cell.Y);
+            if (_editorTiles.CellAt(coord) is not { HasFloor: true, DeviceId: null })
+                return;
+            _editorTiles.SetWall(coord, TileWallKind.Door);
+            EvictTerminalsAtJunctions(coord);
             return;
-        _editorTiles.SetWall(coord, TileWallKind.Door);
-        EvictTerminalsAtJunctions(coord);
+        }
+
+        if (leftClicked)
+        {
+            if (GridCellAt(_designMouse) is { } cell)
+                _editorDoorDragStart = new TileCoord(cell.X, cell.Y);
+            return;
+        }
+        if (!leftReleased || _editorDoorDragStart is not { } start)
+            return;
+        _editorDoorDragStart = null;
+
+        var end = GridCellAt(_designMouse) is { } endCell ? new TileCoord(endCell.X, endCell.Y) : start;
+        var span = LineBetween(start, end).Take(2).ToList();
+
+        // M82 (humble-soaring-cat.md) - direct user rule: a door may replace the wall on the boundary
+        // between two ALREADY-PLACED compartments only if that boundary is exactly 2 tiles long and
+        // neither of those tiles borders open space/vacuum (a genuine interior seam, never a stretch
+        // of the outer hull). Tried FIRST, on the whole 2-tile span at once - both tiles must
+        // independently qualify (TryResolveCompartmentBoundaryDoor) AND agree on the very same
+        // compartment pair, so a drag can't straddle a corner into a third compartment. If it doesn't
+        // apply (not a wall at all, an ordinary hull wall, or a corner), fall through unchanged to the
+        // original floor-based interpretation below - the two cases are mutually exclusive per tile (a
+        // tile is either bare floor or already carries a wall), so there's no ambiguity about which
+        // one a given drag means. No partial application: either both tiles convert, or neither does.
+        if (span.Count == 2
+            && TryResolveCompartmentBoundaryDoor(span[0], out var boundaryOwnerA, out var boundaryOwnerB)
+            && TryResolveCompartmentBoundaryDoor(span[1], out var otherOwnerA, out var otherOwnerB)
+            && boundaryOwnerA == otherOwnerA && boundaryOwnerB == otherOwnerB)
+        {
+            foreach (var spanCoord in span)
+            {
+                _editorTiles.SetWall(spanCoord, TileWallKind.Door);
+                EvictTerminalsAtJunctions(spanCoord);
+            }
+            _editorTiles.LinkDoors(span[0], span[1]);
+            return;
+        }
+
+        var placed = new List<TileCoord>();
+        foreach (var spanCoord in span)
+        {
+            if (_editorTiles.CellAt(spanCoord) is not { HasFloor: true, DeviceId: null })
+                continue;
+            _editorTiles.SetWall(spanCoord, TileWallKind.Door);
+            EvictTerminalsAtJunctions(spanCoord);
+            placed.Add(spanCoord);
+        }
+        if (placed.Count == 2)
+            _editorTiles.LinkDoors(placed[0], placed[1]);
+    }
+
+    // M82 - does `coord` sit on a genuine interior seam between two already-placed compartments? Only
+    // true for a Solid wall tile that is (a) part of some compartment's own wall ring (per M81's
+    // _editorCompartmentAt tracking, which covers a compartment's FULL footprint including its wall
+    // tiles), (b) has EXACTLY ONE neighbor that is that same compartment's own open interior floor
+    // (the "inward" side - zero means this isn't really a ring tile, two means it's a CORNER tile,
+    // where the wall ring never actually touches the inset interior floor at all; doors are only valid
+    // on straight, non-corner segments), and (c) has, on the OPPOSITE ("outward") side, a DIFFERENT
+    // already-placed compartment's own open floor - not real exterior/vacuum (no owner at all), not
+    // the same compartment somehow, and not itself another wall. On success, ownerA/ownerB are the two
+    // compartments' own instance ids (ownerA is whichever owns `coord` itself).
+    private bool TryResolveCompartmentBoundaryDoor(TileCoord coord, out string ownerA, out string ownerB)
+    {
+        ownerA = "";
+        ownerB = "";
+        if (_editorTiles.CellAt(coord) is not { Wall: TileWallKind.Solid })
+            return false;
+        if (!_editorCompartmentAt.TryGetValue(coord, out var owner))
+            return false;
+
+        TileSide? inward = null;
+        foreach (var side in TileSideExtensions.All)
+        {
+            var neighbor = side.Offset(coord);
+            if (_editorCompartmentAt.TryGetValue(neighbor, out var neighborOwner) && neighborOwner == owner
+                && _editorTiles.CellAt(neighbor) is { HasFloor: true, Wall: TileWallKind.None })
+            {
+                if (inward is not null)
+                    return false; // a second match - this is a corner tile, reject
+                inward = side;
+            }
+        }
+        if (inward is not { } inwardSide)
+            return false; // zero matches - not a straight ring tile of its own compartment
+
+        var outward = inwardSide.Opposite().Offset(coord);
+        if (!_editorCompartmentAt.TryGetValue(outward, out var outwardOwner) || outwardOwner == owner)
+            return false; // real exterior/vacuum, or somehow still the same compartment
+        if (_editorTiles.CellAt(outward) is not { HasFloor: true, Wall: TileWallKind.None })
+            return false; // not genuinely open floor on the other side
+
+        ownerA = owner;
+        ownerB = outwardOwner;
+        return true;
     }
 
     // Mounts to whichever side actually has a wall/door neighbor (TileGrid.PlaceTerminal's own
@@ -468,6 +676,16 @@ public partial class Game1
         {
             if (_editorDeviceFootprint.TryGetValue(coord, out var anchor))
             {
+                // M83 - refuse the whole removal (not a partial one) if this device's own anchor tile
+                // is some still-placed compartment's protected core device. In practice every
+                // compartment-placed device is stamped as its own 1x1 footprint (CompartmentPlacer.
+                // Stamp's own PlacedDevice.Coord IS the anchor _editorDeviceKinds/_editorDeviceFootprint
+                // key - see HandleCompartmentToolInput above), so checking the anchor alone is exact,
+                // not just an approximation for the multi-tile case (e.g. a free-tile-painted 4x4
+                // Reactor with no compartment involvement at all is never in _editorCompartmentAt to
+                // begin with, so this never blocks that).
+                if (IsProtectedCompartmentCore(anchor))
+                    return;
                 foreach (var occupied in DeviceFootprintTiles(anchor, DeviceFootprintSize(_editorDeviceKinds[anchor])))
                 {
                     _editorTiles.RemoveDevice(occupied);
@@ -512,6 +730,205 @@ public partial class Game1
     private static TileCoord FootprintAnchorFor(TileCoord clicked, int size) =>
         new(clicked.X - size / 2, clicked.Y - size / 2);
 
+    // The engine's own 3-tile line: Control (the clicked anchor), Bulkhead 1 tile further in
+    // `facing`, Nozzle 2 tiles further - exactly ShipEngine.cs's own ControlPosition/BulkheadPosition/
+    // NozzlePosition convention, just in integer tile space instead of continuous Vec2 world units.
+    private static IEnumerable<TileCoord> EngineFootprintTiles(TileCoord control, TileSide facing)
+    {
+        yield return control;
+        var bulkhead = facing.Offset(control);
+        yield return bulkhead;
+        yield return facing.Offset(bulkhead);
+    }
+
+    // R rotates the PENDING facing (cycled before placement, not dragged per-click - direct user
+    // decision). Control needs bare floor, same precondition every device needs. Bulkhead must
+    // ALREADY be a Solid wall tile the player painted themselves - that's how the player marks "this
+    // is my hull edge," and it can't collide with anything else since a Solid wall tile can't also
+    // host a device/floor-only content. Nozzle must be genuinely open (no floor tile there) - real
+    // exterior space beyond the hull. Ship.cs's constructor already excludes the auto-generated
+    // WallBlock that would otherwise coincide with the Bulkhead position (Engines.Any(e =>
+    // (e.BulkheadPosition - b.Position).Length() < 0.1)), so this needs no further server-side wiring.
+    private void HandleEngineToolInput(bool leftClicked, bool rightClicked, KeyboardState keyboard)
+    {
+        var rDown = keyboard.IsKeyDown(Keys.R);
+        if (rDown && !_prevEngineRotateKeyDown)
+        {
+            _editorEnginePendingFacing = _editorEnginePendingFacing switch
+            {
+                TileSide.West => TileSide.North,
+                TileSide.North => TileSide.East,
+                TileSide.East => TileSide.South,
+                _ => TileSide.West,
+            };
+        }
+        _prevEngineRotateKeyDown = rDown;
+
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var control = new TileCoord(cell.X, cell.Y);
+
+        if (rightClicked)
+        {
+            if (_editorEngineFootprint.TryGetValue(control, out var anchor))
+                RemoveEngineAt(anchor);
+            return;
+        }
+        if (!leftClicked)
+            return;
+
+        var facing = _editorEnginePendingFacing;
+        var bulkhead = facing.Offset(control);
+        var nozzle = facing.Offset(bulkhead);
+
+        if (_editorTiles.CellAt(control) is not { HasFloor: true, Wall: TileWallKind.None, DeviceId: null })
+            return;
+        if (_editorTiles.CellAt(bulkhead) is not { Wall: TileWallKind.Solid })
+            return;
+        if (_editorTiles.CellAt(nozzle) is { HasFloor: true })
+            return;
+        // Two engines can never legally share ANY tile of their 3-tile line - most importantly the
+        // Bulkhead, since a second engine placed against the same hull-wall tile would silently
+        // overwrite the first's facing/footprint bookkeeping the moment it's removed.
+        if (EngineFootprintTiles(control, facing).Any(_editorEngineFootprint.ContainsKey))
+            return;
+
+        var deviceId = $"engine-{control.X}-{control.Y}";
+        _editorTiles.PlaceDevice(control, deviceId);
+        _editorEngineFacing[control] = facing;
+        foreach (var t in EngineFootprintTiles(control, facing))
+            _editorEngineFootprint[t] = control;
+    }
+
+    private void RemoveEngineAt(TileCoord anchor)
+    {
+        // M83 - `anchor` is the engine's own Control tile (_editorEngineFacing's own key convention,
+        // set at placement time in HandleEngineToolInput/HandleCompartmentToolInput), which is one of
+        // the 3 tiles CompartmentPlacer.Stamp marks protected for a baked engine assembly - refuse
+        // before any mutation if it's still a still-placed compartment's own protected core.
+        if (IsProtectedCompartmentCore(anchor))
+            return;
+        if (!_editorEngineFacing.TryGetValue(anchor, out var facing))
+            return;
+        foreach (var t in EngineFootprintTiles(anchor, facing))
+            _editorEngineFootprint.Remove(t);
+        _editorEngineFacing.Remove(anchor);
+        _editorTiles.RemoveDevice(anchor);
+    }
+
+    // R rotates the PENDING rotation step (0-3), same before-placement convention the Engine tool's
+    // own _editorEnginePendingFacing already uses. The clicked tile is the rotated footprint's own
+    // CENTER (FootprintAnchorFor's own convention for the Device tool) rather than its top-left corner
+    // - the anchor CompartmentPlacer.Stamp itself wants is derived by walking back Width/2,Height/2
+    // from the clicked tile, same math FootprintAnchorFor already uses for square devices.
+    private void HandleCompartmentToolInput(bool leftClicked, bool rightClicked, KeyboardState keyboard)
+    {
+        var rDown = keyboard.IsKeyDown(Keys.R);
+        if (rDown && !_prevCompartmentRotateKeyDown)
+            _editorCompartmentPendingRotation = (_editorCompartmentPendingRotation + 1) % 4;
+        _prevCompartmentRotateKeyDown = rDown;
+
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var clicked = new TileCoord(cell.X, cell.Y);
+
+        if (rightClicked)
+        {
+            if (_editorCompartmentAt.TryGetValue(clicked, out var instanceId))
+                RemoveCompartmentAt(instanceId);
+            return;
+        }
+        if (!leftClicked || _editorSelectedCompartmentId is not { } compartmentId)
+            return;
+        if (CompartmentCatalog.Find(compartmentId) is not { } entry)
+            return;
+
+        var rotated = CompartmentPlacer.Rotate(entry, _editorCompartmentPendingRotation);
+        var anchor = new TileCoord(clicked.X - rotated.Width / 2, clicked.Y - rotated.Height / 2);
+        var instance = $"compartment-{_editorNextCompartmentInstance++}";
+        var result = CompartmentPlacer.Stamp(_editorTiles, entry, anchor, _editorCompartmentPendingRotation, instance);
+        if (!result.Success)
+            return; // silent reject, same convention every other tool's own precondition checks use
+
+        foreach (var device in result.Devices)
+        {
+            _editorDeviceKinds[device.Coord] = device.Kind;
+            _editorDeviceFootprint[device.Coord] = device.Coord;
+        }
+        foreach (var engine in result.Engines)
+        {
+            _editorEngineFacing[engine.ControlCoord] = engine.Facing;
+            foreach (var t in EngineFootprintTiles(engine.ControlCoord, engine.Facing))
+                _editorEngineFootprint[t] = engine.ControlCoord;
+        }
+
+        // Every tile the compartment actually occupies - the full rotated footprint's own absolute
+        // tiles (floor + wall ring), the same local (x,y) in [0,Width) x [0,Height) range Stamp itself
+        // iterates internally, offset by anchor.
+        var allTiles = new HashSet<TileCoord>();
+        for (var y = 0; y < rotated.Height; y++)
+            for (var x = 0; x < rotated.Width; x++)
+                allTiles.Add(new TileCoord(anchor.X + x, anchor.Y + y));
+        foreach (var t in allTiles)
+            _editorCompartmentAt[t] = instance;
+        _editorCompartmentTiles[instance] = allTiles;
+        _editorCompartmentProtected[instance] = new HashSet<TileCoord>(result.ProtectedTiles);
+    }
+
+    // M83 - true if `coord` is a still-placed compartment's own protected "core" tile (its core device,
+    // any tile of a baked engine assembly, or a Docking compartment's own airlock door) - per the user's
+    // own rule, this specific tile can never be individually demolished while the rest of its compartment
+    // stands. Removing the WHOLE compartment (RemoveCompartmentAt below, the Compartment tool's own
+    // right-click) is a different, unrestricted action and does NOT go through this check - only
+    // single-tile removal tools (Device/Engine/Door) do.
+    private bool IsProtectedCompartmentCore(TileCoord coord) =>
+        _editorCompartmentAt.TryGetValue(coord, out var instanceId)
+        && _editorCompartmentProtected.TryGetValue(instanceId, out var protectedTiles)
+        && protectedTiles.Contains(coord);
+
+    // The one genuinely tricky part of removal: CompartmentPlacer.Stamp's own placement-time wall
+    // dedup (M80) means a compartment placed touching an EARLIER one never grew its own wall on the
+    // shared boundary - it deduped down to plain floor there instead, leaving the earlier compartment's
+    // own wall as the sole 1-tile separator. Removing THIS compartment (whichever one it is) is safe on
+    // its own shared-boundary tiles that still carry a wall (nothing else depended on them), but if a
+    // NEIGHBORING, still-standing compartment was the one whose ring got deduped away against THIS one
+    // (i.e. this compartment was placed FIRST and the neighbor came second, deduping against it), that
+    // neighbor's boundary now has a hole where this compartment's own wall used to be its shared
+    // separator - repaint a fresh wall there before this compartment's own tiles are cleared.
+    private void RemoveCompartmentAt(string instanceId)
+    {
+        if (!_editorCompartmentTiles.TryGetValue(instanceId, out var tiles))
+            return;
+
+        foreach (var coord in tiles)
+        {
+            if (_editorTiles.CellAt(coord) is not { Wall: TileWallKind.Solid })
+                continue; // not one of this compartment's own ring tiles - interior tiles have no wall
+            foreach (var side in TileSideExtensions.All)
+            {
+                var outward = side.Offset(coord);
+                if (!_editorCompartmentAt.TryGetValue(outward, out var neighborInstance) || neighborInstance == instanceId)
+                    continue; // exterior space, or still this same compartment - nothing to repair
+                if (_editorTiles.CellAt(outward) is { Wall: TileWallKind.None, HasFloor: true })
+                    _editorTiles.SetWall(outward, TileWallKind.Solid); // restore the neighbor's own boundary
+            }
+        }
+
+        foreach (var coord in tiles)
+        {
+            _editorDeviceKinds.Remove(coord);
+            _editorDeviceFootprint.Remove(coord);
+            _editorEngineFacing.Remove(coord);
+            _editorEngineFootprint.Remove(coord);
+            _editorCompartmentAt.Remove(coord);
+            if (_editorTiles.CellAt(coord) is { DeviceId: not null })
+                _editorTiles.RemoveDevice(coord);
+            _editorTiles.SetFloor(coord, false);
+        }
+        _editorCompartmentTiles.Remove(instanceId);
+        _editorCompartmentProtected.Remove(instanceId);
+    }
+
     // Purely cosmetic (direct user answer: no validation requirement) - drag a rectangle over
     // already-painted floor tiles, release to name it. An empty selection (no floor tiles inside the
     // dragged rectangle) is silently ignored rather than prompting for a name nobody would want.
@@ -542,6 +959,7 @@ public partial class Game1
             return;
         _editorPendingZoneTiles = tiles;
         _editorZoneNameInput = $"Отсек {_editorZones.Count + 1}";
+        _editorZonePendingKind = null;
         _editorZoneNamePrompting = true;
     }
 
@@ -554,6 +972,15 @@ public partial class Game1
         }
         if (!leftClicked)
             return;
+        for (var i = 0; i < ShipZoneKinds.All.Length; i++)
+        {
+            if (!GetEditorZoneTypeButtonRect(i).Contains(_designMouse))
+                continue;
+            var kind = ShipZoneKinds.All[i];
+            _editorZonePendingKind = kind;
+            _editorZoneNameInput = ShipZoneKinds.CanonicalName(kind);
+            return;
+        }
         if (GetEditorZoneNameConfirmRect().Contains(_designMouse))
             ConfirmEditorZoneName();
         else if (GetEditorZoneNameCancelRect().Contains(_designMouse))
@@ -573,7 +1000,7 @@ public partial class Game1
         foreach (var zone in _editorZones)
             zone.Tiles.ExceptWith(tiles);
         _editorZones.RemoveAll(z => z.Tiles.Count == 0);
-        _editorZones.Add(new EditorZone(name, tiles));
+        _editorZones.Add(new EditorZone(name, tiles, _editorZonePendingKind));
         _editorPendingZoneTiles = null;
         _editorZoneNamePrompting = false;
     }
@@ -599,6 +1026,11 @@ public partial class Game1
         _editorDeviceKinds.Clear();
         _editorDeviceFootprint.Clear();
         _editorZones.Clear();
+        _editorEngineFacing.Clear();
+        _editorEngineFootprint.Clear();
+        _editorCompartmentAt.Clear();
+        _editorCompartmentTiles.Clear();
+        _editorCompartmentProtected.Clear();
         _editorCurrentSlotName = null; // a blank hull isn't the previously-open named slot any more
         SaveEditorDefinition();
     }

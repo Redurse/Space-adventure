@@ -60,6 +60,18 @@ public sealed class TileCell
     public TileWallKind Wall;
     public bool DoorOpen; // meaningful only when Wall == Door
     public float WallHp;  // meaningful only when Wall != None; <= 0 means breached (see TileGrid.IsBlockingForRegion)
+    // Wall "skin" (direct user request, humble-soaring-cat.md M76 follow-up) - meaningful only when
+    // Wall == Solid; a Door is never itself Reinforced/Window (see WallMaterial.cs), it stays
+    // Standard regardless of what's set here.
+    public WallMaterial WallMaterial;
+    // Links exactly two adjacent Door tiles into one player-authored "wide" door (direct user
+    // request: "дверь занимающая 1 на 2 тайла") - meaningful only when Wall == Door, null for an
+    // ordinary single-tile door. Purely an editor/persistence bookkeeping field: the real ship's own
+    // Door model (Ship.Custom.cs) already auto-widens a door up to Door.StandardSpanUnits (2 units)
+    // from the room-pair overlap alone, so this doesn't need to reach the server at all - it only
+    // drives how the editor RENDERS the pair (one merged sprite instead of two narrow ones) and keeps
+    // them paired through remove/save/load.
+    public string? DoorGroupId;
     public string? DeviceId;    // at most one device per cell; occupies the floor slot, blocks movement
     public string? TerminalId;  // at most one terminal per cell; does NOT occupy the floor slot, does NOT block movement
     public TileSide? TerminalWallSide; // which neighbor direction must carry a wall for the terminal to mount against
@@ -97,6 +109,35 @@ public sealed class TileGrid
     public TileCell? CellAt(TileCoord coord) => Cells.TryGetValue(coord, out var cell) ? cell : null;
 
     public int? RegionIdAt(TileCoord coord) => RegionIdOf.TryGetValue(coord, out var id) ? id : null;
+
+    // M77 (humble-soaring-cat.md) - a deep, independent copy: World.ShipDebris.cs's DestroyRoomAndDetach
+    // needs to ask "what would connectivity look like if this room's tiles were actually gone" without
+    // mutating the live, already-synced Ship.Tiles other systems read this same tick. Copies every
+    // TileCell by value (it's a mutable class, not a record) and carries the private region-id counter
+    // forward too, so a region freshly split/created on the clone can never collide with an id that
+    // still means something different back on the original.
+    public TileGrid Clone()
+    {
+        var clone = new TileGrid { _nextRegionId = _nextRegionId };
+        foreach (var (coord, cell) in Cells)
+            clone.Cells[coord] = new TileCell
+            {
+                HasFloor = cell.HasFloor,
+                Wall = cell.Wall,
+                DoorOpen = cell.DoorOpen,
+                WallHp = cell.WallHp,
+                WallMaterial = cell.WallMaterial,
+                DoorGroupId = cell.DoorGroupId,
+                DeviceId = cell.DeviceId,
+                TerminalId = cell.TerminalId,
+                TerminalWallSide = cell.TerminalWallSide,
+            };
+        foreach (var (id, region) in Regions)
+            clone.Regions[id] = new SealedRegion { Id = region.Id, Tiles = new HashSet<TileCoord>(region.Tiles), LeaksToVacuum = region.LeaksToVacuum };
+        foreach (var (coord, id) in RegionIdOf)
+            clone.RegionIdOf[coord] = id;
+        return clone;
+    }
 
     // A door counts as a wall for region purposes regardless of open/closed state - only the
     // floor/wall LAYER matters for "is this pocket sealed," not the door's momentary state (see
@@ -149,7 +190,7 @@ public sealed class TileGrid
     // kind == None clears the wall (and any door-open state); Solid/Door install a fresh,
     // full-health wall of that kind. Requires a floor already at `coord` - walls cannot be placed
     // in open space (mirrors the "floor is the mandatory substrate" rule from the plan).
-    public void SetWall(TileCoord coord, TileWallKind kind, float hp = 100f)
+    public void SetWall(TileCoord coord, TileWallKind kind, float hp = 100f, WallMaterial material = WallMaterial.Standard)
     {
         if (!Cells.TryGetValue(coord, out var cell) || !cell.HasFloor)
             throw new InvalidOperationException($"Cannot place a wall at {coord} without a floor there first.");
@@ -157,14 +198,41 @@ public sealed class TileGrid
         var wasMember = IsRegionMember(cell);
         cell.Wall = kind;
         cell.WallHp = kind == TileWallKind.None ? 0f : hp;
+        // A Door is never itself a material variant (WallMaterial.cs) - only a Solid wall keeps
+        // whatever was requested; clearing a wall or replacing it with a door both reset to Standard.
+        cell.WallMaterial = kind == TileWallKind.Solid ? material : WallMaterial.Standard;
         if (kind != TileWallKind.Door)
+        {
             cell.DoorOpen = false;
+            cell.DoorGroupId = null;
+        }
         var isMemberNow = IsRegionMember(cell);
 
         if (wasMember && !isMemberNow)
             OnTileLeftRegionMembership(coord);
         else if (!wasMember && isMemberNow)
             OnTileBecameRegionMember(coord);
+    }
+
+    // Pairs two already-placed Door tiles into one player-authored "wide" door (see TileCell.
+    // DoorGroupId's own doc comment) - both must already be Door tiles; a fresh id is generated so
+    // each call produces its own independent pair.
+    public void LinkDoors(TileCoord a, TileCoord b)
+    {
+        if (CellAt(a) is not { Wall: TileWallKind.Door } cellA || CellAt(b) is not { Wall: TileWallKind.Door } cellB)
+            throw new InvalidOperationException($"Cannot link {a} and {b} into a wide door - both must already be door tiles.");
+        var groupId = Guid.NewGuid().ToString("N");
+        cellA.DoorGroupId = groupId;
+        cellB.DoorGroupId = groupId;
+    }
+
+    // M72 follow-up (World.TileSync.cs) - mirrors a live WallBlock's own Material onto its tile, the
+    // same "reconcile against an already-known authoritative value" shape SetWallHp already uses.
+    // Never changes region topology (material is purely cosmetic/HP-cap, like WallHp itself).
+    public void SetWallMaterial(TileCoord coord, WallMaterial material)
+    {
+        if (Cells.TryGetValue(coord, out var cell) && cell.Wall == TileWallKind.Solid)
+            cell.WallMaterial = material;
     }
 
     public void SetDoorOpen(TileCoord coord, bool open)

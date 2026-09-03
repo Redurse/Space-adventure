@@ -1387,6 +1387,46 @@ public partial class Game1
             _shipSearchQuery += e.Character;
     }
 
+    // Crew chat input box (direct user request, "как в Баротравме") - same shape as
+    // OnShipSearchTextInput above, just a longer cap (a chat message needs more room than a search
+    // query) and a real submit on Enter instead of a plain unfocus.
+    private void OnChatTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (!_sessionStarted || !_chatFocused)
+            return;
+
+        if (e.Character == '\b')
+        {
+            if (_chatInput.Length > 0)
+                _chatInput = _chatInput[..^1];
+            return;
+        }
+        if (e.Character == (char)27) // Escape - handled by UpdateCore's own polled keyboard read
+        {
+            // (UpdateCore already clears _chatInput/_chatFocused on Escape; nothing to do here.)
+            return;
+        }
+        if (e.Character == '\r')
+        {
+            // The same physical Enter keystroke that just opened the box - don't also treat it as
+            // an immediate submit/close (Game1.cs's UpdateCore sets this guard for exactly one
+            // Update call around the frame it opens the box).
+            if (_chatJustOpenedThisFrame)
+            {
+                _chatJustOpenedThisFrame = false;
+                return;
+            }
+            var trimmed = _chatInput.Trim();
+            if (trimmed.Length > 0)
+                _pendingChatMessage = trimmed;
+            _chatInput = "";
+            _chatFocused = false;
+            return;
+        }
+        if (!char.IsControl(e.Character) && _chatInput.Length < 120)
+            _chatInput += e.Character;
+    }
+
     // Flying the ship: W ahead, X astern, A/D swing the bow, S brakes. The mouse used to drag a
     // joystick that set a world-space thrust vector, which meant the pilot could aim the ship's
     // course but never its heading - and on a hull whose guns and airlock face particular

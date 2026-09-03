@@ -54,6 +54,22 @@ public partial class Game1
         DrawRectOutline(box, Color.LightGray, 2f);
         _spriteBatch.DrawString(_font, "Название отсека:", new Vector2(box.X + 16, box.Y + 12), Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
 
+        // Zone-type quick-select (direct user request - all 4 described zone types): picking one
+        // fills the name field with its canonical label and records the type; typing over the field
+        // afterward drops back to an untyped, purely cosmetic zone (Game1.Menu.cs's own text handler).
+        for (var i = 0; i < ShipZoneKinds.All.Length; i++)
+        {
+            var kind = ShipZoneKinds.All[i];
+            var rect = GetEditorZoneTypeButtonRect(i);
+            var selected = _editorZonePendingKind == kind;
+            _spriteBatch.Draw(_pixel, rect, selected ? new Color(90, 130, 90) : new Color(40, 44, 54));
+            DrawRectOutline(rect, selected ? Color.LightGreen : Color.LightGray, 1f);
+            var label = ShipZoneKinds.CanonicalName(kind);
+            var labelSize = _font.MeasureString(label) * 0.42f;
+            _spriteBatch.DrawString(_font, label, new Vector2(rect.Center.X - labelSize.X / 2, rect.Center.Y - labelSize.Y / 2),
+                Color.White, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
+        }
+
         var inputRect = GetEditorZoneNameInputRect();
         _spriteBatch.Draw(_pixel, inputRect, new Color(40, 44, 54));
         DrawRectOutline(inputRect, Color.White, 1f);
@@ -150,12 +166,18 @@ public partial class Game1
             DrawEditorFloorDragPreview();
         if (_editorTool == EditorTool.Wall)
             DrawEditorWallDragPreview();
-        if (_editorTool == EditorTool.Door)
+        if (_editorTool == EditorTool.Door && _editorDoorWide)
+            DrawEditorDoorDragPreview();
+        else if (_editorTool == EditorTool.Door)
             DrawEditorDoorHoverPreview();
         if (_editorTool == EditorTool.Zone)
             DrawEditorZoneDragPreview();
         if (_editorTool == EditorTool.Device)
             DrawEditorDevicePlacementPreview();
+        if (_editorTool == EditorTool.Engine)
+            DrawEditorEnginePlacementPreview();
+        if (_editorTool == EditorTool.Compartment)
+            DrawEditorCompartmentPlacementPreview();
 
         _spriteBatch.End();
         GraphicsDevice.ScissorRectangle = previousScissor;
@@ -231,6 +253,9 @@ public partial class Game1
                 DrawEditorDeviceAt(coord, kind);
         }
 
+        foreach (var (control, facing) in _editorEngineFacing)
+            DrawEditorEngineAt(control, facing);
+
         foreach (var zone in _editorZones)
             DrawEditorZone(zone);
     }
@@ -241,6 +266,16 @@ public partial class Game1
     // orientation). Kept as a separate copy rather than shared with ShipRenderer since the two work
     // at different pixel scales (ShipRenderer.PixelsPerUnit=48 vs EditorCellSize, base 24) and read
     // from different data (a live WorldSnapshot's rooms vs this editor's own in-memory TileGrid).
+    // Reinforced/Window (direct user request) reuse the same wall textures, just tinted - no bespoke
+    // art exists for either variant yet, same convention Game1.ShipEditor.DeviceTabs.cs's palette
+    // icons already use. Standard stays plain white (no tint at all).
+    private static Color WallMaterialTint(WallMaterial material) => material switch
+    {
+        WallMaterial.Reinforced => new Color(150, 155, 165),
+        WallMaterial.Window => new Color(150, 215, 235) * 0.75f,
+        _ => Color.White,
+    };
+
     private void DrawEditorWallTile(TileCoord coord)
     {
         bool HasWall(TileSide side) => _editorTiles.CellAt(side.Offset(coord)) is { Wall: TileWallKind.Solid or TileWallKind.Door };
@@ -249,6 +284,7 @@ public partial class Game1
         var east = HasWall(TileSide.East);
         var west = HasWall(TileSide.West);
         var rect = EditorTileRect(coord);
+        var tint = WallMaterialTint(_editorTiles.CellAt(coord)?.WallMaterial ?? WallMaterial.Standard);
 
         // A T-junction (exactly 3 wall-kind neighbors - a straight tile-drawn wall can meet another
         // one at 3 sides in a way no rectangular hand-authored hull ever produced) has to be checked
@@ -263,17 +299,17 @@ public partial class Game1
             var tRotation = !north ? 0f : !east ? MathHelper.PiOver2 : !south ? MathHelper.Pi : -MathHelper.PiOver2;
             var tOrigin = new Vector2(tTex.Width / 2f, tTex.Height / 2f);
             _spriteBatch.Draw(tTex, new Rectangle(rect.Center.X, rect.Center.Y, EditorCellSize, EditorCellSize),
-                null, Color.White, tRotation, tOrigin, SpriteEffects.None, 0f);
+                null, tint, tRotation, tOrigin, SpriteEffects.None, 0f);
             return;
         }
         if (north && south && _editorWallVerticalTexture is { } vTex)
         {
-            _spriteBatch.Draw(vTex, rect, Color.White);
+            _spriteBatch.Draw(vTex, rect, tint);
             return;
         }
         if (east && west && _editorWallHorizontalTexture is { } hTex)
         {
-            _spriteBatch.Draw(hTex, rect, Color.White);
+            _spriteBatch.Draw(hTex, rect, tint);
             return;
         }
         // A dead end (exactly one wall-kind neighbor) reads wrong with the corner texture (a "turn"
@@ -284,7 +320,7 @@ public partial class Game1
             var capRotation = south ? 0f : west ? MathHelper.PiOver2 : north ? MathHelper.Pi : -MathHelper.PiOver2;
             var capOrigin = new Vector2(capTex.Width / 2f, capTex.Height / 2f);
             _spriteBatch.Draw(capTex, new Rectangle(rect.Center.X, rect.Center.Y, EditorCellSize, EditorCellSize),
-                null, Color.White, capRotation, capOrigin, SpriteEffects.None, 0f);
+                null, tint, capRotation, capOrigin, SpriteEffects.None, 0f);
             return;
         }
         if (_editorWallCornerTexture is { } cTex)
@@ -299,16 +335,35 @@ public partial class Game1
             };
             var texOrigin = new Vector2(cTex.Width / 2f, cTex.Height / 2f);
             _spriteBatch.Draw(cTex, new Rectangle(rect.Center.X, rect.Center.Y, EditorCellSize, EditorCellSize),
-                null, Color.White, rotation, texOrigin, SpriteEffects.None, 0f);
+                null, tint, rotation, texOrigin, SpriteEffects.None, 0f);
             return;
         }
 
-        _spriteBatch.Draw(_pixel, rect, new Color(120, 130, 150));
+        _spriteBatch.Draw(_pixel, rect, tint == Color.White ? new Color(120, 130, 150) : tint);
         DrawRectOutline(rect, Color.Black, 1f);
     }
 
+    // A wide door (direct user request - "дверь занимающая 1 на 2 тайла", TileCell.DoorGroupId)
+    // draws as ONE merged rectangle spanning both tiles, not two separate narrow ones - only the
+    // tile that sorts first (by X then Y) actually draws it, so the pair isn't rendered twice.
     private void DrawEditorDoorTile(TileCoord coord)
     {
+        var cell = _editorTiles.CellAt(coord);
+        if (cell?.DoorGroupId is { } groupId)
+        {
+            var partnerEntry = _editorTiles.Cells.FirstOrDefault(kv => kv.Key != coord && kv.Value.DoorGroupId == groupId);
+            if (partnerEntry.Value is not null)
+            {
+                var partner = partnerEntry.Key;
+                if (partner.X < coord.X || (partner.X == coord.X && partner.Y < coord.Y))
+                    return; // the partner tile owns this pair's draw
+                var merged = Rectangle.Union(EditorTileRect(coord), EditorTileRect(partner));
+                _spriteBatch.Draw(_pixel, merged, new Color(120, 200, 255) * 0.5f);
+                DrawRectOutline(merged, new Color(120, 200, 255), 2f);
+                return;
+            }
+        }
+
         var rect = EditorTileRect(coord);
         _spriteBatch.Draw(_pixel, rect, new Color(120, 200, 255) * 0.5f);
         DrawRectOutline(rect, new Color(120, 200, 255), 2f);
@@ -350,6 +405,67 @@ public partial class Game1
         DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
     }
 
+    // Live ghost preview for the Engine tool, same green/red valid-placement convention
+    // DrawEditorDevicePlacementPreview already uses - one box per tile of the pending 3-tile line
+    // (Control/Bulkhead/Nozzle) rather than one merged rectangle, since each tile has a genuinely
+    // different precondition (see HandleEngineToolInput's own doc comment) and a single shared colour
+    // would hide which specific tile is the problem.
+    private void DrawEditorEnginePlacementPreview()
+    {
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var control = new TileCoord(cell.X, cell.Y);
+        var facing = _editorEnginePendingFacing;
+        var bulkhead = facing.Offset(control);
+        var nozzle = facing.Offset(bulkhead);
+
+        var controlValid = _editorTiles.CellAt(control) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
+        var bulkheadValid = _editorTiles.CellAt(bulkhead) is { Wall: TileWallKind.Solid };
+        var nozzleValid = _editorTiles.CellAt(nozzle) is not { HasFloor: true };
+        var noOverlap = !EngineFootprintTiles(control, facing).Any(_editorEngineFootprint.ContainsKey);
+
+        void DrawTile(TileCoord coord, bool valid)
+        {
+            var rect = EditorTileRect(coord);
+            _spriteBatch.Draw(_pixel, rect, (valid && noOverlap ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
+            DrawRectOutline(rect, valid && noOverlap ? Color.LightGreen : Color.OrangeRed, 2f);
+        }
+        DrawTile(control, controlValid);
+        DrawTile(bulkhead, bulkheadValid);
+        DrawTile(nozzle, nozzleValid);
+    }
+
+    // M81 - live ghost preview for the Compartment tool, same green/red valid-placement convention
+    // DrawEditorDevicePlacementPreview/DrawEditorEnginePlacementPreview already use, but checked
+    // against a throwaway TileGrid.Clone() (M77's own clone, never the real _editorTiles) via a real
+    // speculative CompartmentPlacer.Stamp call each frame rather than hand-duplicating Stamp's own
+    // overlap/nozzle-clearance rules here - one simple rectangle over the whole rotated W x H
+    // footprint, not per-tile boxes (unlike the Engine tool's 3 separately-validated tiles, a
+    // compartment's placement is a single all-or-nothing Stamp call, so one box reads correctly).
+    private void DrawEditorCompartmentPlacementPreview()
+    {
+        if (_editorSelectedCompartmentId is not { } compartmentId)
+            return;
+        if (CompartmentCatalog.Find(compartmentId) is not { } entry)
+            return;
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var hovered = new TileCoord(cell.X, cell.Y);
+
+        var rotated = CompartmentPlacer.Rotate(entry, _editorCompartmentPendingRotation);
+        var anchor = new TileCoord(hovered.X - rotated.Width / 2, hovered.Y - rotated.Height / 2);
+
+        var speculative = _editorTiles.Clone();
+        var result = CompartmentPlacer.Stamp(speculative, entry, anchor, _editorCompartmentPendingRotation, "preview");
+        var valid = result.Success;
+
+        var topLeft = EditorTileRect(anchor);
+        var bottomRight = EditorTileRect(new TileCoord(anchor.X + rotated.Width - 1, anchor.Y + rotated.Height - 1));
+        var rect = new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
+        _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
+        DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
+    }
+
     // A multi-tile device (today, only Reactor - DeviceFootprintSize) draws its own real texture
     // stretched across its WHOLE footprint instead of the plain small icon every other device still
     // gets - direct user request ("сама текстура должна занимать все 4 на 4 тайла").
@@ -376,11 +492,46 @@ public partial class Game1
             Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
+    // The engine's 3-tile line (Control/Bulkhead/Nozzle, see HandleEngineToolInput's own doc comment)
+    // needs no NEW drawing for the Bulkhead tile - it's already rendered as an ordinary wall by
+    // DrawEditorWallTile above, since placing an engine never touches that tile's own Wall field.
+    // Control gets the same flat tinted-box+glyph style every non-Reactor device already uses
+    // (DrawEditorDeviceAt); Nozzle gets a small warm "exhaust" swatch so the facing reads at a glance
+    // without needing bespoke rotated art (direct user decision - a plain tint is good enough here).
+    private void DrawEditorEngineAt(TileCoord control, TileSide facing)
+    {
+        var controlRect = EditorTileRect(control);
+        const int size = 18;
+        var box = new Rectangle(controlRect.Center.X - size / 2, controlRect.Center.Y - size / 2, size, size);
+        _spriteBatch.Draw(_pixel, box, new Color(90, 160, 220));
+        DrawRectOutline(box, Color.Black, 1f);
+        var glyph = "Дв";
+        var glyphSize = _font.MeasureString(glyph) * 0.4f;
+        _spriteBatch.DrawString(_font, glyph, new Vector2(box.Center.X - glyphSize.X / 2f, box.Center.Y - glyphSize.Y / 2f),
+            Color.White, 0f, Vector2.Zero, 0.4f, SpriteEffects.None, 0f);
+
+        var nozzleCoord = facing.Offset(facing.Offset(control));
+        var nozzleRect = EditorTileRect(nozzleCoord);
+        var nozzleBox = new Rectangle(nozzleRect.Center.X - 6, nozzleRect.Center.Y - 6, 12, 12);
+        _spriteBatch.Draw(_pixel, nozzleBox, new Color(220, 140, 60));
+        DrawRectOutline(nozzleBox, Color.Black, 1f);
+    }
+
     private void DrawEditorZone(EditorZone zone)
     {
         if (zone.Tiles.Count == 0)
             return;
-        var tint = new Color(255, 200, 90) * 0.15f;
+        // A typed zone (direct user request - all 4 described types) tints differently per kind so
+        // the player can tell them apart on the canvas at a glance; an untyped/custom-named zone
+        // keeps the original amber tint.
+        var tint = (zone.Kind switch
+        {
+            ShipZoneKind.ReactorRoom => new Color(255, 140, 90),
+            ShipZoneKind.MedicalBay => new Color(120, 220, 160),
+            ShipZoneKind.EngineeringBay => new Color(140, 170, 255),
+            ShipZoneKind.ControlRoom => new Color(230, 200, 90),
+            _ => new Color(255, 200, 90),
+        }) * 0.15f;
         foreach (var coord in zone.Tiles)
             _spriteBatch.Draw(_pixel, EditorTileRect(coord), tint);
 
@@ -401,6 +552,22 @@ public partial class Game1
             return;
         var endCell = GridCellAt(_designMouse) is { } ec ? new TileCoord(ec.X, ec.Y) : start;
         foreach (var coord in LineBetween(start, endCell))
+        {
+            var rect = EditorTileRect(coord);
+            var valid = _editorTiles.CellAt(coord) is { HasFloor: true, DeviceId: null };
+            _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.4f);
+            DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
+        }
+    }
+
+    // Wide-door mode's own drag preview (direct user request) - same shape as the Wall tool's line
+    // preview, but capped to the first 2 tiles only (HandleDoorToolInput never links more than that).
+    private void DrawEditorDoorDragPreview()
+    {
+        if (_editorDoorDragStart is not { } start)
+            return;
+        var endCell = GridCellAt(_designMouse) is { } ec ? new TileCoord(ec.X, ec.Y) : start;
+        foreach (var coord in LineBetween(start, endCell).Take(2))
         {
             var rect = EditorTileRect(coord);
             var valid = _editorTiles.CellAt(coord) is { HasFloor: true, DeviceId: null };
@@ -471,10 +638,14 @@ public partial class Game1
         {
             EditorTool.Floor => "Клик - поставить пол. ПКМ - убрать.",
             EditorTool.Wall => "Клик - стена (нужен пол под ней). Зажать и протянуть - линия стен. ПКМ - убрать.",
+            EditorTool.Door when _editorDoorWide => "Зажмите и протяните ровно 2 клетки - широкая дверь. ПКМ по двери - убрать.",
             EditorTool.Door => "Клик по полу или стене - дверь. ПКМ по двери - убрать.",
             EditorTool.Terminal => "Клик по полу рядом со стеной - терминал. ПКМ - убрать.",
             EditorTool.Device => "Клик внутри отсека - поставить устройство. ПКМ рядом - убрать.",
             EditorTool.Zone => "Зажмите и протяните по клеткам с полом, затем впишите название отсека.",
+            EditorTool.Engine => $"R - повернуть (сейчас: {EngineFacingLabel(_editorEnginePendingFacing)}). " +
+                "Клик - поставить (нужна стена в сторону сопла). ПКМ - убрать.",
+            EditorTool.Compartment => "R - повернуть отсек. Клик - поставить целиком (пол+стены+устройства). ПКМ по отсеку - убрать целиком.",
             _ => "",
         };
         _spriteBatch.DrawString(_font, hint, new Vector2(DevicePanelLeft, DeviceItemsTop - 22), Color.Gray, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
@@ -483,6 +654,14 @@ public partial class Game1
     }
 
     private static readonly string[] EditorForwardArrowLabels = { "→", "↓", "←", "↑" };
+
+    private static string EngineFacingLabel(TileSide side) => side switch
+    {
+        TileSide.North => "Север",
+        TileSide.South => "Юг",
+        TileSide.East => "Восток",
+        _ => "Запад",
+    };
 
     // Direct user request ("часть меню на скрине была сверху, а менюшка со всеми блоками в самом
     // низу") - Название/Нос/статус/action buttons moved up near the title, out of the device-tab

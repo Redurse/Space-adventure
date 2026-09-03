@@ -22,17 +22,18 @@ namespace SpaceAdventure.Client;
 // auto-detected, not its own mechanic). PaletteItem's own Kind is null for these - selecting one only
 // switches _editorTool, never touches _editorSelectedDeviceKind.
 //
-// Deliberately NOT included yet: "Двойная дверь"/"Блок иллюминатора" (Стены tab) - these are
-// genuinely new WALL VARIANTS, not devices, and TileWallKind today only knows Solid/Door/None with no
-// room for a variant at all. Adding them needs a real model extension (a wall "skin"/variant field on
-// TileCell), a separate follow-up task - not just a palette entry.
+// "Усиленная стена"/"Иллюминатор"/"Широкая дверь" (Стены tab, direct user request) follow up on this
+// file's own earlier note that these needed a real model extension first - WallMaterial.cs (Solid's
+// own "skin") and TileCell.DoorGroupId (links two Door tiles into one wide door) now exist, so these
+// are ordinary palette entries like everything else, just ones that also set a tool sub-choice
+// (_editorWallMaterial/_editorDoorWide) alongside _editorTool - see PaletteItem below.
 public partial class Game1
 {
-    private enum DeviceTab { ShipControl, Airlock, Storage, Production, Power, Furniture, Weapons, Walls, All }
+    private enum DeviceTab { ShipControl, Airlock, Storage, Production, Power, Furniture, Weapons, Walls, Compartments, All }
 
     private static readonly string[] DeviceTabLabels =
     {
-        "Управление кораблём", "Шлюз", "Хранение", "Производство", "Электроэнергия", "Мебель", "Оружие", "Стены", "Все",
+        "Управление кораблём", "Шлюз", "Хранение", "Производство", "Электроэнергия", "Мебель", "Оружие", "Стены", "Отсеки", "Все",
     };
 
     private DeviceTab _editorDeviceTab = DeviceTab.ShipControl;
@@ -46,15 +47,23 @@ public partial class Game1
     private enum EditorPanelMode { Objects, Modifications }
     private EditorPanelMode _editorPanelMode = EditorPanelMode.Objects;
 
-    private readonly record struct PaletteItem(string Label, EditorTool Tool, CustomDeviceKind? Kind = null);
+    // Material/WideDoor are the tool's own sub-choice (meaningful only when Tool is Wall/Door
+    // respectively) - selecting the item sets _editorWallMaterial/_editorDoorWide alongside
+    // _editorTool, the same way selecting a device entry sets _editorSelectedDeviceKind.
+    private readonly record struct PaletteItem(string Label, EditorTool Tool, CustomDeviceKind? Kind = null,
+        WallMaterial? Material = null, bool WideDoor = false, string? CompartmentId = null);
 
     private static PaletteItem DeviceItem(CustomDeviceKind kind) => new(CustomDeviceCatalog.Name(kind), EditorTool.Device, kind);
 
+    // The old flat EngineSmall/Medium/Large/WarpEngine icons are gone (direct user decision, follow-
+    // up to the real ShipEngine mechanic - see Game1.ShipEditor.cs's own "Engine" EditorTool) -
+    // replaced by one real engine placement tool below, not a palette entry at all (it needs its own
+    // directional 3-tile placement flow, not the generic 1x1/4x4 device footprint machinery).
     private static readonly PaletteItem[] ShipControlItems =
     {
         DeviceItem(CustomDeviceKind.Helm), DeviceItem(CustomDeviceKind.Navigation),
-        DeviceItem(CustomDeviceKind.EngineSmall), DeviceItem(CustomDeviceKind.EngineMedium), DeviceItem(CustomDeviceKind.EngineLarge),
-        DeviceItem(CustomDeviceKind.WarpEngine), DeviceItem(CustomDeviceKind.Camera),
+        new("Двигатель", EditorTool.Engine),
+        DeviceItem(CustomDeviceKind.Camera),
     };
 
     // "Шлюз" itself reuses the Door tool (an airlock is just a door on the outer hull, inferred by
@@ -107,8 +116,22 @@ public partial class Game1
     // "Двойная дверь"/"Блок иллюминатора" deliberately absent - see this file's own top comment.
     private static readonly PaletteItem[] WallItems =
     {
-        new("Стена", EditorTool.Wall), new("Дверь", EditorTool.Door),
+        new("Стена", EditorTool.Wall, Material: WallMaterial.Standard),
+        new("Усиленная стена", EditorTool.Wall, Material: WallMaterial.Reinforced),
+        new("Иллюминатор", EditorTool.Wall, Material: WallMaterial.Window),
+        new("Дверь", EditorTool.Door, WideDoor: false),
+        new("Широкая дверь", EditorTool.Door, WideDoor: true),
     };
+
+    // M81 (humble-soaring-cat.md) - one entry per CompartmentCatalog variant (M80, already complete,
+    // ~30 entries), grouped by CompartmentType so the row at least reads in coherent clusters left to
+    // right; no sub-headers, the same "one long scrollable row" convention "Все" already established
+    // for a big flat list. Picking one just sets EditorTool.Compartment + _editorSelectedCompartmentId
+    // (HandleDeviceTabClick below), exactly like DeviceItem does for _editorSelectedDeviceKind.
+    private static readonly PaletteItem[] CompartmentItems = CompartmentCatalog.Entries
+        .OrderBy(e => e.Type)
+        .Select(e => new PaletteItem(e.DisplayName, EditorTool.Compartment, CompartmentId: e.Id))
+        .ToArray();
 
     // Every device kind the enum actually has, in declaration order, plus the 3 tool-only entries -
     // the same full set the old flat palette showed, just reachable from one tab instead of being
@@ -136,6 +159,7 @@ public partial class Game1
         DeviceTab.Furniture => FurnitureItems,
         DeviceTab.Weapons => WeaponItems,
         DeviceTab.Walls => WallItems,
+        DeviceTab.Compartments => CompartmentItems,
         DeviceTab.All => AllItems,
         _ => Array.Empty<PaletteItem>(),
     };
@@ -322,6 +346,12 @@ public partial class Game1
             _editorTool = items[i].Tool;
             if (items[i].Kind is { } kind)
                 _editorSelectedDeviceKind = kind;
+            if (items[i].CompartmentId is { } compartmentId)
+                _editorSelectedCompartmentId = compartmentId;
+            if (items[i].Tool == EditorTool.Wall)
+                _editorWallMaterial = items[i].Material ?? WallMaterial.Standard;
+            if (items[i].Tool == EditorTool.Door)
+                _editorDoorWide = items[i].WideDoor;
             return true;
         }
         return false;
@@ -339,13 +369,27 @@ public partial class Game1
         DrawRectOutline(rect, DeviceGold * 0.8f, 1f);
     }
 
-    private static Color ItemTint(PaletteItem item) => item.Kind is { } kind ? CustomDeviceCatalog.Tint(kind) : item.Tool switch
+    private static Color ItemTint(PaletteItem item)
     {
-        EditorTool.Wall => new Color(150, 150, 160),
-        EditorTool.Door => new Color(160, 130, 90),
-        EditorTool.Terminal => new Color(100, 180, 190),
-        _ => Color.Gray,
-    };
+        if (item.Kind is { } kind)
+            return CustomDeviceCatalog.Tint(kind);
+        if (item.Tool == EditorTool.Wall)
+            return item.Material switch
+            {
+                WallMaterial.Reinforced => new Color(90, 95, 105),
+                WallMaterial.Window => new Color(140, 210, 235),
+                _ => new Color(150, 150, 160),
+            };
+        if (item.Tool == EditorTool.Door)
+            return item.WideDoor ? new Color(200, 160, 100) : new Color(160, 130, 90);
+        return item.Tool switch
+        {
+            EditorTool.Terminal => new Color(100, 180, 190),
+            EditorTool.Engine => new Color(90, 160, 220),
+            EditorTool.Compartment => new Color(160, 140, 200),
+            _ => Color.Gray,
+        };
+    }
 
     // Direct user request ("картинки предметов были не просто разноцветные квадратики а были
     // настоящие похожие текстурки с видом сверху") - reuses REAL art the game already has instead
@@ -386,7 +430,10 @@ public partial class Game1
         if (item.Kind == CustomDeviceKind.Reactor && _editorReactorTexture is { } reactorTex)
             _spriteBatch.Draw(reactorTex, rect, Color.White);
         else if (item.Tool == EditorTool.Wall && _editorWallVerticalTexture is { } wallTex)
-            _spriteBatch.Draw(wallTex, rect, Color.White);
+            // Reinforced/Window (direct user request) reuse the same real wall texture, just tinted -
+            // no bespoke art exists for either variant yet, same "reuse real art" convention this
+            // file's own top comment already established for device icons.
+            _spriteBatch.Draw(wallTex, rect, ItemTint(item));
         else if (item.Kind is { } kind)
             _spriteBatch.Draw(DeviceIconSkin.Get(FaceForKind(kind), rect.Width, lit: true), rect, Color.White);
         else
@@ -450,7 +497,13 @@ public partial class Game1
             // state" convention the old flat device row already used for real devices.
             var selected = item.Kind is { } kind
                 ? _editorTool == EditorTool.Device && kind == _editorSelectedDeviceKind
-                : _editorTool == item.Tool;
+                : item.CompartmentId is { } compartmentId
+                    ? _editorTool == EditorTool.Compartment && compartmentId == _editorSelectedCompartmentId
+                    : item.Tool == EditorTool.Wall
+                        ? _editorTool == EditorTool.Wall && _editorWallMaterial == (item.Material ?? WallMaterial.Standard)
+                        : item.Tool == EditorTool.Door
+                            ? _editorTool == EditorTool.Door && _editorDoorWide == item.WideDoor
+                            : _editorTool == item.Tool;
 
             DrawItemArt(iconRect, item);
             if (selected)

@@ -102,6 +102,14 @@ public static class CustomShipStore
         try
         {
             return Directory.GetFiles(dir, "*.json")
+                // Excludes each slot's own "<name>.tiles.json" sidecar (the tile-canvas save added
+                // alongside CustomShipDefinition's .json - CustomShipStore.TileCanvasPath's own
+                // convention) - without this, GetFileNameWithoutExtension only strips the last
+                // ".json" and leaves a bogus "<name>.tiles" entry that isn't a real ship slot at
+                // all, which then crashes the ship-select screen: LoadShip happily deserializes the
+                // tile-canvas JSON as a CustomShipDefinition (wrong shape, comes back with null
+                // lists), and CustomShipValidator.Validate immediately NullReferenceExceptions on it.
+                .Where(f => !f.EndsWith(".tiles.json", StringComparison.OrdinalIgnoreCase))
                 .Select(Path.GetFileNameWithoutExtension)
                 .Where(n => n is not null)
                 .Select(n => n!)

@@ -94,6 +94,12 @@ public sealed partial class World
             var block = RepairableBlock(kind);
             StepSystemRepairFor(block.Id, r => r == block.RoomId, block.Position, !IsBlockBroken(kind), deltaSeconds);
         }
+
+        // Cosmoteer-style marching engines (direct user request) - the Control tile's own seized-
+        // throttle state repairs with the same wrench/screwdriver minigame, one instance per engine
+        // (unlike RepairableBlockKinds above, there can be more than one of these on a hull).
+        foreach (var engine in Ship.Engines)
+            StepSystemRepairFor(engine.Id, r => r == engine.RoomId, engine.ControlPosition, !IsEngineControlBroken(engine.Id), deltaSeconds);
     }
 
     // matchesRoom is a predicate rather than a plain room id because a door (unlike a SystemDevice/
@@ -145,6 +151,8 @@ public sealed partial class World
             _doorHp[id] = DoorMaxHp;
         else if (RepairableBlockKinds.Where(k => RepairableBlock(k).Id == id).Cast<DeviceKind?>().FirstOrDefault() is { } blockKind)
             SetBlockBroken(blockKind, false);
+        else if (Ship.Engines.Any(e => e.Id == id))
+            RepairEngineControl(id, EnginePartMaxHp); // instant full fix after the long timer, same as SetBlockBroken above
         else
             RepairDeviceWiring(id);
         _systemRepairProgress.Remove(id);
@@ -161,7 +169,9 @@ public sealed partial class World
         var block = RepairableBlock(kind);
         var system = kind is DeviceKind.Helm or DeviceKind.Navigation ? PowerSystemId.Secondary : PowerSystemId.Engine;
         return new ShipSystemState(block.Id, system, IsBlockBroken(kind), GetSystemRepairDisplay(block.Id));
-    }).ToList();
+    }).Concat(Ship.Engines.Select(e =>
+        new ShipSystemState(e.Id, PowerSystemId.Engine, IsEngineControlBroken(e.Id), GetSystemRepairDisplay(e.Id))))
+    .ToList();
 
     // Test-only convenience, same convention as World.ShipField.cs's DebugPlaceShip: the 12-hour
     // duration above is deliberate real content (this file's own doc comment), not something a

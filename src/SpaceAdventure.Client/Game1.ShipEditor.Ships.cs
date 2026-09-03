@@ -108,6 +108,8 @@ public partial class Game1
             _editorDeviceKinds.Clear();
             _editorDeviceFootprint.Clear();
             _editorZones.Clear();
+            _editorEngineFacing.Clear();
+            _editorEngineFootprint.Clear();
         }
         _editorCurrentSlotName = slotName;
         _editorLoadListOpen = false;

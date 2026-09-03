@@ -240,6 +240,10 @@ public sealed partial class World
         // the menu's own first send).
         if (!string.IsNullOrEmpty(command.Nickname))
             character.Nickname = command.Nickname;
+        if (command.ChatMessage is { Length: > 0 } chatText)
+            LogChat(character, chatText);
+        if (command.VoiceChunk is { } voiceChunk)
+            RelayVoiceChunk(character, voiceChunk);
         // A live player's own role is a self-identification label only (unlike a hired bot's,
         // World.CrewAi.cs never reads it) - no docked/proximity gate needed, same as Nickname above.
         if (command.SetOwnRoleTo is { } roleToSet)
@@ -651,5 +655,8 @@ public sealed partial class World
         _dockedPointId ?? _nearestStationPointId,
         CreatePendingRoomBuildStates(),
         _hullPlatingStock,
-        CreateShipDebrisStates());
+        CreateShipDebrisStates(),
+        CreateEngineStates(),
+        CreateChatLog(),
+        CreateVoiceChunks());
 }

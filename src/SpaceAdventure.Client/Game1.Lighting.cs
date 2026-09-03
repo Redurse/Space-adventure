@@ -68,7 +68,17 @@ public partial class Game1
                 gaps.Add(Occluders.ToGap(door));
             foreach (var airlock in snapshot.EnemyShip.AirlockOuterDoors)
                 gaps.Add(Occluders.ToGap(airlock));
-            walls = Occluders.Build(snapshot.EnemyShip.Rooms, gaps);
+            // M78 (humble-soaring-cat.md) - tile-native occlusion; rasterized fresh from the same
+            // Rooms/Doors/AirlockOuterDoors the snapshot already carries, same approach ClientTileGrid
+            // uses for the player's own ship.
+            var enemyTiles = TileGridRasterizer.FromRooms(snapshot.EnemyShip.Rooms, snapshot.EnemyShip.Doors, snapshot.EnemyShip.AirlockOuterDoors);
+            // Same live-door-state overlay the ship/station sides need (humble-soaring-cat.md,
+            // "не вижу через открытые двери" follow-up) - without it every enemy-ship door tile is
+            // permanently "closed" to TileOccluders.IsOccluding, leaving a sliver of wall behind even
+            // though the SightGap above is unconditionally cut through it.
+            ClientTileGrid.ApplyLiveDoorState(enemyTiles, snapshot.EnemyShip.Rooms, snapshot.EnemyShip.Doors,
+                snapshot.EnemyShip.AirlockOuterDoors, snapshot.DoorStates);
+            walls = TileOccluders.Build(enemyTiles, gaps);
             origin = ComputeStationCamera(me);
             eye = new Vector2((float)me.X, (float)me.Y);
             // A boarded ship is a hostile hull running on its own damaged grid, not the player's -
@@ -104,15 +114,33 @@ public partial class Game1
 
             // While docked the station's compartments are part of the same layout, in the same
             // coordinates - its walls block the view exactly like the ship's own.
-            var rooms = snapshot.Rooms;
             var docked = snapshot.Voyage.DockedPointId is not null;
             if (docked)
-            {
                 foreach (var door in snapshot.Station.Doors)
                     gaps.Add(Occluders.ToGap(door));
-                rooms = snapshot.Rooms.Concat(snapshot.Station.Rooms).ToList();
+            // M78 (humble-soaring-cat.md) - tile-native occlusion. The ship and the (optional)
+            // station are rasterized into two SEPARATE TileGrids rather than merged into one: their
+            // Room/Door id namespaces aren't guaranteed disjoint (TileGridRasterizer keys internally
+            // by those ids), but a WallSegment carries no id/region identity of its own, so
+            // concatenating the two already-rasterized segment lists is safe regardless - the tile-
+            // native equivalent of the old code's `rooms.Concat(station.Rooms)`, just moved to after
+            // rasterization instead of before. Both grids are cut against the SAME gaps list - a gap
+            // is just a world-space rectangle, it applies correctly to either structure's segments
+            // regardless of which one it logically came from.
+            var shipTiles = ClientTileGrid.Build(snapshot);
+            walls = TileOccluders.Build(shipTiles, gaps);
+            if (docked)
+            {
+                var stationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, snapshot.Station.Doors, new[] { snapshot.Station.ShipConnector });
+                // Bug fix (humble-soaring-cat.md, "не вижу через открытые двери", follow-up) - the
+                // ship-side ClientTileGrid.Build already overlays live door-open state (see its own
+                // doc comment); the station side was missed the first time around, so a station door
+                // or the ship<->station connector was still permanently "closed" to TileOccluders no
+                // matter how it actually stood - the identical bug, just on the other structure.
+                ClientTileGrid.ApplyLiveDoorState(stationTiles, snapshot.Station.Rooms, snapshot.Station.Doors,
+                    new[] { snapshot.Station.ShipConnector }, snapshot.DoorStates);
+                walls = walls.Concat(TileOccluders.Build(stationTiles, gaps)).ToList();
             }
-            walls = Occluders.Build(rooms, gaps);
             // Outside the hull the camera folds the player's world position back into the ship's
             // own frame, and so must the eye - otherwise the mask would sit where the ship isn't.
             var camera = ComputeCamera(snapshot, me);

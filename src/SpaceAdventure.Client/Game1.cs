@@ -82,6 +82,10 @@ public partial class Game1 : Game
     // the panel's own tallest case: enemy line + both bars + health (+ incapacitated line) + two
     // turret ammo/charge lines + a hint line.
     private Vector2 CombatPanelOrigin => new(HudEdgeMargin, HudBottom - 190f);
+    // Further up the left edge than CombatPanelOrigin (own ~190px) and HelmTabBarOrigin - both
+    // already claim the bottom-left corner while at a turret or the helm, exactly when a chat
+    // message matters most, so the log needs its own clear spot above them instead of overlapping.
+    private Vector2 ChatPanelOrigin => new(HudEdgeMargin, HudBottom - 400f);
     // Centered directly above the role/portrait box specifically (Barotrauma's own corner has the
     // health bar riding right above the portrait, not spanning the whole equip row) - meant to
     // always be visible the same way the inventory row below it always is.
@@ -220,6 +224,26 @@ public partial class Game1 : Game
     private ShipSchematicCategory _shipSchematicCategory = ShipSchematicCategory.Hull;
     private string _shipSearchQuery = "";
     private bool _shipSearchFocused;
+    // Crew chat (direct user request, "как в Баротравме") - same "only reaches the field while
+    // explicitly focused" shape as _shipSearchQuery/_shipSearchFocused above, so W/A/D/S/X/Z keep
+    // flying the ship while typing. _pendingChatMessage is a one-shot outgoing field, same
+    // capture-send-clear lifecycle as _pendingBuildRoom - set on submit (Enter), threaded into the
+    // next SendInput call, then cleared so it isn't resent every frame after.
+    private string _chatInput = "";
+    private bool _chatFocused;
+    private string? _pendingChatMessage;
+    // True only for the remainder of the Update call that just opened the chat box - guards against
+    // the same physical Enter keystroke that opened it also being read by OnChatTextInput's own
+    // '\r' handling as an immediate submit/close, regardless of whether the platform's TextInput
+    // event for that key happens to arrive before or after this frame's Update.
+    private bool _chatJustOpenedThisFrame;
+    private ChatPanel _chatPanel = null!;
+    private readonly ChatBubbleTracker _chatBubbleTracker = new();
+    // Push-to-talk voice chat (direct user request, "как в Баротравме", local + radio) - one
+    // capture helper for THIS client's own mic, one playback helper for every OTHER player's
+    // incoming voice (Audio/VoiceCapture.cs, Audio/VoicePlayback.cs).
+    private readonly VoiceCapture _voiceCapture = new();
+    private readonly VoicePlayback _voicePlayback = new();
     private FieldRenderer _fieldRenderer = null!;
     private ExternalCameraPanel _externalCameraPanel = null!;
     private StationRenderer _stationRenderer = null!;
@@ -517,6 +541,7 @@ public partial class Game1 : Game
         Window.ClientSizeChanged += (_, _) => UpdateRenderScale();
         Window.TextInput += OnMenuTextInput; // typing the host's address on the join screen
         Window.TextInput += OnShipSearchTextInput; // window 3's item search box, helm redesign (M47 follow-up)
+        Window.TextInput += OnChatTextInput; // crew chat input box, Enter to open/send (direct user request)
         base.Initialize();
     }
 
@@ -574,6 +599,7 @@ public partial class Game1 : Game
             new Rectangle((int)WorldViewportOrigin.X, (int)WorldViewportOrigin.Y, (int)WorldViewportSize.X, (int)WorldViewportSize.Y));
         _powerPanel = new PowerPanel(GraphicsDevice, _font);
         _combatPanel = new CombatPanel(GraphicsDevice, _font);
+        _chatPanel = new ChatPanel(GraphicsDevice, _font);
         _playerHealthPanel = new PlayerHealthPanel(GraphicsDevice, _font);
         _voyagePanel = new VoyagePanel(_font);
         _inventoryPanel = new InventoryPanel(GraphicsDevice, _font);
@@ -679,6 +705,17 @@ public partial class Game1 : Game
             _shipRenderer.SetReactorTexture(_editorReactorTexture);
         }
         catch { /* ShipRenderer.DrawReactorBlock falls back to the procedural design */ }
+        // Marching-engine art (direct user request) - real Control/Bulkhead/Nozzle textures instead
+        // of the DeviceSkin placeholder faces; same defensive load, ShipRenderer falls back to the
+        // old procedural look for whichever part's .xnb is missing/unbuilt.
+        try
+        {
+            var engineControl = Content.Load<Texture2D>("Textures/Devices/EngineControl");
+            var engineBulkhead = Content.Load<Texture2D>("Textures/Devices/EngineBulkhead");
+            var engineNozzle = Content.Load<Texture2D>("Textures/Devices/EngineNozzle");
+            _shipRenderer.SetEngineTextures(engineControl, engineBulkhead, engineNozzle);
+        }
+        catch { /* ShipRenderer.DrawShipEngine/DrawEngineNozzles fall back to the procedural design */ }
         // Ship Editor tile-painting redo - a deliberately crude placeholder floor tile (the user's
         // own words: "просто text текстуру пока что, потом заменим"), just so a painted floor tile
         // reads as something rather than a flat colour rectangle. Falls back to the flat rectangle
@@ -801,8 +838,8 @@ public partial class Game1 : Game
 
     private void UpdateCore(GameTime gameTime)
     {
-
         var keyboard = Keyboard.GetState();
+        _chatJustOpenedThisFrame = false;
 
         // Edge-triggered (holding Escape down must fire this once, not every frame) - what it
         // actually does differs before vs. during a session, so the two branches below split on
@@ -882,7 +919,15 @@ public partial class Game1 : Game
         // leaving the helm is server-side (World.Interact.cs's F handling, top-priority there too),
         // so that case is folded into this frame's interactPressed rather than duplicated here.
         var escapeSendsInteract = false;
-        if (escapePressed && _shipSearchFocused)
+        if (escapePressed && _chatFocused)
+        {
+            // Same "handle the more specific overlay first" priority as the search box below -
+            // closing the chat input is the one thing this Escape press should do, not also
+            // opening the pause menu or standing the captain up from the helm.
+            _chatInput = "";
+            _chatFocused = false;
+        }
+        else if (escapePressed && _shipSearchFocused)
         {
             // Cancels the search box first, same one-thing-at-a-time priority as everything else
             // below - otherwise Esc would stand the captain up from the helm entirely just because
@@ -920,6 +965,19 @@ public partial class Game1 : Game
             }
         }
 
+        // Enter opens the crew chat box (direct user request, "как в Баротравме") - only from
+        // gameplay, and only when nothing else already has keyboard focus, so it doesn't steal
+        // typing away from window 3's own search box or fire while the pause menu is up.
+        // Edge-triggered like every other key here; _chatJustOpenedThisFrame guards the same
+        // physical keystroke's TextInput '\r' from being read as an immediate submit/close by
+        // OnChatTextInput below.
+        var enterDown = keyboard.IsKeyDown(Keys.Enter);
+        if (enterDown && !_prevGameplayKeyboard.IsKeyDown(Keys.Enter) && !_chatFocused && !_shipSearchFocused && !_pauseMenuOpen)
+        {
+            _chatFocused = true;
+            _chatJustOpenedThisFrame = true;
+        }
+
         // M opens the GALACTIC map (game_design.md - two-tier map) from anywhere, unlike the
         // system-level one (GalaxyMapPanel), which still needs walking up to the navigation
         // console - edge-triggered like F11 above, or holding the key would flip it every frame.
@@ -944,12 +1002,36 @@ public partial class Game1 : Game
         // Z swaps between Arc (banked turning, tied to speed) and Rcs (free rotation) at the helm
         // (World.ShipField.cs, M41) - edge-triggered like M above, or holding it down would flip
         // the mode every frame.
-        var toggleControlModeKeyPressed = isAtHelm && !_shipSearchFocused && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
+        var toggleControlModeKeyPressed = isAtHelm && !_shipSearchFocused && !_chatFocused && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
 
         // L lands/takes off (M55) - same edge-triggered shape as Z above. World.PlanetLanding.cs's
         // own CanLandNow is what actually refuses to arm it away from a landable body's surface, so
         // this is sent unconditionally too.
-        var toggleLandingKeyPressed = isAtHelm && !_shipSearchFocused && keyboard.IsKeyDown(Keys.L) && !_prevGameplayKeyboard.IsKeyDown(Keys.L);
+        var toggleLandingKeyPressed = isAtHelm && !_shipSearchFocused && !_chatFocused && keyboard.IsKeyDown(Keys.L) && !_prevGameplayKeyboard.IsKeyDown(Keys.L);
+
+        // Push-to-talk voice (direct user request, "как в Баротравме") - V for local (proximity),
+        // R for radio (heard ship-wide through RadioVoiceFilter). Held, not edge-triggered like
+        // Z/L above: BeginTalking/StopTalking key off the raw down/up transition instead, same
+        // "gate on chat/search focus, not on being at the helm" shape as the movement keys since
+        // talking should work anywhere in the ship, not just at a console. First key held wins
+        // until released - the other PTT key is ignored while already recording, kept simple
+        // rather than allowing a mid-transmission mode switch.
+        // Also excluded while the ship editor is open: its own Engine tool (Game1.ShipEditor.cs's
+        // HandleEngineToolInput) already binds R to cycle the pending engine's facing, so without
+        // this the same keypress would both rotate the ghost AND start a radio transmission.
+        var voiceLocalKeyDown = !_shipSearchFocused && !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.V);
+        var voiceRadioKeyDown = !_shipSearchFocused && !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.R);
+        if (!_voiceCapture.IsRecording)
+        {
+            if (voiceLocalKeyDown)
+                _voiceCapture.BeginTalking(isRadio: false);
+            else if (voiceRadioKeyDown)
+                _voiceCapture.BeginTalking(isRadio: true);
+        }
+        else if ((_voiceCapture.IsRadio && !voiceRadioKeyDown) || (!_voiceCapture.IsRadio && !voiceLocalKeyDown))
+        {
+            _voiceCapture.StopTalking();
+        }
 
         var interactDown = keyboard.IsKeyDown(Keys.E);
         var spaceDown = keyboard.IsKeyDown(Keys.Space);
@@ -981,7 +1063,10 @@ public partial class Game1 : Game
         // weapons is mounted there.
         var fireHeld = !isOutside && spaceDown;
 
-        var move = (isManningTurret || isAtHelm) ? Vec2.Zero : ReadMoveInput(keyboard);
+        // Chat eats WASD as typed characters while focused (same idea as window 3's own search box
+        // above it) - the character just stands still rather than getting walked around by whatever
+        // letters happen to spell the message.
+        var move = (isManningTurret || isAtHelm || _chatFocused) ? Vec2.Zero : ReadMoveInput(keyboard);
         _evaThrustLocal = Vec2.Zero;
         // The barrel traverses toward wherever the cursor is; A/D still nudge it for anyone who
         // wants the keyboard. Either way it's a rate, not a snap - the gun swings at its own
@@ -1233,7 +1318,7 @@ public partial class Game1 : Game
         // Window 3's search box eats W/A/D/S/X/Z as typed characters while focused (M47 follow-up) -
         // the ship just coasts on whatever heading it already had, same as while any other console
         // is open, rather than the pilot's own typing also steering it.
-        var flightControlsLive = isAtHelm && !_shipSearchFocused;
+        var flightControlsLive = isAtHelm && !_shipSearchFocused && !_chatFocused;
         if (helmStabilizePressed || (flightControlsLive && keyboard.IsKeyDown(Keys.S)))
             _helmStabilizeLatched = true;
         var (helmThrottle, helmTurn) = flightControlsLive ? ReadHelmInput(keyboard) : (0f, 0f);
@@ -1408,6 +1493,16 @@ public partial class Game1 : Game
         var debugAddCreditsPressed = _debugAddCreditsClickedThisFrame;
         _debugAddCreditsClickedThisFrame = false;
 
+        // One-shot outgoing chat message (OnChatTextInput's submit path sets this) - same
+        // capture-send-clear lifecycle as _pendingBuildRoom/etc above, so it isn't resent every
+        // frame after the one it was actually typed on.
+        var chatMessage = _pendingChatMessage;
+        _pendingChatMessage = null;
+
+        // One-shot outgoing voice chunk (VoiceCapture's own BufferReady handler sets this) - same
+        // capture-send-clear lifecycle as chatMessage above, so a mic buffer is never resent.
+        var voiceChunk = _voiceCapture.TakePendingChunk();
+
         _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
@@ -1416,7 +1511,7 @@ public partial class Game1 : Game
             scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode,
             jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed,
             fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, _engineerFocusDeviceId, flipHeadingPressed,
-            buildRoom, demolishRoomId, debugAddCreditsPressed);
+            buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1433,6 +1528,22 @@ public partial class Game1 : Game
         else if (_navTransitionRemaining > 0f)
             _navTransitionRemaining = Math.Max(0f, _navTransitionRemaining - (float)gameTime.ElapsedGameTime.TotalSeconds);
         _wasNavigationOpen = navigationOpenNow;
+
+        // One shared tracker (not one per renderer) so a message only ever spawns one bubble
+        // regardless of which renderer context the sender is currently drawn in (Ship/Field).
+        _chatBubbleTracker.Update(_client.LatestSnapshot?.ChatLog, (float)gameTime.ElapsedGameTime.TotalSeconds);
+
+        // Voice chunks relayed this tick (World.Voice.cs) - proximity-mixed for local mode, always
+        // full volume for radio (Audio/VoicePlayback.cs). myCharacter/snapshot are already resolved
+        // above for this same Update call.
+        if (_client.LatestSnapshot is { } snapshotForVoice)
+        {
+            var myVoicePosition = myCharacter is { } myVoiceChar ? new Vec2(myVoiceChar.X, myVoiceChar.Y) : Vec2.Zero;
+            _voicePlayback.Update(snapshotForVoice.VoiceChunks, myVoicePosition,
+                senderId => snapshotForVoice.Characters.FirstOrDefault(c => c.PlayerId == senderId) is { } sender
+                    ? new Vec2(sender.X, sender.Y)
+                    : (Vec2?)null);
+        }
 
         _effectTracker.Step((float)gameTime.ElapsedGameTime.TotalSeconds);
         if (_client.LatestSnapshot is { } latestForEffects)
@@ -1761,7 +1872,7 @@ public partial class Game1 : Game
                 // TEMP-DIAG-BEGIN (M51 - Scene phase was 183-514ms; narrowing to which renderer)
                 var diagSubStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 // TEMP-DIAG-END
-                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles);
+                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles, chatBubbles: _chatBubbleTracker);
                 // TEMP-DIAG-BEGIN
                 _diagShipMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
                 diagSubStopwatch.Restart();
@@ -1794,7 +1905,7 @@ public partial class Game1 : Game
                 // coordinates on the far side of the batch's scale.
                 _fieldRenderer.Draw(_spriteBatch, snapshot, origin, hullCenter,
                     WorldViewportOrigin / sceneZoom, WorldViewportSize / sceneZoom, totalSeconds, _effectTracker.Effects,
-                    seenFromOutside: fromOutside);
+                    seenFromOutside: fromOutside, chatBubbles: _chatBubbleTracker);
                 // TEMP-DIAG-BEGIN
                 _diagFieldMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
                 // TEMP-DIAG-END
@@ -1902,6 +2013,12 @@ public partial class Game1 : Game
             rcsSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { } rcsMe)
             DrawRcsPlume(rcsSnapshot, rcsMe, rcsOrigin, sceneTransform, (float)gameTime.ElapsedGameTime.TotalSeconds);
 
+        // Cosmoteer-style marching engines (direct user request) - Nozzle goes on after the
+        // composite for the same reason the RCS plume just above does (ShipRenderer.
+        // DrawEngineNozzles's own doc comment explains why).
+        if (_shipInteriorOrigin is { } engineOrigin && _client.LatestSnapshot is { } engineSnapshot)
+            _shipRenderer.DrawEngineNozzles(_spriteBatch, engineSnapshot, engineOrigin, sceneTransform, totalSeconds);
+
         _spriteBatch.Begin(transformMatrix: _renderScale);
         // Peaks at the exact midpoint of the transition (fully opaque, hiding the underlying scene
         // swap) and is 0 at both ends - the same hump a cross-dissolve needs, without ever having
@@ -1983,6 +2100,18 @@ public partial class Game1 : Game
             }
 
             _combatPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, ComputeHint(hudSnapshot, _client.PlayerId), CombatPanelOrigin);
+            _chatPanel.Draw(_spriteBatch, hudSnapshot.ChatLog, _chatFocused, _chatInput, ChatPanelOrigin, (float)gameTime.ElapsedGameTime.TotalSeconds);
+            // Push-to-talk indicator (direct user request) - just player feedback that a mic is
+            // actually recording right now, same font/scale/color convention as ChatPanel's own
+            // text above. Plain text, no icon glyph - DebugFont.spritefont only covers Latin-1/
+            // Cyrillic/basic punctuation (its own doc comment: a missing glyph has crashed
+            // DrawString outright before), so an emoji here would just draw as garbled '?' filler.
+            if (_voiceCapture.IsRecording)
+            {
+                var voiceLabel = _voiceCapture.IsRadio ? "РАЦИЯ" : "ГОВОРИТ";
+                _spriteBatch.DrawString(_font, voiceLabel, ChatPanelOrigin + new Vector2(0, -20f),
+                    _voiceCapture.IsRadio ? Color.OrangeRed : Color.LightGreen, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            }
             _playerHealthPanel.Draw(_spriteBatch, hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId), PlayerHealthPanelOrigin);
             _voyagePanel.Draw(_spriteBatch, hudSnapshot, VoyagePanelOrigin);
 

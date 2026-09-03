@@ -19,6 +19,7 @@ public sealed partial class Ship
         var airlockOuterDoors = BuildAirlockOuterDoors(def);
         var wallBlocks = BuildWallBlocks(def);
         wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
+        ApplyWallMaterials(wallBlocks, rooms, def.WallMaterials);
 
         var reactorDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Reactor);
         var distributionDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Distribution);
@@ -94,13 +95,18 @@ public sealed partial class Ship
             ? new Jukebox("jukebox", RoomIdAt(rooms, jukeboxDevice), jukeboxDevice.X, jukeboxDevice.Y)
             : null;
 
+        var engines = def.Engines
+            .Select((e, i) => new ShipEngine($"engine-{i + 1}", RoomIdAt(rooms, new Vec2(e.X, e.Y)), e.X, e.Y, e.Facing, e.MaxThrust, e.Role))
+            .ToList();
+
         return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks,
             helmConsole.Position, helmConsole.RoomId, cardTable, def.ForwardDegrees, componentMounts: componentMounts, jukebox: jukebox,
             reactorDeviceCount: reactorDeviceCount, distributionDeviceCount: distributionDeviceCount,
             helmDeviceCount: helmDeviceCount, navigationDeviceCount: navigationDeviceCount,
             extraHelmConsoles: extraHelmConsoles, extraNavigationConsoles: extraNavigationConsoles,
-            extraReactorPositions: extraReactorPositions, extraDistributionPositions: extraDistributionPositions);
+            extraReactorPositions: extraReactorPositions, extraDistributionPositions: extraDistributionPositions,
+            engines: engines, isCustomBuilt: true);
     }
 
     private static string RoomIdAt(List<Room> rooms, CustomDeviceDef device) =>
@@ -224,6 +230,28 @@ public sealed partial class Ship
                 return true;
         }
         return false;
+    }
+
+    // Copies a painted tile's non-Standard material (def.WallMaterials, keyed by the SAME hull-local
+    // tile coordinate the Ship Editor's canvas uses) onto whichever generated WallBlock actually
+    // landed on that tile - reusing TileGridRasterizer.WallBlockTileCoord (M72's own "block position
+    // -> tile coordinate" helper) rather than re-deriving that mapping here. Runs over BOTH exterior
+    // (BuildWallBlocks) and interior (GenerateInteriorWallBlocks) blocks uniformly since both place
+    // every block on its own RoomId's edge - a no-op (empty materials list) for every hull that never
+    // painted a Reinforced/Window tile, hand-authored or custom alike.
+    private static void ApplyWallMaterials(List<WallBlock> wallBlocks, List<Room> rooms, IReadOnlyList<CustomWallMaterialDef> materials)
+    {
+        if (materials.Count == 0)
+            return;
+        var materialByTile = materials.ToDictionary(m => new TileCoord(m.X, m.Y), m => m.Material);
+        var roomsById = rooms.ToDictionary(r => r.Id);
+        for (var i = 0; i < wallBlocks.Count; i++)
+        {
+            var block = wallBlocks[i];
+            var coord = TileGridRasterizer.WallBlockTileCoord(block, rooms, roomsById[block.RoomId]);
+            if (materialByTile.TryGetValue(coord, out var material))
+                wallBlocks[i] = block with { Material = material };
+        }
     }
 
     private static readonly IReadOnlyDictionary<CustomDeviceKind, PowerSystemId> SystemDeviceKinds = new Dictionary<CustomDeviceKind, PowerSystemId>

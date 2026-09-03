@@ -131,6 +131,19 @@ public sealed partial class World
             return;
         }
 
+        // Cosmoteer-style marching engines (direct user request) - the seized-throttle Control tile
+        // repairs with the same minigame, found by proximity like everything else here.
+        var nearbyBrokenEngineControl = Ship.Engines.FirstOrDefault(e =>
+            e.RoomId == character.RoomId && IsEngineControlBroken(e.Id) &&
+            (e.ControlPosition - character.Position).Length() < InteractionRadius);
+
+        if (nearbyBrokenEngineControl is not null)
+        {
+            if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
+                AttemptSystemRepair(nearbyBrokenEngineControl.Id);
+            return;
+        }
+
         // A hull camera's own junction box (M48) - not a ShipSystemDevice (WireGraphFactory's own
         // comment explains why), so it needs this separate lookup, but the repair itself is the
         // exact same minigame every other device above uses.

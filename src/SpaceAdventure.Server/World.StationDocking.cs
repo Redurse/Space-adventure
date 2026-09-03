@@ -141,5 +141,35 @@ public sealed partial class World
         return (rooms, doors);
     }
 
+    // Bug fix (humble-soaring-cat.md, "стены не имеют коллизии") - the tile-collision equivalent of
+    // GetDockedLayout above, used by World.Movement.cs instead of the old RoomLayout system. Found
+    // live: while docked, movement used to go through RoomLayout.MoveAlongAxis, whose walls are
+    // still the OLD pre-M73 zero-thickness convention (clamped to the room's own rectangle edge,
+    // Room.Top + CharacterRadius) - but M75's renderer has drawn every wall as a real, full 1-unit-
+    // thick tile for a while now, one tile further INTO the room than that old clamp stops at. A
+    // fresh campaign starts docked (World.cs's own constructor: "a fresh run starts docked"), so
+    // this was the actual live movement path for a large share of ordinary play, not a corner case -
+    // a character could stand anywhere from the room's old rectangle edge up to a full tile deeper,
+    // reading as visibly standing inside the wall's own rendered plating. Ship.Tiles and Station.Tiles
+    // already share one coordinate frame (Station.cs's own doc comment: "positioned so ShipConnector
+    // lands exactly on the ship's outer airlock door") and never otherwise overlap, so a plain
+    // Cells-dictionary union (Ship's own cell wins at the one shared connector coordinate - it alone
+    // is kept synced to the live door-open state, via SyncShipTiles's AirlockOuterDoors loop;
+    // Station.Tiles's separate copy of that same tile is never synced) is exact, with no region
+    // recompute needed: TileMovement only ever calls CellAt/IsWalkable, never reads Regions, so
+    // going through TileGrid's own SetFloor/SetWall mutators here would pay for BFS region-merging
+    // work movement itself has no use for. Rebuilt on demand rather than cached, same "either side
+    // can be replaced" reasoning GetDockedLayout above already gives for staying uncached.
+    private TileGrid GetDockedTileGrid()
+    {
+        var merged = new TileGrid();
+        foreach (var (coord, cell) in Ship.Tiles.Cells)
+            merged.Cells[coord] = cell;
+        foreach (var (coord, cell) in Station.Tiles.Cells)
+            if (!merged.Cells.ContainsKey(coord))
+                merged.Cells[coord] = cell;
+        return merged;
+    }
+
     private bool IsStationRoom(string roomId) => Station.Rooms.Any(r => r.Id == roomId);
 }

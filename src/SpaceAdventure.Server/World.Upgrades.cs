@@ -51,10 +51,28 @@ public sealed partial class World
     // RecomputeDeviceBonuses (World.ShipBuilding.cs) whenever _reactorRoomBonusOutput itself
     // changes, so a purchased upgrade level and a built reactor room always sum correctly
     // regardless of which happened more recently.
+    // Direct user request ("если реактор стоит не в своей зоне то он получает дебаф к продуктивности
+    // в 10 процентов ... чтобы в своих отсеках у них не было штрафов") - a plain Room.Name comparison
+    // against the canonical Reactor-zone name (ShipZoneKind.cs), the same trick Game1.ShipEditor.
+    // TileBridge.cs's ZoneNameFor already uses to turn a player-named zone into that room's own Name.
+    // No new field on Room/CustomRoomDef/the network protocol needed - the name already carries it.
+    private const float OutOfZonePenaltyMultiplier = 0.9f;
+
+    // Gated on Ship.IsCustomBuilt (Ship.cs's own doc comment on that flag) - a hand-authored hull's
+    // reactor room already carries its own flavor name ("Реакторная"/"Реакторный отсек") that was
+    // never derived from the zone-type picker, so only a Ship Editor-built hull's room name actually
+    // reflects whether the player put the reactor in a Reactor-typed zone or not.
+    private void RecomputeReactorZonePenalty() =>
+        PowerGrid.Reactor.ZonePenaltyMultiplier = !Ship.IsCustomBuilt ||
+            Ship.GetRoom(Ship.ReactorBlock.RoomId).Name == ShipZoneKinds.CanonicalName(ShipZoneKind.ReactorRoom)
+                ? 1f
+                : OutOfZonePenaltyMultiplier;
+
     private void ApplyUpgradeEffects()
     {
         PowerGrid.Reactor.OutputBonus = _upgradeLevels[ShipUpgradeTrack.ReactorOutput] * ReactorOutputBonusPerLevel + _reactorRoomBonusOutput;
         PowerGrid.Reactor.FuelEfficiencyMultiplier =
             MathF.Pow(ReactorEfficiencyMultiplierPerLevel, _upgradeLevels[ShipUpgradeTrack.ReactorEfficiency]);
+        RecomputeReactorZonePenalty();
     }
 }

@@ -13,7 +13,12 @@ namespace SpaceAdventure.Shared.Model;
 // what lets a passable breach here (World.WallBlocks.cs's IsPassableBreach) work as a walk-through
 // into that specific room (RoomLayout.MoveAlongAxis) instead of the exterior-breach "step out into
 // vacuum" path (World.Eva.cs), which explicitly excludes IsInterior blocks.
-public sealed record WallBlock(string Id, string RoomId, float X, float Y, bool IsInterior = false, string? OtherRoomId = null)
+// Material (direct user request, humble-soaring-cat.md M76 follow-up "варианты стен") defaults to
+// Standard for every hand-authored hull and every custom ship built before this existed - only a
+// Ship-Editor-painted Reinforced/Window tile (Game1.ShipEditor.TileBridge.cs's WallMaterials export)
+// ever produces anything else (Ship.Custom.cs's ApplyWallMaterials).
+public sealed record WallBlock(string Id, string RoomId, float X, float Y, bool IsInterior = false, string? OtherRoomId = null,
+    WallMaterial Material = WallMaterial.Standard)
 {
     public Vec2 Position => new(X, Y);
 }

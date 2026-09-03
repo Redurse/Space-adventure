@@ -30,6 +30,9 @@ public sealed partial class World
         // Content-каталог отсеков - the catalog entry's own device(s), already positioned at the
         // room's centre (TryBuildRoom) - carried through the timer to FinishRoomBuild unchanged.
         public required IReadOnlyList<CustomDeviceDef> Devices;
+        // Direct user request (Cosmoteer-style marching engines) - the catalog entry's own
+        // ShipEngine, if it has one (RoomCatalog.EnginesFor), carried through the same way.
+        public required IReadOnlyList<CustomEngineDef> Engines;
         public double ElapsedSeconds;
     }
 
@@ -90,7 +93,8 @@ public sealed partial class World
     // appended is a strict superset of an already-valid hull, but re-validated rather than assumed
     // so a bug in the placement math fails loudly instead of building a broken hull). Returns the
     // new definition on success, null on any failure - never partially applies anything itself.
-    private static CustomShipDefinition? AppendRoomIfValid(CustomShipDefinition def, CustomRoomDef newRoom, IReadOnlyList<CustomDeviceDef>? devices = null)
+    private static CustomShipDefinition? AppendRoomIfValid(CustomShipDefinition def, CustomRoomDef newRoom,
+        IReadOnlyList<CustomDeviceDef>? devices = null, IReadOnlyList<CustomEngineDef>? engines = null)
     {
         var roomsWithNew = def.Rooms.Append(newRoom).ToList();
         var overlaps = ShipLayoutGeometry.FindRoomPairOverlaps(roomsWithNew);
@@ -102,7 +106,10 @@ public sealed partial class World
         // Content-каталог отсеков - a device-carrying catalog entry's own device(s), already
         // positioned inside newRoom's own bounds (TryBuildRoom) - appended alongside the room itself.
         var newDevices = devices is { Count: > 0 } ? def.Devices.Concat(devices).ToList() : def.Devices;
-        var appended = def with { Rooms = roomsWithNew, Doors = newDoors, Devices = newDevices };
+        // Direct user request (Cosmoteer-style marching engines) - same "append if this catalog
+        // entry actually carries one" shape as devices above.
+        var newEngines = engines is { Count: > 0 } ? def.Engines.Concat(engines).ToList() : def.Engines;
+        var appended = def with { Rooms = roomsWithNew, Doors = newDoors, Devices = newDevices, Engines = newEngines };
         return CustomShipValidator.Validate(appended).Count > 0 ? null : appended;
     }
 
@@ -141,7 +148,7 @@ public sealed partial class World
             var attempt = new CustomRoomDef(NextRoomId(occupiedRooms), entry.Name, x, y, entry.Width, entry.Height);
             newRoom = occupiedRooms.Any(r => RoomsOverlap(r, attempt))
                 ? null
-                : AppendRoomIfValid(def, attempt, RoomCatalog.DevicesFor(entry, attempt)) is null ? null : attempt;
+                : AppendRoomIfValid(def, attempt, RoomCatalog.DevicesFor(entry, attempt), RoomCatalog.EnginesFor(entry, attempt)) is null ? null : attempt;
         }
         else
         {
@@ -152,7 +159,7 @@ public sealed partial class World
 
         Credits -= entry.Price;
         _hullPlatingStock -= entry.PlatingCost;
-        _pendingRoomBuilds.Add(new PendingRoomBuild { Room = newRoom, Devices = RoomCatalog.DevicesFor(entry, newRoom) });
+        _pendingRoomBuilds.Add(new PendingRoomBuild { Room = newRoom, Devices = RoomCatalog.DevicesFor(entry, newRoom), Engines = RoomCatalog.EnginesFor(entry, newRoom) });
     }
 
     // M60's original placement search, kept as the fallback for a BuildRoomRequest with no explicit
@@ -186,7 +193,7 @@ public sealed partial class World
                 if (occupiedRooms.Any(r => RoomsOverlap(r, attempt)))
                     continue;
                 var attemptDevices = RoomCatalog.DevicesFor(entry, attempt);
-                if (AppendRoomIfValid(def, attempt, attemptDevices) is null)
+                if (AppendRoomIfValid(def, attempt, attemptDevices, RoomCatalog.EnginesFor(entry, attempt)) is null)
                     continue;
                 return attempt;
             }
@@ -207,7 +214,7 @@ public sealed partial class World
                 continue;
 
             _pendingRoomBuilds.RemoveAt(i);
-            FinishRoomBuild(pending.Room, pending.Devices);
+            FinishRoomBuild(pending.Room, pending.Devices, pending.Engines);
         }
     }
 
@@ -216,10 +223,10 @@ public sealed partial class World
     // a build in progress. Silently dropped rather than forced on if it no longer fits; the plating
     // and credits already spent when the build started are NOT refunded - a lost supply run is a
     // real, deliberate consequence of building mid-combat, not a bug to patch around.
-    private void FinishRoomBuild(CustomRoomDef room, IReadOnlyList<CustomDeviceDef> devices)
+    private void FinishRoomBuild(CustomRoomDef room, IReadOnlyList<CustomDeviceDef> devices, IReadOnlyList<CustomEngineDef> engines)
     {
         var def = Ship.ToDefinition();
-        if (AppendRoomIfValid(def, room, devices) is not { } appended)
+        if (AppendRoomIfValid(def, room, devices, engines) is not { } appended)
             return;
         ApplyShipDefinition(appended);
     }
@@ -265,7 +272,12 @@ public sealed partial class World
         var remainingDevices = def.Devices.Where(d =>
             !(d.X >= demolished.X && d.X <= demolished.X + demolished.Width &&
               d.Y >= demolished.Y && d.Y <= demolished.Y + demolished.Height)).ToList();
-        var shrunk = def with { Rooms = remainingRooms, Doors = remainingDoors, Airlocks = remainingAirlocks, Devices = remainingDevices };
+        // Direct user request (Cosmoteer-style marching engines) - same bounds-containment filter as
+        // devices above, checked against the engine's own Control tile.
+        var remainingEngines = def.Engines.Where(e =>
+            !(e.X >= demolished.X && e.X <= demolished.X + demolished.Width &&
+              e.Y >= demolished.Y && e.Y <= demolished.Y + demolished.Height)).ToList();
+        var shrunk = def with { Rooms = remainingRooms, Doors = remainingDoors, Airlocks = remainingAirlocks, Devices = remainingDevices, Engines = remainingEngines };
 
         // CustomShipValidator already catches "that was the sole reactor/distribution/helm/
         // navigation room" and "that was the last airlock/oxygen generator/suit locker/storage
@@ -303,7 +315,11 @@ public sealed partial class World
         static HashSet<string> DeviceIds(Ship s) => s.Turrets.Select(t => t.Id)
             .Concat(s.ComponentMounts.Select(m => m.Id)).Concat(s.StorageRacks.Select(r => r.Id))
             .Concat(s.SuitLockers.Select(l => l.Id)).Concat(s.AmmoStorages.Select(a => a.Id))
-            .Concat(s.Cameras.Select(c => c.Id)).Concat(s.SystemDevices.Select(d => d.Id)).ToHashSet();
+            .Concat(s.Cameras.Select(c => c.Id)).Concat(s.SystemDevices.Select(d => d.Id))
+            // Direct user request (Cosmoteer-style marching engines) - a build/demolish that
+            // adds/removes one must take the "device graph changed" full-reset branch below
+            // (InitializeShipState, which calls InitializeEngines) rather than the incremental one.
+            .Concat(s.Engines.Select(e => e.Id)).ToHashSet();
         var deviceGraphUnchanged = DeviceIds(oldShip).SetEquals(DeviceIds(newShip));
 
         CurrentShipKind = ShipKind.Custom;
@@ -345,7 +361,7 @@ public sealed partial class World
             _wallBlockHp.Remove(key);
         foreach (var block in newShip.WallBlocks)
             if (!_wallBlockHp.ContainsKey(block.Id))
-                _wallBlockHp[block.Id] = WallBlockMaxHp;
+                _wallBlockHp[block.Id] = MaxHpFor(block);
 
         var newDoorLikeIds = newShip.Doors.Select(d => d.Id).Concat(newShip.AirlockOuterDoors.Select(a => a.Id)).ToHashSet();
         foreach (var key in _doorOpen.Keys.Where(k => !newDoorLikeIds.Contains(k)).ToList())

@@ -46,7 +46,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         var block = world.Ship.WallBlocks.First(b => b.RoomId == "corridor");
         var room = world.Ship.GetRoom("corridor");
-        var coord = TileGridRasterizer.WallBlockTileCoord(block, room);
+        var coord = TileGridRasterizer.WallBlockTileCoord(block, world.Ship.Rooms, room);
 
         world.Step(RealtimeStep);
         var beforeRegion = world.Ship.Tiles.RegionIdAt(coord); // a solid wall tile is never a region member

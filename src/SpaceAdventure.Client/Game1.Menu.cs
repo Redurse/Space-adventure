@@ -129,6 +129,10 @@ public partial class Game1
         // text box as "Сохранить как" above.
         if (_menuScreen == MenuScreen.ShipEditor && _editorZoneNamePrompting)
         {
+            // Hand-editing the text after picking a type quick-select (direct user request's own
+            // "своё имя" case) drops the pending type - the name and the type can no longer be
+            // trusted to agree once the player starts typing over it.
+            _editorZonePendingKind = null;
             if (e.Character == '\b')
             {
                 if (_editorZoneNameInput.Length > 0)

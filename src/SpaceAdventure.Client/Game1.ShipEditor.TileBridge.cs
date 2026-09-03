@@ -119,7 +119,27 @@ public partial class Game1
             kv.Value.MinX, kv.Value.MinY, kv.Value.Width, kv.Value.Height)).ToList();
         var doors = doorPairs.Select(p => new CustomDoorDef(roomIds[p.A], roomIds[p.B])).ToList();
 
-        return (new CustomShipDefinition(_editorShipName, rooms, doors, airlocks, devices, _editorForwardDegrees), errors);
+        // Wall materials (direct user request - "усиленная стена"/"иллюминатор") - every painted
+        // Solid tile whose material isn't the default Standard, keyed by the SAME tile coordinate
+        // Ship.Custom.cs's ApplyWallMaterials looks up against each auto-generated WallBlock's own
+        // position (via TileGridRasterizer.WallBlockTileCoord). A tile that closed a gap (extended
+        // into what CloseGapIfAdjacent turned into a room-interior wall) still exports correctly -
+        // Ship.FromCustomDefinition regenerates its own interior WallBlock at that exact tile.
+        var wallMaterials = _editorTiles.Cells
+            .Where(kv => kv.Value.Wall == TileWallKind.Solid && kv.Value.WallMaterial != WallMaterial.Standard)
+            .Select(kv => new CustomWallMaterialDef(kv.Key.X, kv.Key.Y, kv.Value.WallMaterial))
+            .ToList();
+
+        // Real engines (ShipEngine.cs, the Engine editor tool) - anchored at the Control tile's own
+        // centre (X+0.5/Y+0.5), the same tile-center convention the `devices` loop above already uses
+        // for a 1x1 footprint (coord.X + footprintSize/2f, footprintSize=1). CustomShipValidator
+        // treats a non-empty Engines list as satisfying the "needs a way to move" rule on its own, no
+        // flat CustomDeviceKind.Engine required alongside it.
+        var engines = _editorEngineFacing
+            .Select(kv => new CustomEngineDef(kv.Key.X + 0.5f, kv.Key.Y + 0.5f, kv.Value, EngineMaxThrust))
+            .ToList();
+
+        return (new CustomShipDefinition(_editorShipName, rooms, doors, airlocks, devices, _editorForwardDegrees, wallMaterials, engines), errors);
     }
 
     // Looks for exactly one other already-converted region sitting 2 tiles away in `direction` (1

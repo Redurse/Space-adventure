@@ -88,7 +88,11 @@ internal static partial class TestRunner
     // A built engine room's own ThrustBonus has to actually reach a real ShipSystemDevice on the
     // Engine power system - confirms the whole CustomDeviceDef->ShipSystemDevice plumbing, not just
     // that a room with the right name exists.
-    private static bool World_ContentCatalog_EngineRoom_CarriesThrustBonusOntoADevice()
+    // Cosmoteer-style marching engines (direct user request, ShipEngine.cs) - a marching-engine
+    // catalog room now builds a real 3-tile ShipEngine (RoomCatalog.EnginesFor) instead of the old
+    // flat SystemDevices ThrustBonus this test originally checked for; the RCS sibling test right
+    // below is untouched since RCS hasn't been converted to a real ShipEngine yet.
+    private static bool World_ContentCatalog_EngineRoom_BuildsAWorkingEngine()
     {
         var world = new World();
         world.SpawnCharacter(1);
@@ -96,8 +100,40 @@ internal static partial class TestRunner
 
         BuildAndCompleteCatalogRoom(world, "engine-small");
 
-        var totalThrustBonus = world.Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.ThrustBonus);
-        return totalThrustBonus > 0f;
+        return world.Ship.Engines.Count == 1 && world.Ship.Engines[0].MaxThrust > 0f
+            && !world.IsEngineNozzleBroken(world.Ship.Engines[0].Id);
+    }
+
+    // Regression: Ship.ToDefinition() (World.ShipBuilding.cs always starts a NEW build from its own
+    // output) didn't round-trip Engines at all until this was caught here - building a second room
+    // after an engine room silently dropped the engine every time. Building an unrelated room
+    // ("quarters") right after the engine room must leave it in place.
+    private static bool World_ContentCatalog_EngineRoom_SurvivesBuildingAnotherRoomAfterward()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        DockAtStation(world, "outpost-gamma");
+
+        BuildAndCompleteCatalogRoom(world, "engine-small");
+        BuildAndCompleteCatalogRoom(world, "quarters");
+
+        return world.Ship.Engines.Count == 1;
+    }
+
+    // Cosmoteer-style engines, RCS follow-up (direct user request - "по его образу сделаем все
+    // остальные") - "rcs-1way" is the one RCS entry small/simple enough (a single straight line of
+    // thrusters) to convert to a real ShipEngine; "rcs-2way"/"rcs-3way" deliberately still use the
+    // old flat TurnBonus device (RoomCatalog.EnginesFor's own doc comment explains why).
+    private static bool World_ContentCatalog_Rcs1Way_BuildsAWorkingEngine()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        DockAtStation(world, "outpost-gamma");
+
+        BuildAndCompleteCatalogRoom(world, "rcs-1way");
+
+        return world.Ship.Engines.Count == 1 && world.Ship.Engines[0].Role == EngineRole.Rcs
+            && world.Ship.Engines[0].MaxThrust > 0f;
     }
 
     // Same guarantee for an RCS room's TurnBonus - a different field on the same Engine-system

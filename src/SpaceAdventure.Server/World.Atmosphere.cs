@@ -73,14 +73,17 @@ public sealed partial class World
             var leak = 0f;
             foreach (var block in Ship.WallBlocks.Where(b => b.RoomId == room.Id))
             {
-                var coord = TileGridRasterizer.WallBlockTileCoord(block, room);
+                var coord = TileGridRasterizer.WallBlockTileCoord(block, Ship.Rooms, room);
                 if (Ship.Tiles.CellAt(coord) is not { Wall: TileWallKind.Solid } cell)
                     continue;
                 var bordersVacuum = TileSideExtensions.All.Any(side => Ship.Tiles.CellAt(side.Offset(coord)) is not { HasFloor: true });
                 if (!bordersVacuum)
                     continue;
-                leak += OxygenLeakPerBreachPerSecond * (1f - cell.WallHp / WallBlockMaxHp);
+                leak += OxygenLeakPerBreachPerSecond * (1f - cell.WallHp / WallMaterialDefaults.MaxHp(block.Material));
             }
+            // Cosmoteer-style marching engines (direct user request) - a breached Bulkhead tile
+            // leaks exactly like a breached WallBlock (World.Engines.cs's own TotalEngineLeakInRoom).
+            leak += TotalEngineLeakInRoom(room.Id);
             var oxygen = _roomOxygen[room.Id] - leak * (float)deltaSeconds;
             _roomOxygen[room.Id] = Math.Clamp(oxygen, 0f, FullOxygen);
         }

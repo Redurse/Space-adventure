@@ -32,7 +32,9 @@ public static class CustomShipValidator
             errors.Add("Нужна хотя бы одна навигационная панель.");
         if (Count(CustomDeviceKind.Navigation) < 1)
             errors.Add("Нужен хотя бы один сканер.");
-        if (Count(CustomDeviceKind.Engine) == 0)
+        // A real ShipEngine (ShipEngine.cs, Cosmoteer-style marching engine) satisfies this just as
+        // well as the older flat CustomDeviceKind.Engine bonus device - either is "a way to move".
+        if (Count(CustomDeviceKind.Engine) == 0 && def.Engines.Count == 0)
             errors.Add("Нужен хотя бы один двигательный блок.");
         // World.StepAtmosphere looks up the single Oxygen device unconditionally (World.
         // Atmosphere.cs) - a hull with none would crash the very first tick, not just fly quiet.

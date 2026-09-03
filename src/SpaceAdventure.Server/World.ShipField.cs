@@ -153,7 +153,10 @@ public sealed partial class World
         // same "usable in either mode" reasoning the plan settled on rather than real lateral thrust.
         // Zero for every hand-authored hull's own Engine devices, so an unmodified hull turns exactly
         // as before.
-        var turnBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.TurnBonus);
+        // Cosmoteer-style RCS thrusters (direct user request, World.Engines.cs) add their own
+        // per-engine, damage/turn-input-aware contribution on top of the existing flat SystemDevices
+        // sum, mirroring the marching-engine thrustBonus below - zero for any hull with none.
+        var turnBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.TurnBonus) + TotalEngineTurn();
         if (ControlMode == ShipControlMode.Arc)
         {
             // Normalized against a fixed reference speed (ArcYawReferenceSpeed), not the flat max
@@ -174,7 +177,11 @@ public sealed partial class World
 
         // Content-каталог отсеков - a built marching-engine room's own ThrustBonus flat-adds to the
         // base force before the mass division below, same zero-change-for-hand-authored-hulls shape.
-        var thrustBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.ThrustBonus);
+        // Cosmoteer-style marching engines (direct user request, World.Engines.cs) add their own
+        // per-engine, damage/throttle-aware contribution on top of the existing flat SystemDevices
+        // sum - zero for every hull with no Ship.Engines fixtures, so this changes nothing for any
+        // hand-authored hull or any custom ship built before the feature existed.
+        var thrustBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.ThrustBonus) + TotalEngineThrust();
         var thrustForcePerSecond = (ControlMode == ShipControlMode.Arc ? ArcThrustForcePerSecond : ShipThrustForcePerSecond) + thrustBonus;
         var thrustAccelerationPerSecond = thrustForcePerSecond / ShipCatalog.Mass(CurrentShipKind);
         var decelerationPerSecond = ShipAutoStabilizeDecelerationPerSecond * enginePowerScale;
@@ -453,7 +460,7 @@ public sealed partial class World
     {
         var nearest = Ship.WallBlocks.OrderBy(b => (b.Position - localContactPoint).Length()).FirstOrDefault();
         if (nearest is not null)
-            DamageWallBlock(nearest.Id, WallBlockMaxHp);
+            DamageWallBlock(nearest.Id, MaxHpFor(nearest));
     }
 
     // Test-only convenience - never called by real gameplay code, no client command reaches it.

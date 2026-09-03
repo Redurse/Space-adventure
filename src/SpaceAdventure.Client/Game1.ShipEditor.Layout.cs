@@ -37,10 +37,14 @@ public partial class Game1
 
     // Tile-painting redo - the Zone tool's own naming prompt, same small-modal convention as
     // "Сохранить как" above.
-    private static Rectangle GetEditorZoneNameBoxRect() => new(220, 200, 340, 120);
-    private static Rectangle GetEditorZoneNameInputRect() => new(240, 240, 300, 26);
-    private static Rectangle GetEditorZoneNameConfirmRect() => new(240, 278, 140, 28);
-    private static Rectangle GetEditorZoneNameCancelRect() => new(400, 278, 140, 28);
+    // Grown to fit the 4 zone-type quick-select buttons (direct user request - all 4 described zone
+    // types, not just one) above the free-text name field.
+    private static Rectangle GetEditorZoneNameBoxRect() => new(200, 150, 380, 200);
+    private static Rectangle GetEditorZoneTypeButtonRect(int index) => new(
+        216 + (index % 2) * 182, 190 + (index / 2) * 38, 172, 32);
+    private static Rectangle GetEditorZoneNameInputRect() => new(216, 274, 348, 26);
+    private static Rectangle GetEditorZoneNameConfirmRect() => new(216, 312, 168, 28);
+    private static Rectangle GetEditorZoneNameCancelRect() => new(396, 312, 168, 28);
 
     private bool HandleShipEditorSidebarClick(bool leftClicked)
     {

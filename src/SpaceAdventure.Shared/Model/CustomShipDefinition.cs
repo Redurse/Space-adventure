@@ -33,6 +33,14 @@ public sealed record CustomDoorDef(string RoomAId, string RoomBId);
 // chambers, whose dedicated outer wall never gets ordinary WallBlocks either - see Ship.cs).
 public sealed record CustomAirlockDef(string RoomId, EdgeSide Side);
 
+// A painted wall tile whose material isn't the default Standard (direct user request - "усиленная
+// стена"/"иллюминатор", humble-soaring-cat.md M76 follow-up). X/Y are the SAME hull-local tile
+// coordinates the Ship Editor's tile canvas already uses (1 unit = 1 tile), which is also exactly
+// where Ship.Custom.cs's auto-generated WallBlocks land - Ship.FromCustomDefinition looks each
+// generated block's own tile coordinate up here (via TileGridRasterizer.WallBlockTileCoord) and
+// copies the match onto that WallBlock. Standard tiles simply have no entry here at all.
+public sealed record CustomWallMaterialDef(int X, int Y, WallMaterial Material);
+
 public enum CustomDeviceKind
 {
     Reactor,
@@ -142,8 +150,18 @@ public sealed record CustomShipDefinition(
     IReadOnlyList<CustomDoorDef> Doors,
     IReadOnlyList<CustomAirlockDef> Airlocks,
     IReadOnlyList<CustomDeviceDef> Devices,
-    float ForwardDegrees)
+    float ForwardDegrees,
+    // Defaults to empty for every call site that predates wall materials (round-tripped hand-
+    // authored hulls, older saved definitions) - an empty list means "every wall is Standard",
+    // exactly today's behavior.
+    IReadOnlyList<CustomWallMaterialDef>? WallMaterialsRaw = null,
+    // Direct user request (Cosmoteer-style marching engines) - defaults to empty for every call site
+    // that predates them, exactly like WallMaterialsRaw above.
+    IReadOnlyList<CustomEngineDef>? EnginesRaw = null)
 {
+    public IReadOnlyList<CustomWallMaterialDef> WallMaterials { get; init; } = WallMaterialsRaw ?? Array.Empty<CustomWallMaterialDef>();
+    public IReadOnlyList<CustomEngineDef> Engines { get; init; } = EnginesRaw ?? Array.Empty<CustomEngineDef>();
+
     public static CustomShipDefinition Empty { get; } = new(
         "Мой корабль", Array.Empty<CustomRoomDef>(), Array.Empty<CustomDoorDef>(),
         Array.Empty<CustomAirlockDef>(), Array.Empty<CustomDeviceDef>(), 0f);

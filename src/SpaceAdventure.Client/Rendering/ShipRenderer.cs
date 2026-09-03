@@ -71,6 +71,10 @@ public sealed class ShipRenderer
     private Texture2D? _wallEndCapTexture;
     private Texture2D? _wallTJunctionTexture;
     private Texture2D? _reactorTexture;
+    // Same "load real art, fall back to procedural if missing" convention - see SetEngineTextures.
+    private Texture2D? _engineControlTexture;
+    private Texture2D? _engineBulkheadTexture;
+    private Texture2D? _engineNozzleTexture;
     private readonly SpriteFont _font;
     private readonly Starfield _starfield;
 
@@ -123,6 +127,16 @@ public sealed class ShipRenderer
     // Same "load real art, fall back to procedural if missing" convention as SetWallTextures.
     internal void SetReactorTexture(Texture2D? reactor) => _reactorTexture = reactor;
 
+    // Direct user request - real hand-picked art for all three parts of a Cosmoteer-style marching
+    // engine, replacing the DeviceSkin-face placeholder each part drew before. Same "load real art,
+    // fall back to procedural if missing" convention as SetWallTextures/SetReactorTexture.
+    internal void SetEngineTextures(Texture2D? control, Texture2D? bulkhead, Texture2D? nozzle)
+    {
+        _engineControlTexture = control;
+        _engineBulkheadTexture = bulkhead;
+        _engineNozzleTexture = nozzle;
+    }
+
     // Shared by Draw() and by Game1's mouse hit-testing so click regions always match what's
     // actually rendered.
     public static Rectangle GetBlockRect(Vec2 worldPosition, int size, Vector2 origin)
@@ -171,7 +185,7 @@ public sealed class ShipRenderer
     // real hull breach should read, so the ship is never drawn any other way now.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock,
         float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null,
-        IEnumerable<AtmosphereParticle>? atmosphere = null)
+        IEnumerable<AtmosphereParticle>? atmosphere = null, ChatBubbleTracker? chatBubbles = null)
     {
         var forwardDegrees = snapshot.ShipForwardDegrees;
 
@@ -286,6 +300,11 @@ public sealed class ShipRenderer
             DrawCameraJunctionBox(spriteBatch, camera, camDamaged, origin, shipPowered);
         }
 
+        // Cosmoteer-style marching engines (direct user request) - EngineState already carries its
+        // own X/Y/Facing (no separate static list to cross-reference, unlike WallBlocks/WallBlockStates).
+        foreach (var engine in snapshot.EngineStates ?? Array.Empty<EngineState>())
+            DrawShipEngine(spriteBatch, engine, origin, totalSeconds);
+
         DrawReactorBlock(spriteBatch, snapshot.ReactorBlock, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds,
             snapshot.Rooms.FirstOrDefault(r => r.Id == snapshot.ReactorBlock.RoomId)?.Name);
         DrawDistributionBlock(spriteBatch, snapshot.DistributionBlock, openBlock.Kind == BlockKind.Distribution, origin, shipPowered);
@@ -315,7 +334,7 @@ public sealed class ShipRenderer
         }
 
         foreach (var character in snapshot.Characters)
-            DrawCharacter(spriteBatch, character, origin);
+            DrawCharacter(spriteBatch, character, origin, chatBubbles?.BubbleFor(character.PlayerId));
 
         // A cutter works anywhere - there's just nothing to cut in here. The flame still lights, and
         // it still burns the tank, so "why is my bottle empty" has a visible cause.
@@ -762,6 +781,173 @@ public sealed class ShipRenderer
         if (damaged)
             spriteBatch.DrawString(_font, "!", new Vector2(rect.Center.X + NormalBlockSize / 2f - 2, rect.Center.Y - NormalBlockSize),
                 Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+    }
+
+    private static Vector2 EngineFacingStep(TileSide side) => side switch
+    {
+        TileSide.North => new Vector2(0, -1),
+        TileSide.South => new Vector2(0, 1),
+        TileSide.East => new Vector2(1, 0),
+        TileSide.West => new Vector2(-1, 0),
+        _ => Vector2.Zero,
+    };
+
+    // The user's real art (Content/Textures/Devices/Engine*.png) is drawn with its own business end
+    // (the open port every part connects through) facing DOWN in the source image - South needs no
+    // rotation, everything else derived from the standard rotation matrix against that baseline.
+    private static float EngineArtRotation(TileSide side) => side switch
+    {
+        TileSide.South => 0f,
+        TileSide.West => MathHelper.PiOver2,
+        TileSide.North => MathHelper.Pi,
+        TileSide.East => -MathHelper.PiOver2,
+        _ => 0f,
+    };
+
+    // Cosmoteer-style marching engine (direct user request) - three tiles drawn as three distinct
+    // pieces of hardware, not one icon repeated, so a hit on any single one reads immediately at a
+    // glance: Control (the crew's own throttle lever - DeviceSkin.Face.Helm, a plain console with no
+    // reason to look like the fiery business end), Bulkhead (the engine's own housing standing in
+    // for the hull plate there - Face.Engine unlit, painted the same steel as everything else on the
+    // deck until it's actually damaged). Nozzle is deliberately NOT drawn here - see DrawEngineNozzles
+    // below, and its own doc comment, for why.
+    private void DrawShipEngine(SpriteBatch spriteBatch, EngineState engine, Vector2 origin, float totalSeconds)
+    {
+        var step = EngineFacingStep(engine.Facing);
+        var controlPos = new Vec2(engine.X, engine.Y);
+        var bulkheadPos = new Vec2(engine.X + step.X, engine.Y + step.Y);
+
+        // Bulkhead - full tile size, repainting whatever plain wall art ClientTileGrid already drew
+        // at that same spot (it has no idea an engine lives there - Ship.cs's own constructor is
+        // what actually drops the redundant WallBlock server-side; this is a client-side-only
+        // repaint of the same tile, same "draw over it" approach DrawBreachedWallBlock already uses).
+        var bulkheadRect = GetBlockRect(bulkheadPos, (int)PixelsPerUnit, origin);
+        if (_engineBulkheadTexture is { } bulkheadTex)
+        {
+            spriteBatch.Draw(bulkheadTex, bulkheadRect, null, engine.BulkheadBroken ? new Color(255, 130, 130) : Color.White,
+                EngineArtRotation(engine.Facing), new Vector2(bulkheadTex.Width / 2f, bulkheadTex.Height / 2f), SpriteEffects.None, 0f);
+            DrawRectOutline(spriteBatch, bulkheadRect, engine.BulkheadBroken ? Color.Red : new Color(150, 155, 165), engine.BulkheadBroken ? 3 : 2);
+        }
+        else
+        {
+            DrawDeviceFace(spriteBatch, bulkheadRect, DeviceSkin.Face.Engine, lit: false,
+                engine.BulkheadBroken ? Color.Red : new Color(150, 155, 165), engine.BulkheadBroken ? 3 : 2);
+        }
+        if (engine.BulkheadBroken)
+        {
+            DrawScorch(spriteBatch, bulkheadRect);
+            DrawHazardStripes(spriteBatch, new Rectangle(bulkheadRect.X, bulkheadRect.Bottom - 4, bulkheadRect.Width, 4), horizontal: true);
+        }
+
+        // Control - same size/style as any other system-device box (DrawSystemDevice).
+        var controlRect = GetBlockRect(controlPos, BigBlockSize, origin);
+        if (_engineControlTexture is { } controlTex)
+        {
+            spriteBatch.Draw(controlTex, controlRect, null, engine.ControlBroken ? new Color(255, 130, 130) : Color.White,
+                EngineArtRotation(engine.Facing), new Vector2(controlTex.Width / 2f, controlTex.Height / 2f), SpriteEffects.None, 0f);
+            DrawRectOutline(spriteBatch, controlRect, engine.ControlBroken ? Color.Red : Color.LightSteelBlue, engine.ControlBroken ? 3 : 2);
+        }
+        else
+        {
+            DrawDeviceFace(spriteBatch, controlRect, DeviceSkin.Face.Helm, !engine.ControlBroken,
+                engine.ControlBroken ? Color.Red : Color.LightSteelBlue, engine.ControlBroken ? 3 : 2);
+        }
+        if (engine.ControlBroken)
+        {
+            DrawScorch(spriteBatch, controlRect);
+            DrawHazardStripes(spriteBatch, new Rectangle(controlRect.X, controlRect.Bottom - 3, controlRect.Width, 3), horizontal: true);
+            spriteBatch.DrawString(_font, "!", new Vector2(controlRect.Center.X + BigBlockSize / 2f - 2, controlRect.Center.Y - BigBlockSize),
+                Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+        }
+        DrawDeviceLabel(spriteBatch, controlRect, "Двигатель");
+    }
+
+    // A sustained rocket exhaust, not a torch - widens AWAY from the nozzle rather than narrowing to
+    // a point the way DrawToolFlame's cutting/welding beam does, and flickers slowly enough to read
+    // as a steady burn rather than a shower of sparks. `seed` staggers multiple engines' flicker
+    // phase apart so a hull with several of them doesn't pulse in obvious unison.
+    private void DrawEngineExhaust(SpriteBatch spriteBatch, Vector2 nozzleCenter, Vector2 direction, float totalSeconds, float seed)
+    {
+        if (direction.LengthSquared() < 0.001f)
+            return;
+        var rotation = MathF.Atan2(direction.Y, direction.X);
+        var flicker = 0.85f + 0.15f * MathF.Sin(totalSeconds * 14f + seed);
+        var length = PixelsPerUnit * (1.05f + 0.35f * flicker);
+
+        void Layer(Color color, float lengthFraction, float width) =>
+            spriteBatch.Draw(_pixel, nozzleCenter, null, color, rotation, new Vector2(0f, 0.5f),
+                new Vector2(length * lengthFraction, width * flicker), SpriteEffects.None, 0f);
+
+        Layer(new Color(255, 120, 20) * 0.30f, 1f, 26f);
+        Layer(new Color(255, 170, 60) * 0.55f, 0.75f, 15f);
+        Layer(new Color(255, 225, 140) * 0.85f, 0.42f, 7f);
+        Layer(Color.White * 0.9f, 0.18f, 3f);
+    }
+
+    // Every marching engine's Nozzle, drawn as its OWN pass after the scene composite - the same
+    // "goes on after the composite rather than into the scene" fix Game1.Vacuum.cs's own
+    // DrawRcsPlume already needed for a suit's manoeuvring thrusters, for the identical underlying
+    // reason: the sight-cone/room-lighting mask (Game1.Lighting.cs's BuildVisibilityMask) multiplies
+    // the WHOLE captured scene, and Nozzle sits one tile past the hull in genuine open space no Room
+    // ever covers - to that mask it reads exactly like the far side of an ordinary wall and gets
+    // blacked out, even though it's the ship's own hardware and the player built it on purpose.
+    // Confirmed live (a magenta test rect drawn from inside the masked pass never appeared on
+    // screen, pixel-sampled directly) before writing this - not a coordinate bug, not GPU clipping.
+    // Called from Game1.cs right where DrawRcsPlume already is, with its own Begin/End (nothing is
+    // guaranteed open at that point in the frame) and the same sceneTransform so it tracks the
+    // camera's own rotation/zoom exactly like everything drawn inside the masked pass does.
+    public void DrawEngineNozzles(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, Matrix sceneTransform, float totalSeconds)
+    {
+        var engines = snapshot.EngineStates;
+        if (engines is not { Count: > 0 })
+            return;
+
+        spriteBatch.Begin(transformMatrix: sceneTransform);
+        foreach (var engine in engines)
+        {
+            var step = EngineFacingStep(engine.Facing);
+            var nozzlePos = new Vec2(engine.X + step.X * 2, engine.Y + step.Y * 2);
+            var nozzleRect = GetBlockRect(nozzlePos, BigBlockSize, origin);
+            if (_engineNozzleTexture is { } nozzleTex)
+            {
+                var tint = engine.NozzleBroken ? new Color(255, 130, 130) : engine.IsThrusting ? Color.White : new Color(160, 160, 160);
+                spriteBatch.Draw(nozzleTex, nozzleRect, null, tint, EngineArtRotation(engine.Facing),
+                    new Vector2(nozzleTex.Width / 2f, nozzleTex.Height / 2f), SpriteEffects.None, 0f);
+                DrawRectOutline(spriteBatch, nozzleRect, engine.NozzleBroken ? Color.Red : new Color(230, 140, 70), engine.NozzleBroken ? 3 : 2);
+            }
+            else
+            {
+                DrawDeviceFace(spriteBatch, nozzleRect, DeviceSkin.Face.Engine, engine.IsThrusting,
+                    engine.NozzleBroken ? Color.Red : new Color(230, 140, 70), engine.NozzleBroken ? 3 : 2);
+            }
+            if (engine.NozzleBroken)
+            {
+                DrawScorch(spriteBatch, nozzleRect);
+                DrawHazardStripes(spriteBatch, new Rectangle(nozzleRect.X, nozzleRect.Bottom - 3, nozzleRect.Width, 3), horizontal: true);
+            }
+        }
+        spriteBatch.End();
+
+        // The flame itself in its own additive-blended pass, same convention DrawRcsPlume's own
+        // exhaust puffs use - a glow has no business being darkened by alpha-blended overdraw, and
+        // additive over the housing just drawn above reads as the housing catching its own light.
+        var anyThrusting = false;
+        foreach (var engine in engines)
+            if (engine.IsThrusting) { anyThrusting = true; break; }
+        if (!anyThrusting)
+            return;
+
+        spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, transformMatrix: sceneTransform);
+        foreach (var engine in engines)
+        {
+            if (!engine.IsThrusting)
+                continue;
+            var step = EngineFacingStep(engine.Facing);
+            var nozzlePos = new Vec2(engine.X + step.X * 2, engine.Y + step.Y * 2);
+            var nozzleRect = GetBlockRect(nozzlePos, BigBlockSize, origin);
+            DrawEngineExhaust(spriteBatch, new Vector2(nozzleRect.Center.X, nozzleRect.Center.Y), step, totalSeconds, engine.X + engine.Y * 7f);
+        }
+        spriteBatch.End();
     }
 
     // Redesigned as one big spinning reactor core (the previous "Hullwright's Bench" housing -
@@ -1488,19 +1674,39 @@ public sealed class ShipRenderer
     // unchanged. Breached walls are also skipped nothing special here either - DrawBreachedWallBlock
     // already punches its own hole/hazard-stripe visual on top of whatever's drawn underneath, at the
     // WallBlock's own position, so it reads correctly over the new art with no changes on its side.
+    // Reinforced/Window (direct user request, humble-soaring-cat.md M76 follow-up "варианты стен")
+    // reuse the same wall textures, just tinted - no bespoke art exists for either variant yet, same
+    // convention the Ship Editor's own canvas/palette already use for it.
+    private static Color WallMaterialTint(WallMaterial material) => material switch
+    {
+        WallMaterial.Reinforced => new Color(150, 155, 165),
+        WallMaterial.Window => new Color(150, 215, 235) * 0.75f,
+        _ => Color.White,
+    };
+
     internal void DrawShipWalls(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
     {
         var tiles = ClientTileGrid.Build(snapshot);
+        // Material lives on the WallBlock itself (WallBlock.cs), not on the tile grid (a pure
+        // projection of Rooms/Doors/AirlockOuterDoors, no WallBlock input - see ClientTileGrid's own
+        // doc comment) - matched back to a tile coordinate via the same WallBlockTileCoord mapping
+        // World.TileSync.cs already uses server-side, so this can never disagree with which block
+        // actually owns that position.
+        var materialByTile = snapshot.WallBlocks
+            .Where(b => b.Material != WallMaterial.Standard)
+            .Select(b => (Coord: TileGridRasterizer.WallBlockTileCoord(b, snapshot.Rooms, snapshot.Rooms.First(r => r.Id == b.RoomId)), b.Material))
+            .ToDictionary(x => x.Coord, x => x.Material);
         foreach (var (coord, cell) in tiles.Cells)
         {
             if (cell.Wall != TileWallKind.Solid)
                 continue; // None = no wall; Door is drawn separately by the existing DrawDoor calls
-            DrawWallTile(spriteBatch, tiles, coord, origin);
+            DrawWallTile(spriteBatch, tiles, coord, origin, materialByTile.GetValueOrDefault(coord, WallMaterial.Standard));
         }
     }
 
-    private void DrawWallTile(SpriteBatch spriteBatch, TileGrid tiles, TileCoord coord, Vector2 origin)
+    private void DrawWallTile(SpriteBatch spriteBatch, TileGrid tiles, TileCoord coord, Vector2 origin, WallMaterial material = WallMaterial.Standard)
     {
+        var tint = WallMaterialTint(material);
         bool HasWall(TileSide side) => tiles.CellAt(side.Offset(coord)) is { Wall: TileWallKind.Solid or TileWallKind.Door };
 
         var north = HasWall(TileSide.North);
@@ -1523,18 +1729,18 @@ public sealed class ShipRenderer
             // actually the open one here, same convention as the corner/end-cap rotations above.
             var tRotation = !north ? 0f : !east ? MathHelper.PiOver2 : !south ? MathHelper.Pi : -MathHelper.PiOver2;
             var tOrigin = new Vector2(tTex.Width / 2f, tTex.Height / 2f);
-            spriteBatch.Draw(tTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, Color.White,
+            spriteBatch.Draw(tTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, tint,
                 tRotation, tOrigin, SpriteEffects.None, 0f);
             return;
         }
         if (north && south && _wallVerticalTexture is { } vTex)
         {
-            spriteBatch.Draw(vTex, new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit), Color.White);
+            spriteBatch.Draw(vTex, new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit), tint);
             return;
         }
         if (east && west && _wallHorizontalTexture is { } hTex)
         {
-            spriteBatch.Draw(hTex, new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit), Color.White);
+            spriteBatch.Draw(hTex, new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit), tint);
             return;
         }
         // A dead end (exactly one wall-kind neighbor) reads wrong with the corner texture (a "turn"
@@ -1544,7 +1750,7 @@ public sealed class ShipRenderer
         {
             var capRotation = south ? 0f : west ? MathHelper.PiOver2 : north ? MathHelper.Pi : -MathHelper.PiOver2;
             var capOrigin = new Vector2(capTex.Width / 2f, capTex.Height / 2f);
-            spriteBatch.Draw(capTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, Color.White,
+            spriteBatch.Draw(capTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, tint,
                 capRotation, capOrigin, SpriteEffects.None, 0f);
             return;
         }
@@ -1563,7 +1769,7 @@ public sealed class ShipRenderer
                 _ => 0f,
             };
             var texOrigin = new Vector2(cTex.Width / 2f, cTex.Height / 2f);
-            spriteBatch.Draw(cTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, Color.White,
+            spriteBatch.Draw(cTex, new Rectangle((int)center.X, (int)center.Y, unit, unit), null, tint,
                 rotation, texOrigin, SpriteEffects.None, 0f);
             return;
         }
@@ -1573,7 +1779,7 @@ public sealed class ShipRenderer
         // that band drawing had (this path is only ever reached if the .mgcb build is broken, so it's
         // not worth threading room/alarm context through a tile loop for it).
         var fallbackRect = new Rectangle((int)center.X - unit / 2, (int)center.Y - unit / 2, unit, unit);
-        TileTextures.DrawSquares(spriteBatch, _hullPlates, TileTextures.HullTileSize, unit, fallbackRect, Color.White, new Point((int)origin.X, (int)origin.Y));
+        TileTextures.DrawSquares(spriteBatch, _hullPlates, TileTextures.HullTileSize, unit, fallbackRect, tint, new Point((int)origin.X, (int)origin.Y));
     }
 
     // Debug aid (M74 follow-up, humble-soaring-cat.md) - draws a bold outline around every 1-unit
@@ -2003,7 +2209,8 @@ public sealed class ShipRenderer
     // actual person from this camera height. FacingX/Y offsets the shoulders/head forward and picks
     // which side the (unlit) hip capsule trails on, plus a small bright nose on the head, so a
     // standing-still character still visibly has a front and a back.
-    internal void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin)
+    internal void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin,
+        (string Text, float Alpha)? chatBubble = null)
     {
         var size = (int)(CharacterDiameter * PixelsPerUnit);
         var center = new Vector2(origin.X + (float)character.X * PixelsPerUnit, origin.Y + (float)character.Y * PixelsPerUnit);
@@ -2056,6 +2263,28 @@ public sealed class ShipRenderer
 
         if (character.SuitActionRemaining > 0)
             spriteBatch.DrawString(_font, "...", new Vector2(rect.X, rect.Bottom + 2), Color.CadetBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+
+        if (chatBubble is { } bubble)
+            DrawChatBubble(spriteBatch, bubble.Text, bubble.Alpha, new Vector2(center.X, rect.Y - 44));
+    }
+
+    // A speech bubble above the sender (direct user request, "как в Баротравме", ChatBubbleTracker) -
+    // positioned further above the head than the permanent nameplate/role glyph so the two never
+    // overlap. A bubble is a brief announcement, not the full chat log, so long text is truncated.
+    private void DrawChatBubble(SpriteBatch spriteBatch, string text, float alpha, Vector2 anchorBottomCenter)
+    {
+        const int maxChars = 40;
+        if (text.Length > maxChars)
+            text = text[..maxChars] + "…";
+
+        const float scale = 0.45f;
+        var size = _font.MeasureString(text) * scale;
+        var padding = new Vector2(6, 4);
+        var boxSize = size + padding * 2;
+        var boxOrigin = new Vector2(anchorBottomCenter.X - boxSize.X / 2f, anchorBottomCenter.Y - boxSize.Y);
+
+        spriteBatch.Draw(_pixel, new Rectangle((int)boxOrigin.X, (int)boxOrigin.Y, (int)boxSize.X, (int)boxSize.Y), Color.Black * (0.6f * alpha));
+        spriteBatch.DrawString(_font, text, boxOrigin + padding, Color.White * alpha, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
     }
 
     private void DrawRectOutline(SpriteBatch spriteBatch, Rectangle rect, Color color, int thickness) =>

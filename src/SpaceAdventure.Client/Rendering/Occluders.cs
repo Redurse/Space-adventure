@@ -37,7 +37,12 @@ public static class Occluders
 
     public static SightGap ToGap(AirlockOuterDoor door) => new(door.Left, door.Top, door.Right, door.Bottom);
 
-    private static void AddHorizontal(List<WallSegment> into, float y, float from, float to, IReadOnlyList<SightGap> gaps)
+    // Shared with TileOccluders.cs (M78, humble-soaring-cat.md) - both the old room-rectangle wall
+    // builder above and the new tile-boundary one feed their raw spans through these same two
+    // methods, so a room-based run and a tile-based run get cut against a SightGap by the exact same
+    // code path and can never drift apart on the rule. Internal rather than private for exactly that
+    // reuse; still not meant to be called from outside Rendering.
+    internal static void AddHorizontal(List<WallSegment> into, float y, float from, float to, IReadOnlyList<SightGap> gaps)
     {
         var spans = new List<(float From, float To)> { (from, to) };
         foreach (var gap in gaps)
@@ -52,7 +57,7 @@ public static class Occluders
                 into.Add(new WallSegment(a, y, b, y));
     }
 
-    private static void AddVertical(List<WallSegment> into, float x, float from, float to, IReadOnlyList<SightGap> gaps)
+    internal static void AddVertical(List<WallSegment> into, float x, float from, float to, IReadOnlyList<SightGap> gaps)
     {
         var spans = new List<(float From, float To)> { (from, to) };
         foreach (var gap in gaps)

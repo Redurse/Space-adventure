@@ -11,7 +11,10 @@ namespace SpaceAdventure.Server;
 // welding repairs it the same gradual way rather than un-breaching it in one instant touch.
 public sealed partial class World
 {
-    public const float WallBlockMaxHp = 100f;
+    // Kept as the Standard-material default (every station/enemy/hand-authored hull, and every
+    // custom ship built before wall materials existed, is entirely this) - a Reinforced/Window
+    // painted tile gets its own, different max via MaxHpFor/MaxHpForBlockId below instead.
+    public const float WallBlockMaxHp = WallMaterialDefaults.StandardMaxHp;
     private const float WelderRepairPerSecond = 30f; // a fully broken block takes a bit over 3s to patch
     private const float WallCutDamagePerSecond = 34f; // matches the ore cutter's own rate
     private const float WallCutReachUnits = 1.7f;
@@ -30,10 +33,20 @@ public sealed partial class World
     {
         _wallBlockHp.Clear();
         foreach (var block in Ship.WallBlocks)
-            _wallBlockHp[block.Id] = WallBlockMaxHp;
+            _wallBlockHp[block.Id] = MaxHpFor(block);
     }
 
-    private float WallBlockHp(string blockId) => _wallBlockHp.GetValueOrDefault(blockId, WallBlockMaxHp);
+    // A block's own max, driven by its Material (WallMaterial.cs) - Standard everywhere except a
+    // custom ship's own Reinforced/Window painted tiles (Ship.Custom.cs's ApplyWallMaterials).
+    private static float MaxHpFor(WallBlock block) => WallMaterialDefaults.MaxHp(block.Material);
+
+    // Looked up by id rather than passed a WallBlock directly because most callers (cutting/welding)
+    // only ever have the id on hand - the scan is fine, a hull has tens of blocks, not thousands.
+    private float MaxHpForBlockId(string blockId) =>
+        WallMaterialDefaults.MaxHp(Ship.WallBlocks.FirstOrDefault(b => b.Id == blockId)?.Material ?? WallMaterial.Standard);
+
+    private float WallBlockHp(string blockId) =>
+        _wallBlockHp.TryGetValue(blockId, out var hp) ? hp : MaxHpForBlockId(blockId);
 
     public bool IsWallBlockBreached(string blockId) => WallBlockHp(blockId) <= 0f;
 
@@ -47,7 +60,7 @@ public sealed partial class World
     }
 
     private void RepairWallBlock(string blockId, float amount) =>
-        _wallBlockHp[blockId] = Math.Min(WallBlockMaxHp, WallBlockHp(blockId) + amount);
+        _wallBlockHp[blockId] = Math.Min(MaxHpForBlockId(blockId), WallBlockHp(blockId) + amount);
 
     // Test-only direct breach, same convention as World.ShipField.cs's DebugPlaceShip - a
     // precondition setter, not a gameplay action. Enemy fire aims at fixed priority targets now
@@ -59,7 +72,7 @@ public sealed partial class World
     {
         var block = Ship.WallBlocks.FirstOrDefault(b => b.RoomId == roomId);
         if (block is not null)
-            DamageWallBlock(block.Id, WallBlockMaxHp);
+            DamageWallBlock(block.Id, MaxHpFor(block));
     }
 
     // Same test-only precondition setter as DebugBreachWallBlock above, just against whichever enemy
@@ -84,7 +97,7 @@ public sealed partial class World
             IsWallBlockBreached(other.Id) && (other.Position - block.Position).Length() <= PassableBreachAdjacency);
 
     private IReadOnlyList<WallBlockState> CreateWallBlockStates() =>
-        Ship.WallBlocks.Select(b => new WallBlockState(b.Id, WallBlockHp(b.Id), WallBlockMaxHp)).ToArray();
+        Ship.WallBlocks.Select(b => new WallBlockState(b.Id, WallBlockHp(b.Id), MaxHpFor(b), b.Material)).ToArray();
 
     // A station is never actually breachable (FindAimedStationWallBlock below is used only for the
     // target-id the client shows a bar over, never by StepWelding/StepCutting/DamageWallBlock/

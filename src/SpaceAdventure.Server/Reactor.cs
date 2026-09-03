@@ -57,7 +57,13 @@ public sealed class Reactor
     // instead of a lever, and cleared the same way every other damaged fixture is: the wrench/
     // screwdriver repair minigame (World.SystemRepair.cs) rather than flipping it back by hand.
     public bool Broken { get; set; }
-    public float CurrentOutput => !EmergencyShutdown && !Broken && Fuel > 0 ? MaxOutput : 0;
+    // Set externally by World.Upgrades.cs's ApplyUpgradeEffects, from a plain Room.Name comparison
+    // against ShipZoneKinds.CanonicalName(ShipZoneKind.ReactorRoom) - direct user request ("если
+    // реактор стоит не в своей зоне то он получает дебаф к продуктивности в 10 процентов"). 1f
+    // whenever the reactor sits in its own zone (or the player never named one at all - building
+    // outside a matching zone is allowed, just penalized, never blocked).
+    public float ZonePenaltyMultiplier { get; set; } = 1f;
+    public float CurrentOutput => !EmergencyShutdown && !Broken && Fuel > 0 ? MaxOutput * ZonePenaltyMultiplier : 0;
 
     public Reactor(float maxOutput, float maxFuel, float fuelPerPowerUnitPerSecond)
     {

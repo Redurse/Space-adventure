@@ -58,10 +58,17 @@ public sealed partial class World
         DestroyRoomAndDetach(block.RoomId);
     }
 
-    // Removes roomId AND every other room that becomes unreachable from the reactor once it's gone
-    // (RoomGraphConnectivity - the same BFS utility M61's TryDemolishRoom already uses, just kept
-    // instead of refused when it finds a split) - the whole detached group spins off together as one
-    // fragment, not one fragment per orphaned room, since they're still structurally one piece.
+    // Removes roomId AND every other room that becomes unreachable from the reactor once it's gone -
+    // the whole detached group spins off together as one fragment, not one fragment per orphaned
+    // room, since they're still structurally one piece.
+    //
+    // M77 (humble-soaring-cat.md) - reachability and device membership are now both answered from
+    // the ALREADY-SYNCED live Ship.Tiles (real tile/region data), not from Ship.ToDefinition()'s DTO
+    // round-trip (RoomGraphConnectivity) plus bounding-box math. Ship.Tiles still has the doomed
+    // room's own tiles in it at this point (only ApplyShipDefinition, below, actually rebuilds the
+    // grid) - simulate its removal on a throwaway TileGrid.Clone() (never mutate the live grid other
+    // systems read this same tick) by clearing its floor tiles the exact same way
+    // TileRegionConnectivity's own unit tests do, then run the region BFS on that.
     private void DestroyRoomAndDetach(string roomId)
     {
         var def = Ship.ToDefinition();
@@ -71,8 +78,8 @@ public sealed partial class World
             return;
 
         // M74 - generic Devices query instead of the ReactorBlock field directly; still just the
-        // first/primary reactor (multiple reactors' anchor-choice is an open question for M77, not
-        // this milestone - humble-soaring-cat.md's own "Риски" section).
+        // first/primary reactor (multiple reactors' anchor-choice is an open question for a later
+        // milestone, not this one - humble-soaring-cat.md's own "Риски" section).
         var anchorRoomId = Ship.Devices.First(d => d.Kind == DeviceKind.Reactor).RoomId;
         if (anchorRoomId == roomId)
             return; // the reactor's own compartment was the one destroyed - not something a room-
@@ -83,14 +90,31 @@ public sealed partial class World
         var remainingRoomIds = remainingRooms.Select(r => r.Id).ToHashSet();
         var remainingDoors = def.Doors.Where(d => remainingRoomIds.Contains(d.RoomAId) && remainingRoomIds.Contains(d.RoomBId)).ToList();
 
-        var keptRoomIds = RoomGraphConnectivity.ReachableFrom(remainingRooms, remainingDoors, anchorRoomId);
+        var scratchTiles = Ship.Tiles.Clone();
+        var destroyedRoom = Ship.Rooms.First(r => r.Id == roomId);
+        foreach (var coord in RoomTileCoords(destroyedRoom))
+            scratchTiles.SetFloor(coord, false);
+
+        var anchorRoom = Ship.Rooms.First(r => r.Id == anchorRoomId);
+        var anchorRegionId = RoomRegionId(anchorRoom, scratchTiles);
+        var reachableRegionIds = anchorRegionId is { } anchorId
+            ? TileRegionConnectivity.ReachableRegionsFrom(scratchTiles, anchorId)
+            : new HashSet<int>();
+
+        var keptRoomIds = remainingRooms
+            .Where(r =>
+            {
+                var liveRoom = Ship.Rooms.First(lr => lr.Id == r.Id);
+                return RoomRegionId(liveRoom, scratchTiles) is { } regionId && reachableRegionIds.Contains(regionId);
+            })
+            .Select(r => r.Id)
+            .ToHashSet();
         var keptRooms = remainingRooms.Where(r => keptRoomIds.Contains(r.Id)).ToList();
         var keptDoors = remainingDoors.Where(d => keptRoomIds.Contains(d.RoomAId) && keptRoomIds.Contains(d.RoomBId)).ToList();
         var keptAirlocks = def.Airlocks.Where(a => keptRoomIds.Contains(a.RoomId)).ToList();
 
         var detachedRooms = def.Rooms.Where(r => !keptRoomIds.Contains(r.Id)).ToList(); // the destroyed room + anything cut off from the reactor with it
-        var keptDevices = def.Devices.Where(d =>
-            !detachedRooms.Any(r => d.X >= r.X && d.X <= r.X + r.Width && d.Y >= r.Y && d.Y <= r.Y + r.Height)).ToList();
+        var keptDevices = def.Devices.Where(d => IsDeviceReachable(d, scratchTiles, reachableRegionIds, detachedRooms)).ToList();
 
         var shrunk = def with { Rooms = keptRooms, Doors = keptDoors, Airlocks = keptAirlocks, Devices = keptDevices };
 
@@ -109,6 +133,57 @@ public sealed partial class World
 
         SpawnDebrisFragment(detachedRooms);
         ApplyShipDefinition(shrunk);
+    }
+
+    // M77 - every tile a Room's own rectangle covers, using the exact same rounding convention
+    // TileGridRasterizer.FromRooms's own floor-population pass uses (RoundToInt, away-from-zero) so
+    // this walks precisely the tiles that rasterizer originally floored for this room - kept as its
+    // own small copy here rather than exposing TileGridRasterizer's private RoundToInt, the same
+    // "kept as its own small copy" call World.ShipBuilding.cs's NextRoomId already makes for a
+    // similarly tiny helper.
+    private static IEnumerable<TileCoord> RoomTileCoords(Room room)
+    {
+        var left = (int)MathF.Round(room.Left, MidpointRounding.AwayFromZero);
+        var right = (int)MathF.Round(room.Right, MidpointRounding.AwayFromZero);
+        var top = (int)MathF.Round(room.Top, MidpointRounding.AwayFromZero);
+        var bottom = (int)MathF.Round(room.Bottom, MidpointRounding.AwayFromZero);
+        for (var x = left; x < right; x++)
+            for (var y = top; y < bottom; y++)
+                yield return new TileCoord(x, y);
+    }
+
+    // A Room's own tiles all belong to one SealedRegion by construction (TileGridRasterizer walls
+    // every room's own boundary) - find it via any ONE of the room's tiles that's actually a region
+    // member (an edge/corner tile is a wall, not a member; RegionIdAt returns null for those and for
+    // any tile the room no longer has at all in `tiles` - e.g. the room just got cleared by the
+    // SetFloor(false) loop above). Null only if literally no tile of this room is a region member
+    // right now (the room itself was just cleared, or is too small to have any interior at all).
+    private static int? RoomRegionId(Room room, TileGrid tiles) =>
+        RoomTileCoords(room).Select(tiles.RegionIdAt).FirstOrDefault(id => id is not null);
+
+    // Which tile a device's own center position falls in - the same point-in-tile containment
+    // TileCoord's own doc comment defines ([X, X+1) x [Y, Y+1)), matching the existing point-
+    // containment convention Ship.RoomIdAt/CustomShipValidator's own Contains already use for "which
+    // room is this device in" (floor, not round - a device is never itself tile-aligned the way a
+    // wall/floor tile is).
+    private static TileCoord DeviceTileCoord(float x, float y) => new((int)MathF.Floor(x), (int)MathF.Floor(y));
+
+    // M77 - real tile ownership instead of bounding-box math: a device belongs to whichever region
+    // its own tile is in, and is kept iff that region is still reachable. Ship.Tiles never actually
+    // tags a live device's own tile with TileCell.DeviceId (only the offline Ship Editor's own
+    // separate scratch grid ever calls PlaceDevice - Ship's own TileGridRasterizer/TileSync never
+    // do), so this looks the device's tile up by its own position instead, which is exactly the same
+    // point-containment idea DeviceId would have encoded. Falls back to the OLD bounding-box check
+    // (against the now-detached rooms) whenever the device's own tile isn't a region member right
+    // now - a wall-mounted device (camera/turret periscope/terminal-adjacent console) sitting exactly
+    // on a wall tile, or a device whose room was just cleared above - so a device is never silently
+    // dropped just because its exact point landed off the walkable interior.
+    private static bool IsDeviceReachable(CustomDeviceDef device, TileGrid tiles, HashSet<int> reachableRegionIds, IReadOnlyList<CustomRoomDef> detachedRooms)
+    {
+        var coord = DeviceTileCoord(device.X, device.Y);
+        if (tiles.RegionIdAt(coord) is { } regionId)
+            return reachableRegionIds.Contains(regionId);
+        return !detachedRooms.Any(r => device.X >= r.X && device.X <= r.X + r.Width && device.Y >= r.Y && device.Y <= r.Y + r.Height);
     }
 
     // M64 - everyone actually aboard a room that's about to detach becomes a free EVA body at their
@@ -191,6 +266,6 @@ public sealed partial class World
     public void DebugDestroyRoomWallBlocks(string roomId)
     {
         foreach (var block in Ship.WallBlocks.Where(b => b.RoomId == roomId).ToList())
-            DamageWallBlock(block.Id, WallBlockMaxHp);
+            DamageWallBlock(block.Id, MaxHpFor(block));
     }
 }

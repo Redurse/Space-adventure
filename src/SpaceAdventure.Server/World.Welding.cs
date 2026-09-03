@@ -87,6 +87,22 @@ public sealed partial class World
             return;
         }
 
+        // Cosmoteer-style marching engines (direct user request) - Bulkhead welds shut exactly like
+        // a breached wall panel; Nozzle only reachable from outside (it's genuinely exterior), an EVA
+        // repair same as patching the outer hull.
+        var engineBulkhead = FindAimedEngine(character, WelderReachUnits, WelderSamples, WeldPointRadius, e => e.BulkheadPosition);
+        if (engineBulkhead is not null)
+        {
+            RepairEngineBulkhead(engineBulkhead.Id, WelderRepairPerSecond * (float)deltaSeconds);
+            return;
+        }
+        var engineNozzle = FindAimedEngine(character, WelderReachUnits, WelderSamples, WeldPointRadius, e => e.NozzlePosition);
+        if (engineNozzle is not null)
+        {
+            RepairEngineNozzle(engineNozzle.Id, WelderRepairPerSecond * (float)deltaSeconds);
+            return;
+        }
+
         if (!character.IsOutside)
             return;
 

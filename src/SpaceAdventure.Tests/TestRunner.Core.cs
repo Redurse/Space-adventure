@@ -65,9 +65,15 @@ internal static partial class TestRunner
 
         var character = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var maxX = world.Ship.Rooms.Max(r => r.Right);
-        // Stops RoomLayout.CharacterRadius short of the bare wall, not exactly on it - a wall has
-        // real thickness now, so the character's own edge is what touches it, not its center point.
-        return Math.Abs(character.X - (maxX - RoomLayout.CharacterRadius)) < 0.01f;
+        // Bug fix follow-up (humble-soaring-cat.md, docked-movement tile collision) - a fresh World
+        // always starts docked, and docked movement now goes through the same tile-based collision
+        // every other structure uses (World.Movement.cs), not the old zero-thickness RoomLayout model
+        // this test's own value used to assume. The airlock-vacuum door (closed by default - "opening
+        // to vacuum is always a deliberate choice", World.ShipPurchase.cs) rasterizes onto the hull's
+        // own trailing-edge wall tile, one tile further IN than maxX itself (TileGridRasterizer's own
+        // leading/trailing rule) - RoomLayout.CharacterRadius short of THAT tile's face, not the bare
+        // room rectangle's edge.
+        return Math.Abs(character.X - (maxX - 1f - RoomLayout.CharacterRadius)) < 0.01f;
     }
 
     private static bool GameServer_Tick_AppliesMoveCommandFromClient()

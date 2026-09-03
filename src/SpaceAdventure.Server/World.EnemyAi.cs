@@ -27,7 +27,10 @@ public sealed partial class World
     // RepairableBlockKinds/RepairableBlock/IsBlockBroken/SetBlockBroken instead of five separately
     // hardcoded HitCandidateKind members - see that file's own doc comment on why this stays
     // "one instance per kind" rather than iterating every Devices entry of a repairable kind.
-    private enum HitCandidateKind { WallBlock, Turret, SystemDevice, Door, RepairableBlock }
+    // EngineBulkhead/EngineNozzle (Cosmoteer-style marching engines, direct user request) - the two
+    // exterior-facing tiles of a ShipEngine, hittable exactly like a WallBlock; Control never is
+    // (it's genuinely interior, past both of those).
+    private enum HitCandidateKind { WallBlock, Turret, SystemDevice, Door, RepairableBlock, EngineBulkhead, EngineNozzle }
     private readonly record struct HitCandidate(Vec2 LocalPosition, float Radius, HitCandidateKind Kind, string Id);
 
     // Every physical thing an enemy shell can run into once it's past the shield, in one flat list:
@@ -56,6 +59,15 @@ public sealed partial class World
         {
             var block = RepairableBlock(kind);
             yield return new HitCandidate(block.Position, DeviceHitRadius, HitCandidateKind.RepairableBlock, block.Id);
+        }
+
+        // Cosmoteer-style marching engines (direct user request) - Nozzle sits furthest out (an
+        // incoming shot reaches it first), Bulkhead one tile behind it; Control is never a target,
+        // it's genuinely interior.
+        foreach (var engine in Ship.Engines)
+        {
+            yield return new HitCandidate(engine.NozzlePosition, WallHitRadius, HitCandidateKind.EngineNozzle, engine.Id);
+            yield return new HitCandidate(engine.BulkheadPosition, WallHitRadius, HitCandidateKind.EngineBulkhead, engine.Id);
         }
     }
 
@@ -139,6 +151,18 @@ public sealed partial class World
                         return true;
                     }
                     continue;
+
+                case HitCandidateKind.EngineNozzle:
+                    if (IsEngineNozzleBroken(candidate.Id))
+                        continue; // already blown open - a hole, not an obstacle
+                    DamageEngineNozzle(candidate.Id, damage);
+                    return true;
+
+                case HitCandidateKind.EngineBulkhead:
+                    if (IsEngineBulkheadBroken(candidate.Id))
+                        continue;
+                    DamageEngineBulkhead(candidate.Id, damage);
+                    return true;
             }
         }
 

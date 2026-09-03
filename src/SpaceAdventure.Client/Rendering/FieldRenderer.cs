@@ -83,7 +83,7 @@ public sealed class FieldRenderer
     // while docked, or the gunner is looking at a black gap where the station they're moored to is.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, Vec2 hullCenter,
         Vector2 viewportOrigin, Vector2 viewportSize, float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null,
-        bool seenFromOutside = false)
+        bool seenFromOutside = false, ChatBubbleTracker? chatBubbles = null)
     {
         Vector2 WorldToScreen(Vec2 world)
         {
@@ -271,7 +271,7 @@ public sealed class FieldRenderer
             var facing = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
             DrawCharacter(spriteBatch, character, WorldToScreen(new Vec2(character.X, character.Y)),
-                new Vector2((float)facing.X, (float)facing.Y));
+                new Vector2((float)facing.X, (float)facing.Y), chatBubbles?.BubbleFor(character.PlayerId));
         }
 
         if (effects is not null)
@@ -1070,7 +1070,8 @@ public sealed class FieldRenderer
     // A suited EVA character always shows the CadetBlue visor ring (ShipRenderer only shows it
     // when WearingSuit - out here everyone's necessarily suited, game_design.md Phase 3 M17).
     // facing arrives already folded into the ship's frame by the caller - see the call site.
-    private void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 screenCenter, Vector2 facing)
+    private void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 screenCenter, Vector2 facing,
+        (string Text, float Alpha)? chatBubble = null)
     {
         // The same body as indoors (ShipRenderer.CharacterDiameter). It used to be a 10px dot, so a
         // crewman shrank to a third of their size the moment they stepped through the airlock -
@@ -1095,5 +1096,27 @@ public sealed class FieldRenderer
         if (!character.IsBot && character.Nickname is { Length: > 0 } nickname)
             spriteBatch.DrawString(_font, nickname, new Vector2(screenCenter.X - 10, screenCenter.Y - size / 2f - 14),
                 Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+
+        if (chatBubble is { } bubble)
+            DrawChatBubble(spriteBatch, bubble.Text, bubble.Alpha, new Vector2(screenCenter.X, screenCenter.Y - size / 2f - 44));
+    }
+
+    // Same speech-bubble idea as indoors (ShipRenderer.DrawChatBubble) - kept as its own small copy
+    // rather than shared, since the two renderers already keep their own independent _pixel/_font
+    // and every other draw helper here.
+    private void DrawChatBubble(SpriteBatch spriteBatch, string text, float alpha, Vector2 anchorBottomCenter)
+    {
+        const int maxChars = 40;
+        if (text.Length > maxChars)
+            text = text[..maxChars] + "…";
+
+        const float scale = 0.45f;
+        var size = _font.MeasureString(text) * scale;
+        var padding = new Vector2(6, 4);
+        var boxSize = size + padding * 2;
+        var boxOrigin = new Vector2(anchorBottomCenter.X - boxSize.X / 2f, anchorBottomCenter.Y - boxSize.Y);
+
+        spriteBatch.Draw(_pixel, new Rectangle((int)boxOrigin.X, (int)boxOrigin.Y, (int)boxSize.X, (int)boxSize.Y), Color.Black * (0.6f * alpha));
+        spriteBatch.DrawString(_font, text, boxOrigin + padding, Color.White * alpha, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
     }
 }
