@@ -227,18 +227,27 @@ public sealed class ShipRenderer
         foreach (var pane in CockpitWindows.Panes(snapshot.Rooms))
             DrawWindowPane(spriteBatch, pane, origin);
 
-        // Drawn after room outlines so the opening visibly cuts through the shared wall.
+        // Drawn after room outlines so the opening visibly cuts through the shared wall. Rect comes
+        // from TileGridRasterizer.DoorTileRect, not the door's own raw Left/Top/Width/Height - see
+        // that method's own doc comment (bug report: the door sprite sat half a tile off from
+        // DrawShipWalls' own tile-square wall art on either side of it).
         foreach (var door in snapshot.Doors)
         {
             var state = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id);
-            DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, state?.IsOpen ?? true, origin,
+            var (left, top, width, height) = TileGridRasterizer.DoorTileRect(snapshot.Rooms, door.X, door.Y, door.Width, door.Height);
+            DrawDoor(spriteBatch, left, top, width, height, state?.IsOpen ?? true, origin,
                 destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
         }
 
         foreach (var outerDoor in snapshot.AirlockOuterDoors)
         {
             var state = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == outerDoor.Id);
-            DrawDoor(spriteBatch, outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, state?.IsOpen ?? false, origin,
+            // Just the airlock's own room, not the full ship - same scoping FromRooms/DoorTileCoords
+            // themselves require (their own doc comments), since an AirlockOuterDoor sits on a
+            // room's outer hull edge, not a shared boundary between two rooms in the list.
+            var ownRoom = new[] { snapshot.Rooms.First(r => r.Id == outerDoor.RoomId) };
+            var (left, top, width, height) = TileGridRasterizer.DoorTileRect(ownRoom, outerDoor.X, outerDoor.Y, outerDoor.Width, outerDoor.Height);
+            DrawDoor(spriteBatch, left, top, width, height, state?.IsOpen ?? false, origin,
                 leadsToVacuum: true, destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
         }
 
@@ -323,7 +332,7 @@ public sealed class ShipRenderer
         ComponentRenderer.Draw(spriteBatch, _pixel, _font, snapshot, origin, totalSeconds);
         var anyoneAtHelm = snapshot.Characters.Any(c => c.IsAtHelm);
         DrawHelmConsole(spriteBatch, snapshot.HelmConsole, anyoneAtHelm, origin, shipPowered);
-        DrawCardTable(spriteBatch, snapshot.CardTable, snapshot.CardGame is not null, origin);
+        DrawCardTable(spriteBatch, snapshot.CardTable, snapshot.CardGame is not null || snapshot.FrontsGame is not null, origin);
         if (snapshot.Jukebox is { } jukebox)
             DrawJukebox(spriteBatch, jukebox, openBlock.Kind == BlockKind.Jukebox, origin);
 

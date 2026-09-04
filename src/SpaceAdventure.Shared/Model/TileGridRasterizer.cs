@@ -149,6 +149,34 @@ public static class TileGridRasterizer
                 yield return new TileCoord(x, y);
     }
 
+    // Same tiles DoorTileCoords resolves to, collapsed into one world-unit rectangle - what the
+    // CLIENT should actually render a ship-side door as (ShipRenderer.Draw), so its sprite lines up
+    // with DrawShipWalls' own tile-square wall art around it. The door's raw geometric
+    // Left/Top/Width/Height sits centered exactly ON the room boundary - half a tile off from where
+    // the leading-edge convention above actually places the solid wall tiles flanking it (bug
+    // report: "дверь стоит не на своём месте, как будто она съехала"). Station/boarding doors are
+    // NOT run through this - StationRenderer/BoardingRenderer still draw walls the old,
+    // boundary-centered way (M75's own doc comment), where the door's own raw rect already lines up.
+    public static (float Left, float Top, float Width, float Height) DoorTileRect(
+        IReadOnlyList<Room> rooms, float centerX, float centerY, float width, float height)
+    {
+        var minX = int.MaxValue;
+        var minY = int.MaxValue;
+        var maxX = int.MinValue;
+        var maxY = int.MinValue;
+        foreach (var coord in DoorTileCoords(rooms, centerX, centerY, width, height))
+        {
+            if (coord.X < minX) minX = coord.X;
+            if (coord.Y < minY) minY = coord.Y;
+            if (coord.X > maxX) maxX = coord.X;
+            if (coord.Y > maxY) maxY = coord.Y;
+        }
+        if (maxX < minX)
+            return (centerX - width / 2f, centerY - height / 2f, width, height);
+
+        return (minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+
     // Which tile a wall at this exact boundary value would occupy: RoundToInt(edge) if some room
     // treats it as a LEADING edge (Left/Top - always walled), else RoundToInt(edge)-1 for a TRAILING
     // edge (Right/Bottom - only walled, one tile further in, when no neighbor covers it - which is

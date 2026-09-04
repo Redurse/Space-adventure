@@ -257,6 +257,12 @@ public sealed partial class World
             TryCardGameTake(character);
         if (command.CardGameEndRoundPressed)
             TryCardGameEndRound(character);
+        if (command.ChooseCardTableGame is { } chosenCardTableGame)
+            TryChooseCardTableGame(character, chosenCardTableGame);
+        if (command.FrontsSetAllocationIndex is { } frontsIndex && command.FrontsSetAllocationAmount is { } frontsAmount)
+            TrySetFrontsAllocation(character, frontsIndex, frontsAmount);
+        if (command.FrontsResolvePressed)
+            TryResolveFrontsBattle(character);
         // 0 means "no snapshot seen yet" (WorldSnapshot.ServerTimestampMs's own doc comment) -
         // nothing to measure a round trip against on that first tick.
         if (command.LastServerTimestampMs > 0)
@@ -501,7 +507,9 @@ public sealed partial class World
         // PowerGrid.Step (so a PowerLossSensor reads last tick's settled allocation, same timing
         // every other GetEffectivePower caller already relies on).
         StepComponentLogic(deltaSeconds);
+        StepCardTable();
         StepCardGame(deltaSeconds);
+        StepFrontsGame(deltaSeconds);
         StepShipDebris(deltaSeconds); // M63 - order doesn't matter, pure independent inertia
         PowerGrid.Step(deltaSeconds);
         Shield.Step(deltaSeconds, GetEffectivePower(PowerSystemId.Shields));
@@ -658,5 +666,8 @@ public sealed partial class World
         CreateShipDebrisStates(),
         CreateEngineStates(),
         CreateChatLog(),
-        CreateVoiceChunks());
+        CreateVoiceChunks(),
+        CreateFrontsGameState(),
+        CreateCardTableChoiceSeatedIds(),
+        CreateCardTableDurakVotes());
 }

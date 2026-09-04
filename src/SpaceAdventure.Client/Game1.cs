@@ -115,6 +115,12 @@ public partial class Game1 : Game
     // screen, not another HUD corner panel competing for space with the rest of them.
     private static readonly Vector2 CardGamePanelOrigin =
         new((DesignWidth - CardGamePanel.PanelWidth) / 2f, (DesignHeight - CardGamePanel.PanelHeight) / 2f);
+    // Same centered treatment as CardGamePanel above - the table's other game (World.FrontsGame.cs).
+    private static readonly Vector2 FrontsGamePanelOrigin =
+        new((DesignWidth - FrontsGamePanel.PanelWidth) / 2f, (DesignHeight - FrontsGamePanel.PanelHeight) / 2f);
+    // The choice step before either game starts (World.CardTable.cs) - centered the same way.
+    private static readonly Vector2 CardTableChoicePanelOrigin =
+        new((DesignWidth - CardTableChoicePanel.PanelWidth) / 2f, (DesignHeight - CardTableChoicePanel.PanelHeight) / 2f);
     // Centered on the design canvas rather than a fixed HUD corner - this one's a modal, not a
     // panel that shares the screen with the rest of the HUD.
     private static readonly Vector2 PauseMenuPanelOrigin =
@@ -178,6 +184,8 @@ public partial class Game1 : Game
     private StationPanel _stationPanel = null!;
     private StationBuildPanel _stationBuildPanel = null!;
     private CardGamePanel _cardGamePanel = null!;
+    private FrontsGamePanel _frontsGamePanel = null!;
+    private CardTableChoicePanel _cardTableChoicePanel = null!;
     // Windows 2 and 3 of the helm redesign (M47 follow-up) - replace the old fixed HelmPanel/
     // ShipStatusPanel pair. Window 1 itself is _galaxyMapPanel, reused as-is (see the myIsAtHelm
     // draw branch below) since its own schematic/fog-of-war rendering already was what was asked
@@ -389,6 +397,10 @@ public partial class Game1 : Game
     private PlayingCard? _pendingPlayCard; // clicked a card in CardGamePanel - own hand or a defend/перевод play
     private bool _pendingCardGameTake; // CardGamePanel's "Взять" button
     private bool _pendingCardGameEndRound; // CardGamePanel's "Бито" button
+    private CardTableGameKind? _pendingCardTableChoice; // clicked a game button in CardTableChoicePanel
+    private int? _pendingFrontsAllocationIndex; // clicked a +/- button in FrontsGamePanel - which front
+    private int? _pendingFrontsAllocationAmount; // ...and its new absolute allocation value
+    private bool _pendingFrontsResolve; // FrontsGamePanel's "Провести бой" button
     // The reactor's 3 physical levers (ShipRenderer.GetReactorLeverRect) - edge-triggered like
     // the rest of the _pending* fields above, cleared/sent once per click.
     private bool _pendingToggleLights;
@@ -612,6 +624,8 @@ public partial class Game1 : Game
         _stationPanel = new StationPanel(_font);
         _stationBuildPanel = new StationBuildPanel(GraphicsDevice, _font);
         _cardGamePanel = new CardGamePanel(GraphicsDevice, _font);
+        _frontsGamePanel = new FrontsGamePanel(GraphicsDevice, _font);
+        _cardTableChoicePanel = new CardTableChoicePanel(GraphicsDevice, _font);
         _helmButtonsWidget = new HelmButtonsWidget(GraphicsDevice, _font);
         _helmTabBar = new HelmTabBar(GraphicsDevice, _font);
         _timeAccelerationWidget = new TimeAccelerationWidget(GraphicsDevice, _font);
@@ -698,15 +712,12 @@ public partial class Game1 : Game
             _shipRenderer.SetWallTextures(_editorWallVerticalTexture, _editorWallHorizontalTexture, _editorWallCornerTexture, _editorWallEndCapTexture, _editorWallTJunctionTexture);
         }
         catch { /* ShipRenderer.DrawWallBand/DrawCornerPlate fall back to the procedural hull plate */ }
-        // Reactor texture (direct user request, "поменяем размер и текстуру реактора") - same
-        // defensive load; ShipRenderer.DrawReactorBlock falls back to the old procedural rings/
-        // turbine if this .xnb is missing/unbuilt.
-        try
-        {
-            _editorReactorTexture = Content.Load<Texture2D>("Textures/Devices/Reactor");
-            _shipRenderer.SetReactorTexture(_editorReactorTexture);
-        }
-        catch { /* ShipRenderer.DrawReactorBlock falls back to the procedural design */ }
+        // Reactor texture - baked procedurally (ReactorTexture) instead of loaded from Content.
+        // AI-generated attempts at Textures/Devices/Reactor.png never matched the game's own
+        // pixel-art style, so this follows a Barotrauma reactor reference directly in code the
+        // same way TileTextures/HullSkin already build the hull and floor.
+        _editorReactorTexture = ReactorTexture.Create(GraphicsDevice);
+        _shipRenderer.SetReactorTexture(_editorReactorTexture);
         // Marching-engine art (direct user request) - real Control/Bulkhead/Nozzle textures instead
         // of the DeviceSkin placeholder faces; same defensive load, ShipRenderer falls back to the
         // old procedural look for whichever part's .xnb is missing/unbuilt.
@@ -1415,6 +1426,15 @@ public partial class Game1 : Game
         _pendingCardGameTake = false;
         _pendingCardGameEndRound = false;
 
+        var chooseCardTableGame = _pendingCardTableChoice;
+        var frontsSetAllocationIndex = _pendingFrontsAllocationIndex;
+        var frontsSetAllocationAmount = _pendingFrontsAllocationAmount;
+        var frontsResolvePressed = _pendingFrontsResolve;
+        _pendingCardTableChoice = null;
+        _pendingFrontsAllocationIndex = null;
+        _pendingFrontsAllocationAmount = null;
+        _pendingFrontsResolve = false;
+
         var toggleLightsPressed = _pendingToggleLights;
         var toggleReactorEmergencyPressed = _pendingToggleReactorEmergency;
         var toggleDoorsLockedPressed = _pendingToggleDoorsLocked;
@@ -1513,7 +1533,8 @@ public partial class Game1 : Game
             scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode,
             jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed,
             fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, _engineerFocusDeviceId, flipHeadingPressed,
-            buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk);
+            buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk,
+            chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -2060,6 +2081,12 @@ public partial class Game1 : Game
                 _stationBuildPanel.Draw(_spriteBatch, hudSnapshot, StationBuildPanelOrigin, _buildPanelCategory, _placingRoomCatalogId, _designMouse);
 
             _cardGamePanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, CardGamePanelOrigin);
+            _frontsGamePanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, FrontsGamePanelOrigin);
+            // Direct user request ("чтобы в стол можно было зайти") - the choice step only shows
+            // once the local player has actually clicked the table open (Game1.Input.cs), not just
+            // from standing near it.
+            if (_openBlock.Kind == BlockKind.CardTable)
+                _cardTableChoicePanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, CardTableChoicePanelOrigin);
 
             // Only one block's terminal is shown at a time, at the same HUD slot — you have to
             // actually be "in" it (game_design.md section 1) rather than seeing everything always.

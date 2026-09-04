@@ -687,6 +687,63 @@ public partial class Game1
             }
         }
 
+        // The CardTable's game-choice step (World.CardTable.cs) - shown only once the local player
+        // has clicked the table open (direct user request, "чтобы в стол можно было зайти"), and
+        // only to the crew actually seated there before either game has started. Alone, only
+        // Фронты (against a bot - direct user request, "можно играть в хойку в одиночку") is on
+        // offer; CardTableChoicePanel.GetChoiceKind knows the exact same seated-count-dependent
+        // button layout Draw renders, so the two can't disagree about which button is which.
+        if (_openBlock.Kind == BlockKind.CardTable &&
+            snapshot?.CardTableChoiceSeatedIds is { Count: 1 or 2 } seatedChoice && seatedChoice.Contains(_client.PlayerId))
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                if (CardTableChoicePanel.GetChoiceKind(seatedChoice.Count, i) is not { } kind ||
+                    !CardTableChoicePanel.GetChoiceButtonRect(i, CardTableChoicePanelOrigin).Contains(_designMouse))
+                    continue;
+                _pendingCardTableChoice = kind;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+        }
+
+        // Фронты (World.FrontsGame.cs) - per-front +/- allocation and "Провести бой". Same
+        // participant gate as the Дурак block above.
+        if (snapshot?.FrontsGame is { } frontsGame && (frontsGame.PlayerAId == _client.PlayerId || frontsGame.PlayerBId == _client.PlayerId))
+        {
+            var isPlayerA = frontsGame.PlayerAId == _client.PlayerId;
+            var myAllocation = isPlayerA ? frontsGame.AllocationA : frontsGame.AllocationB;
+            var myUsed = 0;
+            foreach (var a in myAllocation)
+                myUsed += a;
+            var remaining = frontsGame.ArmyPool - myUsed;
+
+            if (!frontsGame.Finished)
+            {
+                for (var i = 0; i < myAllocation.Count; i++)
+                {
+                    if (frontsGame.Captured[i])
+                        continue;
+                    if (myAllocation[i] > 0 && FrontsGamePanel.GetMinusButtonRect(i, FrontsGamePanelOrigin).Contains(_designMouse))
+                    {
+                        _pendingFrontsAllocationIndex = i;
+                        _pendingFrontsAllocationAmount = myAllocation[i] - 1;
+                        return (-1, -1, null, -1, false, false, null, false, null);
+                    }
+                    if (remaining > 0 && FrontsGamePanel.GetPlusButtonRect(i, FrontsGamePanelOrigin).Contains(_designMouse))
+                    {
+                        _pendingFrontsAllocationIndex = i;
+                        _pendingFrontsAllocationAmount = myAllocation[i] + 1;
+                        return (-1, -1, null, -1, false, false, null, false, null);
+                    }
+                }
+                if (FrontsGamePanel.GetResolveButtonRect(FrontsGamePanelOrigin).Contains(_designMouse))
+                {
+                    _pendingFrontsResolve = true;
+                    return (-1, -1, null, -1, false, false, null, false, null);
+                }
+            }
+        }
+
         var slotCount = me?.Inventory?.MainSlots.Count ?? 0;
         for (var i = 0; i < slotCount; i++)
         {
@@ -1133,6 +1190,18 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
+        // The CardTable (World.CardTable.cs) - direct user request ("сделай чтобы в стол можно
+        // было зайти"): clicking it toggles it open/closed exactly like every other console above,
+        // rather than the choice panel appearing automatically just from standing near it. A game
+        // already in progress (CardGamePanel/FrontsGamePanel) is unaffected - only the pre-game
+        // choice step below is gated on this.
+        if (NearEnough(snapshot.CardTable.Position) &&
+            ShipRenderer.GetBlockRect(snapshot.CardTable.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
+        {
+            _openBlock = _openBlock.Kind == BlockKind.CardTable ? ClickTarget.None : ClickTarget.CardTable;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
         // No mouse interaction with the scanner console any more (M47) - entered with E near it,
         // closed only with Esc (Game1.cs's own interactPressed check, and the escape-handling block
         // in Update()), same asymmetric in/out as HelmConsole's own E-toggle would give it if that
@@ -1486,6 +1555,7 @@ public partial class Game1
             BlockKind.Battery => snapshot.BatteryBlock.Position,
             BlockKind.Navigation => snapshot.NavigationConsole.Position,
             BlockKind.Jukebox => snapshot.Jukebox?.Block.Position ?? myPosition,
+            BlockKind.CardTable => snapshot.CardTable.Position,
             BlockKind.Rack => _openBlock.TargetComponentId is { } rackId
                 ? snapshot.StorageRacks.FirstOrDefault(r => r.Id == rackId)?.Position ?? myPosition
                 : myPosition,

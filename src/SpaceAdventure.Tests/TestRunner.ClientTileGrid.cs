@@ -83,4 +83,32 @@ internal static partial class TestRunner
         // own ?? true fallback) - this must come back DoorOpen=true, not the pre-fix always-false.
         return doorCoords.All(c => stationTiles.CellAt(c) is { Wall: TileWallKind.Door, DoorOpen: true });
     }
+
+    // Bug report from a live screenshot: "дверь стоит не на своём месте, как будто она съехала".
+    // A Door's own raw geometry (Left/Top/Width/Height) sits centred exactly on the room boundary -
+    // half in each room - which is what ShipRenderer.Draw used to feed straight into DrawDoor. But
+    // DrawShipWalls' per-tile wall art (M75) follows TileGridRasterizer's own leading-edge
+    // convention: for the SAME shared boundary, every OTHER row solidifies "quarters"' own Left edge
+    // (tile column 13), not column 12 - one tile entirely to the door's own right. Rendering the
+    // door at its raw, boundary-centred rect left it half a tile off from the wall tiles flanking it
+    // above and below. DoorTileRect must return the same tile column DrawShipWalls actually walls.
+    private static bool TileGridRasterizer_DoorTileRect_AlignsWithTheLeadingEdgeWallConvention()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        var snapshot = world.CreateSnapshot();
+        var door = snapshot.Doors.First(d => d.Id == "door-corridor-quarters");
+        if (door.Left != 12.5f || door.Right != 13.5f)
+            return false; // sanity: still centred on the boundary - the bug's own precondition
+
+        var (left, top, width, height) = TileGridRasterizer.DoorTileRect(snapshot.Rooms, door.X, door.Y, door.Width, door.Height);
+        if (left != 13f || width != 1f || top != 2f || height != 2f)
+            return false;
+
+        // And a real wall tile on the very same boundary, one row above the door (y=0, outside its
+        // own y=[2,4) span), must actually sit at that same column 13 - proving the fix aligns with
+        // the wall DrawShipWalls draws there, not just with an isolated recomputation.
+        var tiles = TileGridRasterizer.FromRooms(snapshot.Rooms, snapshot.Doors, snapshot.AirlockOuterDoors);
+        return tiles.CellAt(new TileCoord(13, 0)) is { Wall: TileWallKind.Solid };
+    }
 }

@@ -4,11 +4,10 @@ using SpaceAdventure.Shared.Protocol;
 namespace SpaceAdventure.Server;
 
 // A hand of "Дурак переводной" (transferable fool), 2 players only, played at the ship's
-// CardTable. The trigger is purely "2 living, non-bot crew standing at the table together"
-// (StepCardGame) - the same continuous room-occupancy check World.ComponentLogic.cs's
-// MotionSensor already uses for "is anyone in this room", just narrowed to exactly 2 and to this
-// one spot. Nothing is clicked to start or open it; CardGamePanel just appears for the two
-// participants the moment the server says a game exists.
+// CardTable - one of 2 games the table can now run (World.CardTable.cs, "Фронты" is the other,
+// World.FrontsGame.cs). Starts the moment either of the 2 seated crew picks it from
+// CardTableChoicePanel (World.CardTable.cs's TryChooseCardTableGame); StepCardGame below only
+// watches for either player walking away/dying/disconnecting mid-hand and cancels it.
 //
 // Rules implemented (standard 36-card deck, ranks 6-14/Ace, 4 suits):
 //  - Deal 6 each, reveal the next card as trump, rest is the draw pile.
@@ -70,29 +69,16 @@ public sealed partial class World
             return;
         }
 
-        bool StillSeated(int playerId)
-        {
-            var c = _characters.GetValueOrDefault(playerId);
-            return c is { Health: > 0f } && !c.IsBot && c.RoomId == Ship.CardTable.RoomId &&
-                (c.Position - Ship.CardTable.Position).Length() < InteractionRadius;
-        }
-
         if (_cardGame is { } active)
         {
             // Either player walking away, dying or disconnecting simply cancels the hand - there's
             // no "pause" state, and nothing is lost since nothing was ever wagered.
-            if (!StillSeated(active.Player1Id) || !StillSeated(active.Player2Id))
+            var seated = SeatedAtCardTable();
+            if (!seated.Contains(active.Player1Id) || !seated.Contains(active.Player2Id))
                 _cardGame = null;
-            return;
         }
-
-        var seated = _characters.Values
-            .Where(c => !c.IsBot && c.Health > 0f && c.RoomId == Ship.CardTable.RoomId &&
-                (c.Position - Ship.CardTable.Position).Length() < InteractionRadius)
-            .Select(c => c.PlayerId)
-            .ToList();
-        if (seated.Count == 2)
-            _cardGame = StartNewCardGame(seated[0], seated[1]);
+        // Starting a fresh hand is no longer automatic - see World.CardTable.cs's own doc comment:
+        // 2 crew seated with no game running just makes the table available to choose from now.
     }
 
     private CardGameSession StartNewCardGame(int player1Id, int player2Id)

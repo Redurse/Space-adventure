@@ -269,4 +269,18 @@ public sealed record ClientCommand(
     // Push-to-talk voice chat (direct user request, "как в Баротравме" - local + radio), edge/
     // one-shot like ChatMessage above: non-null only on the specific tick a mic buffer became
     // ready and is being sent (Game1.cs's _pendingVoiceChunk, same capture-send-clear lifecycle).
-    VoiceChunkPayload? VoiceChunk = null);
+    VoiceChunkPayload? VoiceChunk = null,
+    // Which game to start at the ship's one CardTable, sent the moment either of the 2 seated crew
+    // presses a choice button while it's free (World.CardTable.cs's TryChooseCardTableGame) - direct
+    // user request ("чтобы на карточном столе можно было выбирать игры"). Edge-triggered like every
+    // other click-driven field above; null means no choice made this frame.
+    CardTableGameKind? ChooseCardTableGame = null,
+    // "Фронты" (World.FrontsGame.cs): setting one front's allocation (0..ArmyPool) out of the
+    // sender's own shared pool. Sent as a pair whenever the +/- button for that front is clicked -
+    // level state (the new absolute value), not edge-triggered, since FrontsSetAllocationIndex alone
+    // says which front to touch this frame; null means neither applies.
+    int? FrontsSetAllocationIndex = null,
+    int? FrontsSetAllocationAmount = null,
+    // "Фронты"'s "Провести бой" - resolves the turn using whatever both sides currently have
+    // allocated. Edge-triggered like CardGameEndRoundPressed above.
+    bool FrontsResolvePressed = false);

@@ -169,4 +169,17 @@ public sealed record WorldSnapshot(
     IReadOnlyList<ChatLogEntry>? ChatLog = null,
     // Push-to-talk voice chunks relayed THIS tick only (World.Voice.cs) - not an append-only log
     // like ChatLog above, see VoiceChunkMessage's own doc comment for why.
-    IReadOnlyList<VoiceChunkMessage>? VoiceChunks = null);
+    IReadOnlyList<VoiceChunkMessage>? VoiceChunks = null,
+    // "Фронты" (World.FrontsGame.cs) - null whenever no match is running, the same "unbound
+    // session" shape CardGame above already uses for the table's other game.
+    FrontsGameState? FrontsGame = null,
+    // The 2 player ids currently seated at the CardTable with NEITHER game active yet
+    // (World.CardTable.cs) - null/absent otherwise. Lets CardTableChoicePanel show its choice
+    // buttons only to the actual pair sitting there, the same "am I a participant" gate
+    // CardGamePanel/FrontsGamePanel already use for their own state.
+    IReadOnlyList<int>? CardTableChoiceSeatedIds = null,
+    // Which of the (at most 2) seated ids have already picked Дурак and are waiting on the other -
+    // direct user request ("активировать дурак надо вдвоем нажать на стол"): starting a hand needs
+    // BOTH to choose it, so CardTableChoicePanel can show "ждём второго игрока" instead of nothing
+    // happening. Null/empty whenever no one has voted (or the table isn't in the choosing state).
+    IReadOnlyList<int>? CardTableDurakVotes = null);
