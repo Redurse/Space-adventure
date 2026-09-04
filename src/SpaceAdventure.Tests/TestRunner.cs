@@ -445,6 +445,10 @@ internal static partial class TestRunner
         ("CompartmentCatalog_EngineMedium_HasNonOverlappingValidLayout", CompartmentCatalog_EngineMedium_HasNonOverlappingValidLayout),
         ("CompartmentCatalog_EngineLarge_HasNonOverlappingValidLayout", CompartmentCatalog_EngineLarge_HasNonOverlappingValidLayout),
         ("CompartmentCatalog_TouchingCompartments_HaveExactlyOneWallTileBetweenThem", CompartmentCatalog_TouchingCompartments_HaveExactlyOneWallTileBetweenThem),
+        ("CompartmentCatalog_TouchingSameSizeCompartments_SecondOnesSealedRegionIsRectangular", CompartmentCatalog_TouchingSameSizeCompartments_SecondOnesSealedRegionIsRectangular),
+        ("CompartmentCatalog_TouchingCompartments_ExteriorSideOfMixedCornerStaysSolid", CompartmentCatalog_TouchingCompartments_ExteriorSideOfMixedCornerStaysSolid),
+        ("CompartmentCatalog_FourWayJunctionCorner_StillDedupsToOpenFloor", CompartmentCatalog_FourWayJunctionCorner_StillDedupsToOpenFloor),
+        ("CompartmentCatalog_RealDestroyerEngineCockpitPair_ProducesRectangularRegions", CompartmentCatalog_RealDestroyerEngineCockpitPair_ProducesRectangularRegions),
         ("CompartmentCatalog_OverlappingPlacement_IsRefusedCleanlyWithoutCorruptingTheGrid", CompartmentCatalog_OverlappingPlacement_IsRefusedCleanlyWithoutCorruptingTheGrid),
         ("CompartmentCatalog_RotatedTouchingCompartment_StillDedupsToOneWallTile", CompartmentCatalog_RotatedTouchingCompartment_StillDedupsToOneWallTile),
         ("CompartmentCatalog_EveryEntry_HasDevicesStrictlyInteriorAndInBounds", CompartmentCatalog_EveryEntry_HasDevicesStrictlyInteriorAndInBounds),
@@ -459,6 +463,15 @@ internal static partial class TestRunner
         ("CompartmentProtection_EngineControlTile_IsProtected", CompartmentProtection_EngineControlTile_IsProtected),
         ("CompartmentProtection_DockingAirlockDoorTile_IsProtected", CompartmentProtection_DockingAirlockDoorTile_IsProtected),
         ("CompartmentProtection_WholeCompartmentRemoval_StillClearsCoreTileUnrestricted", CompartmentProtection_WholeCompartmentRemoval_StillClearsCoreTileUnrestricted),
+        ("Ship_Destroyer_BuildsSuccessfully_AndPassesValidation", Ship_Destroyer_BuildsSuccessfully_AndPassesValidation),
+        ("Ship_Freighter_BuildsSuccessfully_AndPassesValidation", Ship_Freighter_BuildsSuccessfully_AndPassesValidation),
+        ("World_Destroyer_AllRoomsReachableFromSpawn", World_Destroyer_AllRoomsReachableFromSpawn),
+        ("World_Freighter_AllRoomsReachableFromSpawn", World_Freighter_AllRoomsReachableFromSpawn),
+        ("World_Destroyer_CanActuallyStartAHostedWorld", World_Destroyer_CanActuallyStartAHostedWorld),
+        ("World_Freighter_CanActuallyStartAHostedWorld", World_Freighter_CanActuallyStartAHostedWorld),
+        ("TileShipBuilder_PartialHeightOverlap_ClosesGapAndConnectsWithDoor", TileShipBuilder_PartialHeightOverlap_ClosesGapAndConnectsWithDoor),
+        ("TileShipBuilder_ExactSpanMatch_StillClosesGapAndConnectsWithDoor", TileShipBuilder_ExactSpanMatch_StillClosesGapAndConnectsWithDoor),
+        ("TileShipBuilder_NoRealOverlap_LeavesRegionsUntouched", TileShipBuilder_NoRealOverlap_LeavesRegionsUntouched),
     };
 
     // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via

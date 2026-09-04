@@ -148,12 +148,22 @@ public partial class Game1
             eye = new Vector2((float)camera.Anchor.X, (float)camera.Anchor.Y);
 
             var mood = ComputeShipPowerMood(snapshot);
-            lights = BuildShipRoomLights(snapshot.Rooms, mood.PowerFraction);
+            // The reactor's light lever, off: kills the ship's OWN lamps (Barotrauma's own manual
+            // light switch reads the same way - a deliberate blackout, not a power shortage), but
+            // must not touch a docked station's independent supply below, and must not make the
+            // compositor bail out to VisibilityMask's own true-black floor either (see `floor` just
+            // below) - a totally unpowered sub still reads as a dim, recognisable space in
+            // Barotrauma, never a hidden one.
+            lights = snapshot.ReactorLevers.LightsOn ? BuildShipRoomLights(snapshot.Rooms, mood.PowerFraction) : new List<PointLight>();
             // A docked station has its own external power - always lit regardless of what shape the
-            // player's own ship's grid is in.
+            // player's own ship's grid is in, or whether its own light lever is on.
             if (docked)
                 AddStationLights(lights, snapshot.Station.Rooms);
-            floor = mood.Floor;
+            // Open space has its own ambient darkness, independent of the ship's interior power mood -
+            // the same VacuumMaskFloor the sight cone below uses, so the two masks agree on how dark
+            // space itself is instead of the hull's own Secondary-power reading leaking out through
+            // the render target's uniform clear colour.
+            floor = me.IsOutside ? VacuumMaskFloor : snapshot.ReactorLevers.LightsOn ? mood.Floor : LightsOffFloor;
         }
 
         // Outside in a suit the lamp is its own thing: a narrow torch with a long throw, not the
@@ -178,23 +188,33 @@ public partial class Game1
                 edgeFade: VacuumLampEdgeFade, coneTint: VacuumLampTint)
             : _visibility.Build(walls, eye, new Vector2((float)facing.X, (float)facing.Y), radius, halfAngle, ambient,
                 origin, _renderScale);
-        // The reactor's light lever (World.cs) kills the room lighting overlay ship-wide - the
-        // sight-only fallback right below already exists for exactly this ("nothing built this
-        // frame"), so flipping the lever just means everything beyond the player's own lamp goes dark.
-        _roomLightingReady = snapshot.ReactorLevers.LightsOn && _roomLighting.Build(walls, lights, floor, origin, _renderScale);
+        // Always built, even with the light lever off or no power at all - `lights`/`floor` above
+        // already encode "how dark", so RoomLighting's own dim floor (never literal black) is what
+        // shows beyond the player's own lamp, matching Barotrauma's own unpowered-but-not-hidden subs.
+        // The VisibilityMask-only fallback (Game1.cs's own `maskReady` branch) still exists for the
+        // genuine edge case of RoomLighting failing to build at all (e.g. a zero-size viewport).
+        _roomLightingReady = _roomLighting.Build(walls, lights, floor, origin, _renderScale);
         // Has to happen here, before the backbuffer is touched - see MergeSight's own comment.
         if (_roomLightingReady && sightReady)
             _roomLighting.MergeSight(_spriteBatch, _visibility);
         return sightReady;
     }
 
-    // Never above ~92% brightness even at full power - room art is already painted as if lit, so
-    // this only has to darken things down from there, never brighten past the original.
-    private static readonly Color PoweredFloor = new(232, 236, 244);
+    // Direct user request ("точь-в-точь как в Barotrauma") - a near-white floor (the old 232,236,244)
+    // left no room between "away from any lamp" and "standing under one": the whole scene read as
+    // uniformly bright regardless of where the room's own PointLight actually was, which is the
+    // opposite of Barotrauma's own moody, high-contrast pools of light in real darkness. A dim,
+    // cool-toned floor gives the additive lamp light somewhere to actually stand out against.
+    private static readonly Color PoweredFloor = new(52, 58, 76);
     // Dark and red rather than plain black: an unpowered room still has to read as a place (and as
     // an emergency, not a void) once the player's own suit lamp picks it out.
     private static readonly Color UnpoweredFloor = new(46, 16, 14);
     private static readonly Color EnemyShipFloor = new(22, 14, 16);
+    // The light lever switched off on purpose - darker than any power-derived UnpoweredFloor (a
+    // deliberate near-blackout, not merely low power), but never literal zero. Real Barotrauma's own
+    // fully unpowered submarines still read as a dim, recognisable space; only the sight cone/lamp
+    // brings detail back, the floor itself never hides the room's existence.
+    private static readonly Color LightsOffFloor = new(10, 8, 14);
 
     private readonly record struct ShipPowerMood(float PowerFraction, Color Floor);
 

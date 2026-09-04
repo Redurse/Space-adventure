@@ -11,5 +11,13 @@ public enum ShipKind
     Frigate, // the original M2 starter layout (Ship.CreateStarter) - kept as the default/mid tier
     Cruiser,
     Corvette, // laid out along its own axis instead of as a row of boxes (Ship.Corvette.cs)
+    // M85 follow-up - two more hand-authored starter hulls, this time built from the M80 compartment
+    // catalog (CompartmentCatalog.cs/CompartmentPlacer.cs) stamped onto a plain TileGrid and run
+    // through TileShipBuilder/Ship.FromCustomDefinition (Ship.cs's Create), rather than a from-scratch
+    // Room-rectangle literal the way Scout/Frigate/Cruiser/Corvette are. Genuinely additional classes
+    // (items 5-6 at the ship-select screen, Game1.Menu.cs's SelectableShipKinds) - none of the 4
+    // above are touched by this.
+    Destroyer, // a 2D spine-plus-branches combat hull: 2 turrets, reactor, life support, medical bay
+    Freighter, // same spine-plus-branches shape, wider reactor/engineering focus, more crew space
     Custom, // player-drawn in the Ship Editor (Ship.Custom.cs) - not sold at any Shipwright
 }

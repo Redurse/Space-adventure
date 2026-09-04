@@ -631,9 +631,11 @@ public partial class Game1 : Game
         _stationRenderer = new StationRenderer(_shipRenderer, GraphicsDevice, _font);
         _boardingRenderer = new BoardingRenderer(_shipRenderer, GraphicsDevice, _font);
         _visibility = new VisibilityMask(GraphicsDevice);
-        // Per-pixel lamp shader disabled on request - falls back to the BasicEffect vertex-colour
-        // path. Re-enable by passing Shaders.TryLoad(Content, "Shaders/Light") again.
-        _roomLighting = new RoomLighting(GraphicsDevice);
+        // Re-enabled (direct user request, "тени как в Barotrauma" - the per-pixel falloff shader
+        // reads more like real shadow-casting than the old BasicEffect vertex-colour fan, whose
+        // triangle facets could show as visible brightness banding in a light's own glow). If this
+        // regresses whatever it was disabled for originally, revert to `new RoomLighting(GraphicsDevice)`.
+        _roomLighting = new RoomLighting(GraphicsDevice, Shaders.TryLoad(Content, "Shaders/Light"));
         // Null when the content build hasn't produced the effect - ScenePost then reports
         // itself unavailable and Draw keeps its original straight-to-backbuffer path.
         _scenePost = new ScenePost(GraphicsDevice, Shaders.TryLoad(Content, "Shaders/Post"));
@@ -1872,7 +1874,7 @@ public partial class Game1 : Game
                 // TEMP-DIAG-BEGIN (M51 - Scene phase was 183-514ms; narrowing to which renderer)
                 var diagSubStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 // TEMP-DIAG-END
-                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles, chatBubbles: _chatBubbleTracker);
+                _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles);
                 // TEMP-DIAG-BEGIN
                 _diagShipMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
                 diagSubStopwatch.Restart();
@@ -1896,6 +1898,11 @@ public partial class Game1 : Game
                 // so there's no moment where the view swaps to "the station screen".
                 if (snapshot.Voyage.DockedPointId is not null && !fromOutside)
                     _stationRenderer.Draw(_spriteBatch, snapshot, origin, _talkingToNpcId, totalSeconds);
+                // Drawn after the (optional) docked station above, not as part of _shipRenderer.Draw
+                // itself - see ShipRenderer.DrawCharacters' own doc comment (bug report: a crewmate
+                // standing near the ship/station boundary had their floating nameplate partly
+                // covered by the station's own wall art, which draws after the ship).
+                _shipRenderer.DrawCharacters(_spriteBatch, snapshot, origin, _chatBubbleTracker);
                 // TEMP-DIAG-BEGIN
                 _diagStationMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
                 diagSubStopwatch.Restart();
@@ -2018,6 +2025,13 @@ public partial class Game1 : Game
         // DrawEngineNozzles's own doc comment explains why).
         if (_shipInteriorOrigin is { } engineOrigin && _client.LatestSnapshot is { } engineSnapshot)
             _shipRenderer.DrawEngineNozzles(_spriteBatch, engineSnapshot, engineOrigin, sceneTransform, totalSeconds);
+
+        // Crew nameplates, also after the composite (direct user request, bug report: a nameplate
+        // going dark in a wall's own cast shadow) - see ShipRenderer.DrawCharacterLabels' own doc
+        // comment. Covers the ship/station/EVA and boarded-enemy-hull cases alike, since all of them
+        // set _shipInteriorOrigin and share the one snapshot.Characters list.
+        if (_shipInteriorOrigin is { } labelOrigin && _client.LatestSnapshot is { } labelSnapshot)
+            _shipRenderer.DrawCharacterLabels(_spriteBatch, labelSnapshot, labelOrigin, sceneTransform);
 
         _spriteBatch.Begin(transformMatrix: _renderScale);
         // Peaks at the exact midpoint of the transition (fully opaque, hiding the underlying scene

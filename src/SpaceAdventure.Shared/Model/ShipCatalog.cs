@@ -9,6 +9,8 @@ public static class ShipCatalog
         ShipKind.Scout => "Разведчик",
         ShipKind.Cruiser => "Крейсер",
         ShipKind.Corvette => "Корвет",
+        ShipKind.Destroyer => "Эсминец",
+        ShipKind.Freighter => "Транспорт",
         ShipKind.Custom => "Свой корабль",
         _ => "Фрегат",
     };
@@ -18,6 +20,8 @@ public static class ShipCatalog
         ShipKind.Scout => "Дёшево и слабо: 2 отсека, 1 орудие, только нож из личного оружия.",
         ShipKind.Cruiser => "Дорого и мощно: 7 отсеков, 3 орудия, второй склад боеприпасов.",
         ShipKind.Corvette => "Вертикальная компоновка: 6 отсеков, бортовой залп, 2 двигателя, 2 стыковочных порта.",
+        ShipKind.Destroyer => "Боевой корабль: 9 отсеков, 2 турели, отдельный медотсек.",
+        ShipKind.Freighter => "Рабочая лошадка: 9 отсеков, широкий реактор, больше места для экипажа.",
         ShipKind.Custom => "Нарисован вами в редакторе корабля.",
         _ => "Сбалансированный старт: 5 отсеков, 2 орудия.",
     };
@@ -41,7 +45,9 @@ public static class ShipCatalog
         ShipKind.Scout => 400,
         ShipKind.Cruiser => 1800,
         ShipKind.Corvette => 1400,
-        _ => 900, // Frigate
+        ShipKind.Destroyer => 1600,
+        ShipKind.Freighter => 1100,
+        _ => 900, // Frigate, and Custom
     };
 
     public static int TradeInValue(ShipKind kind) => (int)(Price(kind) * TradeInFraction);
@@ -57,6 +63,8 @@ public static class ShipCatalog
         ShipKind.Scout => 0.6f,
         ShipKind.Corvette => 1.3f,
         ShipKind.Cruiser => 1.8f,
+        ShipKind.Destroyer => 1.6f,
+        ShipKind.Freighter => 1.4f,
         _ => 1.0f, // Frigate, and Custom - same catch-all Price/TradeInValue above already use
     };
 }

@@ -251,6 +251,8 @@ public sealed partial class Ship
         ShipKind.Scout => CreateScout(),
         ShipKind.Cruiser => CreateCruiser(),
         ShipKind.Corvette => CreateCorvette(),
+        ShipKind.Destroyer => CreateDestroyer(),
+        ShipKind.Freighter => CreateFreighter(),
         // Custom has no fixed layout to build here - callers must go through FromCustomDefinition
         // with the player's own CustomShipDefinition instead (World.cs, World.Save.cs).
         ShipKind.Custom => throw new InvalidOperationException("ShipKind.Custom has no fixed layout - use Ship.FromCustomDefinition."),

@@ -185,7 +185,7 @@ public sealed class ShipRenderer
     // real hull breach should read, so the ship is never drawn any other way now.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock,
         float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null,
-        IEnumerable<AtmosphereParticle>? atmosphere = null, ChatBubbleTracker? chatBubbles = null)
+        IEnumerable<AtmosphereParticle>? atmosphere = null)
     {
         var forwardDegrees = snapshot.ShipForwardDegrees;
 
@@ -333,9 +333,6 @@ public sealed class ShipRenderer
             DrawTurret(spriteBatch, turret, state, snapshot.Rooms, snapshot.Turrets, origin, totalSeconds);
         }
 
-        foreach (var character in snapshot.Characters)
-            DrawCharacter(spriteBatch, character, origin, chatBubbles?.BubbleFor(character.PlayerId));
-
         // A cutter works anywhere - there's just nothing to cut in here. The flame still lights, and
         // it still burns the tank, so "why is my bottle empty" has a visible cause.
         foreach (var shot in snapshot.PersonalShots.Where(s => s.Scene == ShotScene.Ship))
@@ -366,6 +363,20 @@ public sealed class ShipRenderer
         if (atmosphere is not null)
             foreach (var particle in atmosphere)
                 DrawAtmosphereParticle(spriteBatch, particle, origin);
+    }
+
+    // Split out of Draw above (docked-station wall-clipping bug report) - the caller draws this as
+    // its own, later pass so ship characters (and their floating nameplates) always end up on top
+    // of a docked station's own geometry too, not just the ship's own walls. Draw() itself already
+    // sequences floors-then-walls-then-devices correctly so a character never sank behind its own
+    // ship's walls; the station is a second, entirely separate renderer invoked afterward
+    // (Game1.cs), so a crewmate standing near the shared airlock boundary had their nameplate
+    // partly painted over by the station's own hull art - moving the character pass to run after
+    // both renderers fixes that regardless of which side the character is actually closer to.
+    public void DrawCharacters(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ChatBubbleTracker? chatBubbles = null)
+    {
+        foreach (var character in snapshot.Characters)
+            DrawCharacter(spriteBatch, character, origin, chatBubbles?.BubbleFor(character.PlayerId));
     }
 
     // A breach's steam, a damaged system's sparks, a starved reactor's embers - continuous rather
@@ -1610,10 +1621,25 @@ public sealed class ShipRenderer
 
         // Compartment name on a painted plate in the department's own colour, the way a bulkhead is
         // actually stencilled - a bare label floating on the deck reads as a debug overlay.
-        var plate = new Rectangle(rect.X + 8, rect.Y + 8, Math.Min(rect.Width - 16, 34 + room.Name.Length * 9), 20);
+        //
+        // Sized from the font's own real measurement, not a per-character guess (the old
+        // `34 + room.Name.Length * 9` under- or over-shot depending on the actual glyph widths) - a
+        // narrow room with a long name used to spill text straight past its own plate into whatever
+        // drew next (a wall, the neighbouring room), leaving only a fragment of the name legible.
+        // If it still doesn't fit even at the smallest useful size, the name shrinks to match instead
+        // of overflowing - a slightly smaller label beats a truncated-looking one.
+        var nameScale = 0.7f;
+        var textSize = _font.MeasureString(room.Name) * nameScale;
+        var maxTextWidth = rect.Width - 24f;
+        if (textSize.X > maxTextWidth && textSize.X > 0f)
+        {
+            nameScale *= MathHelper.Clamp(maxTextWidth / textSize.X, 0.5f, 1f);
+            textSize = _font.MeasureString(room.Name) * nameScale;
+        }
+        var plate = new Rectangle(rect.X + 8, rect.Y + 8, (int)Math.Min(rect.Width - 16, textSize.X + 20), 20);
         spriteBatch.Draw(_pixel, plate, accent * 0.22f);
         spriteBatch.Draw(_pixel, new Rectangle(plate.X, plate.Y, 3, plate.Height), accent * 0.8f);
-        spriteBatch.DrawString(_font, room.Name, new Vector2(rect.X + 14, rect.Y + 10), Color.LightSteelBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, room.Name, new Vector2(rect.X + 14, rect.Y + 10), Color.LightSteelBlue, 0f, Vector2.Zero, nameScale, SpriteEffects.None, 0f);
 
         var oxygenColor = oxygen >= 50f ? Color.LightSteelBlue : oxygen >= 20f ? Color.Orange : Color.OrangeRed;
         spriteBatch.DrawString(_font, $"O2: {oxygen:0}", new Vector2(rect.X + 10, rect.Y + 30), oxygenColor, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
@@ -2234,25 +2260,6 @@ public sealed class ShipRenderer
         _crewSkin.Draw(spriteBatch, new Vector2(center.X, center.Y + size * 0.30f),
             CharacterHeight * PixelsPerUnit, bodyColor, accent, character.WearingSuit, facing);
 
-        if (character.IsBot && character.Role is { } role)
-            spriteBatch.DrawString(_font, $"{character.BotName} ({CrewRoles.Name(role)})", new Vector2(rect.X - 10, rect.Y - 14),
-                Color.LightSkyBlue, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
-        // A human crewmate reads the same way a hired bot does - name floating over the head,
-        // always on, not just when hovered - so telling a crew of several players apart doesn't
-        // depend on remembering whose colour is whose. Once they've picked their own Role from
-        // CrewPanel, it's shown in the name label too, the same way a bot's already is above.
-        else if (!character.IsBot && character.Nickname is { Length: > 0 } nickname)
-            spriteBatch.DrawString(_font, character.Role is { } playerRole ? $"{nickname} ({CrewRoles.Name(playerRole)})" : nickname,
-                new Vector2(rect.X - 10, rect.Y - 14), Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
-
-        // The crew panel's role picker (CrewPanel.GetOwnRoleIconRect) is the only way a live
-        // player's Role ever gets set - drawing the same glyph HudIcons.DrawRoleGlyph already
-        // gives CrewPanel/InfoPanel rows here is what makes that choice visible in the ship view
-        // itself, for a bot's fixed Role too since both read from the same field.
-        if (character.Role is { } headRole)
-            HudIcons.DrawRoleGlyph(spriteBatch, _pixel, new Vector2(center.X, rect.Y - 26), 0.5f,
-                character.IsBot ? Color.LightSkyBlue : Color.White, headRole);
-
         DrawHeldItems(spriteBatch, _pixel, _font, HeldItemTypes(character.Inventory), center, facing);
 
         if (character.CarryingAmmoCrate)
@@ -2266,6 +2273,67 @@ public sealed class ShipRenderer
 
         if (chatBubble is { } bubble)
             DrawChatBubble(spriteBatch, bubble.Text, bubble.Alpha, new Vector2(center.X, rect.Y - 44));
+    }
+
+    // Every crew nameplate, in one later pass over the whole snapshot - deliberately NOT part of
+    // DrawCharacter/DrawCharacters above. Those draw inside the lit scene batch (captured for
+    // ScenePost, multiplied by the room-lighting/sight mask); a nameplate that shares that batch
+    // goes dark right along with whatever real shadow the character happens to be standing in - a
+    // once-subtle seam that the darker post-Barotrauma-pass PoweredFloor made an actual bug report
+    // ("Eisenhorn (Капитан)" fading into a wall's own cast shadow). Direct user request: a
+    // nameplate's whole job is identifying who this is, so it must read the same whether they are
+    // standing in a lit room or a dark one - the caller draws this call site AFTER ScenePost.Present
+    // (Game1.cs), once the lighting multiply has already been applied to everything else.
+    public void DrawCharacterLabels(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, Matrix sceneTransform)
+    {
+        spriteBatch.Begin(transformMatrix: sceneTransform);
+        foreach (var character in snapshot.Characters)
+            DrawCharacterLabel(spriteBatch, character, origin);
+        spriteBatch.End();
+    }
+
+    private void DrawCharacterLabel(SpriteBatch spriteBatch, CharacterState character, Vector2 origin)
+    {
+        var size = (int)(CharacterDiameter * PixelsPerUnit);
+        var center = new Vector2(origin.X + (float)character.X * PixelsPerUnit, origin.Y + (float)character.Y * PixelsPerUnit);
+        var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
+
+        // The crew panel's role picker (CrewPanel.GetOwnRoleIconRect) is the only way a live
+        // player's Role ever gets set - drawing the same glyph HudIcons.DrawRoleGlyph already
+        // gives CrewPanel/InfoPanel rows here is what makes that choice visible in the ship view
+        // itself, for a bot's fixed Role too since both read from the same field.
+        //
+        // Drawn before the nameplate below (not after, as this used to be) - a long name can extend
+        // far enough to pass under this glyph's own position, and the plate the nameplate now has
+        // needs to be the last thing painted there so it always wins, not whichever happened to be
+        // drawn most recently.
+        if (character.Role is { } headRole)
+            HudIcons.DrawRoleGlyph(spriteBatch, _pixel, new Vector2(center.X, rect.Y - 26), 0.5f,
+                character.IsBot ? Color.LightSkyBlue : Color.White, headRole);
+
+        // A human crewmate reads the same way a hired bot does - name floating over the head,
+        // always on, not just when hovered - so telling a crew of several players apart doesn't
+        // depend on remembering whose colour is whose. Once they've picked their own Role from
+        // CrewPanel, it's shown in the name label too, the same way a bot's already is above.
+        //
+        // Backed by the same opaque plate every other floating label in this file uses
+        // (DrawLabelBacking) - previously bare text, so standing near a device (whose own label
+        // already has a backing) or another crewmate produced two sets of glyphs painted straight
+        // over each other, unreadable regardless of which one was technically drawn last.
+        if (character.IsBot && character.Role is { } role)
+        {
+            var text = $"{character.BotName} ({CrewRoles.Name(role)})";
+            var position = new Vector2(rect.X - 10, rect.Y - 14);
+            DrawLabelBacking(spriteBatch, text, position, 0.45f);
+            spriteBatch.DrawString(_font, text, position, Color.LightSkyBlue, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+        }
+        else if (!character.IsBot && character.Nickname is { Length: > 0 } nickname)
+        {
+            var text = character.Role is { } playerRole ? $"{nickname} ({CrewRoles.Name(playerRole)})" : nickname;
+            var position = new Vector2(rect.X - 10, rect.Y - 14);
+            DrawLabelBacking(spriteBatch, text, position, 0.45f);
+            spriteBatch.DrawString(_font, text, position, Color.White, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+        }
     }
 
     // A speech bubble above the sender (direct user request, "как в Баротравме", ChatBubbleTracker) -

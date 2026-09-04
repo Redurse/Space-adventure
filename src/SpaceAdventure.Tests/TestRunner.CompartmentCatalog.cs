@@ -129,12 +129,157 @@ internal static partial class TestRunner
             return false; // the single remaining wall tile (x=3) must still keep them as two separate regions
 
         // A keeps its own untouched 2x2 interior (4 tiles) - its ring was never a "new" stamp once B
-        // arrived, so nothing about it changes. B's dedup fires for EVERY row along the touching
-        // boundary (A's entire east ring column is solid top to bottom, not just the middle row), so
-        // B's whole west ring column (4 tiles, corners included) turns to floor too, joining its own
-        // 2x2 interior into one connected 8-tile region - not 4+4=8 by coincidence, but literally
-        // "west column (4) + interior (4)" once the boundary dedup is traced all the way across.
-        return grid.Regions[regionA.Value].Tiles.Count == 4 && grid.Regions[regionB.Value].Tiles.Count == 8;
+        // arrived, so nothing about it changes. B's dedup fires for the two NON-corner rows along the
+        // touching boundary (y=1,2) - each of those tiles has only ONE ring side (West), and that side
+        // touches A's already-solid east wall, so it's unambiguously the shared interior boundary.
+        // B's own two CORNER tiles on that same column (y=0,3 - see the dedicated corner-vs-hole test
+        // below for the full story) stay Solid instead: each has a SECOND ring side (North/South) that
+        // is genuine open space (this row is the very top/bottom of the whole combined shape), and a
+        // single TileCell.Wall value can't be "open toward A, solid toward vacuum" at once - keeping it
+        // Solid is what correctly seals that side, at the cost of a harmless, redundant extra wall tile
+        // sitting right next to A's own corner. So B's region is "west column's 2 non-corner tiles (2)
+        // + interior (4)" = 6, not 8 - and, unlike the old (buggy) 8-tile shape, this one is a genuine
+        // rectangle (3 wide x 2 tall), which is exactly what TileShipBuilder.BuildDefinition's own
+        // "region must be rectangular" check requires.
+        return grid.Regions[regionA.Value].Tiles.Count == 4 && grid.Regions[regionB.Value].Tiles.Count == 6;
+    }
+
+    // ---- The confirmed real bug (see CompartmentPlacer.Stamp's own step-4 doc comment): stamping two
+    // SAME-SIZE compartments directly touching (zero gap, full-height match) used to leave the second
+    // one's own corner tile(s) on the shared boundary floored with Wall.None - a literal hole in that
+    // corner's genuine exterior side, and a non-rectangular SealedRegion (TileShipBuilder.BuildDefinition
+    // would reject it as "must be rectangular"). Reproduced with engine-medium/cockpit-small, the exact
+    // same-size (5x5) pair Ship.CatalogHulls.cs's own CreateDestroyer/CreateFreighter place touching at
+    // (0,8)/(5,8) - see the end-to-end test below for that real hull data. ----
+    private static bool CompartmentCatalog_TouchingSameSizeCompartments_SecondOnesSealedRegionIsRectangular()
+    {
+        var grid = new TileGrid();
+        var entryA = CompartmentCatalog.Find("engine-medium");   // 5x5
+        var entryB = CompartmentCatalog.Find("cockpit-small");    // 5x5 - same size as A
+        if (entryA is null || entryB is null)
+            return false;
+
+        var resultA = CompartmentPlacer.Stamp(grid, entryA, new TileCoord(0, 0), rotationSteps: 0, instanceId: "a");
+        var resultB = CompartmentPlacer.Stamp(grid, entryB, new TileCoord(5, 0), rotationSteps: 0, instanceId: "b"); // A ends at x=4, B starts at x=5: zero gap
+        if (!resultA.Success || !resultB.Success)
+            return false;
+
+        // The shared boundary (A's east ring column x=4) must be exactly one wall tile thick along
+        // every row, corners included - checking the actual tile states directly, not just the region.
+        for (var y = 0; y <= 4; y++)
+        {
+            if (grid.CellAt(new TileCoord(4, y)) is not { Wall: TileWallKind.Solid })
+                return false; // A's own wall must still be standing the whole way down
+            if (grid.CellAt(new TileCoord(5, y)) is not { HasFloor: true } farCell)
+                return false;
+            var expectSolid = y == 0 || y == 4; // B's own corners (genuine top/bottom exterior) stay Solid
+            if (expectSolid && farCell.Wall != TileWallKind.Solid)
+                return false;
+            if (!expectSolid && farCell.Wall != TileWallKind.None)
+                return false;
+        }
+
+        var regionB = grid.RegionIdAt(new TileCoord(6, 2));
+        if (regionB is not { } regionBId)
+            return false;
+        var tiles = grid.Regions[regionBId].Tiles;
+        var minX = tiles.Min(t => t.X);
+        var maxX = tiles.Max(t => t.X);
+        var minY = tiles.Min(t => t.Y);
+        var maxY = tiles.Max(t => t.Y);
+        var bboxArea = (maxX - minX + 1) * (maxY - minY + 1);
+        return tiles.Count == bboxArea; // genuinely rectangular - the exact assertion TileShipBuilder needs
+    }
+
+    // ---- The exterior-corner case the fix must NOT break: when only ONE of a corner tile's two ring
+    // sides touches another compartment and the OTHER side is genuine open space, that tile must still
+    // come out Wall.Solid - a real hull wall, not a hole. Reuses the same touching pair as the test
+    // above/below (its own NW/SW corners on the shared boundary are exactly this case), asserted
+    // directly against tile state so a regression that clears BOTH directions (undoing the fix) or ONLY
+    // fixes one specific corner would still be caught. ----
+    private static bool CompartmentCatalog_TouchingCompartments_ExteriorSideOfMixedCornerStaysSolid()
+    {
+        var grid = new TileGrid();
+        var entry = CompartmentCatalog.Find("life-support-small"); // W=4,H=4
+        if (entry is null)
+            return false;
+
+        var resultA = CompartmentPlacer.Stamp(grid, entry, new TileCoord(0, 0), rotationSteps: 0, instanceId: "a");
+        var resultB = CompartmentPlacer.Stamp(grid, entry, new TileCoord(4, 0), rotationSteps: 0, instanceId: "b");
+        if (!resultA.Success || !resultB.Success)
+            return false;
+
+        // B's local (0,0) and (0,3) - NW/SW corners - sit on the shared West boundary AND on B's own
+        // genuine North/South exterior edge (the very top/bottom row of the whole combined shape).
+        bool IsSolidHullCorner(TileCoord c) => grid.CellAt(c) is { HasFloor: true, Wall: TileWallKind.Solid };
+        if (!IsSolidHullCorner(new TileCoord(4, 0)))
+            return false; // NW corner - would leak to vacuum above if this were cleared to None
+        if (!IsSolidHullCorner(new TileCoord(4, 3)))
+            return false; // SW corner - would leak to vacuum below if this were cleared to None
+
+        // A's own corresponding corners (never touched by any dedup at all) must obviously still be
+        // Solid too - the fix only changes B's tiles, never an earlier compartment's.
+        return IsSolidHullCorner(new TileCoord(3, 0)) && IsSolidHullCorner(new TileCoord(3, 3));
+    }
+
+    // ---- The genuinely-interior counterpart: a corner tile whose BOTH ring sides touch an existing
+    // wall (a 4-way junction - this compartment slots into the inside corner formed by 3 already-placed
+    // neighbors) has no genuine exterior side left at all, so THIS corner must dedup away to open floor,
+    // unlike the mixed corner above - confirming the fix distinguishes the two cases rather than just
+    // always keeping corners Solid. ----
+    private static bool CompartmentCatalog_FourWayJunctionCorner_StillDedupsToOpenFloor()
+    {
+        var grid = new TileGrid();
+        var entry = CompartmentCatalog.Find("life-support-small"); // W=4,H=4
+        if (entry is null)
+            return false;
+
+        var resultA = CompartmentPlacer.Stamp(grid, entry, new TileCoord(0, 0), rotationSteps: 0, instanceId: "a"); // top-left
+        var resultB = CompartmentPlacer.Stamp(grid, entry, new TileCoord(4, 0), rotationSteps: 0, instanceId: "b"); // top-right, east of A
+        var resultC = CompartmentPlacer.Stamp(grid, entry, new TileCoord(0, 4), rotationSteps: 0, instanceId: "c"); // bottom-left, south of A
+        var resultD = CompartmentPlacer.Stamp(grid, entry, new TileCoord(4, 4), rotationSteps: 0, instanceId: "d"); // bottom-right - touches B (north) and C (west) at once
+        if (!resultA.Success || !resultB.Success || !resultC.Success || !resultD.Success)
+            return false;
+
+        // D's own NW corner (local (0,0), absolute (4,4)): West neighbor is C's east wall, North
+        // neighbor is B's south wall - both already Solid before D's own ring is stamped.
+        return grid.CellAt(new TileCoord(4, 4)) is { HasFloor: true, Wall: TileWallKind.None };
+    }
+
+    // ---- Real end-to-end proof: the SAME two compartments, at the SAME anchors, Ship.CatalogHulls.cs's
+    // own CreateDestroyer/CreateFreighter actually use for their touching engine/cockpit pair (both
+    // "engine-medium" and "cockpit-small" are 5x5 - the only same-height touching pair either hull's
+    // spine has). Confirms the fix isn't just correct for a synthetic square (life-support-small) but
+    // for the exact real hull data this bug report was about. ----
+    private static bool CompartmentCatalog_RealDestroyerEngineCockpitPair_ProducesRectangularRegions()
+    {
+        var grid = new TileGrid();
+        var engineEntry = CompartmentCatalog.Find("engine-medium");
+        var cockpitEntry = CompartmentCatalog.Find("cockpit-small");
+        if (engineEntry is null || cockpitEntry is null)
+            return false;
+        if (engineEntry.Width != cockpitEntry.Width || engineEntry.Height != cockpitEntry.Height)
+            return false; // sanity - this test only means what it claims if they really are same-size
+
+        var resultEngine = CompartmentPlacer.Stamp(grid, engineEntry, new TileCoord(0, 8), rotationSteps: 0, instanceId: "destroyer-engine");
+        var resultCockpit = CompartmentPlacer.Stamp(grid, cockpitEntry, new TileCoord(5, 8), rotationSteps: 0, instanceId: "destroyer-cockpit");
+        if (!resultEngine.Success || !resultCockpit.Success)
+            return false;
+
+        bool IsRectangular(TileCoord probe)
+        {
+            var regionId = grid.RegionIdAt(probe);
+            if (regionId is not { } id)
+                return false;
+            var tiles = grid.Regions[id].Tiles;
+            var minX = tiles.Min(t => t.X);
+            var maxX = tiles.Max(t => t.X);
+            var minY = tiles.Min(t => t.Y);
+            var maxY = tiles.Max(t => t.Y);
+            return tiles.Count == (maxX - minX + 1) * (maxY - minY + 1);
+        }
+
+        return IsRectangular(new TileCoord(2, 10)) && IsRectangular(new TileCoord(7, 10));
     }
 
     // ---- Overlap rejection: stamping a compartment onto already-occupied floor must fail cleanly,

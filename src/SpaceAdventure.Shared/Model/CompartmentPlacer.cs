@@ -186,6 +186,29 @@ public static class CompartmentPlacer
         // leaving the existing neighbor's own wall as the sole 1-tile separator between the two
         // compartments' interiors (see this file's own doc comment / humble-soaring-cat.md's M80
         // plan). The existing compartment's wall is NEVER touched - only ever the new one's.
+        //
+        // A corner tile belongs to TWO ring sides at once (RingSides), but TileCell.Wall is a single
+        // value for the whole tile - it cannot be "solid facing north, open facing west" at the same
+        // time. Two same-size compartments placed directly touching (e.g. engine-medium/cockpit-small
+        // in Ship.CatalogHulls.cs, both 5x5) hit exactly this: the touching compartment's own corner
+        // tile has one ring side against the earlier compartment's already-solid wall (the shared,
+        // interior boundary - wants dedup) and the OTHER ring side against genuine open space (this
+        // compartment's own real hull exterior - wants to stay Solid). Using ringSides.Exists (OR) to
+        // decide dedup was wrong: it cleared the WHOLE tile to None whenever EITHER side matched,
+        // which silently opened a hole in the genuine exterior side too (confirmed by a throwaway
+        // repro: stamping cockpit-small next to engine-medium left the cockpit's own north-west/
+        // south-west corners HasFloor=true, Wall=None - a real hull leak - and made the resulting
+        // SealedRegion non-rectangular, exactly the shape TileShipBuilder.BuildDefinition's own "must
+        // be rectangular" check correctly rejects). The fix: require ALL of a tile's ring sides to
+        // already touch an existing wall (ringSides.All, not Exists) before dedup-ing it away. For an
+        // ordinary edge tile (one ring side) this is unchanged - All/Exists agree on a single element.
+        // For a corner: if only one side touches a neighbor, the tile stays Solid (correctly keeping
+        // its genuine-exterior side sealed - a harmless, redundant extra wall tile sits right next to
+        // the earlier compartment's own corner, which is exactly how two adjacent hand-authored rooms'
+        // corners already coexist everywhere else in this codebase). If BOTH sides touch an existing
+        // wall (a true 4-way interior junction - e.g. a compartment slotted into the inside corner of
+        // three already-placed neighbors), the tile has no genuine exterior side left at all, so
+        // dedup-ing it to open floor is correct.
         var airlockDoorAbs = rotated.Airlock is { } airlockSpec ? Abs(airlockSpec.DoorPosition) : (TileCoord?)null;
         for (var y = 0; y < h; y++)
             for (var x = 0; x < w; x++)
@@ -196,10 +219,10 @@ public static class CompartmentPlacer
                     continue; // interior tile - no wall here at all
 
                 var coord = Abs(local);
-                var touchesAnExistingWall = ringSides.Exists(side => grid.CellAt(side.Offset(coord)) is { HasFloor: true, Wall: not TileWallKind.None });
-                if (touchesAnExistingWall)
+                var everyRingSideTouchesAnExistingWall = ringSides.TrueForAll(side => grid.CellAt(side.Offset(coord)) is { HasFloor: true, Wall: not TileWallKind.None });
+                if (everyRingSideTouchesAnExistingWall)
                 {
-                    grid.SetWall(coord, TileWallKind.None); // dedup - the neighbor's wall is the shared boundary
+                    grid.SetWall(coord, TileWallKind.None); // dedup - the neighbor's wall(s) are the shared boundary
                     continue;
                 }
 

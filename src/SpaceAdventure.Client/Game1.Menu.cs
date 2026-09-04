@@ -32,7 +32,8 @@ public partial class Game1
         Settings,
     }
 
-    private static readonly ShipKind[] SelectableShipKinds = { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette };
+    private static readonly ShipKind[] SelectableShipKinds =
+        { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette, ShipKind.Destroyer, ShipKind.Freighter };
     private static readonly CrewRole[] RoleChoices = { CrewRole.Captain, CrewRole.Engineer, CrewRole.Mechanic, CrewRole.Security, CrewRole.Scientist };
     private const int RoleIconBoxSize = 70;
     private const int RoleIconGap = 30;
@@ -461,8 +462,13 @@ public partial class Game1
             : keyboard.IsKeyDown(Keys.D2) ? 1
             : keyboard.IsKeyDown(Keys.D3) ? 2
             : keyboard.IsKeyDown(Keys.D4) ? 3
+            // 5/6 (direct user request - "именно как новые 5,6 корабль"): Destroyer/Freighter,
+            // the two compartment-catalog-built ships added alongside the original 4 hand-authored
+            // classes above.
+            : keyboard.IsKeyDown(Keys.D5) ? 4
+            : keyboard.IsKeyDown(Keys.D6) ? 5
             : -1;
-        if (index < 0)
+        if (index < 0 || index >= SelectableShipKinds.Length)
             return;
 
         // Starting fresh abandons the old run - the first docking would overwrite it anyway, so
@@ -1337,37 +1343,44 @@ public partial class Game1
     private void DrawShipSelectScreen()
     {
         _spriteBatch.DrawString(_font, "Выберите корабль", new Vector2(60, 40), Color.White, 0f, Vector2.Zero, 1.4f, SpriteEffects.None, 0f);
+        // Row height shrunk from the original 70 (which only ever had to fit 4 rows) to 52 so all 6
+        // classes - Destroyer/Freighter added as items 5-6 - still fit above the fixed Продолжить/
+        // Кооп/Присоединиться lines below without overlapping them (DesignHeight=560, Game1.cs).
+        const int rowHeight = 52;
         for (var i = 0; i < SelectableShipKinds.Length; i++)
         {
             var kind = SelectableShipKinds[i];
-            var y = 110 + i * 70;
+            var y = 110 + i * rowHeight;
             _spriteBatch.DrawString(_font, $"[{i + 1}] {ShipCatalog.Name(kind)}", new Vector2(60, y), Color.Gold, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
             _spriteBatch.DrawString(_font, ShipCatalog.Description(kind), new Vector2(80, y + 24), Color.LightSteelBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
         }
 
         DrawShipSelectCustomShipList();
 
+        // Below the (now 6-row) class list - shifted down from the original 396/420/460/488 to clear
+        // the last class row's own description line.
         if (_existingSave is { } save)
         {
             _spriteBatch.DrawString(_font, $"[C] Продолжить: {ShipCatalog.Name(save.ShipKind)}, {save.Credits} кред.",
-                new Vector2(60, 396), Color.LightGreen, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
+                new Vector2(60, 424), Color.LightGreen, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
             _spriteBatch.DrawString(_font, "Выбор корабля начнёт новую игру и сотрёт сохранение.",
-                new Vector2(80, 420), Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+                new Vector2(80, 448), Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
         }
 
         var hostLine = _openToNetwork
             ? $"[H] Кооп: ОТКРЫТ, порт {SpaceAdventure.Shared.Networking.Wire.DefaultPort} — друзья вводят {LocalAddresses()}"
             : "[H] Кооп: закрыт (игра только для вас)";
-        _spriteBatch.DrawString(_font, hostLine, new Vector2(60, 460),
+        _spriteBatch.DrawString(_font, hostLine, new Vector2(60, 482),
             _openToNetwork ? Color.LightGreen : Color.LightGray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, "[J] Присоединиться к чужому кораблю", new Vector2(60, 488),
+        _spriteBatch.DrawString(_font, "[J] Присоединиться к чужому кораблю", new Vector2(60, 508),
             Color.LightSkyBlue, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
     }
 
     // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
-    // Step 7) - alongside the 4 fixed classes on the left (which stay keyboard-driven, 1-4), not
-    // instead of them. An invalid design still shows up here (so the player can see it exists and go
-    // fix it in the editor) but greyed out and unclickable, rather than hidden entirely.
+    // Step 7) - alongside the 6 fixed classes on the left (which stay keyboard-driven, 1-6 -
+    // Destroyer/Freighter added as items 5-6 alongside the original 4), not instead of them. An
+    // invalid design still shows up here (so the player can see it exists and go fix it in the
+    // editor) but greyed out and unclickable, rather than hidden entirely.
     private void DrawShipSelectCustomShipList()
     {
         _spriteBatch.DrawString(_font, "Ваши корабли:", new Vector2(650, 80), Color.White, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);

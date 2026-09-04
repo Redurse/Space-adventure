@@ -22,12 +22,6 @@ namespace SpaceAdventure.Client;
 // the existing Room/Door pipeline, unchanged.
 public partial class Game1
 {
-    private readonly record struct TileRoomRect(int MinX, int MinY, int MaxX, int MaxY)
-    {
-        public int Width => MaxX - MinX + 1;
-        public int Height => MaxY - MinY + 1;
-    }
-
     // Every call site (the bottom-bar status line, the Play button) wants both "can this even be
     // turned into rooms at all" (rectangularity - a genuine tile-model concept with no equivalent in
     // CustomShipValidator) and the existing validator's own rules (device minimums, airlocks, ...)
@@ -41,194 +35,16 @@ public partial class Game1
         return (named, CustomShipValidator.Validate(named));
     }
 
+    // Delegates the actual TileGrid -> CustomShipDefinition conversion to TileShipBuilder (Shared) -
+    // the exact same algorithm this method used to implement by hand, ported so a compartment-
+    // catalog-built hull (Ship.cs's Destroyer/Freighter) can reuse it too. This method now only
+    // adapts this class's own editor fields into that method's plain-parameter shape: engines get
+    // the editor's single flat EngineMaxThrust constant (the free-tile Engine tool has no notion of
+    // per-size thrust), zones carry over as-is for the friendly-room-naming feature.
     private (CustomShipDefinition? Definition, IReadOnlyList<string> Errors) BuildDefinitionFromTiles()
     {
-        var errors = new List<string>();
-        if (_editorTiles.Regions.Count == 0)
-        {
-            errors.Add("Нарисуйте хотя бы один отсек (пол внутри стен), прежде чем играть.");
-            return (null, errors);
-        }
-
-        // 1) Every region must be a perfectly filled rectangle - CustomRoomDef can only represent a
-        // plain AABB, not an arbitrary painted shape.
-        var rects = new Dictionary<int, TileRoomRect>();
-        foreach (var (regionId, region) in _editorTiles.Regions)
-        {
-            if (region.Tiles.Count == 0)
-                continue;
-            var minX = region.Tiles.Min(t => t.X);
-            var minY = region.Tiles.Min(t => t.Y);
-            var maxX = region.Tiles.Max(t => t.X);
-            var maxY = region.Tiles.Max(t => t.Y);
-            var rect = new TileRoomRect(minX, minY, maxX, maxY);
-            if (region.Tiles.Count != rect.Width * rect.Height)
-            {
-                errors.Add($"{ZoneNameFor(region.Tiles) ?? $"Отсек {regionId}"}: отсек должен быть прямоугольным, чтобы играть.");
-                continue;
-            }
-            rects[regionId] = rect;
-        }
-        if (errors.Count > 0)
-            return (null, errors);
-
-        var roomIds = rects.Keys.ToDictionary(id => id, id => $"room-{id}");
-        var doorPairs = new HashSet<(int A, int B)>();
-        // Every (region, side) that turned out to face ANOTHER room once gap-closing ran - excluded
-        // from airlock consideration below regardless of whether that shared boundary got a door or
-        // stayed solid, since either way it's no longer a genuinely exterior hull side (the same
-        // "no neighbouring room on this side" condition CustomShipValidator itself enforces).
-        var sidesWithNeighbor = new HashSet<(int RegionId, TileSide Side)>();
-
-        // 2) Close the 1-tile gap wherever two regions are separated by a single wall/door column
-        // or row - only checking East/South from each region's own perspective means every adjacent
-        // pair gets examined exactly once (the pair's other half would find it via West/North).
-        foreach (var regionId in rects.Keys.ToList())
-        {
-            CloseGapIfAdjacent(regionId, TileSide.East, rects, doorPairs, sidesWithNeighbor);
-            CloseGapIfAdjacent(regionId, TileSide.South, rects, doorPairs, sidesWithNeighbor);
-        }
-
-        // 3) Airlocks - a Door tile immediately outside one of a room's sides, with genuine open
-        // space (no other region) beyond it, marks that whole side as the ship's hull airlock -
-        // exactly the "no neighbouring room on this side" condition CustomShipValidator itself
-        // requires (rule 7), just derived here instead of authored as a separate editor tool.
-        var airlocks = new List<CustomAirlockDef>();
-        foreach (var (regionId, rect) in rects)
-            foreach (var side in TileSideExtensions.All)
-                if (!sidesWithNeighbor.Contains((regionId, side)) && SideIsAirlock(rect, side))
-                    airlocks.Add(new CustomAirlockDef(roomIds[regionId], ToEdgeSide(side)));
-
-        // 4) Devices - a device tile always sits on open floor (TileGrid.PlaceDevice's own
-        // precondition), so it's always a member of exactly one region/room. _editorDeviceKinds is
-        // keyed by each device's own anchor (top-left) tile only - exporting the CENTER of its full
-        // footprint (not the anchor corner) keeps a multi-tile device like the Reactor positioned
-        // where CustomDeviceDef's point-containment check (Ship.Custom.cs's RoomIdAt) expects it -
-        // still well inside its own room's rectangle either way.
-        var devices = new List<CustomDeviceDef>();
-        foreach (var (coord, cell) in _editorTiles.Cells)
-        {
-            if (cell.DeviceId is null || !_editorDeviceKinds.TryGetValue(coord, out var kind))
-                continue;
-            var footprintSize = DeviceFootprintSize(kind);
-            devices.Add(new CustomDeviceDef(kind, coord.X + footprintSize / 2f, coord.Y + footprintSize / 2f));
-        }
-
-        var rooms = rects.Select(kv => new CustomRoomDef(
-            roomIds[kv.Key], ZoneNameFor(_editorTiles.Regions[kv.Key].Tiles) ?? $"Отсек {kv.Key}",
-            kv.Value.MinX, kv.Value.MinY, kv.Value.Width, kv.Value.Height)).ToList();
-        var doors = doorPairs.Select(p => new CustomDoorDef(roomIds[p.A], roomIds[p.B])).ToList();
-
-        // Wall materials (direct user request - "усиленная стена"/"иллюминатор") - every painted
-        // Solid tile whose material isn't the default Standard, keyed by the SAME tile coordinate
-        // Ship.Custom.cs's ApplyWallMaterials looks up against each auto-generated WallBlock's own
-        // position (via TileGridRasterizer.WallBlockTileCoord). A tile that closed a gap (extended
-        // into what CloseGapIfAdjacent turned into a room-interior wall) still exports correctly -
-        // Ship.FromCustomDefinition regenerates its own interior WallBlock at that exact tile.
-        var wallMaterials = _editorTiles.Cells
-            .Where(kv => kv.Value.Wall == TileWallKind.Solid && kv.Value.WallMaterial != WallMaterial.Standard)
-            .Select(kv => new CustomWallMaterialDef(kv.Key.X, kv.Key.Y, kv.Value.WallMaterial))
-            .ToList();
-
-        // Real engines (ShipEngine.cs, the Engine editor tool) - anchored at the Control tile's own
-        // centre (X+0.5/Y+0.5), the same tile-center convention the `devices` loop above already uses
-        // for a 1x1 footprint (coord.X + footprintSize/2f, footprintSize=1). CustomShipValidator
-        // treats a non-empty Engines list as satisfying the "needs a way to move" rule on its own, no
-        // flat CustomDeviceKind.Engine required alongside it.
-        var engines = _editorEngineFacing
-            .Select(kv => new CustomEngineDef(kv.Key.X + 0.5f, kv.Key.Y + 0.5f, kv.Value, EngineMaxThrust))
-            .ToList();
-
-        return (new CustomShipDefinition(_editorShipName, rooms, doors, airlocks, devices, _editorForwardDegrees, wallMaterials, engines), errors);
-    }
-
-    // Looks for exactly one other already-converted region sitting 2 tiles away in `direction` (1
-    // tile of wall/door in between), with a matching span on the perpendicular axis - a clean,
-    // straight shared wall, not a partial/offset touch. When found, extends this region's rectangle
-    // by 1 tile onto that wall/door tile so the two rooms end up touching exactly (see this file's
-    // own doc comment), and records the pair as door-connected if any tile along that boundary is a
-    // door rather than a plain solid wall.
-    private void CloseGapIfAdjacent(int regionId, TileSide direction,
-        Dictionary<int, TileRoomRect> rects, HashSet<(int A, int B)> doorPairs,
-        HashSet<(int RegionId, TileSide Side)> sidesWithNeighbor)
-    {
-        var rect = rects[regionId];
-        IEnumerable<TileCoord> BoundaryLine(int offset) => direction switch
-        {
-            TileSide.East => Enumerable.Range(rect.MinY, rect.Height).Select(y => new TileCoord(rect.MaxX + offset, y)),
-            TileSide.South => Enumerable.Range(rect.MinX, rect.Width).Select(x => new TileCoord(x, rect.MaxY + offset)),
-            _ => throw new ArgumentOutOfRangeException(nameof(direction)),
-        };
-
-        var wallLine = BoundaryLine(1).ToList();
-        if (wallLine.Any(c => _editorTiles.CellAt(c) is not { Wall: not TileWallKind.None }))
-            return; // not a clean 1-tile wall/door separator the whole way across
-
-        var farRegionIds = BoundaryLine(2).Select(c => _editorTiles.RegionIdAt(c)).Distinct().ToList();
-        if (farRegionIds.Count != 1 || farRegionIds[0] is not { } neighborId || neighborId == regionId ||
-            !rects.TryGetValue(neighborId, out var neighborRect))
-            return;
-
-        var spanMatches = direction == TileSide.East
-            ? neighborRect.MinX == rect.MaxX + 2 && neighborRect.MinY == rect.MinY && neighborRect.MaxY == rect.MaxY
-            : neighborRect.MinY == rect.MaxY + 2 && neighborRect.MinX == rect.MinX && neighborRect.MaxX == rect.MaxX;
-        if (!spanMatches)
-            return; // offset/partial touch - leave both regions alone rather than guess
-
-        rects[regionId] = direction == TileSide.East ? rect with { MaxX = rect.MaxX + 1 } : rect with { MaxY = rect.MaxY + 1 };
-        sidesWithNeighbor.Add((regionId, direction));
-        sidesWithNeighbor.Add((neighborId, direction.Opposite()));
-        if (wallLine.Any(c => _editorTiles.CellAt(c) is { Wall: TileWallKind.Door }))
-            doorPairs.Add((Math.Min(regionId, neighborId), Math.Max(regionId, neighborId)));
-    }
-
-    // Every tile directly beyond this side of the room (after any gap-closing above) must be either
-    // a door, a plain solid wall, or genuine open space (no cell at all) - i.e. this side never
-    // touches another region - and at least one of those tiles is a door, for this side to become an
-    // airlock rather than a plain sealed hull wall.
-    private bool SideIsAirlock(TileRoomRect rect, TileSide side)
-    {
-        IEnumerable<TileCoord> Line() => side switch
-        {
-            TileSide.North => Enumerable.Range(rect.MinX, rect.Width).Select(x => new TileCoord(x, rect.MinY - 1)),
-            TileSide.South => Enumerable.Range(rect.MinX, rect.Width).Select(x => new TileCoord(x, rect.MaxY + 1)),
-            TileSide.East => Enumerable.Range(rect.MinY, rect.Height).Select(y => new TileCoord(rect.MaxX + 1, y)),
-            TileSide.West => Enumerable.Range(rect.MinY, rect.Height).Select(y => new TileCoord(rect.MinX - 1, y)),
-            _ => throw new ArgumentOutOfRangeException(nameof(side)),
-        };
-
-        var hasDoor = false;
-        foreach (var coord in Line())
-        {
-            var cell = _editorTiles.CellAt(coord);
-            if (cell is { Wall: TileWallKind.Door })
-                hasDoor = true;
-            else if (cell is { Wall: TileWallKind.None })
-                return false; // open floor with no wall right next to us - this side touches another region's territory directly, not clean hull
-        }
-        return hasDoor;
-    }
-
-    private static EdgeSide ToEdgeSide(TileSide side) => side switch
-    {
-        TileSide.North => EdgeSide.Top,
-        TileSide.South => EdgeSide.Bottom,
-        TileSide.East => EdgeSide.Right,
-        TileSide.West => EdgeSide.Left,
-        _ => throw new ArgumentOutOfRangeException(nameof(side)),
-    };
-
-    // Friendly room naming (direct user feature, M76 follow-up: "Зоны") - prefers whichever named
-    // zone overlaps the most tiles of this region, falling back to a generic "Отсек N" label if the
-    // player never named this area.
-    private string? ZoneNameFor(IEnumerable<TileCoord> tiles)
-    {
-        var tileSet = tiles as HashSet<TileCoord> ?? tiles.ToHashSet();
-        return _editorZones
-            .Select(z => (z.Name, Overlap: z.Tiles.Count(tileSet.Contains)))
-            .Where(x => x.Overlap > 0)
-            .OrderByDescending(x => x.Overlap)
-            .Select(x => x.Name)
-            .FirstOrDefault();
+        var engines = _editorEngineFacing.ToDictionary(kv => kv.Key, kv => new TileShipBuilder.EngineSpec(kv.Value, EngineMaxThrust));
+        var zones = _editorZones.Select(z => (z.Name, (IReadOnlySet<TileCoord>)z.Tiles)).ToList();
+        return TileShipBuilder.BuildDefinition(_editorTiles, _editorDeviceKinds, engines, _editorShipName, _editorForwardDegrees, zones);
     }
 }

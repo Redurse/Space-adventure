@@ -101,13 +101,21 @@ internal static partial class TestRunner
             return false;
 
         // Confirm the dedup landed exactly where M80's own design says it does before removing
-        // anything: A's east ring column (x=3) still Solid, B's west ring column (x=4) deduped to
-        // plain floor (HasFloor true, Wall None).
+        // anything: A's east ring column (x=3) still Solid the whole way down. B's west ring column
+        // (x=4) deduped to plain floor (HasFloor true, Wall None) on the two NON-corner rows (y=1,2) -
+        // those tiles have only one ring side (West) and it touches A's wall, unambiguously the shared
+        // interior boundary. B's own CORNER rows (y=0,3) stay Solid instead (CompartmentPlacer.Stamp's
+        // own step-4 doc comment): each also touches this row's genuine top/bottom exterior on its
+        // OTHER ring side, and a single TileCell.Wall value can't be open on one side and solid on the
+        // other, so it stays Solid rather than open a hole there - see TestRunner.CompartmentCatalog.cs's
+        // own CompartmentCatalog_TouchingCompartments_ExteriorSideOfMixedCornerStaysSolid for the
+        // dedicated test of exactly this.
         for (var y = 0; y < 4; y++)
         {
             if (grid.CellAt(new TileCoord(3, y)) is not { Wall: TileWallKind.Solid })
                 return false;
-            if (grid.CellAt(new TileCoord(4, y)) is not { HasFloor: true, Wall: TileWallKind.None })
+            var expectedBWall = y == 0 || y == 3 ? TileWallKind.Solid : TileWallKind.None;
+            if (grid.CellAt(new TileCoord(4, y)) is not { HasFloor: true } bCell || bCell.Wall != expectedBWall)
                 return false;
         }
 
