@@ -111,6 +111,26 @@ internal sealed class PixelCanvas
         Rect(x, y + h - 1, w, 1, Color.Black, 0.42f * a);
     }
 
+    /// <summary>Keeps whichever of the two is brighter, per channel, on an already-opaque pixel.</summary>
+    ///
+    /// Source-over cannot lay one picture over another without a mask saying where one stops, and a
+    /// mask cut out of dithered pixel art never comes out clean. Compositing by "whichever is
+    /// lighter" needs no mask at all: the dark half of the overlay loses to whatever is underneath
+    /// it, and only what is actually drawn in it survives.
+    public void Max(float fx, float fy, Color c)
+    {
+        int x = (int)MathF.Round(fx), y = (int)MathF.Round(fy);
+        if (x < 0 || y < 0 || x >= Width || y >= Height)
+            return;
+
+        var d = _pixels[y * Width + x];
+        _pixels[y * Width + x] = new Vector4(
+            MathF.Max(d.X, c.R / 255f),
+            MathF.Max(d.Y, c.G / 255f),
+            MathF.Max(d.Z, c.B / 255f),
+            MathF.Max(d.W, 1f));
+    }
+
     public Texture2D ToTexture(GraphicsDevice graphics)
     {
         var data = new Color[Width * Height];

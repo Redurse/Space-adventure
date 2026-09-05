@@ -182,4 +182,7 @@ public sealed record WorldSnapshot(
     // direct user request ("активировать дурак надо вдвоем нажать на стол"): starting a hand needs
     // BOTH to choose it, so CardTableChoicePanel can show "ждём второго игрока" instead of nothing
     // happening. Null/empty whenever no one has voted (or the table isn't in the choosing state).
-    IReadOnlyList<int>? CardTableDurakVotes = null);
+    IReadOnlyList<int>? CardTableDurakVotes = null,
+    // The wall terminal's block + on/off (World.cs) - null when this hull has no terminal device
+    // at all (Ship.Terminal), same "device may not exist" shape Jukebox already uses.
+    TerminalState? Terminal = null);

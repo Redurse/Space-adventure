@@ -386,6 +386,13 @@ public partial class Game1 : Game
     private string? _pendingComponentMountInteractId; // install/uninstall/relay-operate a mount
     private string? _pendingSabotageDeviceId; // Gosha's screwdriver's LMB-on-a-device click (World.Wiring.cs)
     private string? _pendingPickupDroppedItemId; // click-to-pick-up (World.Mining.cs), any context
+    // humble-soaring-cat.md - "Полный переход на клик как в Baro": click-driven twins of the E-key
+    // interactions below, same edge-triggered/consume-then-null shape as the three fields above.
+    private string? _pendingSuitLockerInteractId;
+    private string? _pendingTurretInteractId;
+    private string? _pendingAmmoStorageInteractId;
+    private string? _pendingStealCrateId;
+    private string? _pendingRepairDeviceId;
     private SlotRef? _pendingDropItemFrom; // drag ended over empty space (World.Storage.cs)
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
     private string? _pendingWarpToSystemId; // clicked a system on GalaxyMapPanel's own list (World.StarSystems.cs)
@@ -413,6 +420,9 @@ public partial class Game1 : Game
     private bool _pendingJukeboxPrevTrack;
     private bool _pendingJukeboxVolumeUp;
     private bool _pendingJukeboxVolumeDown;
+    // The wall terminal's single on/off toggle - one click on the physical block itself, no panel,
+    // edge-triggered/cleared the same way.
+    private bool _pendingTerminalToggle;
     // The galaxy map's own camera - purely a client view of server-authoritative positions, so it
     // lives here rather than in any snapshot. Zoom via scroll wheel, pan via right-drag; both only
     // read while the navigation console is actually open.
@@ -531,7 +541,10 @@ public partial class Game1 : Game
     {
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
-        IsMouseVisible = true;
+        // Direct user request ("курсор мышки как в баротравме") - the OS's own plain arrow is
+        // hidden; GameCursor.Draw (Game1.cs's own DrawCore, drawn last every frame) replaces it,
+        // so it can change shape over something interactive.
+        IsMouseVisible = false;
         // Set explicitly. Left alone, the caption is whatever the assembly happens to be called,
         // which is the one place a working title survives a rename without anybody noticing.
         Window.Title = "Unidentified Signal";
@@ -683,8 +696,17 @@ public partial class Game1 : Game
         try { _planetSurface = Content.Load<Texture2D>("Textures/PlanetSurface"); }
         catch { _planetSurface = null; }
         _planetEffect = Shaders.TryLoad(Content, "Shaders/Planet");
+        // The drawn backdrop, with a painted scene built out behind it by MenuBackdropArt - the image
+        // on its own is a ship and a star against flat dark space, and no amount of detail fixes a
+        // picture with one plane in it. If the bake throws, the plain image is still what shows, so
+        // reverting to it is deleting the second statement.
         try { _menuBackdrop = Content.Load<Texture2D>("Textures/MenuBackdrop"); }
-        catch { _menuBackdrop = null; } // missing content build falls back to the procedural scene
+        catch { _menuBackdrop = null; } // and then MenuPlanetScene draws the pane instead
+        if (_menuBackdrop is not null)
+        {
+            try { _menuBackdrop = MenuBackdropArt.Bake(GraphicsDevice, _menuBackdrop); }
+            catch { /* keep the plain image */ }
+        }
         try { ItemIcons.SetScrewdriverTexture(Content.Load<Texture2D>("Textures/Screwdriver")); }
         catch { /* ItemIcons.Draw falls back to the procedural silhouette when this is null */ }
         // Content-каталог отсеков - one reference-art texture per catalog room type (the player's
@@ -1408,6 +1430,17 @@ public partial class Game1 : Game
         _pendingPickupDroppedItemId = null;
         _pendingDropItemFrom = null;
 
+        var suitLockerInteractId = _pendingSuitLockerInteractId;
+        var turretInteractId = _pendingTurretInteractId;
+        var ammoStorageInteractId = _pendingAmmoStorageInteractId;
+        var stealCrateId = _pendingStealCrateId;
+        var repairDeviceId = _pendingRepairDeviceId;
+        _pendingSuitLockerInteractId = null;
+        _pendingTurretInteractId = null;
+        _pendingAmmoStorageInteractId = null;
+        _pendingStealCrateId = null;
+        _pendingRepairDeviceId = null;
+
         var abandonQuestPressed = _pendingAbandonQuest;
         _pendingAbandonQuest = false;
 
@@ -1452,6 +1485,9 @@ public partial class Game1 : Game
         _pendingJukeboxPrevTrack = false;
         _pendingJukeboxVolumeUp = false;
         _pendingJukeboxVolumeDown = false;
+
+        var terminalTogglePressed = _pendingTerminalToggle;
+        _pendingTerminalToggle = false;
 
         // Right-click backs out one step of a pending wire-lay without walking back to its start pin
         // - the last fixed bend if there is one, the whole anchor otherwise (World.Wiring.cs's
@@ -1534,7 +1570,8 @@ public partial class Game1 : Game
             jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed,
             fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, _engineerFocusDeviceId, flipHeadingPressed,
             buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk,
-            chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed);
+            chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed, terminalTogglePressed,
+            suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1690,6 +1727,16 @@ public partial class Game1 : Game
                     _scenePost.Present(_spriteBatch, menuSeconds);
                 }
             }
+
+            // The custom cursor (GameCursor's own doc comment) is drawn dead last in the in-session
+            // HUD pass below, which this early return skips entirely - direct user report ("в главном
+            // меню нет курсора"): with IsMouseVisible false and nothing else ever drawing one, the
+            // menu (and every other pre-session screen) had no cursor at all. Plain arrow throughout -
+            // there is no session snapshot yet to compute a hovered-interactable hand cursor from.
+            _spriteBatch.Begin(transformMatrix: _renderScale);
+            GameCursor.Draw(_spriteBatch, _pixel, _designMouse.ToVector2(), false);
+            _spriteBatch.End();
+
             base.Draw(gameTime);
             return;
         }
@@ -2396,6 +2443,16 @@ public partial class Game1 : Game
                 new Vector2(10, 10), Color.Yellow, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
         }
         // TEMP-DIAG-END
+
+        // The hovered device's own highlight, and the cursor's shape - both direct user request
+        // ("как в баротравме"), both read the SAME hover rect (Game1.Interactables.cs) so they can
+        // never show one without the other. Drawn dead last, after every panel, so the highlight
+        // is never painted over and the cursor sits exactly where the OS's own (now hidden) one
+        // would.
+        var hoveredRect = ComputeHoveredInteractable(_client.LatestSnapshot);
+        if (hoveredRect is { } highlightRect)
+            ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, highlightRect, Color.Gold, 2);
+        GameCursor.Draw(_spriteBatch, _pixel, _designMouse.ToVector2(), hoveredRect is not null);
 
         _spriteBatch.End();
 

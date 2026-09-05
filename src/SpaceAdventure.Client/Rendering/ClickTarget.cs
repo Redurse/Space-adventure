@@ -2,7 +2,7 @@ using SpaceAdventure.Shared.Model;
 
 namespace SpaceAdventure.Client.Rendering;
 
-public enum BlockKind { None, Reactor, Distribution, Battery, System, Navigation, Station, Rack, Connections, SuitLocker, Jukebox, CardTable }
+public enum BlockKind { None, Reactor, Distribution, Battery, System, Navigation, Station, Rack, Connections, SuitLocker, Jukebox, CardTable, Terminal }
 
 // Which block, if any, the player currently has "open" (game_design.md sections 1, 5, 10 — click
 // a block to walk up to its terminal). System carries which of the 5 power systems it is;

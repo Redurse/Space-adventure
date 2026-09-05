@@ -371,9 +371,9 @@ public static partial class HullSkin
         // The bands above are plain rectangles and paint straight into the plate's own cut corners
         // on any exterior side; mask those back out with the same flat fill PlatePolygon's own
         // silhouette uses, reproducing the corner cut this would otherwise get for free from simply
-        // never drawing there. Skipped wherever PlatePolygon itself left that corner square (see
-        // FindDiagonalNeighbor) - masking a cut there would carve a notch out of a corner that is
-        // no longer cut.
+        // never drawing there. Skipped wherever PlatePolygon itself left that corner square
+        // (ShouldCutCorner) - masking a cut there would carve a notch out of a corner that is no
+        // longer cut.
         if (margins.TopExterior || margins.BottomExterior || margins.LeftExterior || margins.RightExterior)
         {
             var outerLeft = rect.X - margins.Left;
@@ -381,13 +381,13 @@ public static partial class HullSkin
             var outerWidth = rect.Width + margins.Left + margins.Right;
             var outerHeight = rect.Height + margins.Top + margins.Bottom;
             var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(outerWidth, outerHeight) / 3f);
-            if (FindDiagonalNeighbor(room, rooms, 0) is null)
+            if (ShouldCutCorner(room, rooms, 0))
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop), cut, mirrorX: false, mirrorY: false);
-            if (FindDiagonalNeighbor(room, rooms, 1) is null)
+            if (ShouldCutCorner(room, rooms, 1))
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop), cut, mirrorX: true, mirrorY: false);
-            if (FindDiagonalNeighbor(room, rooms, 3) is null)
+            if (ShouldCutCorner(room, rooms, 3))
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft, outerTop + outerHeight), cut, mirrorX: false, mirrorY: true);
-            if (FindDiagonalNeighbor(room, rooms, 2) is null)
+            if (ShouldCutCorner(room, rooms, 2))
                 MaskPlateCorner(spriteBatch, pixel, new Vector2(outerLeft + outerWidth, outerTop + outerHeight), cut, mirrorX: true, mirrorY: true);
         }
 
@@ -463,6 +463,32 @@ public static partial class HullSkin
                 return other;
         }
         return null;
+    }
+
+    // A corner only needs a diagonal chamfer when it's a genuine convex "outside" turn - both edges
+    // meeting there actually facing open space, not this room's rectangle simply ending where a
+    // flush neighbour sharing the WHOLE edge begins. Bug report (live screenshot): the old check
+    // only asked "is there a diagonal (point-touching) neighbour here", which for two rooms that
+    // share their entire boundary (e.g. cockpit/reactor, both spanning the full Y range at X=5) is
+    // always "no" - so both rooms independently cut a decorative notch out of what is actually a
+    // dead straight hull seam, right next to the ship's own top/bottom exterior edge. Reaching
+    // through that notch (which has no wall/occluder behind it at all, being purely cosmetic) let
+    // the reactor's own devices and wiring show through to a character standing in the cockpit.
+    // Uses EdgeExteriorAtCorner (not the coarser RoomMargins.XExterior flags) for the same reason
+    // DrawReentrantChamfers already needs it: a corridor-mouth room's own edge can be exterior at
+    // one end and interior at the other.
+    private static bool ShouldCutCorner(Room room, IReadOnlyList<Room> rooms, int corner)
+    {
+        if (FindDiagonalNeighbor(room, rooms, corner) is not null)
+            return false;
+        var (edgeA, atA, edgeB, atB) = corner switch
+        {
+            0 => (0, room.Left, 2, room.Top),
+            1 => (0, room.Right, 3, room.Top),
+            2 => (1, room.Right, 3, room.Bottom),
+            _ => (1, room.Left, 2, room.Bottom),
+        };
+        return EdgeExteriorAtCorner(room, rooms, edgeA, atA) && EdgeExteriorAtCorner(room, rooms, edgeB, atB);
     }
 
     // A room's exterior edge meeting a diagonal neighbour's exterior edge at the same point, with
@@ -560,9 +586,11 @@ public static partial class HullSkin
     }
 
     // Rectangle with its corners taken off - eight points, filled as a fan from the middle. A
-    // corner that has a diagonal neighbour (FindDiagonalNeighbor) is left square instead - one
-    // point instead of two - so the two rooms' plates meet flush there rather than each carving an
-    // independent, differently-sized notch out of the same shared point.
+    // corner that doesn't actually need a chamfer (ShouldCutCorner) is left square instead - one
+    // point instead of two - whether that's because a diagonal neighbour's plate already meets it
+    // flush there, or because one of the corner's own two edges isn't exterior at all (a straight
+    // seam between two flush-adjacent rooms, not a real convex turn - see ShouldCutCorner's own
+    // doc comment for the bug this half of the condition fixes).
     private static Vector2[] PlatePolygon(Room room, IReadOnlyList<Room> rooms, RoomMargins margins, Vector2 origin)
     {
         var rect = RoomRect(room, origin);
@@ -573,17 +601,17 @@ public static partial class HullSkin
         var cut = MathF.Min(CornerCutUnits * ShipRenderer.PixelsPerUnit, MathF.Min(right - left, bottom - top) / 3f);
 
         var points = new List<Vector2>(8);
-        AddCorner(points, FindDiagonalNeighbor(room, rooms, 0) is not null, new Vector2(left, top + cut), new Vector2(left + cut, top), new Vector2(left, top));
-        AddCorner(points, FindDiagonalNeighbor(room, rooms, 1) is not null, new Vector2(right - cut, top), new Vector2(right, top + cut), new Vector2(right, top));
-        AddCorner(points, FindDiagonalNeighbor(room, rooms, 2) is not null, new Vector2(right, bottom - cut), new Vector2(right - cut, bottom), new Vector2(right, bottom));
-        AddCorner(points, FindDiagonalNeighbor(room, rooms, 3) is not null, new Vector2(left + cut, bottom), new Vector2(left, bottom - cut), new Vector2(left, bottom));
+        AddCorner(points, !ShouldCutCorner(room, rooms, 0), new Vector2(left, top + cut), new Vector2(left + cut, top), new Vector2(left, top));
+        AddCorner(points, !ShouldCutCorner(room, rooms, 1), new Vector2(right - cut, top), new Vector2(right, top + cut), new Vector2(right, top));
+        AddCorner(points, !ShouldCutCorner(room, rooms, 2), new Vector2(right, bottom - cut), new Vector2(right - cut, bottom), new Vector2(right, bottom));
+        AddCorner(points, !ShouldCutCorner(room, rooms, 3), new Vector2(left + cut, bottom), new Vector2(left, bottom - cut), new Vector2(left, bottom));
         return points.ToArray();
     }
 
-    private static void AddCorner(List<Vector2> points, bool diagonalNeighbor, Vector2 incoming, Vector2 outgoing, Vector2 square)
+    private static void AddCorner(List<Vector2> points, bool square, Vector2 incoming, Vector2 outgoing, Vector2 squarePoint)
     {
-        if (diagonalNeighbor)
-            points.Add(square);
+        if (square)
+            points.Add(squarePoint);
         else
         {
             points.Add(incoming);

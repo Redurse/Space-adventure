@@ -283,4 +283,17 @@ public sealed record ClientCommand(
     int? FrontsSetAllocationAmount = null,
     // "Фронты"'s "Провести бой" - resolves the turn using whatever both sides currently have
     // allocated. Edge-triggered like CardGameEndRoundPressed above.
-    bool FrontsResolvePressed = false);
+    bool FrontsResolvePressed = false,
+    // A wall terminal's on/off toggle - one click on the physical block itself (no separate panel,
+    // unlike the jukebox), edge-triggered and proximity-checked server-side the same way.
+    bool TerminalTogglePressed = false,
+    // humble-soaring-cat.md - "Полный переход на клик как в Baro": the E-key interactions below
+    // each gain a click-driven twin, keyed by the specific object the client already
+    // hovered/highlighted rather than "nearest in range". Edge-triggered like DoorToggleId/
+    // SabotageDeviceId; server re-checks room/distance/tool itself (World.ClickInteract.cs), same
+    // trust level as those two. HandleInteract's own E-key branches are untouched and still work.
+    string? SuitLockerInteractId = null,
+    string? TurretInteractId = null,
+    string? AmmoStorageInteractId = null,
+    string? StealCrateId = null,
+    string? RepairDeviceId = null);

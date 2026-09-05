@@ -484,6 +484,12 @@ internal static partial class TestRunner
         ("TileShipBuilder_PartialHeightOverlap_ClosesGapAndConnectsWithDoor", TileShipBuilder_PartialHeightOverlap_ClosesGapAndConnectsWithDoor),
         ("TileShipBuilder_ExactSpanMatch_StillClosesGapAndConnectsWithDoor", TileShipBuilder_ExactSpanMatch_StillClosesGapAndConnectsWithDoor),
         ("TileShipBuilder_NoRealOverlap_LeavesRegionsUntouched", TileShipBuilder_NoRealOverlap_LeavesRegionsUntouched),
+        ("World_ClickInteract_SuitLocker_EquipsAndUnequips", World_ClickInteract_SuitLocker_EquipsAndUnequips),
+        ("World_ClickInteract_SuitLocker_IgnoresUnreachableLocker", World_ClickInteract_SuitLocker_IgnoresUnreachableLocker),
+        ("World_ClickInteract_Turret_ReloadsAndMans", World_ClickInteract_Turret_ReloadsAndMans),
+        ("World_ClickInteract_AmmoStorage_TakesACrate", World_ClickInteract_AmmoStorage_TakesACrate),
+        ("World_ClickInteract_StealCrate_AddsItemAndMarksLooted", World_ClickInteract_StealCrate_AddsItemAndMarksLooted),
+        ("World_ClickInteract_RepairDeviceId_RepairsADamagedSystemDevice", World_ClickInteract_RepairDeviceId_RepairsADamagedSystemDevice),
     };
 
     // Throwaway diagnostic for one specific scenario - not a registered test, invoked only via

@@ -46,6 +46,10 @@ public sealed class ShipRenderer
     // used unchanged for Engine system devices, which this request never touched).
     public const int ReactorBlockSize = (int)(4 * PixelsPerUnit);
 
+    // A single wall tile (1 game unit), chosen to exactly match TerminalTexture's own native 48px
+    // resolution (1 * PixelsPerUnit == 48) - the baked texture draws 1:1 with no up/downscaling.
+    public const int TerminalBlockSize = (int)(1 * PixelsPerUnit);
+
     // Bulkhead slab, in screen pixels, centred on the room boundary. Deliberately narrower than a
     // door's 1-unit (48px) span so a doorway still cuts cleanly through it, and narrower than twice
     // RoomLayout.CharacterRadius (33.6px) so a character stopped at the collision clearance never
@@ -89,11 +93,13 @@ public sealed class ShipRenderer
     private readonly Dictionary<DeckPlates.Deck, Texture2D[]> _deckPlates = new();
     private readonly Texture2D _deckGrime;
     private readonly CrewSkin _crewSkin;
+    private readonly Texture2D _terminalTexture;
 
     public ShipRenderer(GraphicsDevice graphicsDevice, SpriteFont font, Rectangle worldViewport)
     {
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
+        _terminalTexture = TerminalTexture.Create(graphicsDevice);
         _wallPlate = TileTextures.CreateWallPlate(graphicsDevice);
         _hullPlates = TileTextures.CreateHullPlates(graphicsDevice);
         _devicePlate = TileTextures.CreateDevicePlate(graphicsDevice);
@@ -335,6 +341,8 @@ public sealed class ShipRenderer
         DrawCardTable(spriteBatch, snapshot.CardTable, snapshot.CardGame is not null || snapshot.FrontsGame is not null, origin);
         if (snapshot.Jukebox is { } jukebox)
             DrawJukebox(spriteBatch, jukebox, openBlock.Kind == BlockKind.Jukebox, origin);
+        if (snapshot.Terminal is { } terminal)
+            DrawTerminal(spriteBatch, terminal, origin);
 
         foreach (var turret in snapshot.Turrets)
         {
@@ -1218,6 +1226,16 @@ public sealed class ShipRenderer
         // machine says whether it is running without anybody reading a label.
         DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Jukebox, jukebox.On, accent, isOpen ? 3 : 2);
         DrawDeviceLabel(spriteBatch, rect, "Музыка");
+    }
+
+    // A wall terminal - no panel of its own (one click on the block is the whole toggle gesture),
+    // so nothing here ever draws an "isOpen" highlight the way the reactor/jukebox do. Off dims the
+    // whole baked face to gray, the same convention DrawReactorBlock uses for its own texture.
+    private void DrawTerminal(SpriteBatch spriteBatch, TerminalState terminal, Vector2 origin)
+    {
+        var rect = GetBlockRect(terminal.Block.Position, TerminalBlockSize, origin);
+        var tint = terminal.On ? Color.White : new Color(90, 90, 90);
+        spriteBatch.Draw(_terminalTexture, rect, tint);
     }
 
     private static string SystemLabel(PowerSystemId system) => system switch

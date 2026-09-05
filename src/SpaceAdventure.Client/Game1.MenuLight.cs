@@ -33,6 +33,7 @@ public partial class Game1
             return;
         }
 
+        var pane = MenuArtPane;
         var blob = _scenePost.Blob;
         _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, SamplerState.LinearClamp, transformMatrix: _renderScale);
 
@@ -42,6 +43,14 @@ public partial class Game1
         var breath = 1f + MathF.Sin(totalSeconds * 0.35f) * 0.06f;
         Pool(blob, planet, 470f * breath, new Color(96, 132, 205), 0.55f);
         Pool(blob, planet, 190f * breath, new Color(150, 186, 240), 0.70f);
+
+        // The ship's own hull (baked into the backdrop, DrawMenuScene's own doc comment) sat under
+        // no pool at all - direct user report ("корабль почти не видно"). Centred on the midpoint
+        // between the bake's tail (0.10, 0.62) and nose (0.52, 0.20), same pane-fraction coordinates
+        // DrawMenuEnginePlume's own NozzleMouths use, wide enough to soften across the whole hull
+        // rather than spotlighting one point on it.
+        var hull = new Vector2(pane.X + pane.Width * 0.31f, pane.Y + pane.Height * 0.41f);
+        Pool(blob, hull, pane.Width * 0.42f, new Color(196, 206, 226), 0.5f);
 
         // Warm rim from the left, behind the button column - the cabin's own lamp. Without something
         // on this side the buttons sit in flat ambient and the relief term has no direction to work

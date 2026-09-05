@@ -15,7 +15,7 @@ internal static partial class TestRunner
         int Count(DeviceKind kind) => byKind.TryGetValue(kind, out var n) ? n : 0;
 
         // One physical fixture each - ReactorBlock/DistributionBlock/BatteryBlock/HelmConsole/
-        // NavigationConsole/CardTable/Jukebox all appear exactly once on the starter hull.
+        // NavigationConsole/CardTable/Jukebox/Terminal all appear exactly once on the starter hull.
         return Count(DeviceKind.Reactor) == 1
             && Count(DeviceKind.Distribution) == 1
             && Count(DeviceKind.Battery) == 1
@@ -23,6 +23,7 @@ internal static partial class TestRunner
             && Count(DeviceKind.Navigation) == 1
             && Count(DeviceKind.CardTable) == 1
             && Count(DeviceKind.Jukebox) == 1
+            && Count(DeviceKind.Terminal) == 1
             // system-shields/system-shields-2 (Shields x2), system-weapon-charger (x1),
             // system-oxygen (x1), system-engine/system-engine-2 (Engine x2) - system-secondary is
             // deliberately excluded (ShipDevice.cs's own doc comment on PowerSystemId.Secondary).
@@ -41,7 +42,7 @@ internal static partial class TestRunner
             && Count(DeviceKind.ComponentMount) == 6
             // Nothing places a physical Junction device yet (ShipDevice.cs's own doc comment).
             && Count(DeviceKind.Junction) == 0
-            && ship.Devices.Count == 27;
+            && ship.Devices.Count == 28;
     }
 
     // Every entry must carry a distinct Id and the same position as its source fixture - two turrets

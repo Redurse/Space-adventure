@@ -147,6 +147,10 @@ public sealed partial class World
     public int JukeboxTrackIndex { get; private set; } = 0;
     public int JukeboxVolume { get; private set; } = 50;
 
+    // The wall terminal's on/off - meaningless while Ship.Terminal is null (no such device on this
+    // hull), same as JukeboxOn above but with nothing else to track.
+    public bool TerminalOn { get; private set; } = false;
+
     // Retained only so CreateSave() can round-trip a Custom hull - null whenever flying a fixed
     // class. Set here and in ApplySave, the only two places CurrentShipKind can become Custom.
     private CustomShipDefinition? _customShipDefinition;
@@ -332,6 +336,14 @@ public sealed partial class World
                 JukeboxVolume = Math.Max(0, JukeboxVolume - 5);
         }
 
+        // The wall terminal's single on/off toggle - one click on the physical block itself (no
+        // panel), same proximity-checked treatment as the jukebox above.
+        if (Ship.Terminal is { } terminalBlock && command.TerminalTogglePressed &&
+            (terminalBlock.Position - character.Position).Length() < InteractionRadius)
+        {
+            TerminalOn = !TerminalOn;
+        }
+
         if (command.BuyItemType is { } buyItemType)
             TryBuyItem(character, buyItemType);
 
@@ -397,6 +409,21 @@ public sealed partial class World
 
         if (command.PickupDroppedItemId is { } pickupId)
             TryPickupDroppedItem(character, pickupId);
+
+        if (command.SuitLockerInteractId is { } suitLockerId)
+            TrySuitLockerInteractById(character, suitLockerId);
+
+        if (command.TurretInteractId is { } turretInteractId)
+            TryTurretInteractById(character, turretInteractId);
+
+        if (command.AmmoStorageInteractId is { } ammoStorageId)
+            TryTakeAmmoCrateById(character, ammoStorageId);
+
+        if (command.StealCrateId is { } stealCrateId)
+            TryStealCrateById(character, stealCrateId);
+
+        if (command.RepairDeviceId is { } repairDeviceId)
+            TryRepairDeviceById(character, repairDeviceId);
 
         if (command.PushOffPressed)
             HandlePushOff(character, new Vec2(command.PushOffDirectionX, command.PushOffDirectionY));
@@ -669,5 +696,6 @@ public sealed partial class World
         CreateVoiceChunks(),
         CreateFrontsGameState(),
         CreateCardTableChoiceSeatedIds(),
-        CreateCardTableDurakVotes());
+        CreateCardTableDurakVotes(),
+        Ship.Terminal is { } terminalStateBlock ? new TerminalState(terminalStateBlock, TerminalOn) : null);
 }

@@ -110,8 +110,16 @@ public sealed class Starfield
     // frame and scaled to pixels (ShipRenderer.Draw) - zero while docked/stationary, so the whole
     // field simply holds still exactly when the ship does. Defaults to no drift at all for
     // GalaxyMapPanel's own starfield backdrop, which isn't a flight view - just twinkle there.
+    // Deep space itself, not the absence of it - a flat literal (0,0,0) read as a broken/missing
+    // background rather than a real backdrop (direct user request, comparing against Barotrauma's
+    // own always-slightly-lit void). One solid very-dark fill under everything else is enough -
+    // the nebulae/stars already carry all the actual variation.
+    private static readonly Color DeepSpace = new(8, 9, 15);
+
     public void Draw(SpriteBatch spriteBatch, float totalSeconds, Vector2 driftPixels = default)
     {
+        spriteBatch.Draw(_pixel, _bounds, DeepSpace);
+
         foreach (var nebula in _nebulae)
         {
             var pos = Wrap(nebula.Position - driftPixels * nebula.Parallax, _bounds);

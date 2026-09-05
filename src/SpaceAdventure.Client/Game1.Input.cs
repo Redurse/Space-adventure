@@ -1077,6 +1077,19 @@ public partial class Game1
                 return (-1, -1, null, -1, false, false, null, false, null);
             }
 
+            // Stealing a crate (World.StationCrime.cs, humble-soaring-cat.md) - the same [E] action,
+            // now also a click on the crate itself, same size/rect StationRenderer.DrawCrate draws.
+            foreach (var crate in snapshot.Station.Crates)
+            {
+                if (snapshot.Station.CrateStates.FirstOrDefault(s => s.CrateId == crate.Id)?.Looted ?? false)
+                    continue;
+                if ((crate.Position - new Vec2(me.X, me.Y)).Length() >= TurretInteractionRadius ||
+                    !ShipRenderer.GetBlockRect(crate.Position, 20, stationOrigin).Contains(_designMouse))
+                    continue;
+                _pendingStealCrateId = crate.Id;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+
             // Content-каталог отсеков - while the Shipwright's own whole-ship overview is showing
             // (ShipBuildOverviewActive), a click that missed every NPC above is aimed at the now-
             // visible hull itself (ComputeCamera already re-anchored/zoomed the whole scene to fit
@@ -1102,6 +1115,10 @@ public partial class Game1
         var myPosition = new Vec2(me.X, me.Y);
         bool NearEnough(Vec2 blockPosition) => (blockPosition - myPosition).Length() < TurretInteractionRadius;
         var origin = ComputeCamera(snapshot, me).Origin;
+        // humble-soaring-cat.md - every RepairDeviceId candidate below needs the same "damaged AND
+        // holding the right tool" gate World.Interact.cs's own E-key branches already use.
+        bool HoldingRepairTool() =>
+            HeldItemTypes(me.Inventory).Contains(ItemType.Wrench) || HeldItemTypes(me.Inventory).Contains(ItemType.Screwdriver);
 
         // Content-каталог отсеков - a module is selected, so this click (whether the player is
         // physically aboard their own ship, or still standing on the station with the Shipwright's
@@ -1159,8 +1176,17 @@ public partial class Game1
         // near any part of that footprint has to count as "near enough" to open it - not just the
         // one exact point ReactorBlock.Position itself sits at, which NearEnough alone still tests.
         var reactorHalfWorldSize = ShipRenderer.BigBlockSize * snapshot.ReactorBlock.SizeScale / ShipRenderer.PixelsPerUnit / 2f;
-        if ((myPosition - snapshot.ReactorBlock.Position).Length() < TurretInteractionRadius + reactorHalfWorldSize &&
-            ShipRenderer.GetBlockRect(snapshot.ReactorBlock.Position, (int)(ShipRenderer.BigBlockSize * snapshot.ReactorBlock.SizeScale), origin).Contains(_designMouse))
+        var reactorNearEnoughForRepair = (myPosition - snapshot.ReactorBlock.Position).Length() < TurretInteractionRadius + reactorHalfWorldSize &&
+            ShipRenderer.GetBlockRect(snapshot.ReactorBlock.Position, (int)(ShipRenderer.BigBlockSize * snapshot.ReactorBlock.SizeScale), origin).Contains(_designMouse);
+        // humble-soaring-cat.md - a damaged block repairs on click instead of opening its (otherwise
+        // unaffected) panel, same priority order World.Interact.cs's own repair branches already use.
+        if (reactorNearEnoughForRepair && HoldingRepairTool() &&
+            (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.ReactorBlock.Id)?.Damaged ?? false))
+        {
+            _pendingRepairDeviceId = snapshot.ReactorBlock.Id;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+        if (reactorNearEnoughForRepair)
         {
             _openBlock = _openBlock.Kind == BlockKind.Reactor ? ClickTarget.None : ClickTarget.Reactor;
             return (-1, -1, null, -1, false, false, null, false, null);
@@ -1173,9 +1199,23 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
+        // The terminal has no panel of its own - one click is the whole "gesture" (direct user
+        // request), so this just fires the toggle straight away instead of opening _openBlock.
+        if (snapshot.Terminal is { } terminal && NearEnough(terminal.Block.Position) &&
+            ShipRenderer.GetBlockRect(terminal.Block.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
+        {
+            _pendingTerminalToggle = true;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
         if (NearEnough(snapshot.DistributionBlock.Position) &&
             ShipRenderer.GetBlockRect(snapshot.DistributionBlock.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
         {
+            if (HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.DistributionBlock.Id)?.Damaged ?? false))
+            {
+                _pendingRepairDeviceId = snapshot.DistributionBlock.Id;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
             if (HoldingScrewdriver() && snapshot.Wiring.Components.FirstOrDefault(c => c.Kind == ComponentKind.Distribution) is { } distribution)
                 _openBlock = ToggleConnections(distribution.Id);
             else
@@ -1186,7 +1226,50 @@ public partial class Game1
         if (NearEnough(snapshot.BatteryBlock.Position) &&
             ShipRenderer.GetBlockRect(snapshot.BatteryBlock.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
         {
+            if (HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.BatteryBlock.Id)?.Damaged ?? false))
+            {
+                _pendingRepairDeviceId = snapshot.BatteryBlock.Id;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
             _openBlock = _openBlock.Kind == BlockKind.Battery ? ClickTarget.None : ClickTarget.Battery;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
+        // Helm/navigation console repair (RepairableBlockKinds.Helm/.Navigation) - neither console
+        // has a click-to-open panel of its own (both are entered with [E] instead), so this is the
+        // only click behavior either one gets: repair when broken and holding the right tool.
+        if (NearEnough(snapshot.HelmConsole.Position) &&
+            ShipRenderer.GetBlockRect(snapshot.HelmConsole.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse) &&
+            HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.HelmConsole.Id)?.Damaged ?? false))
+        {
+            _pendingRepairDeviceId = snapshot.HelmConsole.Id;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+        if (NearEnough(snapshot.NavigationConsole.Position) &&
+            ShipRenderer.GetBlockRect(snapshot.NavigationConsole.Position, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse) &&
+            HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.NavigationConsole.Id)?.Damaged ?? false))
+        {
+            _pendingRepairDeviceId = snapshot.NavigationConsole.Id;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
+        // Turret (World.Interact.cs branches 6+8 - reload/repair/man), one click covers all three
+        // the same way [E] already does, resolved server-side by state (World.ClickInteract.cs).
+        foreach (var turret in snapshot.Turrets)
+        {
+            if (!NearEnough(turret.PeriscopePosition) ||
+                !ShipRenderer.GetBlockRect(turret.PeriscopePosition, ShipRenderer.MediumBlockSize, origin).Contains(_designMouse))
+                continue;
+            _pendingTurretInteractId = turret.Id;
+            return (-1, -1, null, -1, false, false, null, false, null);
+        }
+
+        // Ammo storage (World.Interact.cs branch 7 - take a crate).
+        foreach (var storage in snapshot.AmmoStorages)
+        {
+            if (!NearEnough(storage.Position) || !ShipRenderer.GetBlockRect(storage.Position, ShipRenderer.NormalBlockSize, origin).Contains(_designMouse))
+                continue;
+            _pendingAmmoStorageInteractId = storage.Id;
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
@@ -1217,15 +1300,14 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
-        // Read-only card (SuitLockerPanel) - the actual take/put-back is still the E-key interact
-        // (World.Interact.cs, gated on this locker's own stock), this just shows what's in it.
+        // Suit locker (World.Interact.cs branch 16 - equip/unequip) - a click on the locker now
+        // performs the actual take/put-back directly (humble-soaring-cat.md's "Полный переход на
+        // клик как в Baro"), the same instant action [E] already did; no more read-only view step.
         foreach (var locker in snapshot.SuitLockers)
         {
             if (!NearEnough(locker.Position) || !ShipRenderer.GetBlockRect(locker.Position, ShipRenderer.NormalBlockSize, origin).Contains(_designMouse))
                 continue;
-            _openBlock = _openBlock.Kind == BlockKind.SuitLocker && _openBlock.TargetComponentId == locker.Id
-                ? ClickTarget.None
-                : ClickTarget.ForSuitLocker(locker.Id);
+            _pendingSuitLockerInteractId = locker.Id;
             return (-1, -1, null, -1, false, false, null, false, null);
         }
 
@@ -1243,11 +1325,64 @@ public partial class Game1
                     return (-1, -1, null, -1, false, false, null, false, null);
                 }
 
+                // A damaged device repairs on click instead of opening its panel, same priority as
+                // the reactor/distribution/battery blocks above.
+                if (HoldingRepairTool() && (snapshot.SystemStates.FirstOrDefault(s => s.DeviceId == device.Id)?.Damaged ?? false))
+                {
+                    _pendingRepairDeviceId = device.Id;
+                    return (-1, -1, null, -1, false, false, null, false, null);
+                }
+
                 _openBlock = HoldingScrewdriver()
                     ? ToggleConnections(device.Id)
                     : _openBlock.Kind == BlockKind.System && _openBlock.System == device.System
                         ? ClickTarget.None
                         : ClickTarget.ForSystem(device.System);
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+        }
+
+        // Hull cameras (M48) - not a ShipSystemDevice (WireGraphFactory's own comment explains why),
+        // but the same click-to-repair as one, resolved by the same RepairDeviceId (World.ClickInteract.cs
+        // finds it among Ship.Cameras by id).
+        foreach (var camera in snapshot.Cameras)
+        {
+            if (!NearEnough(camera.InteriorPosition) ||
+                !ShipRenderer.GetBlockRect(camera.InteriorPosition, ShipRenderer.NormalBlockSize, origin).Contains(_designMouse))
+                continue;
+            if (HoldingRepairTool() && (snapshot.SystemStates.FirstOrDefault(s => s.DeviceId == camera.Id)?.Damaged ?? false))
+            {
+                _pendingRepairDeviceId = camera.Id;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+        }
+
+        // Cosmoteer-style marching engines - the Control tile's own seized-throttle state repairs
+        // the same way, one click on the tile itself.
+        foreach (var engine in snapshot.EngineStates ?? Array.Empty<EngineState>())
+        {
+            var controlPosition = new Vec2(engine.X, engine.Y);
+            if (!NearEnough(controlPosition) ||
+                !ShipRenderer.GetBlockRect(controlPosition, (int)ShipRenderer.PixelsPerUnit, origin).Contains(_designMouse))
+                continue;
+            if (HoldingRepairTool() && engine.ControlBroken)
+            {
+                _pendingRepairDeviceId = engine.Id;
+                return (-1, -1, null, -1, false, false, null, false, null);
+            }
+        }
+
+        // Junction boxes ("С‰РёС‚РєРё") repair on click the same way every other device above does,
+        // regardless of which tool is held - only their screwdriver-only "open the wiring view"
+        // behavior below still needs one specifically.
+        foreach (var junctionForRepair in snapshot.Wiring.Components.Where(c => c.Kind == ComponentKind.Junction))
+        {
+            if (!NearEnough(junctionForRepair.Position) ||
+                !ShipRenderer.GetBlockRect(junctionForRepair.Position, ShipRenderer.NormalBlockSize, origin).Contains(_designMouse))
+                continue;
+            if (HoldingRepairTool() && (snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == junctionForRepair.Id)?.Damaged ?? false))
+            {
+                _pendingRepairDeviceId = junctionForRepair.Id;
                 return (-1, -1, null, -1, false, false, null, false, null);
             }
         }
@@ -1381,16 +1516,43 @@ public partial class Game1
                 : myPosition;
             bool DoorNearEnough(Vec2 doorPosition) => (doorPosition - doorClickPosition).Length() < TurretInteractionRadius;
 
+            // Rect comes from TileGridRasterizer.DoorTileRect, not the door's own raw
+            // Left/Top/Width/Height - ShipRenderer.Draw's own door loop stopped using the raw rect
+            // (bug report: the sprite sat half a tile off from the tile-square wall art flanking
+            // it), so the click hit-test has to agree with wherever it's actually drawn now, or a
+            // click on the visibly-correct door position would silently miss.
+            // A destroyed door (World.Doors.cs) repairs on click instead of toggling (which would be
+            // a no-op against a jammed-open door anyway) - same priority every other repairable
+            // device above already gives its own click.
+            bool DoorDestroyed(string doorId) => snapshot.DoorStates.FirstOrDefault(s => s.DoorId == doorId)?.Destroyed ?? false;
+
             foreach (var door in snapshot.Doors)
             {
-                if (DoorNearEnough(door.Position) && ShipRenderer.GetDoorRect(door.Left, door.Top, door.Width, door.Height, origin).Contains(_designMouse))
-                    return (-1, -1, null, -1, false, false, null, false, door.Id);
+                var (dLeft, dTop, dWidth, dHeight) = TileGridRasterizer.DoorTileRect(snapshot.Rooms, door.X, door.Y, door.Width, door.Height);
+                if (!DoorNearEnough(door.Position) || !ShipRenderer.GetDoorRect(dLeft, dTop, dWidth, dHeight, origin).Contains(_designMouse))
+                    continue;
+                if (HoldingRepairTool() && DoorDestroyed(door.Id))
+                {
+                    _pendingRepairDeviceId = door.Id;
+                    return (-1, -1, null, -1, false, false, null, false, null);
+                }
+                return (-1, -1, null, -1, false, false, null, false, door.Id);
             }
 
             foreach (var outerDoor in snapshot.AirlockOuterDoors)
             {
-                if (DoorNearEnough(outerDoor.Position) && ShipRenderer.GetDoorRect(outerDoor.Left, outerDoor.Top, outerDoor.Width, outerDoor.Height, origin).Contains(_designMouse))
-                    return (-1, -1, null, -1, false, false, null, false, outerDoor.Id);
+                // Just the airlock's own room, not the full ship - same scoping DoorTileRect/
+                // DoorTileCoords themselves require (their own doc comments).
+                var ownRoom = new[] { snapshot.Rooms.First(r => r.Id == outerDoor.RoomId) };
+                var (oLeft, oTop, oWidth, oHeight) = TileGridRasterizer.DoorTileRect(ownRoom, outerDoor.X, outerDoor.Y, outerDoor.Width, outerDoor.Height);
+                if (!DoorNearEnough(outerDoor.Position) || !ShipRenderer.GetDoorRect(oLeft, oTop, oWidth, oHeight, origin).Contains(_designMouse))
+                    continue;
+                if (HoldingRepairTool() && DoorDestroyed(outerDoor.Id))
+                {
+                    _pendingRepairDeviceId = outerDoor.Id;
+                    return (-1, -1, null, -1, false, false, null, false, null);
+                }
+                return (-1, -1, null, -1, false, false, null, false, outerDoor.Id);
             }
 
             // Aboard a boarded hull the doors are the fight: they start closed, and opening one lets

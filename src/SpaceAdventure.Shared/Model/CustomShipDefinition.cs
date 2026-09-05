@@ -63,6 +63,7 @@ public enum CustomDeviceKind
     StorageRack,
     CardTable,
     Jukebox,
+    Terminal,
     // M60 follow-up - neither of these had a CustomDeviceKind before (the Ship Editor doesn't offer
     // placing either), which meant Ship.FromCustomDefinition always produced zero cameras/mounts -
     // fine for an editor-drawn hull with none to begin with, but silently deleted them from a

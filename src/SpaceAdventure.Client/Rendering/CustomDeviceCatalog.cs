@@ -15,7 +15,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.Engine, CustomDeviceKind.SuitLocker,
         CustomDeviceKind.Shields, CustomDeviceKind.WeaponCharger, CustomDeviceKind.Oxygen, CustomDeviceKind.Secondary,
         CustomDeviceKind.TurretBallistic, CustomDeviceKind.TurretLaser, CustomDeviceKind.AmmoStorage,
-        CustomDeviceKind.StorageRack, CustomDeviceKind.CardTable, CustomDeviceKind.Jukebox, CustomDeviceKind.Junction,
+        CustomDeviceKind.StorageRack, CustomDeviceKind.CardTable, CustomDeviceKind.Jukebox, CustomDeviceKind.Terminal, CustomDeviceKind.Junction,
         CustomDeviceKind.Battery,
     };
 
@@ -23,7 +23,7 @@ public static class CustomDeviceCatalog
     // (CustomShipValidator would only reject the duplicate anyway; the editor just never creates one).
     public static bool IsSingleton(CustomDeviceKind kind) => kind is
         CustomDeviceKind.Reactor or CustomDeviceKind.Distribution or CustomDeviceKind.Helm
-        or CustomDeviceKind.Navigation or CustomDeviceKind.CardTable or CustomDeviceKind.Jukebox;
+        or CustomDeviceKind.Navigation or CustomDeviceKind.CardTable or CustomDeviceKind.Jukebox or CustomDeviceKind.Terminal;
 
     public static string Name(CustomDeviceKind kind) => kind switch
     {
@@ -48,6 +48,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.StorageRack => "Стеллаж",
         CustomDeviceKind.CardTable => "Карточный стол",
         CustomDeviceKind.Jukebox => "Музыкальный автомат",
+        CustomDeviceKind.Terminal => "Терминал",
         CustomDeviceKind.TurretMachineGun => "Турель (пулемёт)",
         CustomDeviceKind.Camera => "Камера",
         CustomDeviceKind.ComponentMount => "Крепление модуля",
@@ -103,6 +104,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.StorageRack => "C",
         CustomDeviceKind.CardTable => "K",
         CustomDeviceKind.Jukebox => "J",
+        CustomDeviceKind.Terminal => "Q",
         CustomDeviceKind.TurretMachineGun => "M",
         CustomDeviceKind.Camera => "V",
         CustomDeviceKind.ComponentMount => "P",
@@ -129,6 +131,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.StorageRack => new Color(160, 140, 110),
         CustomDeviceKind.CardTable => new Color(140, 100, 190),
         CustomDeviceKind.Jukebox => new Color(224, 196, 120),
+        CustomDeviceKind.Terminal => new Color(70, 190, 210),
         CustomDeviceKind.TurretMachineGun => new Color(200, 90, 90),
         CustomDeviceKind.Camera => new Color(140, 170, 200),
         CustomDeviceKind.ComponentMount => new Color(170, 170, 170),

@@ -48,6 +48,8 @@ public sealed partial class Ship
         devices.AddRange(ComponentMounts.Select(m => new CustomDeviceDef(CustomDeviceKind.ComponentMount, m.X, m.Y, TargetDoorId: m.TargetDoorId)));
         if (Jukebox is { } jukebox)
             devices.Add(new CustomDeviceDef(CustomDeviceKind.Jukebox, jukebox.X, jukebox.Y));
+        if (Terminal is { } terminal)
+            devices.Add(new CustomDeviceDef(CustomDeviceKind.Terminal, terminal.X, terminal.Y));
 
         // Cosmoteer-style marching engines (direct user request) - without this, ToDefinition would
         // silently drop every already-built ShipEngine the moment World.ShipBuilding.cs builds or

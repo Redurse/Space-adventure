@@ -39,6 +39,9 @@ public sealed partial class Ship
     // The jukebox's physical position, or null when this hull has none - unlike CardTable this is
     // genuinely optional flavor furniture (Ship Editor only for now), not a fixture every hull gets.
     public Jukebox? Jukebox { get; }
+    // The wall terminal's physical position, or null when this hull has none - same optional
+    // flavor-furniture treatment as Jukebox, not a fixture every hull gets.
+    public Terminal? Terminal { get; }
     // Two per hull (game_design.md section 13) - a starter kit of 3 units of every hand
     // tool/tank/weapon/consumable used to live scattered across the ship as individual ToolStation
     // pickups; it now lives here instead, split across these two shelves (World.ShipPurchase.cs's
@@ -110,6 +113,7 @@ public sealed partial class Ship
         float forwardDegrees = 0f,
         IReadOnlyList<ComponentMount>? componentMounts = null,
         Jukebox? jukebox = null,
+        Terminal? terminal = null,
         int reactorDeviceCount = 1,
         int distributionDeviceCount = 1,
         int helmDeviceCount = 1,
@@ -140,6 +144,7 @@ public sealed partial class Ship
         ExtraDistributionPositions = extraDistributionPositions ?? Array.Empty<Vec2>();
         ComponentMounts = componentMounts ?? Array.Empty<ComponentMount>();
         Jukebox = jukebox;
+        Terminal = terminal;
         Rooms = rooms;
         Doors = doors;
         AirlockOuterDoors = airlockOuterDoors;
@@ -206,6 +211,9 @@ public sealed partial class Ship
 
         if (Jukebox is { } jukebox)
             devices.Add(new ShipDevice(jukebox.Id, DeviceKind.Jukebox, jukebox.RoomId, jukebox.X, jukebox.Y));
+
+        if (Terminal is { } terminal)
+            devices.Add(new ShipDevice(terminal.Id, DeviceKind.Terminal, terminal.RoomId, terminal.X, terminal.Y));
 
         // PowerSystemId.Secondary has no DeviceKind counterpart (ShipDevice.cs's own doc comment) -
         // a hull's "system-secondary" fixture stays on SystemDevices untouched, just absent here.
@@ -485,6 +493,10 @@ public sealed partial class Ship
         // Aft of the card table, clear of the turret periscope (1.5, 3) and every console above.
         var jukebox = new Jukebox("jukebox", "cockpit", X: 4f, Y: 4.5f);
 
+        // Against the cockpit's left (exterior) wall, clear of the helm/nav console pair and the
+        // turret periscope - a small wall fixture, not another floor console to walk around.
+        var terminal = new Terminal("terminal", "cockpit", X: 0.6f, Y: 1f);
+
         // Outer-hull wall blocks: every room's top/bottom is exterior (the ship is one row
         // wide); only cockpit's left and the airlock chamber's right are exterior side walls not
         // covered by a dedicated door — engine's former right-side hull is now the door to the
@@ -524,6 +536,6 @@ public sealed partial class Ship
         var corridor = rooms.First(r => r.Id == "corridor");
         return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
-            cardTable, componentMounts: componentMounts, jukebox: jukebox);
+            cardTable, componentMounts: componentMounts, jukebox: jukebox, terminal: terminal);
     }
 }

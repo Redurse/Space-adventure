@@ -381,6 +381,27 @@ internal sealed class Checks : Game
             return null;
         });
 
+        // The backdrop is painted in code now, so nothing catches a bad index or a divide-by-zero
+        // in it until the menu draws - and by then the load has already swallowed the exception.
+        // Set BACKDROP_DUMP to a path to also write the baked image out, which is how the art gets
+        // looked at without launching the game.
+        Check("the menu backdrop bakes", () =>
+        {
+            var drawn = Content.Load<Texture2D>("Textures/MenuBackdrop");
+            var backdrop = MenuBackdropArt.Bake(GraphicsDevice, drawn);
+            if (backdrop.Width != MenuBackdropArt.Width || backdrop.Height != MenuBackdropArt.Height)
+                return "baked at " + backdrop.Width + "x" + backdrop.Height;
+
+            var dump = Environment.GetEnvironmentVariable("BACKDROP_DUMP");
+            if (!string.IsNullOrEmpty(dump))
+            {
+                using var stream = File.Create(dump);
+                backdrop.SaveAsPng(stream, backdrop.Width, backdrop.Height);
+                Console.WriteLine("     wrote " + dump);
+            }
+            return null;
+        });
+
         Check("the noise lattice wraps, so tiled surfaces have no seam",
             () => TileTextures.NoiseWrapsCleanly() ? null : "Noise does not close on itself - every tiled surface will show a seam");
 

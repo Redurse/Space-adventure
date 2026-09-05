@@ -95,6 +95,11 @@ public sealed partial class Ship
             ? new Jukebox("jukebox", RoomIdAt(rooms, jukeboxDevice), jukeboxDevice.X, jukeboxDevice.Y)
             : null;
 
+        var terminalDevice = def.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.Terminal);
+        var terminal = terminalDevice is not null
+            ? new Terminal("terminal", RoomIdAt(rooms, terminalDevice), terminalDevice.X, terminalDevice.Y)
+            : null;
+
         var engines = def.Engines
             .Select((e, i) => new ShipEngine($"engine-{i + 1}", RoomIdAt(rooms, new Vec2(e.X, e.Y)), e.X, e.Y, e.Facing, e.MaxThrust, e.Role))
             .ToList();
@@ -102,6 +107,7 @@ public sealed partial class Ship
         return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks,
             helmConsole.Position, helmConsole.RoomId, cardTable, def.ForwardDegrees, componentMounts: componentMounts, jukebox: jukebox,
+            terminal: terminal,
             reactorDeviceCount: reactorDeviceCount, distributionDeviceCount: distributionDeviceCount,
             helmDeviceCount: helmDeviceCount, navigationDeviceCount: navigationDeviceCount,
             extraHelmConsoles: extraHelmConsoles, extraNavigationConsoles: extraNavigationConsoles,
