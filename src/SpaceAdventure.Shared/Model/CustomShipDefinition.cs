@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SpaceAdventure.Shared.Model;
 
 // A player-drawn hull (in-game Ship Editor) - the moral equivalent of Ship.CreateStarter() etc.,
@@ -22,7 +24,36 @@ public enum EdgeSide
 // representable in IEEE-754 float, the same way whole units always were - only genuinely irrational/
 // arbitrary-precision placement would need an epsilon instead, which this project's grid-snapped
 // placement (editor and future building UI alike) never produces.
-public sealed record CustomRoomDef(string Id, string Name, float X, float Y, float Width, float Height);
+//
+// M86 follow-up (humble-soaring-cat.md, non-rectangular compartments) - Rects is a UNION of 1+
+// pieces instead of exactly one; see Room.cs's own doc comment for why RoomId stays singular
+// either way. The (X,Y,Width,Height) constructor below is kept as the compat path every existing
+// hand-authored hull and editor-built single-rect room still uses unchanged.
+[method: JsonConstructor]
+public sealed record CustomRoomDef(string Id, string Name, IReadOnlyList<RectF> Rects)
+{
+    public CustomRoomDef(string Id, string Name, float X, float Y, float Width, float Height)
+        : this(Id, Name, new[] { new RectF(X, Y, Width, Height) })
+    {
+    }
+
+    public float X => Rects.Min(r => r.X);
+    public float Y => Rects.Min(r => r.Y);
+    public float Width => Rects.Max(r => r.Right) - X;
+    public float Height => Rects.Max(r => r.Bottom) - Y;
+
+    // See Room.cs's own doc comment on why this can't be left to record-synthesized equality.
+    public bool Equals(CustomRoomDef? other) =>
+        other is not null && Id == other.Id && Name == other.Name && Rects.SequenceEqual(other.Rects);
+
+    public override int GetHashCode()
+    {
+        var hash = HashCode.Combine(Id, Name);
+        foreach (var rect in Rects)
+            hash = HashCode.Combine(hash, rect);
+        return hash;
+    }
+}
 
 // One optional passage on the boundary shared by these two rooms - at most one per room pair,
 // centered on whatever range they actually share (Ship.Custom.cs works out where and how big).
