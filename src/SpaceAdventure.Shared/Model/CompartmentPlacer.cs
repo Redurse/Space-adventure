@@ -40,10 +40,13 @@ public static class CompartmentPlacer
 {
     // A compartment's template, rotated by 0-3 steps of +90 clockwise, but not yet translated onto
     // an anchor - kept as its own pure, testable step (TestRunner.CompartmentCatalog.cs's own
-    // rotation-transform test) separate from Stamp's TileGrid mutation.
+    // rotation-transform test) separate from Stamp's TileGrid mutation. FootprintRects (M91,
+    // humble-soaring-cat.md non-rectangular compartments) is the rotated union of the entry's own
+    // pieces - a plain single-rect entry rotates to a single rotated rect, same as before.
     public readonly record struct RotatedCompartment(
         int Width,
         int Height,
+        IReadOnlyList<RectF> FootprintRects,
         IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind, bool IsCore, TurretMountSide MountSide)> Devices,
         IReadOnlyList<(TileCoord Control, TileSide Facing, float MaxThrust, EngineRole Role)> Engines,
         (TileSide Side, TileCoord DoorPosition)? Airlock);
@@ -65,6 +68,7 @@ public static class CompartmentPlacer
         var engines = entry.Engines
             .Select(e => (e.RelativeControl, e.Facing, e.MaxThrust, e.Role))
             .ToList();
+        var footprintRects = entry.FootprintRects.ToList();
 
         TileCoord? airlockDoor = entry.Airlock is { } authoredAirlock
             ? RingCenter(authoredAirlock.Side, w, h)
@@ -84,6 +88,9 @@ public static class CompartmentPlacer
             if (airlockSide is { } side)
                 airlockSide = RotateSideClockwise(side);
 
+            for (var i = 0; i < footprintRects.Count; i++)
+                footprintRects[i] = RotateRectClockwise(footprintRects[i], h);
+
             (w, h) = (h, w);
         }
 
@@ -91,11 +98,20 @@ public static class CompartmentPlacer
             ? (finalSide, finalDoor)
             : null;
 
-        return new RotatedCompartment(w, h, devices, engines, airlock);
+        return new RotatedCompartment(w, h, footprintRects, devices, engines, airlock);
     }
 
     private static TileCoord RotatePointClockwise(TileCoord point, int heightBeforeRotation) =>
         new(heightBeforeRotation - 1 - point.Y, point.X);
+
+    // Continuous-coordinate counterpart of RotatePointClockwise above (no "-1": a RectF's own X/Y is
+    // a boundary VALUE, not a discrete tile index, so a point (x,y) in a WxH box maps to (H-y,x) in
+    // the resulting HxW box with no off-by-one adjustment). A rect's two opposite corners both map
+    // under that same rule; taking the new min corner and swapping Width/Height reproduces the
+    // rotated rect. Verified by hand: a rect spanning the WHOLE box (0,0,W,H) maps to (0,0,H,W) -
+    // the entire new box, exactly as rotating "everything" should.
+    private static RectF RotateRectClockwise(RectF rect, float heightBeforeRotation) =>
+        new(heightBeforeRotation - rect.Y - rect.Height, rect.X, rect.Height, rect.Width);
 
     private static TileSide RotateSideClockwise(TileSide side) => side switch
     {
@@ -128,16 +144,32 @@ public static class CompartmentPlacer
     };
 
     // Which cardinal direction(s) a LOCAL tile sits on the compartment's own outer ring - a
-    // non-corner edge tile has exactly one, a corner tile has two (both edges it belongs to), an
-    // interior tile has none at all.
-    private static List<TileSide> RingSides(TileCoord local, int w, int h)
+    // non-corner edge tile has exactly one, a corner tile has two or more (every direction whose
+    // neighbor tile isn't itself part of the footprint), an interior tile has none at all.
+    // Generalized (M91, humble-soaring-cat.md non-rectangular compartments) to test against the
+    // footprint's own tile SET instead of a single WxH box's edges - for a single-rect footprint
+    // this is byte-identical to the old box-edge test (a neighbor outside [0,w)x[0,h) is never in
+    // the set either way); for a multi-rect footprint, a direction whose neighbor tile IS part of
+    // this SAME footprint (an internal seam between two of its own pieces) correctly stops counting
+    // as a ring side at all, needing no wall there.
+    private static List<TileSide> FootprintRingSides(TileCoord local, HashSet<TileCoord> footprintTiles)
     {
-        var sides = new List<TileSide>(2);
-        if (local.Y == 0) sides.Add(TileSide.North);
-        if (local.Y == h - 1) sides.Add(TileSide.South);
-        if (local.X == 0) sides.Add(TileSide.West);
-        if (local.X == w - 1) sides.Add(TileSide.East);
+        var sides = new List<TileSide>(4);
+        if (!footprintTiles.Contains(local with { Y = local.Y - 1 })) sides.Add(TileSide.North);
+        if (!footprintTiles.Contains(local with { Y = local.Y + 1 })) sides.Add(TileSide.South);
+        if (!footprintTiles.Contains(local with { X = local.X - 1 })) sides.Add(TileSide.West);
+        if (!footprintTiles.Contains(local with { X = local.X + 1 })) sides.Add(TileSide.East);
         return sides;
+    }
+
+    private static HashSet<TileCoord> FootprintTiles(IReadOnlyList<RectF> footprintRects)
+    {
+        var tiles = new HashSet<TileCoord>();
+        foreach (var rect in footprintRects)
+            for (var x = (int)rect.X; x < (int)rect.Right; x++)
+                for (var y = (int)rect.Y; y < (int)rect.Bottom; y++)
+                    tiles.Add(new TileCoord(x, y));
+        return tiles;
     }
 
     // Stamps `entry` (rotated by rotationSteps * 90 deg clockwise) onto `grid`, anchored so the
@@ -151,19 +183,19 @@ public static class CompartmentPlacer
         var rotated = Rotate(entry, rotationSteps);
         var w = rotated.Width;
         var h = rotated.Height;
+        var footprintTiles = FootprintTiles(rotated.FootprintRects);
 
         TileCoord Abs(TileCoord local) => new(anchor.X + local.X, anchor.Y + local.Y);
 
         // 1) Footprint overlap check - every tile this compartment would floor must currently be
         // empty (no floor at all yet). Checked BEFORE any mutation so a rejected placement never
         // corrupts the grid.
-        for (var y = 0; y < h; y++)
-            for (var x = 0; x < w; x++)
-            {
-                var coord = Abs(new TileCoord(x, y));
-                if (grid.CellAt(coord) is { HasFloor: true })
-                    return CompartmentPlacementResult.Fail($"Cannot place '{entry.DisplayName}' at {coord} - already occupied.");
-            }
+        foreach (var local in footprintTiles)
+        {
+            var coord = Abs(local);
+            if (grid.CellAt(coord) is { HasFloor: true })
+                return CompartmentPlacementResult.Fail($"Cannot place '{entry.DisplayName}' at {coord} - already occupied.");
+        }
 
         // 2) Every engine's Nozzle lands outside the footprint by design (CompartmentCatalog.cs's own
         // worked-out layouts) - but it still needs to be genuine open space at PLACEMENT time, not
@@ -176,9 +208,8 @@ public static class CompartmentPlacer
         }
 
         // 3) Stamp the floor for the whole footprint.
-        for (var y = 0; y < h; y++)
-            for (var x = 0; x < w; x++)
-                grid.SetFloor(Abs(new TileCoord(x, y)), true);
+        foreach (var local in footprintTiles)
+            grid.SetFloor(Abs(local), true);
 
         // 4) Stamp the wall ring, with placement-time dedup: a new ring tile whose immediate outward
         // neighbor is ALREADY a wall (necessarily from an earlier, different compartment - our own
@@ -210,25 +241,24 @@ public static class CompartmentPlacer
         // three already-placed neighbors), the tile has no genuine exterior side left at all, so
         // dedup-ing it to open floor is correct.
         var airlockDoorAbs = rotated.Airlock is { } airlockSpec ? Abs(airlockSpec.DoorPosition) : (TileCoord?)null;
-        for (var y = 0; y < h; y++)
-            for (var x = 0; x < w; x++)
+        foreach (var local in footprintTiles)
+        {
+            var ringSides = FootprintRingSides(local, footprintTiles);
+            if (ringSides.Count == 0)
+                continue; // interior tile - no wall here at all (includes an internal seam tile
+                          // whose every neighbor is part of this same footprint)
+
+            var coord = Abs(local);
+            var everyRingSideTouchesAnExistingWall = ringSides.TrueForAll(side => grid.CellAt(side.Offset(coord)) is { HasFloor: true, Wall: not TileWallKind.None });
+            if (everyRingSideTouchesAnExistingWall)
             {
-                var local = new TileCoord(x, y);
-                var ringSides = RingSides(local, w, h);
-                if (ringSides.Count == 0)
-                    continue; // interior tile - no wall here at all
-
-                var coord = Abs(local);
-                var everyRingSideTouchesAnExistingWall = ringSides.TrueForAll(side => grid.CellAt(side.Offset(coord)) is { HasFloor: true, Wall: not TileWallKind.None });
-                if (everyRingSideTouchesAnExistingWall)
-                {
-                    grid.SetWall(coord, TileWallKind.None); // dedup - the neighbor's wall(s) are the shared boundary
-                    continue;
-                }
-
-                var isAirlockDoor = airlockDoorAbs is { } doorCoord && doorCoord == coord;
-                grid.SetWall(coord, isAirlockDoor ? TileWallKind.Door : TileWallKind.Solid);
+                grid.SetWall(coord, TileWallKind.None); // dedup - the neighbor's wall(s) are the shared boundary
+                continue;
             }
+
+            var isAirlockDoor = airlockDoorAbs is { } doorCoord && doorCoord == coord;
+            grid.SetWall(coord, isAirlockDoor ? TileWallKind.Door : TileWallKind.Solid);
+        }
 
         // 5) Devices.
         var placedDevices = new List<PlacedDevice>();

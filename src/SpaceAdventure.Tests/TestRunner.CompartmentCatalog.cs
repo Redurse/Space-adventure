@@ -13,14 +13,25 @@ internal static partial class TestRunner
     // holds, so it's still exactly the right smoke check to have once new entries land there.
 
     // ---- Every catalog entry is internally sane - a cheap smoke check across the whole catalog
-    // (rectangular by construction, but the device/airlock positions are hand-authored data, so a
-    // typo landing one on the ring or out of bounds would otherwise go unnoticed). ----
+    // (rectangular-or-multi-rect-union by construction, but the device/airlock positions are
+    // hand-authored data, so a typo landing one on the ring or out of bounds would otherwise go
+    // unnoticed). Generalized (M91, humble-soaring-cat.md non-rectangular compartments) to test
+    // against the entry's own FootprintRects tile SET instead of a single W x H box - byte-identical
+    // to the old box-edge test whenever an entry has exactly one rect. ----
     private static bool CompartmentCatalog_EveryEntry_HasDevicesStrictlyInteriorAndInBounds()
     {
         foreach (var entry in CompartmentCatalog.Entries)
         {
-            bool Inside(TileCoord p) => p.X >= 0 && p.X < entry.Width && p.Y >= 0 && p.Y < entry.Height;
-            bool OnRing(TileCoord p) => p.X == 0 || p.X == entry.Width - 1 || p.Y == 0 || p.Y == entry.Height - 1;
+            var tiles = new HashSet<TileCoord>();
+            foreach (var rect in entry.FootprintRects)
+                for (var x = (int)rect.X; x < (int)rect.Right; x++)
+                    for (var y = (int)rect.Y; y < (int)rect.Bottom; y++)
+                        tiles.Add(new TileCoord(x, y));
+
+            bool Inside(TileCoord p) => tiles.Contains(p);
+            bool OnRing(TileCoord p) =>
+                !tiles.Contains(p with { X = p.X - 1 }) || !tiles.Contains(p with { X = p.X + 1 }) ||
+                !tiles.Contains(p with { Y = p.Y - 1 }) || !tiles.Contains(p with { Y = p.Y + 1 });
 
             foreach (var device in entry.Devices)
                 if (!Inside(device.RelativePosition) || OnRing(device.RelativePosition))
@@ -32,6 +43,70 @@ internal static partial class TestRunner
                 if (doorPos is null || !Inside(doorPos.Value) || !OnRing(doorPos.Value))
                     return false;
             }
+        }
+        return true;
+    }
+
+    // ---- M91 (humble-soaring-cat.md) - stamping a genuinely multi-rect entry (reactor-d, the
+    // notched-corner octagon) produces exactly its own footprint as floor, walls only the true
+    // exterior boundary (never the internal seams between its 3 constituent rects), and rotates
+    // cleanly through all 4 steps (each step's floor tile count must stay the same - rotation only
+    // repositions the shape, never changes its area). ----
+    private static bool CompartmentPlacer_MultiRectEntry_StampsExactFootprintWithNoInteriorWalls()
+    {
+        var entry = CompartmentCatalog.Find("reactor-d")!;
+        var grid = new TileGrid();
+        var result = CompartmentPlacer.Stamp(grid, entry, new TileCoord(0, 0), rotationSteps: 0, instanceId: "test");
+        if (!result.Success)
+            return false;
+
+        var expectedTiles = new HashSet<TileCoord>();
+        foreach (var rect in entry.FootprintRects)
+            for (var x = (int)rect.X; x < (int)rect.Right; x++)
+                for (var y = (int)rect.Y; y < (int)rect.Bottom; y++)
+                    expectedTiles.Add(new TileCoord(x, y));
+
+        foreach (var coord in expectedTiles)
+            if (grid.CellAt(coord) is not { HasFloor: true })
+                return false;
+
+        // The 2x2 corners cut from the bounding box must have NO floor at all (never touched).
+        var bboxWidth = entry.Width;
+        var bboxHeight = entry.Height;
+        foreach (var (cx, cy) in new[] { (0, 0), (bboxWidth - 1, 0), (0, bboxHeight - 1), (bboxWidth - 1, bboxHeight - 1) })
+            if (grid.CellAt(new TileCoord(cx, cy)) is { HasFloor: true })
+                return false;
+
+        // Internal seams (where the middle band meets the top/bottom bands) must carry no wall -
+        // e.g. (4,1) sits on the top band's own bottom row, immediately above the middle band's own
+        // top row at (4,2) - both part of this SAME footprint, so neither gets a wall tile.
+        if (grid.CellAt(new TileCoord(4, 1)) is not { Wall: TileWallKind.None })
+            return false;
+        if (grid.CellAt(new TileCoord(4, 2)) is not { Wall: TileWallKind.None })
+            return false;
+
+        // But the top band's own genuine exterior top edge does get walled.
+        if (grid.CellAt(new TileCoord(4, 0)) is not { Wall: TileWallKind.Solid })
+            return false;
+
+        return true;
+    }
+
+    private static bool CompartmentPlacer_MultiRectEntry_RotatesThroughAllFourStepsPreservingArea()
+    {
+        var entry = CompartmentCatalog.Find("reactor-d")!;
+        var unrotatedTileCount = entry.FootprintRects.Sum(r => (int)r.Width * (int)r.Height);
+        for (var steps = 0; steps < 4; steps++)
+        {
+            var rotated = CompartmentPlacer.Rotate(entry, steps);
+            var tileCount = rotated.FootprintRects.Sum(r => (int)r.Width * (int)r.Height);
+            if (tileCount != unrotatedTileCount)
+                return false;
+
+            var grid = new TileGrid();
+            var result = CompartmentPlacer.Stamp(grid, entry, new TileCoord(20 * steps, 0), steps, $"test-{steps}");
+            if (!result.Success)
+                return false;
         }
         return true;
     }

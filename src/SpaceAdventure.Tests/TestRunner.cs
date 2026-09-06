@@ -451,6 +451,8 @@ internal static partial class TestRunner
         ("World_Voice_RadioFlagIsRelayed", World_Voice_RadioFlagIsRelayed),
         ("World_Voice_EmptySamplesAreIgnored", World_Voice_EmptySamplesAreIgnored),
         ("CompartmentCatalog_EveryEntry_HasDevicesStrictlyInteriorAndInBounds", CompartmentCatalog_EveryEntry_HasDevicesStrictlyInteriorAndInBounds),
+        ("CompartmentPlacer_MultiRectEntry_StampsExactFootprintWithNoInteriorWalls", CompartmentPlacer_MultiRectEntry_StampsExactFootprintWithNoInteriorWalls),
+        ("CompartmentPlacer_MultiRectEntry_RotatesThroughAllFourStepsPreservingArea", CompartmentPlacer_MultiRectEntry_RotatesThroughAllFourStepsPreservingArea),
         ("Ship_Destroyer_BuildsSuccessfully_AndPassesValidation", Ship_Destroyer_BuildsSuccessfully_AndPassesValidation),
         ("Ship_Freighter_BuildsSuccessfully_AndPassesValidation", Ship_Freighter_BuildsSuccessfully_AndPassesValidation),
         ("World_Destroyer_AllRoomsReachableFromSpawn", World_Destroyer_AllRoomsReachableFromSpawn),

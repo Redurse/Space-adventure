@@ -46,15 +46,31 @@ public sealed record CompartmentEngineSpec(TileCoord RelativeControl, TileSide F
 // - see CustomShipDefinition.cs's own doc comment). Always the compartment's own protected core.
 public sealed record CompartmentAirlockSpec(TileSide Side);
 
+// M91 (humble-soaring-cat.md, non-rectangular compartments) - FootprintRects is a UNION of 1+
+// axis-aligned pieces instead of exactly one W x H rectangle, same generalization as Room.cs/
+// CustomRoomDef's own M86. The (Width, Height) constructor is kept as the compat path every
+// existing single-rect entry (reactor-a/b/c) still uses unchanged.
 public sealed record CompartmentCatalogEntry(
     string Id,
     string DisplayName,
     CompartmentType Type,
-    int Width,
-    int Height,
+    IReadOnlyList<RectF> FootprintRects,
     IReadOnlyList<CompartmentDeviceSpec> Devices,
     IReadOnlyList<CompartmentEngineSpec> Engines,
-    CompartmentAirlockSpec? Airlock = null);
+    CompartmentAirlockSpec? Airlock = null)
+{
+    public CompartmentCatalogEntry(string Id, string DisplayName, CompartmentType Type, int Width, int Height,
+        IReadOnlyList<CompartmentDeviceSpec> Devices, IReadOnlyList<CompartmentEngineSpec> Engines, CompartmentAirlockSpec? Airlock = null)
+        : this(Id, DisplayName, Type, new[] { new RectF(0, 0, Width, Height) }, Devices, Engines, Airlock)
+    {
+    }
+
+    // Derived bounding box - kept for every existing read site (Ship Editor palette previews etc.)
+    // that only ever wants "a" size. Equals the true single rect exactly whenever FootprintRects has
+    // one element (every entry authored before this milestone, forever).
+    public int Width => (int)FootprintRects.Max(r => r.Right);
+    public int Height => (int)FootprintRects.Max(r => r.Bottom);
+}
 
 public static class CompartmentCatalog
 {
@@ -74,18 +90,16 @@ public static class CompartmentCatalog
     // reactor-a/b/c: 3 reference screenshots from the user, all labelled "N тип реакторного отсека" -
     // same reactor prop, same 3-door composition (double door north, single doors east/west), each
     // reference just drawn with progressively more open floor around that core and a chamfered/
-    // octagon-ish OUTER hull silhouette that gets more pronounced from a to c. The chamfered corners
-    // are NOT reproducible here: this whole milestone's architecture is plain WxH rectangles only
-    // (BuildDefinitionFromTiles hard-requires a rectangular SealedRegion, and CompartmentPlacer.Stamp
-    // always floors a full rectangle) - reproducing an octagon room would need genuinely new stamping
-    // logic, not something these 3 reference images asked for on their own. So each entry below keeps
-    // the real, functional part (rectangular ring, centered reactor, doors auto-inserted at stitching
-    // per TileShipBuilder's own gap-closing - confirmed with the user, NOT CompartmentAirlockSpec,
-    // which stays Docking-only) and just grows the rectangle a/b/c to match each reference's visibly
-    // larger floor area; the chamfered exterior art itself is dropped. Anchor in each centers the
-    // Reactor's 4x4 footprint (CustomDeviceFootprint.Size) inside the ring - see TileShipBuilder.cs's
-    // own doc comment on why a multi-tile device's RelativePosition is its footprint's top-left
-    // anchor, not its center.
+    // octagon-ish OUTER hull silhouette that gets more pronounced from a to c. Originally the
+    // chamfered corners were dropped as unreproducible (this milestone's architecture used to be
+    // plain WxH rectangles only) - the user then asked for genuine non-rectangular compartments in
+    // general (humble-soaring-cat.md M86-M91), so reactor-d below is the first entry that actually
+    // reproduces the cut-corner silhouette, using the same reactor/door composition as a/b/c. Anchor
+    // in each centers the Reactor's 4x4 footprint (CustomDeviceFootprint.Size) inside the ring - see
+    // TileShipBuilder.cs's own doc comment on why a multi-tile device's RelativePosition is its
+    // footprint's top-left anchor, not its center. Doors are NOT baked in here - they come from
+    // TileShipBuilder's own gap-closing when two placed compartments touch (confirmed with the
+    // user), not CompartmentAirlockSpec (which stays Docking-only).
     public static IReadOnlyList<CompartmentCatalogEntry> Entries { get; } = new[]
     {
         new CompartmentCatalogEntry(
@@ -111,6 +125,22 @@ public static class CompartmentCatalog
             Width: 13,
             Height: 9,
             Devices: OneDevice(CustomDeviceKind.Reactor, 4, 2),
+            Engines: NoEngines),
+        // 12x10 bbox with a 2x2 square cut off each of its 4 corners - a 3-rectangle octagon
+        // decomposition (middle band the full width, top/bottom bands narrowed by the cut) - the
+        // first entry that actually reproduces references 2/3's chamfered silhouette instead of
+        // approximating it with a plain rectangle.
+        new CompartmentCatalogEntry(
+            Id: "reactor-d",
+            DisplayName: "Реакторный отсек (тип 4, со срезанными углами)",
+            Type: CompartmentType.Reactor,
+            FootprintRects: new[]
+            {
+                new RectF(0, 2, 12, 6),
+                new RectF(2, 0, 8, 2),
+                new RectF(2, 8, 8, 2),
+            },
+            Devices: OneDevice(CustomDeviceKind.Reactor, 4, 3),
             Engines: NoEngines),
     };
 
