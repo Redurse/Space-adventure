@@ -6,10 +6,14 @@ namespace Anabiosis.Shared.Model;
 // input; this file only needs to be correct against a plain TileGrid, which is exactly what
 // TestRunner.CompartmentCatalog.cs exercises directly.
 
-// One device that ended up placed on the grid - Coord is its absolute tile, DeviceId is the string
-// TileGrid itself tracks (TileCell.DeviceId is an opaque identifier to TileGrid - this is where its
-// meaning, kind and instance, actually lives).
-public sealed record PlacedDevice(TileCoord Coord, CustomDeviceKind Kind, string DeviceId, bool IsCore);
+// One device that ended up placed on the grid - Coord is its absolute footprint anchor (top-left,
+// same convention the free-tile editor's own _editorDeviceFootprint uses - NOT necessarily the only
+// tile it occupies, see CustomDeviceFootprint.Size), DeviceId is the string TileGrid itself tracks
+// (TileCell.DeviceId is an opaque identifier to TileGrid - this is where its meaning, kind and
+// instance, actually lives). Rotated (M91 follow-up, Helm/Navigation's own 3x2 footprint) is
+// whether this specific placed instance's Width/Height ended up swapped from the catalog's own
+// authored orientation.
+public sealed record PlacedDevice(TileCoord Coord, CustomDeviceKind Kind, string DeviceId, bool IsCore, bool Rotated = false);
 
 // One engine assembly that ended up placed - TileGrid has no ShipEngine concept of its own (Control
 // is plain floor, Bulkhead is just a wall-ring tile, Nozzle is untouched open space), so this is the
@@ -47,7 +51,7 @@ public static class CompartmentPlacer
         int Width,
         int Height,
         IReadOnlyList<RectF> FootprintRects,
-        IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind, bool IsCore, TurretMountSide MountSide)> Devices,
+        IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind, bool IsCore, TurretMountSide MountSide, bool Rotated)> Devices,
         IReadOnlyList<(TileCoord Control, TileSide Facing, float MaxThrust, EngineRole Role)> Engines,
         (TileSide Side, TileCoord DoorPosition)? Airlock);
 
@@ -63,7 +67,7 @@ public static class CompartmentPlacer
         var h = entry.Height;
 
         var devices = entry.Devices
-            .Select(d => (d.RelativePosition, d.Kind, d.IsCore, d.MountSide))
+            .Select(d => (d.RelativePosition, d.Kind, d.IsCore, d.MountSide, d.Rotated))
             .ToList();
         var engines = entry.Engines
             .Select(e => (e.RelativeControl, e.Facing, e.MaxThrust, e.Role))
@@ -77,8 +81,25 @@ public static class CompartmentPlacer
 
         for (var step = 0; step < steps; step++)
         {
+            // Box-aware, not point-aware: a device's own anchor is its footprint's TOP-LEFT corner,
+            // not a dimensionless point - rotating just the anchor via the plain point formula
+            // (correct only for a 1x1 device, where "anchor" and "the one tile it occupies" are the
+            // same thing) silently misplaced any bigger square device too (the Reactor) whenever a
+            // compartment carrying one got rotated, a pre-existing gap nobody had hit before Helm/
+            // Navigation's own new 3x2 footprint made it impossible to ignore. RotateDeviceAnchorClockwise
+            // below is the same corner-rotation reasoning RotateRectClockwise already uses for
+            // FootprintRects, just in discrete tile-index space. A device's own effective rotation
+            // flips every step (rotating the whole compartment 90 degrees rotates everything baked
+            // into it 90 degrees too), tracked per-device since two devices could have started with
+            // different Rotated flags.
             for (var i = 0; i < devices.Count; i++)
-                devices[i] = (RotatePointClockwise(devices[i].RelativePosition, h), devices[i].Kind, devices[i].IsCore, devices[i].MountSide);
+            {
+                var (baseWidth, baseHeight) = CustomDeviceFootprint.Size(devices[i].Kind);
+                var (curWidth, curHeight) = devices[i].Rotated ? (baseHeight, baseWidth) : (baseWidth, baseHeight);
+                _ = curWidth; // only curHeight is needed for the anchor formula - kept for symmetry/clarity
+                var newPosition = RotateDeviceAnchorClockwise(devices[i].RelativePosition, curHeight, h);
+                devices[i] = (newPosition, devices[i].Kind, devices[i].IsCore, devices[i].MountSide, !devices[i].Rotated);
+            }
 
             for (var i = 0; i < engines.Count; i++)
                 engines[i] = (RotatePointClockwise(engines[i].RelativeControl, h), RotateSideClockwise(engines[i].Facing), engines[i].MaxThrust, engines[i].Role);
@@ -103,6 +124,15 @@ public static class CompartmentPlacer
 
     private static TileCoord RotatePointClockwise(TileCoord point, int heightBeforeRotation) =>
         new(heightBeforeRotation - 1 - point.Y, point.X);
+
+    // Rotates a device's own footprint anchor (top-left corner of an ownHeight-tall box, not a bare
+    // point) 90 degrees clockwise - equivalent to RotatePointClockwise when ownHeight == 1 (a 1x1
+    // device's anchor IS the one tile it occupies, so the two formulas agree exactly), but correctly
+    // accounts for a taller box's own far corner otherwise. Derived the same way RotateRectClockwise
+    // is: the box's own bottom-right corner (anchor.Y + ownHeight - 1) maps through the ordinary
+    // point rotation to become the rotated box's new LEFT edge.
+    private static TileCoord RotateDeviceAnchorClockwise(TileCoord anchor, int ownHeight, int heightBeforeRotation) =>
+        new(heightBeforeRotation - anchor.Y - ownHeight, anchor.X);
 
     // Continuous-coordinate counterpart of RotatePointClockwise above (no "-1": a RectF's own X/Y is
     // a boundary VALUE, not a discrete tile index, so a point (x,y) in a WxH box maps to (H-y,x) in
@@ -252,18 +282,26 @@ public static class CompartmentPlacer
             grid.SetWall(coord, isAirlockDoor ? TileWallKind.Door : TileWallKind.Solid, fromCompartment: true);
         }
 
-        // 5) Devices.
+        // 5) Devices - every tile of the device's own REAL footprint (CustomDeviceFootprint.Size,
+        // swapped when this instance is Rotated) gets the SAME deviceId, not just its anchor tile -
+        // a multi-tile device (Reactor, or Helm/Navigation's own new 3x2) must actually occupy and
+        // block every tile it visually covers, the same way the free-tile editor's own
+        // DeviceFootprintTiles already does for a hand-placed one.
         var placedDevices = new List<PlacedDevice>();
         var protectedTiles = new List<TileCoord>();
         var deviceIndex = 0;
-        foreach (var (position, kind, isCore, _) in rotated.Devices)
+        foreach (var (position, kind, isCore, _, deviceRotated) in rotated.Devices)
         {
-            var coord = Abs(position);
+            var deviceAnchor = Abs(position);
             var deviceId = $"{instanceId}-device-{deviceIndex++}";
-            grid.PlaceDevice(coord, deviceId);
-            placedDevices.Add(new PlacedDevice(coord, kind, deviceId, isCore));
+            var (baseWidth, baseHeight) = CustomDeviceFootprint.Size(kind);
+            var (deviceWidth, deviceHeight) = deviceRotated ? (baseHeight, baseWidth) : (baseWidth, baseHeight);
+            for (var dx = 0; dx < deviceWidth; dx++)
+                for (var dy = 0; dy < deviceHeight; dy++)
+                    grid.PlaceDevice(new TileCoord(deviceAnchor.X + dx, deviceAnchor.Y + dy), deviceId);
+            placedDevices.Add(new PlacedDevice(deviceAnchor, kind, deviceId, isCore, deviceRotated));
             if (isCore)
-                protectedTiles.Add(coord);
+                protectedTiles.Add(deviceAnchor);
         }
 
         // 6) Engines - Control stays plain, un-flagged open floor (ShipEngine.cs's own doc comment:

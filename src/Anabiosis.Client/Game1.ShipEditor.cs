@@ -879,7 +879,11 @@ public partial class Game1
         foreach (var device in result.Devices)
         {
             _editorDeviceKinds[device.Coord] = device.Kind;
-            _editorDeviceFootprint[device.Coord] = device.Coord;
+            if (device.Rotated)
+                _editorDeviceRotation[device.Coord] = true;
+            var (deviceWidth, deviceHeight) = DeviceFootprintSize(device.Kind, device.Rotated);
+            foreach (var occupied in DeviceFootprintTiles(device.Coord, deviceWidth, deviceHeight))
+                _editorDeviceFootprint[occupied] = device.Coord;
         }
         foreach (var engine in result.Engines)
         {

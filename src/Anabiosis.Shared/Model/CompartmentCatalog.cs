@@ -28,12 +28,16 @@ public enum CompartmentType
     CrewQuarters,
 }
 
-// One device baked into a compartment template. RelativePosition MUST be strictly interior (never on
+// One device baked into a compartment template. RelativePosition is the device's own footprint
+// TOP-LEFT anchor (CustomDeviceFootprint.Size(Kind), same anchor convention the free-tile editor's
+// own DeviceFootprintTiles uses) - every tile of its real footprint (1 for most kinds, 4x4 for the
+// Reactor, 3x2 for Helm/Navigation, swapped to 2x3 when Rotated) MUST be strictly interior (never on
 // the W x H rectangle's own outer ring - that's where the wall lives, and TileGrid.PlaceDevice
 // refuses a device tile that already carries a wall). IsCore marks the one device (per compartment)
 // that's meant to become permanently protected from removal once a later milestone's outfit-mode UI
 // exists - every OTHER device on the same compartment is ordinary/removable in that future UI.
-public sealed record CompartmentDeviceSpec(CustomDeviceKind Kind, TileCoord RelativePosition, bool IsCore, TurretMountSide MountSide = TurretMountSide.Aft);
+public sealed record CompartmentDeviceSpec(CustomDeviceKind Kind, TileCoord RelativePosition, bool IsCore,
+    TurretMountSide MountSide = TurretMountSide.Aft, bool Rotated = false);
 
 // One marching/RCS engine assembly baked into a compartment template - RelativeControl is the
 // Control tile's own local position (see ShipEngine.cs's own doc comment for the Control/Bulkhead/
@@ -141,6 +145,28 @@ public static class CompartmentCatalog
                 new RectF(2, 8, 8, 2),
             },
             Devices: OneDevice(CustomDeviceKind.Reactor, 4, 3),
+            Engines: NoEngines),
+        // 14x10 bbox, same 2x2-cut-corner octagon convention as reactor-d - a side-by-side
+        // Navigation ("сканер")/Helm ("навигационная панель") console pair, from the user's own
+        // reference screenshot ("1 тип кокпита"). Both placed Rotated (their own authored 3x2
+        // becomes a 2-wide x 3-tall standing console, matching the reference's tall panel look),
+        // with a walking corridor between them and along both flanks leading to the left/right
+        // doors (auto-generated at stitching, same as every other entry here - not baked in).
+        new CompartmentCatalogEntry(
+            Id: "cockpit-a",
+            DisplayName: "Кокпит (тип 1)",
+            Type: CompartmentType.Cockpit,
+            FootprintRects: new[]
+            {
+                new RectF(0, 2, 14, 6),
+                new RectF(2, 0, 10, 2),
+                new RectF(2, 8, 10, 2),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(3, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(9, 3), IsCore: true, Rotated: true),
+            },
             Engines: NoEngines),
     };
 
