@@ -169,24 +169,27 @@ public static class CompartmentCatalog
             },
             Engines: NoEngines),
         // Second variant from the SAME reference screenshot (direct user request - "добавь ещё один
-        // кокпит с вот такими размерами"), a slightly more compact 13x10 take on cockpit-a's own
-        // composition (same octagon cut-corner convention, same rotated Navigation+Helm pair) -
-        // exact tile counts are the user's own best read of the screenshot's grid, not measured
-        // pixel-for-pixel.
+        // кокпит с вот такими размерами"). Revised smaller/more compact after the user flagged the
+        // first attempt as wrong on all 3 counts (proportions, N/H placement, doors) - a careful
+        // re-read of the reference's own grid, not measured pixel-for-pixel: still a best-effort
+        // estimate, correct on specific tile deltas if still off rather than guessed from scratch
+        // again. Devices UNROTATED here (3 wide x 2 tall each) - the compact 4-row middle band only
+        // has 2 interior rows, enough for the unrotated orientation, not the standing/rotated one
+        // cockpit-a uses.
         new CompartmentCatalogEntry(
             Id: "cockpit-b",
             DisplayName: "Кокпит (тип 2)",
             Type: CompartmentType.Cockpit,
             FootprintRects: new[]
             {
-                new RectF(0, 2, 13, 6),
-                new RectF(2, 0, 9, 2),
-                new RectF(2, 8, 9, 2),
+                new RectF(0, 2, 10, 4),
+                new RectF(2, 0, 6, 2),
+                new RectF(2, 6, 6, 2),
             },
             Devices: new[]
             {
-                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(2, 3), IsCore: true, Rotated: true),
-                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(8, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(1, 3), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(5, 3), IsCore: true),
             },
             Engines: NoEngines),
     };
