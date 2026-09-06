@@ -168,6 +168,27 @@ public static class CompartmentCatalog
                 new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(9, 3), IsCore: true, Rotated: true),
             },
             Engines: NoEngines),
+        // Second variant from the SAME reference screenshot (direct user request - "добавь ещё один
+        // кокпит с вот такими размерами"), a slightly more compact 13x10 take on cockpit-a's own
+        // composition (same octagon cut-corner convention, same rotated Navigation+Helm pair) -
+        // exact tile counts are the user's own best read of the screenshot's grid, not measured
+        // pixel-for-pixel.
+        new CompartmentCatalogEntry(
+            Id: "cockpit-b",
+            DisplayName: "Кокпит (тип 2)",
+            Type: CompartmentType.Cockpit,
+            FootprintRects: new[]
+            {
+                new RectF(0, 2, 13, 6),
+                new RectF(2, 0, 9, 2),
+                new RectF(2, 8, 9, 2),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(2, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(8, 3), IsCore: true, Rotated: true),
+            },
+            Engines: NoEngines),
     };
 
     // A non-overlapping grid of Distribution panels filling the compartment's own interior (never the
