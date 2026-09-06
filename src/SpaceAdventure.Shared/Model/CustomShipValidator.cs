@@ -69,14 +69,24 @@ public static class CustomShipValidator
             }
             if (ShipLayoutGeometry.SideHasNeighbor(room, airlock.Side, overlaps))
                 errors.Add($"Люк в «{room.Name}» стоит на стене, граничащей с другим отсеком.");
+            // M89 (humble-soaring-cat.md, non-rectangular compartments) - a multi-rect room can have
+            // more than one piece reaching its own bounding-box edge on the same cardinal side (an
+            // L-shape's two arms both touching its own top edge, say); SideMidpoint/SideLength can
+            // only place a real door unambiguously when exactly one piece qualifies.
+            else if (ShipLayoutGeometry.SubrectsFacingSide(room, airlock.Side).Count != 1)
+                errors.Add($"Люк в «{room.Name}» стоит на стороне, за которую отвечает не ровно один кусок отсека.");
         }
 
         return errors;
     }
 
+    // Generalized (M89) to test every pair of the two rooms' own subrects instead of assuming one
+    // rectangle per room - byte-identical to the old single-rect check whenever both rooms have
+    // exactly one piece (every existing hand-authored hull/station/editor-drawn rectangular room).
     private static bool Overlaps(CustomRoomDef a, CustomRoomDef b) =>
-        a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
+        a.Rects.Any(ra => b.Rects.Any(rb =>
+            ra.X < rb.Right && rb.X < ra.Right && ra.Y < rb.Bottom && rb.Y < ra.Bottom));
 
     private static bool Contains(CustomRoomDef r, float x, float y) =>
-        x >= r.X && x <= r.X + r.Width && y >= r.Y && y <= r.Y + r.Height;
+        r.Rects.Any(rect => x >= rect.X && x <= rect.Right && y >= rect.Y && y <= rect.Bottom);
 }
