@@ -10,7 +10,7 @@ namespace SpaceAdventure.Server;
 // spend rather than a free action.
 public sealed partial class World
 {
-    public const float WelderReachUnits = 1.7f;
+    public const float WelderReachUnits = InteractionConstants.WelderReachUnits;
     private const int WelderSamples = 6;
     // A wall block is a 1x1 segment (WallBlock.cs) - generous enough that the flame doesn't have to
     // land pixel-perfect on the block's own center to catch it. Widened from the cutter's original

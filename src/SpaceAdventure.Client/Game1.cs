@@ -18,8 +18,9 @@ namespace SpaceAdventure.Client;
 // Game1.Menu.cs; everything here assumes a live _client.
 public partial class Game1 : Game
 {
-    private const float TurretInteractionRadius = 1.0f; // must match World.InteractionRadius
-    private const float WelderHintReachUnits = 1.7f; // must match World.WelderReachUnits
+    private const float TurretInteractionRadius = InteractionConstants.DeviceInteractionRadius;
+    private const float WelderHintReachUnits = InteractionConstants.WelderReachUnits;
+    private const float PickupHintRadius = InteractionConstants.PickupRadius; // World.Mining.cs's real TryPickupDroppedItem radius - was drifted to TurretInteractionRadius before
 
     // Shared by the ship interior and the space outside it - both are now drawn through the same
     // camera (game_design.md: "one continuous space, no hidden transition"), so there's only one
@@ -100,11 +101,14 @@ public partial class Game1 : Game
     private static readonly Vector2 StationBuildPanelOrigin =
         new((DesignWidth - StationBuildPanel.PanelWidth) / 2f, DesignHeight - StationBuildPanel.PanelHeight - 8);
     // Window 3 of the helm redesign (M47 follow-up) - a fixed HUD corner, unlike window 2's own
-    // draggable widget, since nothing about it ever needs to get out of the way of the schematic
-    // underneath (it already floats above window 1, not over any of its own controls).
-    private static readonly Vector2 ShipSchematicPanelOrigin = new(DesignWidth - ShipSchematicPanel.Width - 12, 12);
+    // draggable widget, since nothing about it ever needs to get out of the way of the panel
+    // underneath (it already floats above window 1, not over any of its own controls). Was sized
+    // off the old ShipSchematicPanel's own width (380) before EngineerDevicePanel (340) replaced it
+    // here entirely - fixed to the panel that's actually drawn at this origin now, closing a 40px
+    // gap that had crept in between its right edge and the intended margin.
+    private static readonly Vector2 EngineerDevicePanelOrigin = new(DesignWidth - EngineerDevicePanel.Width - 12, 12);
     // M57 - the tab switcher sits at a fixed spot regardless of tab (same "mode switch, not an
-    // instrument" reasoning ShipSchematicPanelOrigin's own comment gives for staying fixed rather
+    // instrument" reasoning EngineerDevicePanelOrigin's own comment gives for staying fixed rather
     // than draggable) - bottom-left, clear of both the always-on TEMP-DIAG FPS/Sim overlay (fixed
     // at (10,10), ~130px tall) up top and the permanent bottom HUD band (inventory hotbar/equip
     // row/role box/health bar) HelmButtonsWidget's own default position already dodges the same way.
@@ -191,7 +195,6 @@ public partial class Game1 : Game
     // draw branch below) since its own schematic/fog-of-war rendering already was what was asked
     // for, just not yet shown anywhere but the nav console.
     private HelmButtonsWidget _helmButtonsWidget = null!;
-    private ShipSchematicPanel _shipSchematicPanel = null!;
     // M57 - the 3 windows above become 3 switchable tabs (HelmTab.cs's own doc comment) instead of
     // all drawn at once; _helmTab is purely client-local, like _openBlock, so different players at
     // helm can watch different tabs. _helmTabBar switches it, _timeAccelerationWidget is the
@@ -226,15 +229,9 @@ public partial class Game1 : Game
     // continuous, same treatment ScannerSweepDegrees already gets) - purely a local "which half was
     // last clicked" choice until the server echoes it back onto CharacterState.ScannerMode.
     private ScannerMode _requestedScannerMode = ScannerMode.Directional;
-    // Window 3's own state: which instrument overlay is showing, and the item-search box's typed
-    // text plus whether it currently has keyboard focus (Window.TextInput only reaches it while
-    // focused, so W/A/D/S/X/Z keep flying the ship the rest of the time).
-    private ShipSchematicCategory _shipSchematicCategory = ShipSchematicCategory.Hull;
-    private string _shipSearchQuery = "";
-    private bool _shipSearchFocused;
-    // Crew chat (direct user request, "как в Баротравме") - same "only reaches the field while
-    // explicitly focused" shape as _shipSearchQuery/_shipSearchFocused above, so W/A/D/S/X/Z keep
-    // flying the ship while typing. _pendingChatMessage is a one-shot outgoing field, same
+    // Crew chat (direct user request, "как в Баротравме") - only reaches the field while explicitly
+    // focused (Window.TextInput), so W/A/D/S/X/Z keep flying the ship while typing.
+    // _pendingChatMessage is a one-shot outgoing field, same
     // capture-send-clear lifecycle as _pendingBuildRoom - set on submit (Enter), threaded into the
     // next SendInput call, then cleared so it isn't resent every frame after.
     private string _chatInput = "";
@@ -565,7 +562,6 @@ public partial class Game1 : Game
         UpdateRenderScale();
         Window.ClientSizeChanged += (_, _) => UpdateRenderScale();
         Window.TextInput += OnMenuTextInput; // typing the host's address on the join screen
-        Window.TextInput += OnShipSearchTextInput; // window 3's item search box, helm redesign (M47 follow-up)
         Window.TextInput += OnChatTextInput; // crew chat input box, Enter to open/send (direct user request)
         base.Initialize();
     }
@@ -644,7 +640,6 @@ public partial class Game1 : Game
         _timeAccelerationWidget = new TimeAccelerationWidget(GraphicsDevice, _font);
         _engineerDevicePanel = new EngineerDevicePanel(GraphicsDevice, _font);
         _scannerModeWidget = new ScannerModeWidget(GraphicsDevice, _font);
-        _shipSchematicPanel = new ShipSchematicPanel(GraphicsDevice, _font);
         DrawLoadingFrame("ЗАГРУЗКА...", 25);
 
         // FieldRenderer's own ctor is the single heaviest step in this whole list - it bakes every
@@ -943,10 +938,6 @@ public partial class Game1 : Game
         var myCharacter = _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         var isAtHelm = myCharacter?.IsAtHelm ?? false;
         var isOutside = myCharacter?.IsOutside ?? false;
-        // Standing up from the helm drops window 3's own search focus - otherwise it would sit
-        // there invisibly holding onto typed characters with no panel left on screen to show them.
-        if (!isAtHelm)
-            _shipSearchFocused = false;
 
         // During a session: Esc closes whatever's open (a block/console, a top-bar panel, the
         // turret/helm) one thing at a time, same priority a second click on a console already has;
@@ -961,13 +952,6 @@ public partial class Game1 : Game
             // opening the pause menu or standing the captain up from the helm.
             _chatInput = "";
             _chatFocused = false;
-        }
-        else if (escapePressed && _shipSearchFocused)
-        {
-            // Cancels the search box first, same one-thing-at-a-time priority as everything else
-            // below - otherwise Esc would stand the captain up from the helm entirely just because
-            // they were mid-search, which is the one Escape a text field should never trigger.
-            _shipSearchFocused = false;
         }
         else if (escapePressed)
         {
@@ -1001,13 +985,12 @@ public partial class Game1 : Game
         }
 
         // Enter opens the crew chat box (direct user request, "как в Баротравме") - only from
-        // gameplay, and only when nothing else already has keyboard focus, so it doesn't steal
-        // typing away from window 3's own search box or fire while the pause menu is up.
-        // Edge-triggered like every other key here; _chatJustOpenedThisFrame guards the same
-        // physical keystroke's TextInput '\r' from being read as an immediate submit/close by
-        // OnChatTextInput below.
+        // gameplay, and only when nothing else already has keyboard focus, so it doesn't fire while
+        // the pause menu is up. Edge-triggered like every other key here; _chatJustOpenedThisFrame
+        // guards the same physical keystroke's TextInput '\r' from being read as an immediate
+        // submit/close by OnChatTextInput below.
         var enterDown = keyboard.IsKeyDown(Keys.Enter);
-        if (enterDown && !_prevGameplayKeyboard.IsKeyDown(Keys.Enter) && !_chatFocused && !_shipSearchFocused && !_pauseMenuOpen)
+        if (enterDown && !_prevGameplayKeyboard.IsKeyDown(Keys.Enter) && !_chatFocused && !_pauseMenuOpen)
         {
             _chatFocused = true;
             _chatJustOpenedThisFrame = true;
@@ -1037,12 +1020,12 @@ public partial class Game1 : Game
         // Z swaps between Arc (banked turning, tied to speed) and Rcs (free rotation) at the helm
         // (World.ShipField.cs, M41) - edge-triggered like M above, or holding it down would flip
         // the mode every frame.
-        var toggleControlModeKeyPressed = isAtHelm && !_shipSearchFocused && !_chatFocused && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
+        var toggleControlModeKeyPressed = isAtHelm && !_chatFocused && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
 
         // L lands/takes off (M55) - same edge-triggered shape as Z above. World.PlanetLanding.cs's
         // own CanLandNow is what actually refuses to arm it away from a landable body's surface, so
         // this is sent unconditionally too.
-        var toggleLandingKeyPressed = isAtHelm && !_shipSearchFocused && !_chatFocused && keyboard.IsKeyDown(Keys.L) && !_prevGameplayKeyboard.IsKeyDown(Keys.L);
+        var toggleLandingKeyPressed = isAtHelm && !_chatFocused && keyboard.IsKeyDown(Keys.L) && !_prevGameplayKeyboard.IsKeyDown(Keys.L);
 
         // Push-to-talk voice (direct user request, "как в Баротравме") - V for local (proximity),
         // R for radio (heard ship-wide through RadioVoiceFilter). Held, not edge-triggered like
@@ -1054,8 +1037,8 @@ public partial class Game1 : Game
         // Also excluded while the ship editor is open: its own Engine tool (Game1.ShipEditor.cs's
         // HandleEngineToolInput) already binds R to cycle the pending engine's facing, so without
         // this the same keypress would both rotate the ghost AND start a radio transmission.
-        var voiceLocalKeyDown = !_shipSearchFocused && !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.V);
-        var voiceRadioKeyDown = !_shipSearchFocused && !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.R);
+        var voiceLocalKeyDown = !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.V);
+        var voiceRadioKeyDown = !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.R);
         if (!_voiceCapture.IsRecording)
         {
             if (voiceLocalKeyDown)
@@ -1328,9 +1311,9 @@ public partial class Game1 : Game
             : UpdateItemDrag(mouse, gameTime.TotalGameTime.TotalSeconds);
         if (dragTookTheClick)
             _prevLeftMouseButton = mouse.LeftButton; // keep HandleMouseClick's own edge detection in step
-        var (toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmStabilizePressed, doorToggleId) =
+        var (toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, doorToggleId) =
             dragTookTheClick
-                ? (-1, -1, (ItemType?)null, -1, false, false, (ShipUpgradeTrack?)null, false, (string?)null)
+                ? (-1, -1, (ItemType?)null, -1, false, false, (ShipUpgradeTrack?)null, (string?)null)
                 : HandleMouseClick(mouse);
 
         // Bail out of the rest of this frame immediately - _client is about to become null, and
@@ -1353,8 +1336,8 @@ public partial class Game1 : Game
         // Window 3's search box eats W/A/D/S/X/Z as typed characters while focused (M47 follow-up) -
         // the ship just coasts on whatever heading it already had, same as while any other console
         // is open, rather than the pilot's own typing also steering it.
-        var flightControlsLive = isAtHelm && !_shipSearchFocused && !_chatFocused;
-        if (helmStabilizePressed || (flightControlsLive && keyboard.IsKeyDown(Keys.S)))
+        var flightControlsLive = isAtHelm && !_chatFocused;
+        if (flightControlsLive && keyboard.IsKeyDown(Keys.S))
             _helmStabilizeLatched = true;
         var (helmThrottle, helmTurn) = flightControlsLive ? ReadHelmInput(keyboard) : (0f, 0f);
         if (helmThrottle != 0f || helmTurn != 0f)
@@ -1915,7 +1898,7 @@ public partial class Game1 : Game
                         _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true);
                         break;
                     case HelmTab.Engineer:
-                        _engineerDevicePanel.Draw(_spriteBatch, snapshot, ShipSchematicPanelOrigin, _engineerFocusDeviceId);
+                        _engineerDevicePanel.Draw(_spriteBatch, snapshot, EngineerDevicePanelOrigin, _engineerFocusDeviceId);
                         break;
                 }
                 _helmTabBar.Draw(_spriteBatch, _helmTab, HelmTabBarOrigin, _designMouse);

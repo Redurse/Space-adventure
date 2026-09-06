@@ -5,7 +5,7 @@ namespace SpaceAdventure.Server;
 
 public sealed partial class World
 {
-    private const float InteractionRadius = 1.0f; // units, distance to a periscope/storage/locker to interact with it
+    private const float InteractionRadius = InteractionConstants.DeviceInteractionRadius; // distance to a periscope/storage/locker to interact with it
     private const float SuitActionDurationSeconds = 2f;
 
     // Single E key, priority-ordered: 0) ignored entirely while mid-equip/unequip (can't react

@@ -10,7 +10,7 @@ namespace SpaceAdventure.Server;
 // underfoot and, everywhere else, switches whether touching the hull/a rock grabs on.
 public sealed partial class World
 {
-    private const float PickupRadius = 1.5f;
+    private const float PickupRadius = InteractionConstants.PickupRadius;
 
     private readonly List<DroppedItem> _droppedItems = new();
     private int _nextDroppedItemId = 1;

@@ -52,7 +52,6 @@ public sealed class ScenePost : IDisposable
     private bool _capturing;
     private bool _distortionDrawn;
     private bool _normalsDrawn;
-    private bool _ownLightDrawn;
 
     public ScenePost(GraphicsDevice device, Effect? effect)
     {
@@ -184,11 +183,7 @@ public sealed class ScenePost : IDisposable
         return true;
     }
 
-    public void EndOwnLight()
-    {
-        _ownLightDrawn = true;
-        _lightMask = _ownLight;
-    }
+    public void EndOwnLight() => _lightMask = _ownLight;
 
     // The light mask the chain reads to decide what glows and which way the light is coming from -
     // RoomLighting.Mask normally, the plain sight mask when room lighting did not build, null when
@@ -209,7 +204,6 @@ public sealed class ScenePost : IDisposable
         // has drawn into it again this frame.
         _distortionDrawn = false;
         _normalsDrawn = false;
-        _ownLightDrawn = false;
         return true;
     }
 
