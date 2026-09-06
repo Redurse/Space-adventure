@@ -1,3 +1,4 @@
+using SpaceAdventure.Server;
 using SpaceAdventure.Shared.Model;
 
 internal static partial class TestRunner
@@ -73,5 +74,63 @@ internal static partial class TestRunner
             new[] { new CustomAirlockDef("s", EdgeSide.Bottom) }, Array.Empty<CustomDeviceDef>(), 0f);
         var errors = CustomShipValidator.Validate(def);
         return !errors.Any(e => e.Contains("ровно один кусок"));
+    }
+
+    // M90 (humble-soaring-cat.md) end-to-end integration test - builds a REAL, playable World from
+    // an L-shaped custom ship, walks a character all the way into the far arm (through the door,
+    // across the internal seam between the L's own two pieces, with no wall in the way), breaches an
+    // unrelated wall elsewhere on the ship, and confirms the character's own room identity is still
+    // reported correctly. This is exactly the failure class TileMovement.RoomIdAt's own doc comment
+    // describes having been bitten by before (a region-based lookup silently breaking room identity
+    // once enough interior walls got shot through and TileGrid merged two SealedRegions) - RoomIdAt
+    // stays a pure Room.Contains rectangle-list scan, never touching SealedRegion at all, so that
+    // failure class cannot reappear regardless of what elsewhere on the ship gets breached.
+    private static CustomShipDefinition BuildLShapedCustomShipDefinition()
+    {
+        // Both pieces are 3+ tall/wide, and the far arm (bottomArm) reaches topArm's OWN right edge
+        // (x=3) so the seam between them fully covers that column - keeping the "genuine notch" (no
+        // floor below) on the OPPOSITE side (x=0) from where room "b"'s door attaches (x=4). Two
+        // lessons learned by trial: (1) a room narrower than 3 in either dimension has every one of
+        // its own tiles on its own wall ring (TileGridRasterizer.FromRooms walls a room's own
+        // outermost floor tiles, not a separate ring outside them) with no interior tile left
+        // walkable at all - a pre-existing fact of this game's tile model. (2) a corner tile that is
+        // simultaneously "touches a neighbour room" (should stay open) AND "touches this room's own
+        // genuine notch" (should wall) can't have both - keeping the notch and the neighbour on
+        // different sides avoids ever needing one tile to satisfy both roles.
+        var lRoom = new CustomRoomDef("a", "Г-отсек", new[]
+        {
+            new RectF(0, 0, 4, 3),
+            new RectF(1, 3, 3, 3),
+        });
+        var bRoom = new CustomRoomDef("b", "Мостик", 4, 0, 4, 3);
+        return new CustomShipDefinition(
+            "Тестовый Г-корабль",
+            new[] { lRoom, bRoom },
+            new[] { new CustomDoorDef("a", "b") },
+            new[] { new CustomAirlockDef("b", EdgeSide.Right) },
+            new[]
+            {
+                new CustomDeviceDef(CustomDeviceKind.Helm, 6f, 1f),
+                new CustomDeviceDef(CustomDeviceKind.Reactor, 4.5f, 0.3f),
+                new CustomDeviceDef(CustomDeviceKind.Distribution, 5f, 0.3f),
+                new CustomDeviceDef(CustomDeviceKind.Navigation, 5.5f, 0.3f),
+                new CustomDeviceDef(CustomDeviceKind.Engine, 6f, 0.3f),
+                new CustomDeviceDef(CustomDeviceKind.Oxygen, 6.5f, 0.3f),
+                new CustomDeviceDef(CustomDeviceKind.SuitLocker, 7f, 0.3f),
+                new CustomDeviceDef(CustomDeviceKind.StorageRack, 7.5f, 0.3f),
+            },
+            0f);
+    }
+
+    private static bool NonRectangularRoom_World_CharacterInFarArm_RoomIdStaysCorrectAfterUnrelatedBreach()
+    {
+        var world = new World(ShipKind.Custom, BuildLShapedCustomShipDefinition());
+        world.SpawnCharacter(1);
+        MoveCharacterTo(world, 1, targetX: 2f, targetY: 4f); // the L's far arm - through the door and across its own internal seam
+
+        world.DebugBreachWallBlock("b"); // an unrelated wall breach elsewhere on the ship
+
+        var character = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        return world.Ship.Rooms.Single(r => r.Contains(new Vec2(character.X, character.Y))).Id == "a";
     }
 }

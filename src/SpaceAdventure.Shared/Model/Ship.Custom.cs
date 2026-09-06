@@ -14,7 +14,7 @@ public sealed partial class Ship
         if (errors.Count > 0)
             throw new InvalidOperationException("Invalid custom ship definition: " + string.Join("; ", errors));
 
-        var rooms = def.Rooms.Select(r => new Room(r.Id, r.Name, r.X, r.Y, r.Width, r.Height)).ToList();
+        var rooms = def.Rooms.Select(r => new Room(r.Id, r.Name, r.Rects)).ToList();
         var doors = BuildDoors(def);
         var airlockOuterDoors = BuildAirlockOuterDoors(def);
         var wallBlocks = BuildWallBlocks(def);
@@ -179,10 +179,15 @@ public sealed partial class Ship
         return airlocks;
     }
 
-    // One 1x1 block per unit segment of a room's boundary that has no neighboring room on that
+    // One 1x1 block per unit segment of a room's boundary that has no neighboring floor on that
     // side at all AND isn't the dedicated airlock side (matches GenerateOuterWallBlocks' own rule
     // plus the airlock chambers' convention of never mixing ordinary hull into the airlock's wall -
-    // see Ship.cs's CreateStarter comment on the original hand-authored hulls).
+    // see Ship.cs's CreateStarter comment on the original hand-authored hulls). Generalized
+    // (humble-soaring-cat.md M90) to walk each of a room's own SUBRECTS independently instead of
+    // its bounding box - for a single-rect room (every hand-authored hull, every existing
+    // editor-drawn rectangular room) this is byte-identical to the old per-room walk, since
+    // room.Rects has exactly one element equal to the bbox. A multi-rect room's own internal seam
+    // (where two of ITS OWN subrects touch) never gets a wall block at all - see IsUnitCovered.
     private static List<WallBlock> BuildWallBlocks(CustomShipDefinition def)
     {
         var blocks = new List<WallBlock>();
@@ -190,26 +195,37 @@ public sealed partial class Ship
         {
             var hasAirlock = new HashSet<EdgeSide>(def.Airlocks.Where(a => a.RoomId == room.Id).Select(a => a.Side));
             var index = 0;
+            foreach (var rect in room.Rects)
+            {
+                // The airlock skip only applies to the ONE subrect that actually reaches the room's
+                // own bounding-box edge on that side (ShipLayoutGeometry.SubrectsFacingSide/M89's own
+                // "exactly one" guarantee, enforced by CustomShipValidator) - any OTHER subrect that
+                // happens to have its own edge in the same cardinal direction (an interior notch
+                // edge, not the room's real exterior on that side) still needs ordinary wall
+                // treatment.
+                bool SkipForAirlock(EdgeSide side) =>
+                    hasAirlock.Contains(side) && ShipLayoutGeometry.SubrectsFacingSide(room, side).Contains(rect);
 
-            if (!hasAirlock.Contains(EdgeSide.Top))
-                for (var x = room.X; x < room.X + room.Width; x++)
-                    if (!IsUnitCovered(def.Rooms, room, EdgeSide.Top, x))
-                        blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, x + 0.5f, room.Y));
+                if (!SkipForAirlock(EdgeSide.Top))
+                    for (var x = rect.X; x < rect.Right; x++)
+                        if (!IsUnitCovered(def.Rooms, room, rect, EdgeSide.Top, x))
+                            blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, x + 0.5f, rect.Y));
 
-            if (!hasAirlock.Contains(EdgeSide.Bottom))
-                for (var x = room.X; x < room.X + room.Width; x++)
-                    if (!IsUnitCovered(def.Rooms, room, EdgeSide.Bottom, x))
-                        blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, x + 0.5f, room.Y + room.Height));
+                if (!SkipForAirlock(EdgeSide.Bottom))
+                    for (var x = rect.X; x < rect.Right; x++)
+                        if (!IsUnitCovered(def.Rooms, room, rect, EdgeSide.Bottom, x))
+                            blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, x + 0.5f, rect.Bottom));
 
-            if (!hasAirlock.Contains(EdgeSide.Left))
-                for (var y = room.Y; y < room.Y + room.Height; y++)
-                    if (!IsUnitCovered(def.Rooms, room, EdgeSide.Left, y))
-                        blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, room.X, y + 0.5f));
+                if (!SkipForAirlock(EdgeSide.Left))
+                    for (var y = rect.Y; y < rect.Bottom; y++)
+                        if (!IsUnitCovered(def.Rooms, room, rect, EdgeSide.Left, y))
+                            blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, rect.X, y + 0.5f));
 
-            if (!hasAirlock.Contains(EdgeSide.Right))
-                for (var y = room.Y; y < room.Y + room.Height; y++)
-                    if (!IsUnitCovered(def.Rooms, room, EdgeSide.Right, y))
-                        blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, room.X + room.Width, y + 0.5f));
+                if (!SkipForAirlock(EdgeSide.Right))
+                    for (var y = rect.Y; y < rect.Bottom; y++)
+                        if (!IsUnitCovered(def.Rooms, room, rect, EdgeSide.Right, y))
+                            blocks.Add(new WallBlock($"{room.Id}-wall-{index++}", room.Id, rect.Right, y + 0.5f));
+            }
         }
         return blocks;
     }
@@ -218,22 +234,36 @@ public sealed partial class Ship
     // round-tripped through a CustomShipDefinition walks this in 1-unit steps starting from a
     // fractional room edge (e.g. 4.5, 5.5, ...), same as Ship.cs's own GenerateOuterWallBlocks
     // already does directly - this just needed to stop assuming the start was always whole.
-    private static bool IsUnitCovered(IReadOnlyList<CustomRoomDef> rooms, CustomRoomDef room, EdgeSide side, float unitStart)
+    //
+    // `rect` is the SPECIFIC subrect of `room` this segment belongs to (M90) - checked against
+    // every OTHER room's subrects (a genuine interior wall between two different rooms, handled by
+    // Ship.cs's GenerateInteriorWallBlocks instead) AND every OTHER subrect of `room` itself (this
+    // room's own internal seam between two of its own pieces - never gets a wall at all, since
+    // they're the same continuous space). Byte-identical to the old room-vs-room-only check
+    // whenever room.Rects.Count == 1 (every hand-authored hull, forever) - the "same room" loop
+    // below finds nothing else to compare `rect` against in that case.
+    private static bool IsUnitCovered(IReadOnlyList<CustomRoomDef> rooms, CustomRoomDef room, RectF rect, EdgeSide side, float unitStart)
     {
+        bool CoversFrom(RectF other) => side switch
+        {
+            EdgeSide.Top => other.Bottom == rect.Y && other.X <= unitStart && other.Right >= unitStart + 1,
+            EdgeSide.Bottom => other.Y == rect.Bottom && other.X <= unitStart && other.Right >= unitStart + 1,
+            EdgeSide.Left => other.Right == rect.X && other.Y <= unitStart && other.Bottom >= unitStart + 1,
+            EdgeSide.Right => other.X == rect.Right && other.Y <= unitStart && other.Bottom >= unitStart + 1,
+            _ => false,
+        };
+
+        foreach (var otherRect in room.Rects)
+            if (otherRect != rect && CoversFrom(otherRect))
+                return true;
+
         foreach (var other in rooms)
         {
             if (other.Id == room.Id)
                 continue;
-            var covers = side switch
-            {
-                EdgeSide.Top => other.Y + other.Height == room.Y && other.X <= unitStart && other.X + other.Width >= unitStart + 1,
-                EdgeSide.Bottom => other.Y == room.Y + room.Height && other.X <= unitStart && other.X + other.Width >= unitStart + 1,
-                EdgeSide.Left => other.X + other.Width == room.X && other.Y <= unitStart && other.Y + other.Height >= unitStart + 1,
-                EdgeSide.Right => other.X == room.X + room.Width && other.Y <= unitStart && other.Y + other.Height >= unitStart + 1,
-                _ => false,
-            };
-            if (covers)
-                return true;
+            foreach (var otherRect in other.Rects)
+                if (CoversFrom(otherRect))
+                    return true;
         }
         return false;
     }

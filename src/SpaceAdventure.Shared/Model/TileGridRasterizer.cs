@@ -44,36 +44,51 @@ public static class TileGridRasterizer
 
         // Floor first - TileGrid.SetWall requires a floor already at the target coordinate, and a
         // wall/door tile is always also a floor tile in the new model (walls sit ON TOP of floor).
+        // Generalized (humble-soaring-cat.md M90) to walk each room's own subrects independently -
+        // byte-identical to the old per-room walk whenever every room has exactly one rect (every
+        // hand-authored hull/station forever), since room.Rects then has exactly one element equal
+        // to the bbox.
         foreach (var room in rooms)
-        {
-            var left = RoundToInt(room.Left);
-            var right = RoundToInt(room.Right);
-            var top = RoundToInt(room.Top);
-            var bottom = RoundToInt(room.Bottom);
-            for (var x = left; x < right; x++)
+            foreach (var rect in room.Rects)
+            {
+                var left = RoundToInt(rect.X);
+                var right = RoundToInt(rect.Right);
+                var top = RoundToInt(rect.Y);
+                var bottom = RoundToInt(rect.Bottom);
+                for (var x = left; x < right; x++)
+                    for (var y = top; y < bottom; y++)
+                        grid.SetFloor(new TileCoord(x, y), true);
+            }
+
+        foreach (var room in rooms)
+            foreach (var rect in room.Rects)
+            {
+                var left = RoundToInt(rect.X);
+                var right = RoundToInt(rect.Right);
+                var top = RoundToInt(rect.Y);
+                var bottom = RoundToInt(rect.Bottom);
+
+                // Leading edges (Left/Top) are no longer unconditional on their own - a multi-rect
+                // room's own subrect can have ANOTHER of its own pieces sitting flush against this
+                // exact edge (an internal seam, e.g. an L-shape's lower arm has its own Top edge
+                // exactly where the upper arm's Bottom edge already sits) - that never gets a wall
+                // tile at all, on either side, since it's one continuous floor. Genuinely facing a
+                // DIFFERENT room still gets the wall unconditionally here, same as before (that
+                // room's own trailing-side check below is what stays silent for its half).
                 for (var y = top; y < bottom; y++)
-                    grid.SetFloor(new TileCoord(x, y), true);
-        }
+                    if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Left, y))
+                        WallTile(grid, new TileCoord(left, y));
+                for (var x = left; x < right; x++)
+                    if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Top, x))
+                        WallTile(grid, new TileCoord(x, top));
 
-        foreach (var room in rooms)
-        {
-            var left = RoundToInt(room.Left);
-            var right = RoundToInt(room.Right);
-            var top = RoundToInt(room.Top);
-            var bottom = RoundToInt(room.Bottom);
-
-            for (var y = top; y < bottom; y++)
-                WallTile(grid, new TileCoord(left, y));
-            for (var x = left; x < right; x++)
-                WallTile(grid, new TileCoord(x, top));
-
-            for (var y = room.Top; y < room.Bottom; y += 1f)
-                if (!Station.IsUnitCovered(rooms, room, EdgeSide.Right, y))
-                    WallTile(grid, new TileCoord(right - 1, RoundToInt(y)));
-            for (var x = room.Left; x < room.Right; x += 1f)
-                if (!Station.IsUnitCovered(rooms, room, EdgeSide.Bottom, x))
-                    WallTile(grid, new TileCoord(RoundToInt(x), bottom - 1));
-        }
+                for (var y = rect.Y; y < rect.Bottom; y += 1f)
+                    if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Right, y) && !Station.IsUnitCoveredByOtherRoom(rooms, room, rect, EdgeSide.Right, y))
+                        WallTile(grid, new TileCoord(right - 1, RoundToInt(y)));
+                for (var x = rect.X; x < rect.Right; x += 1f)
+                    if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Bottom, x) && !Station.IsUnitCoveredByOtherRoom(rooms, room, rect, EdgeSide.Bottom, x))
+                        WallTile(grid, new TileCoord(RoundToInt(x), bottom - 1));
+            }
 
         // A Door/AirlockOuterDoor is a StandardSpanUnits(2)-wide rectangle centered on the wall it
         // sits in; whichever of Width/Height equals 1 tells you the wall's orientation (Door.cs).
@@ -177,19 +192,24 @@ public static class TileGridRasterizer
         return (minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 
-    // Which tile a wall at this exact boundary value would occupy: RoundToInt(edge) if some room
-    // treats it as a LEADING edge (Left/Top - always walled), else RoundToInt(edge)-1 for a TRAILING
-    // edge (Right/Bottom - only walled, one tile further in, when no neighbor covers it - which is
-    // guaranteed true here since a door/airlock already sits on this boundary).
+    // Which tile a wall at this exact boundary value would occupy: RoundToInt(edge) if some room's
+    // own SUBRECT treats it as a LEADING edge (Left/Top - always walled), else RoundToInt(edge)-1 for
+    // a TRAILING edge (Right/Bottom - only walled, one tile further in, when no neighbor covers it -
+    // which is guaranteed true here since a door/airlock already sits on this boundary). Generalized
+    // (M90) to search every room's flattened subrects instead of its bbox - byte-identical to the
+    // old per-room search whenever every room has exactly one rect (every hand-authored hull/station
+    // forever).
     private static int PerpendicularCoord(IReadOnlyList<Room> rooms, float edgeValue, bool vertical)
     {
         const float epsilon = 0.01f;
         foreach (var room in rooms)
-            if (vertical ? MathF.Abs(room.Left - edgeValue) < epsilon : MathF.Abs(room.Top - edgeValue) < epsilon)
-                return RoundToInt(edgeValue);
+            foreach (var rect in room.Rects)
+                if (vertical ? MathF.Abs(rect.X - edgeValue) < epsilon : MathF.Abs(rect.Y - edgeValue) < epsilon)
+                    return RoundToInt(edgeValue);
         foreach (var room in rooms)
-            if (vertical ? MathF.Abs(room.Right - edgeValue) < epsilon : MathF.Abs(room.Bottom - edgeValue) < epsilon)
-                return RoundToInt(edgeValue) - 1;
+            foreach (var rect in room.Rects)
+                if (vertical ? MathF.Abs(rect.Right - edgeValue) < epsilon : MathF.Abs(rect.Bottom - edgeValue) < epsilon)
+                    return RoundToInt(edgeValue) - 1;
         return RoundToInt(edgeValue); // not on any given room's own edge - fall back
     }
 
@@ -214,17 +234,25 @@ public static class TileGridRasterizer
     // same room-list-aware PerpendicularCoord logic the Door/AirlockOuterDoor case above already
     // uses for exactly this leading/trailing ambiguity - needs every room in the hull, not just the
     // block's own, to know whether a neighbor's leading edge actually claimed this boundary first.
+    // Generalized (M90) to find which of `room`'s own SUBRECTS this block actually sits on (a
+    // block's position always lands exactly on one of a room's own subrect edges - Ship.Custom.cs's
+    // BuildWallBlocks/GenerateInteriorWallBlocks never place one anywhere else) instead of assuming
+    // the room's bbox edge directly - byte-identical to the old 4-branch check whenever room.Rects
+    // has exactly one element equal to the bbox (every hand-authored hull/station forever).
     public static TileCoord WallBlockTileCoord(WallBlock block, IReadOnlyList<Room> rooms, Room room)
     {
         const float epsilon = 0.01f;
-        if (MathF.Abs(block.Y - room.Top) < epsilon)
-            return new TileCoord(RoundToInt(block.X - 0.5f), PerpendicularCoord(rooms, room.Top, vertical: false));
-        if (MathF.Abs(block.Y - room.Bottom) < epsilon)
-            return new TileCoord(RoundToInt(block.X - 0.5f), PerpendicularCoord(rooms, room.Bottom, vertical: false));
-        if (MathF.Abs(block.X - room.Left) < epsilon)
-            return new TileCoord(PerpendicularCoord(rooms, room.Left, vertical: true), RoundToInt(block.Y - 0.5f));
-        if (MathF.Abs(block.X - room.Right) < epsilon)
-            return new TileCoord(PerpendicularCoord(rooms, room.Right, vertical: true), RoundToInt(block.Y - 0.5f));
+        foreach (var rect in room.Rects)
+        {
+            if (MathF.Abs(block.Y - rect.Y) < epsilon && block.X > rect.X - epsilon && block.X < rect.Right + epsilon)
+                return new TileCoord(RoundToInt(block.X - 0.5f), PerpendicularCoord(rooms, rect.Y, vertical: false));
+            if (MathF.Abs(block.Y - rect.Bottom) < epsilon && block.X > rect.X - epsilon && block.X < rect.Right + epsilon)
+                return new TileCoord(RoundToInt(block.X - 0.5f), PerpendicularCoord(rooms, rect.Bottom, vertical: false));
+            if (MathF.Abs(block.X - rect.X) < epsilon && block.Y > rect.Y - epsilon && block.Y < rect.Bottom + epsilon)
+                return new TileCoord(PerpendicularCoord(rooms, rect.X, vertical: true), RoundToInt(block.Y - 0.5f));
+            if (MathF.Abs(block.X - rect.Right) < epsilon && block.Y > rect.Y - epsilon && block.Y < rect.Bottom + epsilon)
+                return new TileCoord(PerpendicularCoord(rooms, rect.Right, vertical: true), RoundToInt(block.Y - 0.5f));
+        }
         throw new InvalidOperationException($"WallBlock {block.Id} doesn't lie on any edge of room {room.Id}.");
     }
 

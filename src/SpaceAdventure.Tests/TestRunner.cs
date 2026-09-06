@@ -465,6 +465,7 @@ internal static partial class TestRunner
         ("NonRectangularRoom_FindRoomPairOverlaps_FindsRealTouchNotBoundingBoxGhost", NonRectangularRoom_FindRoomPairOverlaps_FindsRealTouchNotBoundingBoxGhost),
         ("NonRectangularRoom_Validator_RejectsAirlockOnAmbiguousMultiSubrectSide", NonRectangularRoom_Validator_RejectsAirlockOnAmbiguousMultiSubrectSide),
         ("NonRectangularRoom_Validator_AcceptsAirlockOnUnambiguousSide", NonRectangularRoom_Validator_AcceptsAirlockOnUnambiguousSide),
+        ("NonRectangularRoom_World_CharacterInFarArm_RoomIdStaysCorrectAfterUnrelatedBreach", NonRectangularRoom_World_CharacterInFarArm_RoomIdStaysCorrectAfterUnrelatedBreach),
         ("RectilinearDecomposition_PlainRectangle_YieldsExactlyOnePiece", RectilinearDecomposition_PlainRectangle_YieldsExactlyOnePiece),
         ("RectilinearDecomposition_LShape_DecomposesCleanly", RectilinearDecomposition_LShape_DecomposesCleanly),
         ("RectilinearDecomposition_PlusShape_DecomposesCleanly", RectilinearDecomposition_PlusShape_DecomposesCleanly),

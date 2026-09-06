@@ -297,32 +297,41 @@ public sealed partial class Ship
     // (World.EnemyAi.cs treats every WallBlock alike) and repaired the same way. A door footprint
     // cut into the boundary is filtered out afterward by the same pass the constructor already
     // runs for outer wall blocks.
+    // Generalized (humble-soaring-cat.md M90) to run against every room's flattened subrects
+    // instead of assuming one rectangle per room - a same-room subrect pair is skipped outright
+    // (internal seam, never a wall - two pieces of the same multi-rect room are one continuous
+    // space). Byte-identical to the old per-room math whenever every room has exactly one rect
+    // (every hand-authored hull, forever), since RoomGeometry.Flatten produces exactly one RoomRect
+    // per such room.
     private static IEnumerable<WallBlock> GenerateInteriorWallBlocks(IReadOnlyList<Room> rooms)
     {
         const float Epsilon = 0.01f;
         var index = 0;
-        for (var i = 0; i < rooms.Count; i++)
+        var flat = RoomGeometry.Flatten(rooms);
+        for (var i = 0; i < flat.Count; i++)
         {
-            for (var j = i + 1; j < rooms.Count; j++)
+            for (var j = i + 1; j < flat.Count; j++)
             {
-                var a = rooms[i];
-                var b = rooms[j];
+                var a = flat[i];
+                var b = flat[j];
+                if (a.RoomId == b.RoomId)
+                    continue;
 
-                if (Math.Abs(a.Right - b.Left) < Epsilon || Math.Abs(b.Right - a.Left) < Epsilon)
+                if (Math.Abs(a.Rect.Right - b.Rect.X) < Epsilon || Math.Abs(b.Rect.Right - a.Rect.X) < Epsilon)
                 {
-                    var sharedX = Math.Abs(a.Right - b.Left) < Epsilon ? a.Right : a.Left;
-                    var overlapTop = Math.Max(a.Top, b.Top);
-                    var overlapBottom = Math.Min(a.Bottom, b.Bottom);
+                    var sharedX = Math.Abs(a.Rect.Right - b.Rect.X) < Epsilon ? a.Rect.Right : a.Rect.X;
+                    var overlapTop = Math.Max(a.Rect.Y, b.Rect.Y);
+                    var overlapBottom = Math.Min(a.Rect.Bottom, b.Rect.Bottom);
                     for (var y = overlapTop; y < overlapBottom - Epsilon; y += 1f)
-                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, sharedX, y + 0.5f, IsInterior: true, OtherRoomId: b.Id);
+                        yield return new WallBlock($"{a.RoomId}-{b.RoomId}-wall-{index++}", a.RoomId, sharedX, y + 0.5f, IsInterior: true, OtherRoomId: b.RoomId);
                 }
-                else if (Math.Abs(a.Bottom - b.Top) < Epsilon || Math.Abs(b.Bottom - a.Top) < Epsilon)
+                else if (Math.Abs(a.Rect.Bottom - b.Rect.Y) < Epsilon || Math.Abs(b.Rect.Bottom - a.Rect.Y) < Epsilon)
                 {
-                    var sharedY = Math.Abs(a.Bottom - b.Top) < Epsilon ? a.Bottom : a.Top;
-                    var overlapLeft = Math.Max(a.Left, b.Left);
-                    var overlapRight = Math.Min(a.Right, b.Right);
+                    var sharedY = Math.Abs(a.Rect.Bottom - b.Rect.Y) < Epsilon ? a.Rect.Bottom : a.Rect.Y;
+                    var overlapLeft = Math.Max(a.Rect.X, b.Rect.X);
+                    var overlapRight = Math.Min(a.Rect.Right, b.Rect.Right);
                     for (var x = overlapLeft; x < overlapRight - Epsilon; x += 1f)
-                        yield return new WallBlock($"{a.Id}-{b.Id}-wall-{index++}", a.Id, x + 0.5f, sharedY, IsInterior: true, OtherRoomId: b.Id);
+                        yield return new WallBlock($"{a.RoomId}-{b.RoomId}-wall-{index++}", a.RoomId, x + 0.5f, sharedY, IsInterior: true, OtherRoomId: b.RoomId);
                 }
             }
         }
