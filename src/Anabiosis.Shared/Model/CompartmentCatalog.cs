@@ -146,50 +146,49 @@ public static class CompartmentCatalog
             },
             Devices: OneDevice(CustomDeviceKind.Reactor, 4, 3),
             Engines: NoEngines),
-        // 14x10 bbox, same 2x2-cut-corner octagon convention as reactor-d - a side-by-side
-        // Navigation ("сканер")/Helm ("навигационная панель") console pair, from the user's own
-        // reference screenshot ("1 тип кокпита"). Both placed Rotated (their own authored 3x2
-        // becomes a 2-wide x 3-tall standing console, matching the reference's tall panel look),
-        // with a walking corridor between them and along both flanks leading to the left/right
-        // doors (auto-generated at stitching, same as every other entry here - not baked in).
+        // 3 rounds of guessing this shape from a static reference screenshot all came back wrong
+        // (direct user rejection each time - "на скриншоте вообще другая форма кокпита, абсолютно
+        // другая"), so the user built it in the Ship Editor and saved it ("Кокпит 2") instead - this
+        // entry is a byte-exact transcription of that save's own .tiles.json (no guessing left): a
+        // 5-wide x 2-tall windowed "nose" (WallMaterial.Window on its own perimeter in the source
+        // file) sitting on a 7-wide x 7-tall main cabin. Navigation/Helm both Rotated (standing
+        // consoles, 2-wide x 3-tall), placed side by side in the cabin's upper-middle rows exactly
+        // where the user put them. Doors are NOT baked in (same convention as every other entry -
+        // they come from stitching), even though the source save has 2 double doors (left/right
+        // flanks) and 1 single door (bottom, centered) of its own.
         new CompartmentCatalogEntry(
             Id: "cockpit-a",
             DisplayName: "Кокпит (тип 1)",
             Type: CompartmentType.Cockpit,
             FootprintRects: new[]
             {
-                new RectF(0, 2, 14, 6),
-                new RectF(2, 0, 10, 2),
-                new RectF(2, 8, 10, 2),
+                new RectF(1, 0, 5, 2),
+                new RectF(0, 2, 7, 7),
             },
             Devices: new[]
             {
-                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(3, 3), IsCore: true, Rotated: true),
-                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(9, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(1, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(4, 3), IsCore: true, Rotated: true),
             },
             Engines: NoEngines),
-        // Second variant from the SAME reference screenshot (direct user request - "добавь ещё один
-        // кокпит с вот такими размерами"). Revised smaller/more compact after the user flagged the
-        // first attempt as wrong on all 3 counts (proportions, N/H placement, doors) - a careful
-        // re-read of the reference's own grid, not measured pixel-for-pixel: still a best-effort
-        // estimate, correct on specific tile deltas if still off rather than guessed from scratch
-        // again. Devices UNROTATED here (3 wide x 2 tall each) - the compact 4-row middle band only
-        // has 2 interior rows, enough for the unrotated orientation, not the standing/rotated one
-        // cockpit-a uses.
+        // Second variant, same file-transcription approach - a byte-exact read of the user's own
+        // "Кокпит 3" save. A shallower, wider shape than cockpit-a: a 9-wide x 1-tall notch on top of
+        // an 11-wide x 4-tall main cabin. Navigation/Helm both UNROTATED here (the cabin's own
+        // interior is only 4 rows deep, enough for the flat 3-wide x 2-tall orientation, not the
+        // standing one cockpit-a uses) - matches the source save exactly.
         new CompartmentCatalogEntry(
             Id: "cockpit-b",
             DisplayName: "Кокпит (тип 2)",
             Type: CompartmentType.Cockpit,
             FootprintRects: new[]
             {
-                new RectF(0, 2, 10, 4),
-                new RectF(2, 0, 6, 2),
-                new RectF(2, 6, 6, 2),
+                new RectF(1, 0, 9, 1),
+                new RectF(0, 1, 11, 4),
             },
             Devices: new[]
             {
-                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(1, 3), IsCore: true),
-                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(5, 3), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(2, 1), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(6, 1), IsCore: true),
             },
             Engines: NoEngines),
     };

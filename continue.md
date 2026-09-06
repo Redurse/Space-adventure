@@ -1,4 +1,4 @@
-# Space Adventure — контекст для продолжения работы
+# Anabiosis — контекст для продолжения работы
 
 Этот файл — конспект для Claude (или любого другого агента), который продолжит работу над
 проектом на другой машине/аккаунте без доступа к истории текущей сессии. Дизайн-документ
@@ -17,23 +17,23 @@ in-process транспорт (`InProcessTransport`), но серверная с
 ## Структура решения
 
 ```
-Space adventure/
+Anabiosis/
   game_design.md       — дизайн-документ (источник истины по геймплею, фазы 1-4)
   architecture.md       — архитектурные заметки/открытые вопросы
-  SpaceAdventure.sln
+  Anabiosis.sln
   src/
-    SpaceAdventure.Shared/    — модель данных + протокол, без MonoGame-зависимостей
-    SpaceAdventure.Server/    — вся симуляция (World.cs + partial-файлы по темам)
-    SpaceAdventure.Client/    — рендер/ввод, никакой игровой логики
-    SpaceAdventure.Tests/     — ручной test runner (без внешнего фреймворка), TestRunner.cs
+    Anabiosis.Shared/    — модель данных + протокол, без MonoGame-зависимостей
+    Anabiosis.Server/    — вся симуляция (World.cs + partial-файлы по темам)
+    Anabiosis.Client/    — рендер/ввод, никакой игровой логики
+    Anabiosis.Tests/     — ручной test runner (без внешнего фреймворка), TestRunner.cs
 ```
 
 ### Сборка / тесты / запуск
 
 ```bash
-dotnet build "SpaceAdventure.sln"
-dotnet run --project src/SpaceAdventure.Tests --no-build     # 106/106 должно быть зелёным
-dotnet run --project src/SpaceAdventure.Client --no-build    # запускает окно игры (Windows-приложение);
+dotnet build "Anabiosis.sln"
+dotnet run --project src/Anabiosis.Tests --no-build     # 106/106 должно быть зелёным
+dotnet run --project src/Anabiosis.Client --no-build    # запускает окно игры (Windows-приложение);
                                                               # первым делом покажет экран выбора корабля (1/2/3)
 ```
 
@@ -461,10 +461,10 @@ doc-comment), и с другими id устройство просто тихо
    `health=0` после надевания скафандра во всех 30 попытках подряд — не похоже на удачу). Проверено
    30 подряд чистыми прогонами после фикса.
 10. **`timeout N dotnet run --project ...` в этой песочнице не всегда убивает дочерний .exe.**
-    После `dotnet run --project src/SpaceAdventure.Client --no-build`, убитого через `timeout`,
-    `SpaceAdventure.Client.exe` иногда продолжает висеть в фоне и блокирует DLL при следующей
+    После `dotnet run --project src/Anabiosis.Client --no-build`, убитого через `timeout`,
+    `Anabiosis.Client.exe` иногда продолжает висеть в фоне и блокирует DLL при следующей
     `dotnet build` (ошибка копирования файла, "занят другим процессом"). Проверять
-    `Get-Process -Name SpaceAdventure.Client` после такой проверки и явно `Stop-Process -Force`,
+    `Get-Process -Name Anabiosis.Client` после такой проверки и явно `Stop-Process -Force`,
     если процесс остался — не полагаться на то, что `timeout` сам всё почистил.
 11. **`MoveCharacterTo`-хелпер ломается, если целевая Y отличается от высоты дверей (обычно 3), а
     путь пересекает несколько комнат.** Диагональный bang-bang контроллер идёт к цели равными
@@ -512,7 +512,7 @@ doc-comment), и с другими id устройство просто тихо
     (за фасадом `= null!`) до тех пор, пока игрок не выберет корабль на стартовом экране.**
     Обнаружено на практике во время единой-камеры-сессии: фоновый запуск клиента для проверки
     сборки закрылся до нажатия 1/2/3 — `UnloadContent` тут же уронил `NullReferenceException`
-    (падение процесса ещё и оставило `SpaceAdventure.Client.exe` висеть и блокировать DLL для
+    (падение процесса ещё и оставило `Anabiosis.Client.exe` висеть и блокировать DLL для
     следующей сборки, см. пункт 10 выше). **Фикс**: `_session?.Dispose()` вместо
     `_session.Dispose()`. Не связано с M15-M18/единой камерой по сути, просто впервые
     проявилось при их проверке.
@@ -1813,7 +1813,7 @@ SR-защёлка, при одновременном set+reset побеждае�
 делегирует прямоугольник `GetGoodRect`.
 
 **Проверено**: 224/224 тестов (дважды подряд без флейка — клиентские правки не трогают покрытый
-тестами код), чистая сборка всего решения (`SpaceAdventure.sln`) без ошибок. Живая проверка в
+тестами код), чистая сборка всего решения (`Anabiosis.sln`) без ошибок. Живая проверка в
 MonoGame-окне не проводилась (ограничение песочницы, см. раздел про верификацию выше) — по запросу
 пользователя после этого прохода.
 
@@ -2116,7 +2116,7 @@ Y≈0.5) — расстояние ~5.5 units, далеко за пределам
 - **GitHub CLI** — удалён через `winget uninstall --id GitHub.cli` (потребовалось поднять права
   через `Start-Process -Verb RunAs`, обычный `winget uninstall` падал с 1603 без прав админа).
 - **Никнейм** (`PlayerSettingsStore.cs`, новый) — тот же паттерн, что `SaveStore.cs` (тот же
-  `%LocalAppData%\SpaceAdventure\`, JSON, temp-файл + move, проглатывание ошибок), только это
+  `%LocalAppData%\Anabiosis\`, JSON, temp-файл + move, проглатывание ошибок), только это
   профиль ИГРОКА, а не сейва — не стирается при выборе нового корабля. `Game1.Menu.cs` получил
   третий экран `MenuScreen.Nickname`, показывается ПЕРВЫМ при каждом запуске (не только при первом
   знакомстве), предзаполнен сохранённым именем — Enter подтверждает и сохраняет.
@@ -2980,7 +2980,7 @@ Lost Colony, чтобы системы смотрелись более упор�
   обновлён на тот же метод, поведение то же (все 200 систем в одном компоненте).
 
 **Проверено**: `dotnet build` на решении целиком — чисто (0 ошибок компиляции; в моменте
-пересборки процесс `SpaceAdventure.Client.exe` был запущен — это не ошибка в коде, просто
+пересборки процесс `Anabiosis.Client.exe` был запущен — это не ошибка в коде, просто
 занятый файл, пересоберётся сам при следующем запуске после закрытия окна). Полный набор тестов
 дважды подряд: 286/287 (только заранее известный посторонний флейк
 `World_Docking_AtWar_NeverArmsTheButton`), включая три переименованных/обновлённых теста на варп.
@@ -3023,7 +3023,7 @@ Lost Colony, чтобы системы смотрелись более упор�
   свободных координат никогда не было этой ловушки в принципе (сценарий структурно исчез, не
   просто прошёл).
 
-**Проверено**: `dotnet build` — 0 ошибок компиляции (сам `SpaceAdventure.Client.exe` в моменте
+**Проверено**: `dotnet build` — 0 ошибок компиляции (сам `Anabiosis.Client.exe` в моменте
 пересборки был запущен — не ошибка кода, просто копирование в его `bin` было занято; пересоберётся
 при следующем запуске). Полный набор тестов дважды подряд: 285/286 (только известный посторонний
 флейк `World_Docking_AtWar_NeverArmsTheButton`) — 286 = 287 предыдущих минус один удалённый
@@ -3161,7 +3161,7 @@ backbuffer-диагностикой с тремя случаями (без уг�
   `ArgumentException: An item with the same key has already been added` прямо на первом кадре
   отрисовки редактора (`DrawEditorBottomBar` вызывает `Validate` каждый кадр, чтобы решить,
   рисовать ли кнопку «Играть» активной).
-- **Что уже произошло на диске**: у пользователя `%LOCALAPPDATA%\SpaceAdventure\custom-ship.json`
+- **Что уже произошло на диске**: у пользователя `%LOCALAPPDATA%\Anabiosis\custom-ship.json`
   уже содержал два отсека с одинаковым `Id: "room-6"` (сохранено ещё до того, как это было
   замечено — автосохранение пишет на каждое действие). Файл вручную восстановлен: «лишний»
   1×1 отсек (не связанный дверями/люками/устройствами ни с чем — только большой `room-6` 4×2
@@ -3583,7 +3583,7 @@ minReachableNeighbors)` докидывает процедурный хвост �
 переподключена под новую роль.
 
 **M43 — персистентные ИИ-корабли.** Новые `NpcShipKind {Cargo, Military, Scout}` и
-`NpcShipRuntime` (`SpaceAdventure.Server/NpcShipRuntime.cs`) — живут только в ТЕКУЩЕЙ системе
+`NpcShipRuntime` (`Anabiosis.Server/NpcShipRuntime.cs`) — живут только в ТЕКУЩЕЙ системе
 (`World.NpcShips.cs`), популяция (до 8 штук) пересчитывается лениво при входе в новую систему.
 Грузовые шаттлят между станциями системы (или до синтетической точки за радиусом варпа, если
 станция всего одна); военные патрулируют случайными точками и становятся угрозой только когда
@@ -3741,7 +3741,7 @@ GetScannerHandleScreen, DrawRadarBezel/DrawScannerHandle/HitTestContact/DrawGlow
 `GalaxyMapPanel.ShipAndStations.cs` (161 строка: DrawShipMarker/DrawShipHullSchematic/
 DrawStationSchematic/DrawShipVelocityVector), `GalaxyMapPanel.FieldContent.cs` (156 строк:
 DrawSystemBackdrop/DrawWarpZoneRing/DrawLargestAsteroidMarkers/DrawCloseRangeContacts). Единственная
-реальная правка — две забытые `using SpaceAdventure.Shared.Model;` в новых файлах (AsteroidShape/
+реальная правка — две забытые `using Anabiosis.Shared.Model;` в новых файлах (AsteroidShape/
 SystemOrbits оттуда), поймано сразу же сборкой.
 
 `Game1.cs` (1949 строк) — Update()/Draw() сами по себе гигантские (~500 строк каждый) и НЕ
@@ -3938,8 +3938,8 @@ throwaway-путь (`TestRunner.Diagnostic()`) сразу показала об�
 что и остальные 4 (`spaceadventure-known-test-failure.md` в памяти), просто в этот раз задел ещё
 один тест из той же нестабильной области.
 
-Видимость (клиентский рендер) отдельным автотестом не покрыта — `SpaceAdventure.Tests` не
-ссылается на `SpaceAdventure.Client` вообще, поэтому `Occluders`/`VisibilityMask` можно проверить
+Видимость (клиентский рендер) отдельным автотестом не покрыта — `Anabiosis.Tests` не
+ссылается на `Anabiosis.Client` вообще, поэтому `Occluders`/`VisibilityMask` можно проверить
 только вживую. Живая проверка ограничилась смоук-тестом (билд+запуск, в том числе поверх реального
 загруженного боя с несколькими вражескими кораблями, тем же самым рендер-путём, без падений и
 визуальных артефактов) — прицельное прорезание пролома и его фотографирование вживую не делалось
