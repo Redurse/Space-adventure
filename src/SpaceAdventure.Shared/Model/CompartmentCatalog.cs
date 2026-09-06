@@ -65,14 +65,54 @@ public static class CompartmentCatalog
     private static readonly CompartmentEngineSpec[] NoEngines = Array.Empty<CompartmentEngineSpec>();
 
     // Cleared at the user's own direct request ("вместо всех текущих отсеков я буду присылать новые
-    // вариации") - every hand-authored entry this milestone originally shipped with is gone, ready
-    // for a fresh set to replace them. The schema above (CompartmentType/CompartmentDeviceSpec/
-    // CompartmentEngineSpec/CompartmentAirlockSpec/CompartmentCatalogEntry) and CompartmentPlacer.cs's
-    // own placement algorithm are untouched - only the data went away. Every client call site
-    // (Game1.ShipEditor.DeviceTabs.cs's own palette, Game1.ShipEditor.cs/.Draw.cs's Find lookups)
-    // already handles an empty/missing entry gracefully, so this compiles and runs fine as-is; the
-    // Compartment tool's own palette will just show nothing to place until new entries land here.
-    public static IReadOnlyList<CompartmentCatalogEntry> Entries { get; } = Array.Empty<CompartmentCatalogEntry>();
+    // вариации") - every hand-authored entry this milestone originally shipped with is gone, and is
+    // being replaced one reference image at a time. Every client call site (Game1.ShipEditor.
+    // DeviceTabs.cs's own palette, Game1.ShipEditor.cs/.Draw.cs's Find lookups) already handles an
+    // empty/missing entry gracefully, so the catalog compiles and runs fine at any point during this
+    // replacement.
+    //
+    // reactor-a/b/c: 3 reference screenshots from the user, all labelled "N тип реакторного отсека" -
+    // same reactor prop, same 3-door composition (double door north, single doors east/west), each
+    // reference just drawn with progressively more open floor around that core and a chamfered/
+    // octagon-ish OUTER hull silhouette that gets more pronounced from a to c. The chamfered corners
+    // are NOT reproducible here: this whole milestone's architecture is plain WxH rectangles only
+    // (BuildDefinitionFromTiles hard-requires a rectangular SealedRegion, and CompartmentPlacer.Stamp
+    // always floors a full rectangle) - reproducing an octagon room would need genuinely new stamping
+    // logic, not something these 3 reference images asked for on their own. So each entry below keeps
+    // the real, functional part (rectangular ring, centered reactor, doors auto-inserted at stitching
+    // per TileShipBuilder's own gap-closing - confirmed with the user, NOT CompartmentAirlockSpec,
+    // which stays Docking-only) and just grows the rectangle a/b/c to match each reference's visibly
+    // larger floor area; the chamfered exterior art itself is dropped. Anchor in each centers the
+    // Reactor's 4x4 footprint (CustomDeviceFootprint.Size) inside the ring - see TileShipBuilder.cs's
+    // own doc comment on why a multi-tile device's RelativePosition is its footprint's top-left
+    // anchor, not its center.
+    public static IReadOnlyList<CompartmentCatalogEntry> Entries { get; } = new[]
+    {
+        new CompartmentCatalogEntry(
+            Id: "reactor-a",
+            DisplayName: "Реакторный отсек (тип 1)",
+            Type: CompartmentType.Reactor,
+            Width: 10,
+            Height: 9,
+            Devices: OneDevice(CustomDeviceKind.Reactor, 3, 2),
+            Engines: NoEngines),
+        new CompartmentCatalogEntry(
+            Id: "reactor-b",
+            DisplayName: "Реакторный отсек (тип 2)",
+            Type: CompartmentType.Reactor,
+            Width: 12,
+            Height: 10,
+            Devices: OneDevice(CustomDeviceKind.Reactor, 4, 3),
+            Engines: NoEngines),
+        new CompartmentCatalogEntry(
+            Id: "reactor-c",
+            DisplayName: "Реакторный отсек (тип 3)",
+            Type: CompartmentType.Reactor,
+            Width: 13,
+            Height: 9,
+            Devices: OneDevice(CustomDeviceKind.Reactor, 4, 2),
+            Engines: NoEngines),
+    };
 
     // A non-overlapping grid of Distribution panels filling the compartment's own interior (never the
     // ring - see CompartmentDeviceSpec's own doc comment), the first one flagged as this compartment's
