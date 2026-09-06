@@ -1489,18 +1489,56 @@ public sealed class ShipRenderer
     private static readonly Color DoorSeam = new(110, 50, 32);
     private static readonly Color DoorBrace = new(92, 44, 24);
 
+    private static readonly Color DoorSeamHighlight = new(232, 138, 95);
+    private static readonly Color DoorWornPaint = new(232, 168, 72);
+
     private void DrawClosedDoorLeaf(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, bool leadsToVacuum)
     {
         DrawTopLitBands(spriteBatch, rect, horizontal, DoorPanelBands);
 
         // The center seam - between the two leaf halves, exactly where DrawDoorLeafCaps' own split
         // already reads as "open" for the same door, so closed and open agree on where the leaf
-        // actually divides.
+        // actually divides. A thin lit sliver right beside it, same "one overhead light" language
+        // the frame's own top strip and the panel's own bands already use.
         const int seamThickness = 4;
         if (horizontal)
+        {
             spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - seamThickness / 2, rect.Y, seamThickness, rect.Height), DoorSeam);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X, rect.Y, 1, rect.Height), DoorSeamHighlight);
+        }
         else
+        {
             spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Center.Y - seamThickness / 2, rect.Width, seamThickness), DoorSeam);
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Center.Y, rect.Width, 1), DoorSeamHighlight);
+        }
+
+        // Each half reads as its own riveted plate - an inset bevel outline plus the same 4-corner
+        // rivet shared by every other device's own housing (DrawRivets), just run twice instead of
+        // once so each half gets its own set rather than only the leaf's outer corners.
+        const int panelInset = 6;
+        foreach (var half in horizontal
+                     ? new[]
+                     {
+                         new Rectangle(rect.X, rect.Y, rect.Width / 2, rect.Height),
+                         new Rectangle(rect.Center.X, rect.Y, rect.Width - rect.Width / 2, rect.Height),
+                     }
+                     : new[]
+                     {
+                         new Rectangle(rect.X, rect.Y, rect.Width, rect.Height / 2),
+                         new Rectangle(rect.X, rect.Center.Y, rect.Width, rect.Height - rect.Height / 2),
+                     })
+        {
+            var inset = new Rectangle(half.X + panelInset, half.Y + panelInset, Math.Max(1, half.Width - panelInset * 2), Math.Max(1, half.Height - panelInset * 2));
+            DrawRectOutline(spriteBatch, inset, DoorBrace, 1);
+            DrawRivets(spriteBatch, half);
+        }
+
+        // A couple of worn-paint chips (direct user request, "детализированнее") - purely cosmetic
+        // asymmetric wear so the panel doesn't read as a perfectly uniform print, always at the same
+        // two corners regardless of door size so it never overlaps the brace/rivets above.
+        const int wornSize = 5;
+        spriteBatch.Draw(_pixel, new Rectangle(rect.X + panelInset + 2, rect.Bottom - panelInset - wornSize - 2, wornSize, wornSize / 2), DoorWornPaint * 0.7f);
+        spriteBatch.Draw(_pixel, new Rectangle(rect.Right - panelInset - wornSize - 2, rect.Y + panelInset + 2, wornSize, wornSize / 2), DoorWornPaint * 0.7f);
 
         DrawDoorBraces(spriteBatch, rect, horizontal, leadsToVacuum);
     }
