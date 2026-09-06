@@ -1447,23 +1447,114 @@ public sealed class ShipRenderer
         DrawDoorTerminals(spriteBatch, rect, horizontal, indicator);
     }
 
+    // Bronze/brass housing (direct user request, matching a reference screenshot) - a plain flat
+    // fill read as too flat next to the leaf's own top-lit bands below, so the bezel gets one too:
+    // a lighter strip along its top edge standing in for the same single overhead light source.
+    private static readonly Color DoorFrameLit = new(140, 107, 74);
+    private static readonly Color DoorFrame = new(90, 68, 46);
+    private static readonly Color DoorFrameDestroyed = new(92, 80, 72);
+
     private void DrawDoorFrame(SpriteBatch spriteBatch, Rectangle rect, bool destroyed)
     {
         const int margin = 5;
         var bezel = new Rectangle(rect.X - margin, rect.Y - margin, rect.Width + margin * 2, rect.Height + margin * 2);
-        spriteBatch.Draw(_pixel, bezel, destroyed ? new Color(92, 80, 72) : new Color(92, 104, 116));
+        if (destroyed)
+        {
+            spriteBatch.Draw(_pixel, bezel, DoorFrameDestroyed);
+        }
+        else
+        {
+            spriteBatch.Draw(_pixel, bezel, DoorFrame);
+            var litHeight = Math.Max(2, bezel.Height / 4);
+            spriteBatch.Draw(_pixel, new Rectangle(bezel.X, bezel.Y, bezel.Width, litHeight), DoorFrameLit);
+        }
         DrawRivets(spriteBatch, bezel);
     }
 
+    // Warm painted-metal panel (direct user request, matching a reference screenshot) - a top-lit
+    // gradient (approximated as flat bands, same "no image assets" convention as everywhere else in
+    // this file) plus a stepped diagonal brace on each leaf half. Every offset is a fraction of
+    // rect/halfWidth rather than a fixed pixel count, so the exact same drawing already scales
+    // correctly whether this door spans one tile or two (Door.Width/Height, ShipRenderer.GetDoorRect) -
+    // no separate "single" vs "double" art or code path needed.
+    private static readonly Color[] DoorPanelBands = { new(224, 128, 80), new(200, 98, 60), new(168, 78, 48), new(136, 60, 36) };
+    private static readonly Color DoorSeam = new(110, 50, 32);
+    private static readonly Color DoorBrace = new(92, 44, 24);
+
     private void DrawClosedDoorLeaf(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, bool leadsToVacuum)
     {
-        spriteBatch.Draw(_pixel, rect, Color.DarkRed);
-        if (horizontal)
-            spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Center.Y - 1, rect.Width, 2), new Color(58, 10, 10));
-        else
-            spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - 1, rect.Y, 2, rect.Height), new Color(58, 10, 10));
+        DrawTopLitBands(spriteBatch, rect, horizontal, DoorPanelBands);
 
-        DrawDoorEdgeStripes(spriteBatch, rect, horizontal, leadsToVacuum ? 8 : 6);
+        // The center seam - between the two leaf halves, exactly where DrawDoorLeafCaps' own split
+        // already reads as "open" for the same door, so closed and open agree on where the leaf
+        // actually divides.
+        const int seamThickness = 4;
+        if (horizontal)
+            spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - seamThickness / 2, rect.Y, seamThickness, rect.Height), DoorSeam);
+        else
+            spriteBatch.Draw(_pixel, new Rectangle(rect.X, rect.Center.Y - seamThickness / 2, rect.Width, seamThickness), DoorSeam);
+
+        DrawDoorBraces(spriteBatch, rect, horizontal, leadsToVacuum);
+    }
+
+    // Fills rect with `bands.Length` equal strips along the SHORT axis (top-to-bottom for a
+    // horizontal door, left-to-right for a vertical one - always across the leaf's own thickness,
+    // never along its length), lightest band first - the same "one overhead light source" language
+    // DrawDoorFrame's own lit strip above uses.
+    private void DrawTopLitBands(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, Color[] bands)
+    {
+        var span = horizontal ? rect.Height : rect.Width;
+        for (var i = 0; i < bands.Length; i++)
+        {
+            var from = i * span / bands.Length;
+            var to = (i + 1) * span / bands.Length;
+            var band = horizontal
+                ? new Rectangle(rect.X, rect.Y + from, rect.Width, to - from)
+                : new Rectangle(rect.X + from, rect.Y, to - from, rect.Height);
+            spriteBatch.Draw(_pixel, band, bands[i]);
+        }
+    }
+
+    // One stepped (not smooth) diagonal per leaf half, mirrored around the center seam - reads as a
+    // welded cross-brace at a glance, blocky enough to sit comfortably next to the banded fill
+    // above rather than looking like a stray anti-aliased line.
+    private void DrawDoorBraces(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, bool leadsToVacuum)
+    {
+        const int steps = 6;
+        var halfLength = (horizontal ? rect.Width : rect.Height) / 2f;
+        var acrossExtent = horizontal ? rect.Height : rect.Width;
+        // Divides the leaf's own thickness exactly (never overshoots it), independent of how far
+        // along the diagonal actually runs - the two axes only need to agree on step COUNT, not size.
+        var acrossStep = Math.Max(1, acrossExtent / steps);
+        var thickness = Math.Max(2, acrossStep);
+        var alongStep = Math.Max(2, (int)(halfLength * 0.7f / steps));
+
+        void Brace(float lengthStart, int direction)
+        {
+            for (var i = 0; i < steps; i++)
+            {
+                var alongLeaf = lengthStart + direction * i * alongStep;
+                var acrossLeaf = i * acrossStep;
+                var pos = horizontal
+                    ? new Rectangle(rect.X + (int)alongLeaf, rect.Y + acrossLeaf, alongStep, thickness)
+                    : new Rectangle(rect.X + acrossLeaf, rect.Y + (int)alongLeaf, thickness, alongStep);
+                spriteBatch.Draw(_pixel, pos, DoorBrace);
+            }
+        }
+
+        // First half: brace runs from its near end inward; second half mirrors it outward from the
+        // seam - together they form the same "V per half" shape regardless of how wide either half
+        // actually is (one tile or two), since every offset above is relative to halfLength.
+        Brace(halfLength * 0.15f, 1);
+        Brace(halfLength * 0.85f, -1);
+        Brace(halfLength * 1.15f, 1);
+        Brace(halfLength * 1.85f, -1);
+
+        // leadsToVacuum keeps a thin hazard edge (the one place stripes still earn their keep - the
+        // functional "this one opens onto vacuum" signal, not decoration) rather than the old
+        // all-doors-get-stripes treatment.
+        if (leadsToVacuum)
+            DrawDoorEdgeStripes(spriteBatch, rect, horizontal, 5);
     }
 
     private void DrawOpenDoorLeaf(SpriteBatch spriteBatch, Rectangle rect, bool horizontal, bool leadsToVacuum)
