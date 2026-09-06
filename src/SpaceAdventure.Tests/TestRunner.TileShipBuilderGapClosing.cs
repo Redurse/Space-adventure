@@ -104,4 +104,43 @@ internal static partial class TestRunner
         var roomB = FindRoom(definition.Rooms, x: 20, y: 10, w: 2, h: 3);
         return roomA is not null && roomB is not null && definition.Doors.Count == 0;
     }
+
+    // ---- M88 (humble-soaring-cat.md, non-rectangular compartments) - a genuinely L-shaped region
+    // (a 4x2 arm plus a 2x2 arm below its left half - a step, not a rectangle) must decompose into
+    // a multi-rect CustomRoomDef instead of being rejected, AND still gap-close/door-connect
+    // correctly against a separate rectangular neighbour touching its east side. ----
+    private static bool TileShipBuilder_LShapedRegion_DecomposesAndConnectsWithDoor()
+    {
+        var tiles = new TileGrid();
+        for (var y = 0; y < 2; y++)
+            for (var x = 0; x < 4; x++)
+                tiles.SetFloor(new TileCoord(x, y), true);
+        for (var y = 2; y < 4; y++)
+            for (var x = 0; x < 2; x++)
+                tiles.SetFloor(new TileCoord(x, y), true);
+
+        // A separate rectangular region east of the L's top arm, joined by a 1-tile wall/door column.
+        for (var y = 0; y < 2; y++)
+        {
+            tiles.SetFloor(new TileCoord(4, y), true);
+            tiles.SetFloor(new TileCoord(5, y), true);
+        }
+        tiles.SetWall(new TileCoord(4, 0), TileWallKind.Solid);
+        tiles.SetWall(new TileCoord(4, 1), TileWallKind.Door);
+
+        var (definition, errors) = BuildTileDefinition(tiles);
+        if (definition is null || errors.Count > 0)
+            return false;
+        if (definition.Rooms.Count != 2)
+            return false;
+
+        var lRoom = definition.Rooms.FirstOrDefault(r => r.Rects.Count > 1);
+        if (lRoom is null)
+            return false;
+
+        if (definition.Doors.Count != 1)
+            return false;
+        var door = definition.Doors[0];
+        return door.RoomAId == lRoom.Id || door.RoomBId == lRoom.Id;
+    }
 }

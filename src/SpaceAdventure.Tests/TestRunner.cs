@@ -459,6 +459,7 @@ internal static partial class TestRunner
         ("World_Freighter_CanActuallyStartAHostedWorld", World_Freighter_CanActuallyStartAHostedWorld),
         ("TileShipBuilder_ExactSpanMatch_StillClosesGapAndConnectsWithDoor", TileShipBuilder_ExactSpanMatch_StillClosesGapAndConnectsWithDoor),
         ("TileShipBuilder_NoRealOverlap_LeavesRegionsUntouched", TileShipBuilder_NoRealOverlap_LeavesRegionsUntouched),
+        ("TileShipBuilder_LShapedRegion_DecomposesAndConnectsWithDoor", TileShipBuilder_LShapedRegion_DecomposesAndConnectsWithDoor),
         ("RectilinearDecomposition_PlainRectangle_YieldsExactlyOnePiece", RectilinearDecomposition_PlainRectangle_YieldsExactlyOnePiece),
         ("RectilinearDecomposition_LShape_DecomposesCleanly", RectilinearDecomposition_LShape_DecomposesCleanly),
         ("RectilinearDecomposition_PlusShape_DecomposesCleanly", RectilinearDecomposition_PlusShape_DecomposesCleanly),

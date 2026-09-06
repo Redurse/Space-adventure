@@ -44,54 +44,64 @@ public static class TileShipBuilder
             return (null, errors);
         }
 
-        // 1) Every region must be a perfectly filled rectangle - CustomRoomDef can only represent a
-        // plain AABB, not an arbitrary painted shape.
-        var rects = new Dictionary<int, TileRoomRect>();
+        // 1) Decompose every region's tile set into a small union of non-overlapping rectangles
+        // (RectilinearDecomposition, humble-soaring-cat.md M87) instead of rejecting anything that
+        // isn't a single perfectly-filled rectangle outright - a plain rectangular region (every
+        // hand-authored/editor-drawn room so far) still yields exactly 1 piece; an L/plus/notched-
+        // corner shape now yields a few pieces instead of an error.
+        var rects = new Dictionary<int, List<TileRoomRect>>();
         foreach (var (regionId, region) in tiles.Regions)
         {
             if (region.Tiles.Count == 0)
                 continue;
-            var minX = region.Tiles.Min(t => t.X);
-            var minY = region.Tiles.Min(t => t.Y);
-            var maxX = region.Tiles.Max(t => t.X);
-            var maxY = region.Tiles.Max(t => t.Y);
-            var rect = new TileRoomRect(minX, minY, maxX, maxY);
-            if (region.Tiles.Count != rect.Width * rect.Height)
+            var (decomposed, error) = RectilinearDecomposition.Decompose(region.Tiles);
+            if (error is not null || decomposed is null)
             {
-                errors.Add($"{ZoneNameFor(zones, region.Tiles) ?? $"Отсек {regionId}"}: отсек должен быть прямоугольным, чтобы играть.");
+                errors.Add($"{ZoneNameFor(zones, region.Tiles) ?? $"Отсек {regionId}"}: {error ?? "не удалось разобрать форму отсека."}");
                 continue;
             }
-            rects[regionId] = rect;
+            rects[regionId] = decomposed.Select(r => new TileRoomRect(r.MinX, r.MinY, r.MaxX, r.MaxY)).ToList();
         }
         if (errors.Count > 0)
             return (null, errors);
 
         var roomIds = rects.Keys.ToDictionary(id => id, id => $"room-{id}");
         var doorPairs = new HashSet<(int A, int B)>();
-        // Every (region, side) that turned out to face ANOTHER room once gap-closing ran - excluded
-        // from airlock consideration below regardless of whether that shared boundary got a door or
-        // stayed solid, since either way it's no longer a genuinely exterior hull side (the same
-        // "no neighbouring room on this side" condition CustomShipValidator itself enforces).
-        var sidesWithNeighbor = new HashSet<(int RegionId, TileSide Side)>();
+        // Every (region, subrect, side) that turned out to face ANOTHER room's subrect once gap-
+        // closing ran - excluded from airlock consideration below regardless of whether that shared
+        // boundary got a door or stayed solid, since either way it's no longer a genuinely exterior
+        // hull side (the same "no neighbouring room on this side" condition CustomShipValidator
+        // itself enforces). Keyed per subrect, not per whole region, since a multi-piece room can
+        // have one piece touching a neighbour while another piece's same-direction side is still
+        // genuine open hull.
+        var sidesWithNeighbor = new HashSet<(int RegionId, int SubrectIndex, TileSide Side)>();
 
-        // 2) Close the 1-tile gap wherever two regions are separated by a single wall/door column
-        // or row - only checking East/South from each region's own perspective means every adjacent
-        // pair gets examined exactly once (the pair's other half would find it via West/North).
+        // 2) Close the 1-tile gap wherever two DIFFERENT regions' subrects are separated by a
+        // single wall/door column or row - only checking East/South from each subrect's own
+        // perspective means every adjacent pair gets examined exactly once (the pair's other half
+        // would find it via West/North). Never fires between two subrects of the SAME region - they
+        // already tile that region's floor with zero gap by construction of the decomposition above,
+        // so CloseGapIfAdjacent's own neighborId==regionId guard naturally excludes them.
         foreach (var regionId in rects.Keys.ToList())
-        {
-            CloseGapIfAdjacent(tiles, regionId, TileSide.East, rects, doorPairs, sidesWithNeighbor);
-            CloseGapIfAdjacent(tiles, regionId, TileSide.South, rects, doorPairs, sidesWithNeighbor);
-        }
+            for (var i = 0; i < rects[regionId].Count; i++)
+            {
+                CloseGapIfAdjacent(tiles, regionId, i, TileSide.East, rects, doorPairs, sidesWithNeighbor);
+                CloseGapIfAdjacent(tiles, regionId, i, TileSide.South, rects, doorPairs, sidesWithNeighbor);
+            }
 
-        // 3) Airlocks - a Door tile immediately outside one of a room's sides, with genuine open
+        // 3) Airlocks - a Door tile immediately outside one of a subrect's sides, with genuine open
         // space (no other region) beyond it, marks that whole side as the ship's hull airlock -
         // exactly the "no neighbouring room on this side" condition CustomShipValidator itself
-        // requires (rule 7), just derived here instead of authored as a separate editor tool.
+        // requires (rule 7), just derived here instead of authored as a separate editor tool. A
+        // multi-piece room can in principle qualify on more than one subrect - ShipLayoutGeometry's
+        // own M89 follow-up is where "at most one subrect per (room, side)" gets enforced/validated;
+        // this step stays a faithful per-subrect generalization of the old per-region check.
         var airlocks = new List<CustomAirlockDef>();
-        foreach (var (regionId, rect) in rects)
-            foreach (var side in TileSideExtensions.All)
-                if (!sidesWithNeighbor.Contains((regionId, side)) && SideIsAirlock(tiles, rect, side))
-                    airlocks.Add(new CustomAirlockDef(roomIds[regionId], ToEdgeSide(side)));
+        foreach (var (regionId, subrects) in rects)
+            for (var i = 0; i < subrects.Count; i++)
+                foreach (var side in TileSideExtensions.All)
+                    if (!sidesWithNeighbor.Contains((regionId, i, side)) && SideIsAirlock(tiles, subrects[i], side))
+                        airlocks.Add(new CustomAirlockDef(roomIds[regionId], ToEdgeSide(side)));
 
         // 4) Devices - a device tile always sits on open floor (TileGrid.PlaceDevice's own
         // precondition), so it's always a member of exactly one region/room. `deviceKinds` is keyed
@@ -110,7 +120,7 @@ public static class TileShipBuilder
 
         var rooms = rects.Select(kv => new CustomRoomDef(
             roomIds[kv.Key], ZoneNameFor(zones, tiles.Regions[kv.Key].Tiles) ?? $"Отсек {kv.Key}",
-            kv.Value.MinX, kv.Value.MinY, kv.Value.Width, kv.Value.Height)).ToList();
+            kv.Value.Select(r => new RectF(r.MinX, r.MinY, r.Width, r.Height)).ToArray())).ToList();
         var doors = doorPairs.Select(p => new CustomDoorDef(roomIds[p.A], roomIds[p.B])).ToList();
 
         // Wall materials (direct user request - "усиленная стена"/"иллюминатор") - every painted
@@ -136,17 +146,19 @@ public static class TileShipBuilder
         return (new CustomShipDefinition(shipName, rooms, doors, airlocks, devices, forwardDegrees, wallMaterials, engineDefs), errors);
     }
 
-    // Looks for exactly one other already-converted region sitting 2 tiles away in `direction` (1
-    // tile of wall/door in between), with a matching span on the perpendicular axis - a clean,
-    // straight shared wall, not a partial/offset touch. When found, extends this region's rectangle
-    // by 1 tile onto that wall/door tile so the two rooms end up touching exactly (see this file's
-    // own doc comment), and records the pair as door-connected if any tile along that boundary is a
-    // door rather than a plain solid wall.
-    private static void CloseGapIfAdjacent(TileGrid tiles, int regionId, TileSide direction,
-        Dictionary<int, TileRoomRect> rects, HashSet<(int A, int B)> doorPairs,
-        HashSet<(int RegionId, TileSide Side)> sidesWithNeighbor)
+    // Looks for exactly one other already-converted region's SUBRECT sitting 2 tiles away in
+    // `direction` (1 tile of wall/door in between), with a matching span on the perpendicular axis -
+    // a clean, straight shared wall, not a partial/offset touch. When found, extends this subrect by
+    // 1 tile onto that wall/door tile so the two rooms end up touching exactly (see this file's own
+    // doc comment), and records the pair as door-connected if any tile along that boundary is a door
+    // rather than a plain solid wall. Never matches a subrect of `regionId` itself (its own
+    // neighborId==regionId guard below) - two pieces of the same multi-rect room are already flush
+    // by construction, never separated by a 1-tile wall/door gap.
+    private static void CloseGapIfAdjacent(TileGrid tiles, int regionId, int subrectIndex, TileSide direction,
+        Dictionary<int, List<TileRoomRect>> rects, HashSet<(int A, int B)> doorPairs,
+        HashSet<(int RegionId, int SubrectIndex, TileSide Side)> sidesWithNeighbor)
     {
-        var rect = rects[regionId];
+        var rect = rects[regionId][subrectIndex];
         IEnumerable<TileCoord> BoundaryLine(int offset) => direction switch
         {
             TileSide.East => Enumerable.Range(rect.MinY, rect.Height).Select(y => new TileCoord(rect.MaxX + offset, y)),
@@ -160,10 +172,10 @@ public static class TileShipBuilder
 
         var farRegionIds = BoundaryLine(2).Select(c => tiles.RegionIdAt(c)).Distinct().ToList();
         if (farRegionIds.Count != 1 || farRegionIds[0] is not { } neighborId || neighborId == regionId ||
-            !rects.TryGetValue(neighborId, out var neighborRect))
+            !rects.TryGetValue(neighborId, out var neighborSubrects))
             return;
 
-        // Only the two regions actually being 2 tiles apart in `direction` (exact) is required; the
+        // Only the two subrects actually being 2 tiles apart in `direction` (exact) is required; the
         // PERPENDICULAR span only needs to overlap by at least one tile, not match exactly - two
         // compartments of different sizes (e.g. a 7-tall reactor next to a 5-tall cockpit) can still
         // share a real, partial boundary. This mirrors FindRoomPairOverlaps's own Math.Max/Math.Min
@@ -172,16 +184,27 @@ public static class TileShipBuilder
         // MinY/MaxY here are inclusive tile coordinates (TileRoomRect.Height = MaxY - MinY + 1), so
         // the overlap condition is the inclusive-range one: Max(near.Min, far.Min) <= Min(near.Max,
         // far.Max). E.g. Y-ranges [7,13] and [8,12] overlap (8 <= 12); [7,13] and [14,18] do not
-        // (14 <= 13 is false).
-        var spanMatches = direction == TileSide.East
-            ? neighborRect.MinX == rect.MaxX + 2 && Math.Max(rect.MinY, neighborRect.MinY) <= Math.Min(rect.MaxY, neighborRect.MaxY)
-            : neighborRect.MinY == rect.MaxY + 2 && Math.Max(rect.MinX, neighborRect.MinX) <= Math.Min(rect.MaxX, neighborRect.MaxX);
-        if (!spanMatches)
+        // (14 <= 13 is false). A clean straight join lands on at most one of the neighbor's own
+        // pieces, so the first match found is the only one there ever is.
+        var neighborIndex = -1;
+        for (var j = 0; j < neighborSubrects.Count; j++)
+        {
+            var candidate = neighborSubrects[j];
+            var matches = direction == TileSide.East
+                ? candidate.MinX == rect.MaxX + 2 && Math.Max(rect.MinY, candidate.MinY) <= Math.Min(rect.MaxY, candidate.MaxY)
+                : candidate.MinY == rect.MaxY + 2 && Math.Max(rect.MinX, candidate.MinX) <= Math.Min(rect.MaxX, candidate.MaxX);
+            if (matches)
+            {
+                neighborIndex = j;
+                break;
+            }
+        }
+        if (neighborIndex < 0)
             return; // genuinely no shared span - leave both regions alone rather than guess
 
-        rects[regionId] = direction == TileSide.East ? rect with { MaxX = rect.MaxX + 1 } : rect with { MaxY = rect.MaxY + 1 };
-        sidesWithNeighbor.Add((regionId, direction));
-        sidesWithNeighbor.Add((neighborId, direction.Opposite()));
+        rects[regionId][subrectIndex] = direction == TileSide.East ? rect with { MaxX = rect.MaxX + 1 } : rect with { MaxY = rect.MaxY + 1 };
+        sidesWithNeighbor.Add((regionId, subrectIndex, direction));
+        sidesWithNeighbor.Add((neighborId, neighborIndex, direction.Opposite()));
         if (wallLine.Any(c => tiles.CellAt(c) is { Wall: TileWallKind.Door }))
             doorPairs.Add((Math.Min(regionId, neighborId), Math.Max(regionId, neighborId)));
     }
