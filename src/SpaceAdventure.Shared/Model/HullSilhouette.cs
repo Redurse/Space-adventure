@@ -6,13 +6,23 @@ namespace SpaceAdventure.Shared.Model;
 // that's one straight row of boxes the two are the same thing, so nobody noticed - but the moment a
 // class isn't a rectangle (the Corvette is a U, with open space between its engine pylons) the box
 // covers vacuum, and a crewman in magnetic boots walks across a gap with nothing under his feet.
+//
+// M92 (humble-soaring-cat.md, non-rectangular compartments) - flattens every room to its own
+// constituent RectF pieces first (a room can now be a non-rectangular UNION of several - Room.cs's
+// own M86), rather than one rectangle per room. RoomId isn't needed anywhere in this file (pure EVA/
+// boot-snapping geometry), so the flattened form here is just a plain RectF list. Byte-identical to
+// the old per-room math whenever every room has exactly one rect (every hand-authored hull/station,
+// forever) - genuinely carries someone around an inside corner of a multi-rect room's own notch too,
+// exactly the same way it already does for a multi-room hull's own concave silhouette.
 public static class HullSilhouette
 {
+    private static IEnumerable<RectF> Flatten(IReadOnlyList<Room> rooms) => rooms.SelectMany(r => r.Rects);
+
     public static bool Contains(IReadOnlyList<Room> rooms, Vec2 localPoint)
     {
-        foreach (var room in rooms)
-            if (localPoint.X >= room.Left && localPoint.X <= room.Right &&
-                localPoint.Y >= room.Top && localPoint.Y <= room.Bottom)
+        foreach (var rect in Flatten(rooms))
+            if (localPoint.X >= rect.Left && localPoint.X <= rect.Right &&
+                localPoint.Y >= rect.Top && localPoint.Y <= rect.Bottom)
                 return true;
         return false;
     }
@@ -24,27 +34,28 @@ public static class HullSilhouette
             return 0f;
 
         var nearest = float.MaxValue;
-        foreach (var room in rooms)
-            nearest = (float)Math.Min(nearest, (ClampToRoom(room, localPoint) - localPoint).Length());
+        foreach (var rect in Flatten(rooms))
+            nearest = (float)Math.Min(nearest, (ClampToRect(rect, localPoint) - localPoint).Length());
         return nearest;
     }
 
     // Where a boot ends up: standing `clearance` clear of the plating, on the outside of it.
     public static Vec2 SnapToSurface(IReadOnlyList<Room> rooms, Vec2 localPoint, float clearance)
     {
-        if (rooms.Count == 0)
+        var rects = Flatten(rooms).ToList();
+        if (rects.Count == 0)
             return localPoint;
 
         if (!Contains(rooms, localPoint))
         {
             // Outside already: walk in to the nearest bit of plating, then stand off it. Snapping
-            // to the *nearest* compartment rather than the whole box is what carries someone around
+            // to the *nearest* piece rather than the whole box is what carries someone around
             // an inside corner instead of across the gap it opens.
-            var best = ClampToRoom(rooms[0], localPoint);
+            var best = ClampToRect(rects[0], localPoint);
             var bestDistance = (best - localPoint).Length();
-            for (var i = 1; i < rooms.Count; i++)
+            for (var i = 1; i < rects.Count; i++)
             {
-                var candidate = ClampToRoom(rooms[i], localPoint);
+                var candidate = ClampToRect(rects[i], localPoint);
                 var distance = (candidate - localPoint).Length();
                 if (distance < bestDistance)
                     (best, bestDistance) = (candidate, distance);
@@ -55,29 +66,29 @@ public static class HullSilhouette
         }
 
         // Under the plating (walked into the hull, or spawned inside it): leave through the nearest
-        // face that actually opens onto space. A face shared with the next compartment is not a way
-        // out - stepping through it would put the boots inside the ship.
-        var exit = NearestExteriorExit(rooms, localPoint, clearance);
+        // face that actually opens onto space. A face shared with the next piece is not a way out -
+        // stepping through it would put the boots inside the ship.
+        var exit = NearestExteriorExit(rects, rooms, localPoint, clearance);
         return exit ?? localPoint;
     }
 
-    private static Vec2? NearestExteriorExit(IReadOnlyList<Room> rooms, Vec2 localPoint, float clearance)
+    private static Vec2? NearestExteriorExit(IReadOnlyList<RectF> rects, IReadOnlyList<Room> rooms, Vec2 localPoint, float clearance)
     {
         Vec2? best = null;
         var bestDistance = float.MaxValue;
 
-        foreach (var room in rooms)
+        foreach (var rect in rects)
         {
-            if (localPoint.X < room.Left || localPoint.X > room.Right ||
-                localPoint.Y < room.Top || localPoint.Y > room.Bottom)
+            if (localPoint.X < rect.Left || localPoint.X > rect.Right ||
+                localPoint.Y < rect.Top || localPoint.Y > rect.Bottom)
                 continue;
 
             foreach (var (distance, candidate) in new[]
                      {
-                         (localPoint.X - room.Left, new Vec2(room.Left - clearance, localPoint.Y)),
-                         (room.Right - localPoint.X, new Vec2(room.Right + clearance, localPoint.Y)),
-                         (localPoint.Y - room.Top, new Vec2(localPoint.X, room.Top - clearance)),
-                         (room.Bottom - localPoint.Y, new Vec2(localPoint.X, room.Bottom + clearance)),
+                         (localPoint.X - rect.Left, new Vec2(rect.Left - clearance, localPoint.Y)),
+                         (rect.Right - localPoint.X, new Vec2(rect.Right + clearance, localPoint.Y)),
+                         (localPoint.Y - rect.Top, new Vec2(localPoint.X, rect.Top - clearance)),
+                         (rect.Bottom - localPoint.Y, new Vec2(localPoint.X, rect.Bottom + clearance)),
                      })
             {
                 if (distance >= bestDistance || Contains(rooms, candidate))
@@ -90,6 +101,6 @@ public static class HullSilhouette
         return best;
     }
 
-    private static Vec2 ClampToRoom(Room room, Vec2 point) =>
-        new(Math.Clamp(point.X, room.Left, room.Right), Math.Clamp(point.Y, room.Top, room.Bottom));
+    private static Vec2 ClampToRect(RectF rect, Vec2 point) =>
+        new(Math.Clamp(point.X, rect.Left, rect.Right), Math.Clamp(point.Y, rect.Top, rect.Bottom));
 }
