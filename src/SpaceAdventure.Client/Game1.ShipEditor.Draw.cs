@@ -172,6 +172,8 @@ public partial class Game1
             DrawEditorDoorHoverPreview();
         if (_editorTool == EditorTool.Zone)
             DrawEditorZoneDragPreview();
+        if (_editorTool == EditorTool.Terminal)
+            DrawEditorTerminalPlacementPreview();
         if (_editorTool == EditorTool.Device)
             DrawEditorDevicePlacementPreview();
         if (_editorTool == EditorTool.Engine)
@@ -205,7 +207,18 @@ public partial class Game1
     private void DrawEditorFloorDragPreview()
     {
         if (_editorFloorDragStart is not { } start)
+        {
+            // Direct user request ("при размещении вообще всех блоков подсвечивалось область") -
+            // a single-cell version of the same highlight below, shown before any drag has actually
+            // started, so hovering alone already previews what one click would place.
+            if (GridCellAt(_designMouse) is { } hover)
+            {
+                var hoverRect = EditorTileRect(new TileCoord(hover.X, hover.Y));
+                _spriteBatch.Draw(_pixel, hoverRect, new Color(90, 160, 110) * 0.35f);
+                DrawRectOutline(hoverRect, Color.LightGreen, 2f);
+            }
             return;
+        }
         var endCell = GridCellAt(_designMouse) ?? start;
         var minX = Math.Min(start.X, endCell.X);
         var minY = Math.Min(start.Y, endCell.Y);
@@ -368,6 +381,39 @@ public partial class Game1
 
         var rect = EditorTileRect(coord);
         _shipRenderer.DrawDoor(_spriteBatch, rect, isOpen: false);
+    }
+
+    // Direct user request ("при размещении вообще всех блоков подсвечивалось область") - the one
+    // tool that had no ghost preview at all before this (every other tool already had one: Floor/
+    // Wall/Zone their own drag previews, Door/Device/Engine/Compartment the green/red valid-
+    // placement convention DrawEditorDevicePlacementPreview established). Mirrors
+    // HandleTerminalToolInput's own validity checks exactly (floor, no terminal yet, not a
+    // construction junction, and at least one walled side to mount to) rather than a second,
+    // independently-drifting copy of that logic.
+    private void DrawEditorTerminalPlacementPreview()
+    {
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var coord = new TileCoord(cell.X, cell.Y);
+        var rect = EditorTileRect(coord);
+
+        TileSide? mountSide = null;
+        if (_editorTiles.CellAt(coord) is { HasFloor: true, TerminalId: null } && !IsAtConstructionJunction(coord))
+        {
+            foreach (var candidateSide in TileSideExtensions.All)
+            {
+                if (_editorTiles.CellAt(candidateSide.Offset(coord)) is not { Wall: not TileWallKind.None })
+                    continue;
+                mountSide = candidateSide;
+                break;
+            }
+        }
+
+        var valid = mountSide is not null;
+        _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
+        DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
+        if (mountSide is { } side)
+            DrawEditorTerminalMark(coord, side);
     }
 
     private void DrawEditorTerminalMark(TileCoord coord, TileSide side)
@@ -550,7 +596,18 @@ public partial class Game1
     private void DrawEditorWallDragPreview()
     {
         if (_editorWallDragStart is not { } start)
+        {
+            // Same single-cell hover fallback as the Floor tool's own preview above.
+            if (GridCellAt(_designMouse) is { } hover)
+            {
+                var hoverCoord = new TileCoord(hover.X, hover.Y);
+                var hoverRect = EditorTileRect(hoverCoord);
+                var hoverValid = _editorTiles.CellAt(hoverCoord) is { HasFloor: true, DeviceId: null };
+                _spriteBatch.Draw(_pixel, hoverRect, (hoverValid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.4f);
+                DrawRectOutline(hoverRect, hoverValid ? Color.LightGreen : Color.OrangeRed, 2f);
+            }
             return;
+        }
         var endCell = GridCellAt(_designMouse) is { } ec ? new TileCoord(ec.X, ec.Y) : start;
         foreach (var coord in LineBetween(start, endCell))
         {
@@ -604,7 +661,16 @@ public partial class Game1
     private void DrawEditorZoneDragPreview()
     {
         if (_editorZoneDragStart is not { } start)
+        {
+            // Same single-cell hover fallback as the Floor/Wall tools' own previews above.
+            if (GridCellAt(_designMouse) is { } hover)
+            {
+                var hoverRect = EditorTileRect(new TileCoord(hover.X, hover.Y));
+                _spriteBatch.Draw(_pixel, hoverRect, new Color(255, 200, 90) * 0.25f);
+                DrawRectOutline(hoverRect, Color.Gold, 2f);
+            }
             return;
+        }
         var endCell = GridCellAt(_designMouse) ?? start;
         var minX = Math.Min(start.X, endCell.X);
         var minY = Math.Min(start.Y, endCell.Y);
