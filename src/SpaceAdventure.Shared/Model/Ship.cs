@@ -389,6 +389,13 @@ public sealed partial class Ship
 
         // Doors sit on the shared vertical wall between adjacent rooms, open around the row's
         // mid-height (y=3) — walking near the top/bottom of a room still hits a solid wall.
+        // Every door on this hull is the same full double width on purpose - a single-tile door is
+        // real (Ship.Custom.cs/TileShipBuilder.cs already produce genuine 1-tile ones wherever two
+        // rooms only overlap by one tile), but this hull's own movement model is a plain straight-
+        // line walk with no snap-to-door-center assist, so a door narrower than the corridor's own
+        // walking line (y=3 here) silently strands the walker at the wall instead of letting them
+        // through - tried narrowing three of these five doors for variety and it broke 91 unrelated
+        // tests this way, all of them just walking straight down this same hallway.
         var doors = new[]
         {
             new Door("door-cockpit-reactor", "cockpit", "reactor", 5, 3, 1.0f, Door.StandardSpanUnits),

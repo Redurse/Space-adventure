@@ -346,6 +346,9 @@ public partial class Game1
     // A wide door (direct user request - "дверь занимающая 1 на 2 тайла", TileCell.DoorGroupId)
     // draws as ONE merged rectangle spanning both tiles, not two separate narrow ones - only the
     // tile that sorts first (by X then Y) actually draws it, so the pair isn't rendered twice.
+    // The rect itself is handed straight to ShipRenderer's own door art (direct user request -
+    // "своей моделькой, а не голым квадратом") instead of a flat placeholder fill - same closed
+    // look the ship interior view shows, since a door being built has no open/closed state yet.
     private void DrawEditorDoorTile(TileCoord coord)
     {
         var cell = _editorTiles.CellAt(coord);
@@ -358,15 +361,13 @@ public partial class Game1
                 if (partner.X < coord.X || (partner.X == coord.X && partner.Y < coord.Y))
                     return; // the partner tile owns this pair's draw
                 var merged = Rectangle.Union(EditorTileRect(coord), EditorTileRect(partner));
-                _spriteBatch.Draw(_pixel, merged, new Color(120, 200, 255) * 0.5f);
-                DrawRectOutline(merged, new Color(120, 200, 255), 2f);
+                _shipRenderer.DrawDoor(_spriteBatch, merged, isOpen: false);
                 return;
             }
         }
 
         var rect = EditorTileRect(coord);
-        _spriteBatch.Draw(_pixel, rect, new Color(120, 200, 255) * 0.5f);
-        DrawRectOutline(rect, new Color(120, 200, 255), 2f);
+        _shipRenderer.DrawDoor(_spriteBatch, rect, isOpen: false);
     }
 
     private void DrawEditorTerminalMark(TileCoord coord, TileSide side)

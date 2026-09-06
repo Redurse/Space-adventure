@@ -1423,9 +1423,17 @@ public sealed class ShipRenderer
     // draws the station's own Rooms/Doors/Characters through the exact same visual language
     // instead of duplicating it.
     internal void DrawDoor(SpriteBatch spriteBatch, float left, float top, float width, float height, bool isOpen, Vector2 origin,
+        bool leadsToVacuum = false, bool destroyed = false, float totalSeconds = 0f) =>
+        DrawDoor(spriteBatch, GetDoorRect(left, top, width, height, origin), isOpen, leadsToVacuum, destroyed, totalSeconds);
+
+    // Rect-based overload (Game1.ShipEditor.Draw.cs's own DrawEditorDoorTile, direct user request -
+    // "дверь своей моделькой, а не голым квадратом") - the editor has no world-unit origin/PixelsPerUnit
+    // mapping of its own to feed the position-based overload above, but it already computes exactly
+    // the merged (for a 2-tile wide door) or single screen rect its own placeholder used to fill flat,
+    // so this skips straight to drawing the real door art at that rect instead of re-deriving one.
+    internal void DrawDoor(SpriteBatch spriteBatch, Rectangle rect, bool isOpen,
         bool leadsToVacuum = false, bool destroyed = false, float totalSeconds = 0f)
     {
-        var rect = GetDoorRect(left, top, width, height, origin);
         var horizontal = rect.Width >= rect.Height;
 
         var indicator = destroyed
