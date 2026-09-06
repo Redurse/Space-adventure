@@ -394,10 +394,6 @@ public partial class Game1 : Game
     private bool _pendingAbandonQuest; // Administrator's action button when the job can't be turned in here
     private string? _pendingWarpToSystemId; // clicked a system on GalaxyMapPanel's own list (World.StarSystems.cs)
     private CrewRole? _pendingSetOwnRoleTo; // clicked a role icon on the crew panel's own row
-    // Always false since the crew panel stopped being a role picker - the role is chosen once when a
-    // campaign starts and never cleared. The plumbing below it is left connected rather than torn out:
-    // it reaches into the client command shape, and the cost of that edit is not worth saving a bool.
-    private bool _pendingClearOwnRole;
     private PlayingCard? _pendingPlayCard; // clicked a card in CardGamePanel - own hand or a defend/перевод play
     private bool _pendingCardGameTake; // CardGamePanel's "Взять" button
     private bool _pendingCardGameEndRound; // CardGamePanel's "Бито" button
@@ -1431,9 +1427,7 @@ public partial class Game1 : Game
         _pendingWarpToSystemId = null;
 
         var setOwnRoleTo = _pendingSetOwnRoleTo;
-        var clearOwnRolePressed = _pendingClearOwnRole;
         _pendingSetOwnRoleTo = null;
-        _pendingClearOwnRole = false;
 
         var playCard = _pendingPlayCard;
         var cardGameTakePressed = _pendingCardGameTake;
@@ -1546,7 +1540,7 @@ public partial class Game1 : Game
 
         _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
-            _nickname, setOwnRoleTo, clearOwnRolePressed, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
+            _nickname, setOwnRoleTo, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
             _client.LatestSnapshot?.ServerTimestampMs ?? 0, (float?)wireBendAt?.X, (float?)wireBendAt?.Y,
             toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed,
             scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode,

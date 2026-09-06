@@ -393,7 +393,7 @@ public partial class Game1
         if (GridCellAt(_designMouse) is not { } cell)
             return;
         var hovered = new TileCoord(cell.X, cell.Y);
-        var size = DeviceFootprintSize(_editorSelectedDeviceKind);
+        var size = CustomDeviceFootprint.Size(_editorSelectedDeviceKind);
         var anchor = FootprintAnchorFor(hovered, size);
         var footprint = DeviceFootprintTiles(anchor, size).ToList();
         var valid = footprint.All(t => _editorTiles.CellAt(t) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null });
@@ -466,12 +466,12 @@ public partial class Game1
         DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
     }
 
-    // A multi-tile device (today, only Reactor - DeviceFootprintSize) draws its own real texture
+    // A multi-tile device (today, only Reactor - CustomDeviceFootprint.Size) draws its own real texture
     // stretched across its WHOLE footprint instead of the plain small icon every other device still
     // gets - direct user request ("сама текстура должна занимать все 4 на 4 тайла").
     private void DrawEditorDeviceAt(TileCoord anchor, CustomDeviceKind kind)
     {
-        var footprintSize = DeviceFootprintSize(kind);
+        var footprintSize = CustomDeviceFootprint.Size(kind);
         if (footprintSize > 1 && kind == CustomDeviceKind.Reactor && _editorReactorTexture is { } reactorTex)
         {
             var topLeft = EditorTileRect(anchor);

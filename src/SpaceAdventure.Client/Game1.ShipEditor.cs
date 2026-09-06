@@ -104,12 +104,6 @@ public partial class Game1
     private sealed record EditorZone(string Name, HashSet<TileCoord> Tiles, ShipZoneKind? Kind = null);
     private readonly List<EditorZone> _editorZones = new();
 
-    // 1x1 for every kind except the Reactor, which is now a real 4x4-tile footprint everywhere in
-    // the game (ShipRenderer.ReactorBlockSize) - a per-kind lookup rather than a special case
-    // scattered through placement/removal/drawing/export, so a future multi-tile device just adds
-    // one more entry here.
-    private static int DeviceFootprintSize(CustomDeviceKind kind) => kind == CustomDeviceKind.Reactor ? 4 : 1;
-
     // Real Cosmoteer-style engine (ShipEngine.cs) - a directional 3-tile line (Control/Bulkhead/
     // Nozzle), NOT the generic NxN device footprint above, so it gets its own parallel bookkeeping
     // rather than being forced through _editorDeviceKinds/_editorDeviceFootprint (direct user
@@ -686,7 +680,7 @@ public partial class Game1
                 // begin with, so this never blocks that).
                 if (IsProtectedCompartmentCore(anchor))
                     return;
-                foreach (var occupied in DeviceFootprintTiles(anchor, DeviceFootprintSize(_editorDeviceKinds[anchor])))
+                foreach (var occupied in DeviceFootprintTiles(anchor, CustomDeviceFootprint.Size(_editorDeviceKinds[anchor])))
                 {
                     _editorTiles.RemoveDevice(occupied);
                     _editorDeviceFootprint.Remove(occupied);
@@ -697,7 +691,7 @@ public partial class Game1
         }
         if (!leftClicked)
             return;
-        var size = DeviceFootprintSize(_editorSelectedDeviceKind);
+        var size = CustomDeviceFootprint.Size(_editorSelectedDeviceKind);
         var placeAnchor = FootprintAnchorFor(coord, size);
         var footprint = DeviceFootprintTiles(placeAnchor, size).ToList();
         if (footprint.Any(t => _editorTiles.CellAt(t) is not { HasFloor: true, Wall: TileWallKind.None, DeviceId: null }))

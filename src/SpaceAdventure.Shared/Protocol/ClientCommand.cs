@@ -139,8 +139,6 @@ public sealed record ClientCommand(
     // alone, hence the separate bool below - the same split AttachTankFromSlot/DetachTankSlot
     // already uses for "set" vs "unset" on one thing.
     CrewRole? SetOwnRoleTo = null,
-    // Edge-triggered like SetOwnRoleTo's own click, just for the "no role" option in the same picker.
-    bool ClearOwnRolePressed = false,
     // Дурак переводной (World.CardGame.cs, CardGamePanel): playing a card out of hand, whether
     // that's an attack, a beat, or a перевод is resolved server-side from context - the client
     // just names the exact card by rank/suit (a 36-card deck never has a duplicate, so that's

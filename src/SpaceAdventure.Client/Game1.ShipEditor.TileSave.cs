@@ -76,7 +76,7 @@ public partial class Game1
         {
             var anchor = new TileCoord(d.X, d.Y);
             var deviceId = $"device-{d.X}-{d.Y}";
-            foreach (var occupied in DeviceFootprintTiles(anchor, DeviceFootprintSize(d.Kind)))
+            foreach (var occupied in DeviceFootprintTiles(anchor, CustomDeviceFootprint.Size(d.Kind)))
             {
                 _editorTiles.PlaceDevice(occupied, deviceId);
                 _editorDeviceFootprint[occupied] = anchor;

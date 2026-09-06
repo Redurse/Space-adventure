@@ -104,7 +104,7 @@ public static class TileShipBuilder
         {
             if (cell.DeviceId is null || !deviceKinds.TryGetValue(coord, out var kind))
                 continue;
-            var footprintSize = DeviceFootprintSize(kind);
+            var footprintSize = CustomDeviceFootprint.Size(kind);
             devices.Add(new CustomDeviceDef(kind, coord.X + footprintSize / 2f, coord.Y + footprintSize / 2f));
         }
 
@@ -237,8 +237,4 @@ public static class TileShipBuilder
             .FirstOrDefault();
     }
 
-    // Mirrors Game1.ShipEditor.cs's own DeviceFootprintSize exactly (only Reactor occupies more than
-    // its own single anchor tile - a 4x4 footprint, ShipRenderer.ReactorBlockSize) - kept here too so
-    // this port has no MonoGame-side dependency at all.
-    private static int DeviceFootprintSize(CustomDeviceKind kind) => kind == CustomDeviceKind.Reactor ? 4 : 1;
 }

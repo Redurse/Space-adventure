@@ -34,9 +34,10 @@ public sealed record CustomShipTileCanvas(
         string? TerminalId, TileSide? TerminalWallSide,
         WallMaterial WallMaterial = WallMaterial.Standard, string? DoorGroupId = null);
 
-    // Only the device's own anchor (top-left) tile and kind - DeviceFootprintSize(Kind) recomputes
-    // which other tiles it occupies on load (Game1.ShipEditor.cs's own DeviceFootprintTiles), so a
-    // multi-tile device's other occupied cells don't need their own separate record.
+    // Only the device's own anchor (top-left) tile and kind - CustomDeviceFootprint.Size(Kind)
+    // recomputes which other tiles it occupies on load (Game1.ShipEditor.cs's own
+    // DeviceFootprintTiles), so a multi-tile device's other occupied cells don't need their own
+    // separate record.
     public sealed record DeviceRecord(int X, int Y, CustomDeviceKind Kind);
 
     // A real ShipEngine (ShipEngine.cs) placed via the Engine editor tool - only the Control tile's

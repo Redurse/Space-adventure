@@ -14,16 +14,16 @@ namespace SpaceAdventure.Client.Rendering;
 // even though only the scanner sweep/pulse visuals below are scanner-specific content.
 public sealed partial class GalaxyMapPanel
 {
-    // Must match World.Scanner.cs's own ScannerRangeUnits/ScannerSweepHalfAngleDegrees - purely
-    // decorative here (drawing how far/wide the cone reaches), the server is what actually decides
-    // what the sweep finds. internal, not private: Game1.cs's own MinConsoleZoom clamp (below)
-    // needs it too, so the camera can never zoom out past the beam's own real reach.
-    internal const float ScannerRangeUnits = 1080f;
-    private const float ScannerSweepHalfAngleDegrees = 12f;
-    // Must match World.Scanner.cs's own ScannerPingCooldownSeconds (M47 follow-up) - purely
+    // Shared with World.Scanner.cs (ScannerConstants) - purely decorative here (drawing how far/
+    // wide the cone reaches), the server is what actually decides what the sweep finds. internal,
+    // not private: Game1.cs's own MinConsoleZoom clamp (below) needs it too, so the camera can
+    // never zoom out past the beam's own real reach.
+    internal const float ScannerRangeUnits = ScannerConstants.RangeUnits;
+    private const float ScannerSweepHalfAngleDegrees = ScannerConstants.SweepHalfAngleDegrees;
+    // Shared with World.Scanner.cs's own ScannerPingCooldownSeconds (M47 follow-up) - purely
     // decorative here (deriving how long ago the last pulse fired from the cooldown alone), the
     // server is what actually gates when the next one is allowed to fire.
-    private const float ScannerPingCooldownSeconds = 15f;
+    private const float ScannerPingCooldownSeconds = ScannerConstants.PingCooldownSeconds;
     private const float ScannerPingPulseDurationSeconds = 1.3f;
 
     // The round sonar screen itself (M48 follow-up, matching the reference Barotrauma screenshot):

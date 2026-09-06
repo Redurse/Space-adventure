@@ -252,8 +252,6 @@ public sealed partial class World
         // World.CrewAi.cs never reads it) - no docked/proximity gate needed, same as Nickname above.
         if (command.SetOwnRoleTo is { } roleToSet)
             character.Role = roleToSet;
-        else if (command.ClearOwnRolePressed)
-            character.Role = null;
 
         if (command.PlayCardRank is { } cardRank && command.PlayCardSuit is { } cardSuit)
             TryPlayCard(character, cardRank, cardSuit);

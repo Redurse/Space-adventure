@@ -21,9 +21,9 @@ public sealed class Character
     public bool IsBot { get; init; }
     public string? BotName { get; init; }
     // set, not init, unlike IsBot/BotName above - a bot's Role is fixed for its whole time aboard
-    // (set once at hire, World.Recruiting.cs), but a live player can pick/clear their own from the
-    // crew panel at any time (ApplyCommand's SetOwnRoleTo/ClearOwnRolePressed) - purely a
-    // self-identification label, not a job assignment, so nothing else needs to react to it changing.
+    // (set once at hire, World.Recruiting.cs); a live player picks their own once, at the start of
+    // the campaign (ApplyCommand's SetOwnRoleTo) - purely a self-identification label, not a job
+    // assignment, so nothing else needs to react to it changing.
     public CrewRole? Role { get; set; }
     // Typed at the menu, echoed on every ClientCommand (World.cs's ApplyCommand) - null until the
     // first command arrives, and always null for a bot (BotName is its name instead).

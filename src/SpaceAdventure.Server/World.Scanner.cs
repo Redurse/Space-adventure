@@ -14,19 +14,19 @@ public sealed partial class World
     // A narrow directional pulse, not an omnidirectional radar - reading the bearing off the dial
     // actually matters. Half-width, not full width: the cone spans SweepHalfAngle either side of
     // ScannerSweepDegrees.
-    private const float ScannerSweepHalfAngleDegrees = 12f;
+    private const float ScannerSweepHalfAngleDegrees = ScannerConstants.SweepHalfAngleDegrees;
     // Comfortably short of the field's own full extent (2400) - a pulse that already covered the
     // whole system from any one spot would make standing at the console strictly better than
     // flying to look, which isn't the point of a director­al sensor. 900 * 1.2 (M48 follow-up -
     // "лучевой сканер сканировал на 20 процентов дальше").
-    private const float ScannerRangeUnits = 1080f;
+    private const float ScannerRangeUnits = ScannerConstants.RangeUnits;
     // The console's own toggle switch (M48 follow-up - "круговой... просвечивает область в 2 раза
     // меньше, но зато по кругу"): trading range for all-around coverage, not free coverage.
     private const float CircularScannerRangeUnits = ScannerRangeUnits / 2f;
     // M47 follow-up - "с перезарядкой... 15 секунд": aiming the dial is still free and continuous,
     // but the actual detecting pulse is a discrete, cooldown-gated action rather than a permanent
     // sweep - a placeholder value the design brief itself called out as provisional.
-    public const float ScannerPingCooldownSeconds = 15f;
+    public const float ScannerPingCooldownSeconds = ScannerConstants.PingCooldownSeconds;
 
     // Combat damage (World.EnemyAi.cs's ApplyEnemyAttack, enemy/weapon overhaul - "сонар можно
     // было сломать") - a wrecked console answers to nobody until repaired (World.SystemRepair.cs);
