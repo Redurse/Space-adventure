@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -346,74 +346,9 @@ internal static partial class TestRunner
         return !world.IsDocked; // pressed anyway - still refused
     }
 
-    // Trading a Frigate down to a Scout costs less than the trade-in is worth, so the yard pays
-    // out - which is exactly the negative-cost case World.ShipPurchase.cs allows on purpose.
-    private static bool World_Shipyard_BuyCheaperHull_SwapsShipAndRefunds()
-    {
-        var world = new World(); // starts docked at home-station as a Frigate
-        world.SpawnCharacter(1);
-        // home-station is itself a Shipyard now too, but this still exercises the real
-        // "undock/redock at a different Shipwright" path rather than assuming the two are
-        // interchangeable - outpost-gamma is just as valid a target as staying put would be.
-        DockAtStation(world, "outpost-gamma");
-
-        var creditsBefore = world.Credits;
-        var expectedCost = world.GetShipSwapCost(ShipKind.Scout);
-        world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
-
-        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        return world.CurrentShipKind == ShipKind.Scout
-            && world.Credits == creditsBefore - expectedCost
-            && expectedCost < 0 // trading down really does pay out
-            && world.Ship.Rooms.Count == Ship.Create(ShipKind.Scout).Rooms.Count
-            && me.X == world.Ship.SpawnPoint.X; // moved onto the new hull's spawn point
-    }
-
-    private static bool World_Shipyard_Buy_FailsWithoutEnoughCredits()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        DockAtStation(world, "outpost-gamma"); // the Shipyard station
-
-        // A Cruiser costs far more than the starting wallet even after trading in the Frigate.
-        var creditsBefore = world.Credits;
-        world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Cruiser));
-
-        return world.CurrentShipKind == ShipKind.Frigate && world.Credits == creditsBefore;
-    }
-
-    private static bool World_Shipyard_Buy_FailsWhileNotDocked()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        EnterBattle(world);
-
-        world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
-        return world.CurrentShipKind == ShipKind.Frigate;
-    }
-
-    // A new hull comes out of the yard intact, and the crew wallet/inventory carry across - only
-    // the ship itself is replaced (World.ShipPurchase.cs).
-    private static bool World_Shipyard_SwapKeepsCreditsAndClearsBreaches()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-
-        // Take some damage first so there's something to be repaired by the swap, then head to
-        // the one station that actually has a Shipwright.
-        EquipSuit(world, 1);
-        WinBattleAt(world, "sector-alpha");
-        DockAtStation(world, "outpost-gamma");
-
-        var creditsBefore = world.Credits;
-        var expectedCost = world.GetShipSwapCost(ShipKind.Scout);
-        world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
-
-        var snapshot = world.CreateSnapshot();
-        return world.CurrentShipKind == ShipKind.Scout
-            && world.Credits == creditsBefore - expectedCost
-            && snapshot.WallBlockStates.All(s => !s.Breached)
-            && snapshot.RoomOxygen.All(o => o.Oxygen >= 100f);
-    }
-
+    // The Shipwright hull-swap tests that used to live here (buy cheaper/pricier hull, refused
+    // without docking/credits, breach/oxygen reset on swap) were removed along with the whole
+    // feature (direct user request, "удали все текущие корабли... полностью удалить из кода") -
+    // every ShipKind but Custom is gone, and Custom was never sellable at a Shipwright to begin
+    // with, so there was nothing left to swap TO.
 }

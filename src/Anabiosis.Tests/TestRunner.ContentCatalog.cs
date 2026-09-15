@@ -223,7 +223,7 @@ internal static partial class TestRunner
     // a hand-built definition with 2 reactor devices must now validate cleanly.
     private static bool CustomShipValidator_AllowsMultipleReactorsHelmsAndNavigationConsoles()
     {
-        var def = Ship.Create(ShipKind.Frigate).ToDefinition();
+        var def = ShipDefaultHull.Definition;
         var doubled = def with { Devices = def.Devices.Append(new CustomDeviceDef(CustomDeviceKind.Reactor, def.Devices.First(d => d.Kind == CustomDeviceKind.Reactor).X,
             def.Devices.First(d => d.Kind == CustomDeviceKind.Reactor).Y)).ToList() };
 

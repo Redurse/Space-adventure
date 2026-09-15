@@ -19,7 +19,7 @@ internal static partial class TestRunner
             new CustomRoomDef("a", "Мостик", 0, 0, 4, 4),
             new CustomRoomDef("b", "Шлюз", 4, 0, 4, 4),
         },
-        new[] { new CustomDoorDef("a", "b") },
+        new[] { new CustomDoorDef(4, 2, true, true) }, // shared wall at X=4, centered on its Y=[0,4] span
         new[] { new CustomAirlockDef("b", EdgeSide.Right) },
         new[]
         {
@@ -140,14 +140,40 @@ internal static partial class TestRunner
         return before >= 99f && after < before;
     }
 
-    private static void EquipWelderWithTank(World world)
+    // Same fetch as TakeFromRack, but walks straight to the rack (MoveCharacterTo) instead of via
+    // WalkAcrossShipTo's own "doorRow=3" shortcut. That shortcut assumes every door sits at the
+    // hull's own vertical center (true on the standard 6-tall row-of-rooms hulls it was written
+    // for), but BuildEngineCustomShipDefinition's rooms are only 4 units tall, so their real door
+    // between "a"/"b" is centered at Y=2, not Y=3 - walking the doorRow=3 route means grazing the
+    // very edge of that door instead of its middle, which stalled indefinitely once combined with
+    // this method's own float-precision convergence (found live: burned through hundreds of ticks
+    // never quite crossing, long enough for the bulkhead breach's own oxygen leak - triggered right
+    // before this call - to suffocate the character before they ever reached the rack). A direct
+    // diagonal walk keeps Y near its own start/target (both ~2, safely inside the door's true span)
+    // the whole time, the same fix already used by hand in World_Eva_CorvetteCrewGoesOutThroughABeamPort
+    // for this exact class of problem.
+    private static int TakeFromRackDirect(World world, ItemType item)
     {
-        var slot = TakeFromRack(world, ItemType.WeldingTool);
-        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: slot));
-        TakeTankFromRack(world, ItemType.WeldingTank);
-        AttachTankTo(world, Array.IndexOf(
-            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.WeldingTool),
-            ItemType.WeldingTank);
+        var rackSlots = world.CreateSnapshot().RackSlots;
+        var rackSlotIndex = -1;
+        for (var i = 0; i < rackSlots.Count; i++)
+            if (rackSlots[i] == item) { rackSlotIndex = i; break; }
+        if (rackSlotIndex < 0)
+            return -1;
+
+        var rack = world.Ship.StorageRacks[rackSlotIndex / StorageRack.Capacity];
+        MoveCharacterTo(world, 1, rack.X, rack.Y);
+
+        var mainSlots = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots;
+        var freeMainSlot = -1;
+        for (var i = 0; i < mainSlots.Count; i++)
+            if (mainSlots[i] is null) { freeMainSlot = i; break; }
+        if (freeMainSlot < 0)
+            return -1;
+
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Rack, rackSlotIndex), MoveItemTo: new SlotRef(ItemSlotKind.Main, freeMainSlot)));
+        return freeMainSlot;
     }
 
     // Direct user request - the Bulkhead "держит воздух" like a wall panel, so it welds shut like
@@ -161,7 +187,12 @@ internal static partial class TestRunner
         var engineId = world.Ship.Engines.Single().Id;
         world.DebugBreachEngineBulkhead(engineId);
 
-        EquipWelderWithTank(world);
+        var toolSlot = TakeFromRackDirect(world, ItemType.WeldingTool);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: toolSlot));
+        TakeFromRackDirect(world, ItemType.WeldingTank);
+        AttachTankTo(world, Array.IndexOf(
+            world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.WeldingTool),
+            ItemType.WeldingTank);
         MoveCharacterTo(world, 1, 0.5f, 1.5f);
         for (var i = 0; i < 60; i++)
         {
@@ -201,7 +232,7 @@ internal static partial class TestRunner
             new CustomRoomDef("a", "Мостик", 0, 0, 4, 4),
             new CustomRoomDef("b", "Шлюз", 4, 0, 4, 4),
         },
-        new[] { new CustomDoorDef("a", "b") },
+        new[] { new CustomDoorDef(4, 2, true, true) }, // shared wall at X=4, centered on its Y=[0,4] span
         new[] { new CustomAirlockDef("b", EdgeSide.Right) },
         new[]
         {

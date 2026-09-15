@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -18,6 +19,10 @@ public partial class Game1
     private bool _editorSaveAsPrompting;
     private string _editorSaveAsInput = "";
     private bool _editorLoadListOpen;
+    // Direct user request ("сделай возможность листать сохраненные чертежи в редакторе") - which
+    // page of EditorLoadRowsPerPage names is currently shown; reset to 0 wherever the list is opened
+    // (Game1.ShipEditor.Layout.cs's own click handler) so it never reopens mid-list from last time.
+    private int _editorLoadListPage;
 
     // "Сохранить" with no known slot behaves like "Сохранить как" (prompts for a name) - the least
     // surprising default for a design that's never been saved under a name yet.
@@ -64,21 +69,51 @@ public partial class Game1
         _editorSaveAsPrompting = false;
     }
 
-    private void HandleEditorLoadListInput(bool leftClicked)
+    // Direct user request ("сделай возможность листать сохраненные чертежи в редакторе") - Left/Right
+    // page the same way the Prev/Next buttons do (Pressed's own edge-detection, same helper "Сохранить
+    // как"'s Enter shortcut already uses), so a long session of flipping through many saved designs
+    // doesn't have to keep re-aiming the mouse at a small button. `page` is clamped every call (not
+    // just when the list is (re)opened) so deleting the last name on the final page never strands it
+    // one page past the new end.
+    private void HandleEditorLoadListInput(bool leftClicked, KeyboardState keyboard)
     {
+        var names = CustomShipStore.ListShips();
+        var pageCount = Math.Max(1, (names.Count + EditorLoadRowsPerPage - 1) / EditorLoadRowsPerPage);
+        _editorLoadListPage = Math.Clamp(_editorLoadListPage, 0, pageCount - 1);
+
+        if (Pressed(keyboard, Keys.Left) && _editorLoadListPage > 0)
+            _editorLoadListPage--;
+        if (Pressed(keyboard, Keys.Right) && _editorLoadListPage < pageCount - 1)
+            _editorLoadListPage++;
+
         if (!leftClicked)
             return;
-        var names = CustomShipStore.ListShips();
-        for (var i = 0; i < names.Count; i++)
+
+        if (GetEditorLoadPrevPageRect().Contains(_designMouse))
+        {
+            if (_editorLoadListPage > 0)
+                _editorLoadListPage--;
+            return;
+        }
+        if (GetEditorLoadNextPageRect().Contains(_designMouse))
+        {
+            if (_editorLoadListPage < pageCount - 1)
+                _editorLoadListPage++;
+            return;
+        }
+
+        var firstIndex = _editorLoadListPage * EditorLoadRowsPerPage;
+        var pageNames = names.Skip(firstIndex).Take(EditorLoadRowsPerPage).ToList();
+        for (var i = 0; i < pageNames.Count; i++)
         {
             if (GetEditorLoadRowDeleteRect(i).Contains(_designMouse))
             {
-                HandleEditorLoadRowDelete(names[i]);
+                HandleEditorLoadRowDelete(pageNames[i]);
                 return;
             }
             if (GetEditorLoadRowRect(i).Contains(_designMouse))
             {
-                HandleEditorLoadRowClick(names[i]);
+                HandleEditorLoadRowClick(pageNames[i]);
                 return;
             }
         }

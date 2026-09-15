@@ -178,4 +178,58 @@ internal static partial class TestRunner
 
         return Contains(cutSegments, new WallSegment(0, 0, 2.5f, 0)) && Contains(cutSegments, new WallSegment(3.5f, 0, 6, 0));
     }
+
+    // Direct user request ("свободная половина полублочной стены не должна быть в тени") - a
+    // half-thick straight-run wall (TileCell.WallOpenSide set, same grid shape as TestRunner.
+    // HalfThickWalls.cs's own movement regression test) must occlude only its own solid half, not the
+    // full tile. Before TileOccluders knew about WallOpenSide at all, a half-thick tile fell into the
+    // ordinary full-tile path and got its far edge traced a whole tile further out (at y=1 instead of
+    // the true y=0.5 solid/free boundary) - swallowing the free half (which TileMovement already lets
+    // a character walk into) into shadow.
+    private static bool TileOccluders_HalfThickWall_OccludesOnlyItsOwnSolidHalf()
+    {
+        var grid = new TileGrid();
+        for (var x = 0; x < 5; x++)
+            for (var y = 0; y < 5; y++)
+                grid.SetFloor(new TileCoord(x, y), true);
+        // Every tile of row 0 is a straight Top-edge run except the two corners (0,0)/(4,0), same
+        // shape TileMovement_MoveAlongAxis_WalksIntoHalfThickWallsFreeHalf already proves is walkable
+        // past y=0.5.
+        for (var x = 0; x < 5; x++)
+        {
+            grid.SetWall(new TileCoord(x, 0), TileWallKind.Solid);
+            if (x is not (0 or 4))
+                grid.SetWallOpenSide(new TileCoord(x, 0), TileSide.North);
+        }
+
+        var segments = TileOccluders.Build(grid, new List<SightGap>());
+
+        // The bug's exact symptom: the free half's own row (y=1, across the run's own middle
+        // stretch) must NOT be occluded any more.
+        if (AnyHorizontalCovers(segments, 1f, 2.5f))
+            return false;
+        // The fix itself: the real solid/free boundary, at y=0.5.
+        if (!AnyHorizontalCovers(segments, 0.5f, 2.5f))
+            return false;
+        // The true exterior boundary (the tiles' own top edge) is unchanged and still occluding.
+        return AnyHorizontalCovers(segments, 0f, 2.5f);
+    }
+
+    // Direct user bug report ("не вижу ничего через стену являющейся иллюминатором") - a Window
+    // wall tile must produce NO occluding segment at all (same treatment as an open door), while an
+    // ordinary Standard wall tile right next to it on the same run still fully occludes - proving
+    // the exception is specific to Window material, not a blanket change to wall occlusion.
+    private static bool TileOccluders_WindowWall_DoesNotOccludeSightButOrdinaryWallStillDoes()
+    {
+        var grid = BuildFourByFourWalledRoom();
+        grid.SetWallMaterial(new TileCoord(1, 0), WallMaterial.Window);
+
+        var segments = TileOccluders.Build(grid, new List<SightGap>());
+
+        // The window's own stretch of the top wall (x in [1,2)) must be gone.
+        if (AnyHorizontalCovers(segments, 0f, 1.5f))
+            return false;
+        // Its Standard neighbor (x in [2,3)) on the exact same run must still occlude.
+        return AnyHorizontalCovers(segments, 0f, 2.5f);
+    }
 }

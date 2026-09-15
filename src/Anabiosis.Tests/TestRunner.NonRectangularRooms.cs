@@ -106,7 +106,7 @@ internal static partial class TestRunner
         return new CustomShipDefinition(
             "Тестовый Г-корабль",
             new[] { lRoom, bRoom },
-            new[] { new CustomDoorDef("a", "b") },
+            new[] { new CustomDoorDef(4, 1.5f, true, true) }, // shared wall at X=4 (topArm's own right edge), centered on its Y=[0,3] span
             new[] { new CustomAirlockDef("b", EdgeSide.Right) },
             new[]
             {

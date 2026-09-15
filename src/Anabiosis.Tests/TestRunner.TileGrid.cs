@@ -120,7 +120,10 @@ internal static partial class TestRunner
         return grid.RegionIdAt(a) != grid.RegionIdAt(c);
     }
 
-    private static bool TileGrid_TerminalRequiresAdjacentWallAndNeverAffectsRegionsOrWalkability()
+    // Direct user request ("в таком случае будет полностью заполнен тайл") - a floor-adjacent wall
+    // device now fully occupies its own tile once placed (unlike the old always-walkable mode), but
+    // still never affects region topology (only the floor/wall LAYER does that).
+    private static bool TileGrid_WallDeviceRequiresAdjacentWallAndFullyBlocksItsOwnTile()
     {
         var grid = new TileGrid();
         var floor = new TileCoord(0, 0);
@@ -129,7 +132,7 @@ internal static partial class TestRunner
         var threwWithoutWall = false;
         try
         {
-            grid.PlaceTerminal(floor, TileSide.East, "terminal-1");
+            grid.PlaceWallDevice(floor, TileSide.East, CustomDeviceKind.Terminal, "terminal-1");
         }
         catch (InvalidOperationException)
         {
@@ -145,11 +148,64 @@ internal static partial class TestRunner
         var regionBefore = grid.RegionIdAt(floor);
         var walkableBefore = TileGrid.IsWalkable(grid.CellAt(floor)!);
 
-        grid.PlaceTerminal(floor, TileSide.East, "terminal-1");
+        grid.PlaceWallDevice(floor, TileSide.East, CustomDeviceKind.Terminal, "terminal-1");
 
         var regionAfter = grid.RegionIdAt(floor);
         var walkableAfter = TileGrid.IsWalkable(grid.CellAt(floor)!);
-        return regionBefore == regionAfter && walkableBefore == walkableAfter && walkableAfter;
+        return regionBefore == regionAfter && walkableBefore && !walkableAfter;
+    }
+
+    // Direct user report ("стены в пол блока являются стенами и на них якобы можно крепить лампу.
+    // для таких стен это должно быть невозможно и это можно было сделать только в том же тайле что
+    // и стена") - a half-thick wall neighbor must refuse PlaceWallDevice (recess into it instead,
+    // via PlaceRecessedWallDevice), even though it's still a genuine `Wall != None` neighbor.
+    private static bool TileGrid_WallDevice_RefusesProtrudingOntoAHalfThickWallNeighbor()
+    {
+        var grid = new TileGrid();
+        var floor = new TileCoord(0, 0);
+        var wallCoord = new TileCoord(1, 0);
+        grid.SetFloor(floor, true);
+        grid.SetFloor(wallCoord, true);
+        grid.SetWall(wallCoord, TileWallKind.Solid);
+        grid.SetWallOpenSide(wallCoord, TileSide.East); // a half-thick wall, recess-only
+
+        try
+        {
+            grid.PlaceWallDevice(floor, TileSide.East, CustomDeviceKind.Terminal, "terminal-1");
+            return false;
+        }
+        catch (InvalidOperationException) { /* expected */ }
+
+        // The SAME wall tile still accepts a recessed device just fine.
+        grid.PlaceRecessedWallDevice(wallCoord, CustomDeviceKind.Terminal, "terminal-1");
+        return grid.CellAt(wallCoord)!.WallDeviceId == "terminal-1";
+    }
+
+    // Direct user request ("на стену размером с полублок можно крепить только терминал и настенную
+    // лампу") - the restriction is enforced at the TileGrid API level itself, for either mode.
+    private static bool TileGrid_WallDevice_RejectsKindsOtherThanTerminalOrWallLamp()
+    {
+        var grid = new TileGrid();
+        var floor = new TileCoord(0, 0);
+        var wallCoord = new TileCoord(1, 0);
+        grid.SetFloor(floor, true);
+        grid.SetFloor(wallCoord, true);
+        grid.SetWall(wallCoord, TileWallKind.Solid);
+
+        try
+        {
+            grid.PlaceWallDevice(floor, TileSide.East, CustomDeviceKind.Reactor, "reactor-1");
+            return false;
+        }
+        catch (InvalidOperationException) { /* expected */ }
+
+        grid.SetWallOpenSide(wallCoord, TileSide.East);
+        try
+        {
+            grid.PlaceRecessedWallDevice(wallCoord, CustomDeviceKind.Reactor, "reactor-1");
+            return false;
+        }
+        catch (InvalidOperationException) { return true; }
     }
 
     private static bool TileGrid_DevicePlacementBlocksWalkableButNotRegionMembership()
@@ -195,5 +251,105 @@ internal static partial class TestRunner
 
         return grid.Regions[leftRegionId].Tiles.Count == breakAt
             && grid.Regions[rightRegionId].Tiles.Count == length - breakAt - 1;
+    }
+
+    // Direct user request ("не угловые клетки занимали только половину блока которая была ближе к
+    // космосу") - the position-aware IsWalkable overload, checked directly against a hand-built
+    // half-thick wall tile for every one of the 4 possible open sides. The solid half sits on
+    // WallOpenSide itself; the opposite half is free.
+    private static bool TileGrid_HalfThickWall_SolidHalfBlockedFreeHalfWalkable()
+    {
+        foreach (var openSide in TileSideExtensions.All)
+        {
+            var grid = new TileGrid();
+            var coord = new TileCoord(5, 5);
+            grid.SetFloor(coord, true);
+            grid.SetWall(coord, TileWallKind.Solid);
+            grid.SetWallOpenSide(coord, openSide);
+            var cell = grid.CellAt(coord)!;
+
+            // Sample the exact center of each half - unambiguously inside one side or the other,
+            // regardless of which axis openSide is on.
+            var (solidX, solidY) = openSide switch
+            {
+                TileSide.North => (5.5, 5.25),
+                TileSide.South => (5.5, 5.75),
+                TileSide.West => (5.25, 5.5),
+                TileSide.East => (5.75, 5.5),
+                _ => throw new ArgumentOutOfRangeException(),
+            };
+            var (freeX, freeY) = openSide switch
+            {
+                TileSide.North => (5.5, 5.75),
+                TileSide.South => (5.5, 5.25),
+                TileSide.West => (5.75, 5.5),
+                TileSide.East => (5.25, 5.5),
+                _ => throw new ArgumentOutOfRangeException(),
+            };
+
+            if (TileGrid.IsWalkable(cell, coord, new Vec2(solidX, solidY)))
+                return false; // the solid half must block
+            if (!TileGrid.IsWalkable(cell, coord, new Vec2(freeX, freeY)))
+                return false; // the free half must not
+        }
+        return true;
+    }
+
+    // A genuine corner (WallOpenSide == null) stays fully blocked everywhere in the tile - a
+    // regression guard that corners are untouched by the half-thickness feature.
+    private static bool TileGrid_CornerWall_StaysFullyBlockedAtEveryPosition()
+    {
+        var grid = new TileGrid();
+        var coord = new TileCoord(5, 5);
+        grid.SetFloor(coord, true);
+        grid.SetWall(coord, TileWallKind.Solid); // WallOpenSide left null - never set
+        var cell = grid.CellAt(coord)!;
+
+        return !TileGrid.IsWalkable(cell, coord, new Vec2(5.25, 5.25))
+            && !TileGrid.IsWalkable(cell, coord, new Vec2(5.75, 5.75))
+            && !TileGrid.IsWalkable(cell, coord, new Vec2(5.5, 5.5));
+    }
+
+    // Direct user request ("на пустой стороне можно поставить терминал и он будет занимать весь
+    // полублок") - PlaceRecessedTerminal refuses a corner (no WallOpenSide), a door, and plain open
+    // floor, but succeeds on a genuine half-thick wall tile - and once placed, blocks BOTH halves,
+    // unlike the old floor-adjacent PlaceTerminal which never blocks anything.
+    private static bool TileGrid_PlaceRecessedTerminal_RequiresNonCornerWallAndThenBlocksWholeTile()
+    {
+        var grid = new TileGrid();
+        var corner = new TileCoord(0, 0);
+        var door = new TileCoord(1, 0);
+        var straight = new TileCoord(2, 0);
+        var floor = new TileCoord(3, 0);
+        grid.SetFloor(corner, true);
+        grid.SetFloor(door, true);
+        grid.SetFloor(straight, true);
+        grid.SetFloor(floor, true);
+        grid.SetWall(corner, TileWallKind.Solid); // WallOpenSide left null - stands in for a corner
+        grid.SetWall(door, TileWallKind.Door);
+        grid.SetWall(straight, TileWallKind.Solid);
+        grid.SetWallOpenSide(straight, TileSide.North);
+
+        bool Throws(TileCoord coord)
+        {
+            try
+            {
+                grid.PlaceRecessedWallDevice(coord, CustomDeviceKind.Terminal, "terminal-x");
+                return false;
+            }
+            catch (InvalidOperationException) { return true; }
+        }
+
+        if (!Throws(corner) || !Throws(door) || !Throws(floor))
+            return false;
+
+        grid.PlaceRecessedWallDevice(straight, CustomDeviceKind.Terminal, "terminal-1");
+        var cell = grid.CellAt(straight)!;
+        if (cell.WallDeviceId != "terminal-1" || !cell.WallDeviceRecessed)
+            return false;
+
+        // Both halves now blocked, not just the wall's own solid North half.
+        return !TileGrid.IsWalkable(cell, straight, new Vec2(2.5, 2.25))
+            && !TileGrid.IsWalkable(cell, straight, new Vec2(2.5, 2.75));
     }
 }

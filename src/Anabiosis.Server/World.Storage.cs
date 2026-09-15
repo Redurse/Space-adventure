@@ -35,6 +35,9 @@ public sealed partial class World
         ItemType.LaserRifle, ItemType.LaserRifle, ItemType.LaserRifle,
         ItemType.BeltBag, ItemType.BeltBag, ItemType.BeltBag,
         ItemType.IdCard, ItemType.IdCard, ItemType.IdCard,
+        // Direct user request - radio voice needs a worn item now (ItemType.Radio's own doc
+        // comment), so the starter kit has to actually carry some or nobody could ever use it.
+        ItemType.Radio, ItemType.Radio, ItemType.Radio,
     };
 
     // Every hull's starter kit (game_design.md section 13): 3 units of every hand tool/tank/weapon/

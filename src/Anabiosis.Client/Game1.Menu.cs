@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -32,8 +32,6 @@ public partial class Game1
         Settings,
     }
 
-    private static readonly ShipKind[] SelectableShipKinds =
-        { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette, ShipKind.Destroyer, ShipKind.Freighter };
     private static readonly CrewRole[] RoleChoices = { CrewRole.Captain, CrewRole.Engineer, CrewRole.Mechanic, CrewRole.Security, CrewRole.Scientist };
     private const int RoleIconBoxSize = 70;
     private const int RoleIconGap = 30;
@@ -228,8 +226,13 @@ public partial class Game1
                 continue;
             _selectedRole = RoleChoices[i];
             PlayerSettingsStore.SaveRole(_selectedRole);
-            // The campaign has been waiting on this since the prologue faded out.
-            var shipKind = _prologuePendingShipKind ?? ShipKind.Frigate;
+            // The campaign has been waiting on this since the prologue faded out. Direct user
+            // request ("удали все текущие корабли... полностью удалить из кода") - _prologuePendingShipKind
+            // is only ever set by BeginPrologue, which nothing calls any more (the fixed 6-class
+            // ship-select branch that used to trigger it is gone) - always null here now, falling
+            // back to Custom, which StartHostedSession/World's own constructor resolve to the
+            // frozen default hull (ShipDefaultHull.cs) whenever no CustomShipDefinition is given.
+            var shipKind = _prologuePendingShipKind ?? ShipKind.Custom;
             _prologuePendingShipKind = null;
             StartHostedSession(shipKind, loadFrom: null);
             return;
@@ -283,6 +286,15 @@ public partial class Game1
         if (_menuScreen == MenuScreen.Credits)
         {
             ReturnFromCredits();
+            return true;
+        }
+        if (_menuScreen == MenuScreen.Settings && _awaitingRebindAction is not null)
+        {
+            // A pending Controls-tab rebind capture is one layer deeper than the settings screen
+            // itself - Escape cancels just that (rather than rebinding the action to Escape) before
+            // it's ever allowed to leave the screen underneath it, same priority the in-session
+            // pause-menu path (Game1.cs) already gives its own capture.
+            _awaitingRebindAction = null;
             return true;
         }
         if (_menuScreen == MenuScreen.Settings)
@@ -386,15 +398,20 @@ public partial class Game1
             if (!IsMainMenuButtonVisible(action) || !IsMainMenuButtonEnabled(action) || !rect.Contains(point))
                 continue;
 
+            PlayUiClick();
             switch (action)
             {
                 case MainMenuAction.NewGame:
                     _menuScreen = MenuScreen.ShipSelect;
                     break;
                 case MainMenuAction.Tutorial:
-                    // Always the starter Frigate, no ship-select step - the tutorial's own room ids
-                    // (World.Tutorial.cs) are hardcoded to that hull's layout.
-                    StartHostedSession(ShipKind.Frigate, loadFrom: null, isTutorial: true);
+                    // Always the same layout, no ship-select step - the tutorial's own room ids
+                    // (World.Tutorial.cs) are hardcoded to it. That layout used to be the fixed
+                    // Frigate hull; direct user request ("удали все текущие корабли... полностью
+                    // удалить из кода") removed the hull class itself, but its exact shape survives
+                    // as ShipDefaultHull.cs's frozen default - Custom (with no CustomShipDefinition)
+                    // resolves to that same layout, so the tutorial's own hardcoded room ids stay valid.
+                    StartHostedSession(ShipKind.Custom, loadFrom: null, isTutorial: true);
                     break;
                 case MainMenuAction.Credits:
                     _menuScreen = MenuScreen.Credits;
@@ -458,25 +475,6 @@ public partial class Game1
             return;
         }
 
-        var index = keyboard.IsKeyDown(Keys.D1) ? 0
-            : keyboard.IsKeyDown(Keys.D2) ? 1
-            : keyboard.IsKeyDown(Keys.D3) ? 2
-            : keyboard.IsKeyDown(Keys.D4) ? 3
-            // 5/6 (direct user request - "именно как новые 5,6 корабль"): Destroyer/Freighter,
-            // the two compartment-catalog-built ships added alongside the original 4 hand-authored
-            // classes above.
-            : keyboard.IsKeyDown(Keys.D5) ? 4
-            : keyboard.IsKeyDown(Keys.D6) ? 5
-            : -1;
-        if (index < 0 || index >= SelectableShipKinds.Length)
-            return;
-
-        // Starting fresh abandons the old run - the first docking would overwrite it anyway, so
-        // clearing it now keeps "continue" from offering a save that no longer matches.
-        SaveStore.Delete();
-        // A genuinely new campaign, unlike Continue/Tutorial above - the one path that gets the
-        // prologue (Game1.Prologue.cs), which only starts the session once it has played out.
-        BeginPrologue(SelectableShipKinds[index]);
     }
 
     // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
@@ -558,8 +556,16 @@ public partial class Game1
     // loop already runs on its own background thread once the session exists.
     private System.Threading.Tasks.Task<SoloSession>? _pendingSession;
 
-    private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom, CustomShipDefinition? customShip = null, bool isTutorial = false)
+    // Direct user request ("если играешь в редакторе... вернуться в редактор и продолжать
+    // собирать корабль") - true only for a session started from the Ship Editor's own "Играть"
+    // button (HandleShipEditorPlayClicked), never for a normal НОВАЯ ИГРА/ПРОДОЛЖИТЬ/ПРИСОЕДИНИТЬСЯ/
+    // a saved custom ship picked on ShipSelect - those have no editor canvas to go back to. Gates
+    // the pause menu's 5th button (PauseMenuPanel) and ReturnToShipEditor below.
+    private bool _sessionStartedFromEditor;
+
+    private void StartHostedSession(ShipKind shipKind, SaveGame? loadFrom, CustomShipDefinition? customShip = null, bool isTutorial = false, bool fromShipEditor = false)
     {
+        _sessionStartedFromEditor = fromShipEditor;
         var openToNetwork = _openToNetwork;
         _pendingSession = Task.Run(() => new SoloSession(shipKind, loadFrom,
             openToNetwork ? Anabiosis.Shared.Networking.Wire.DefaultPort : null, customShip, isTutorial));
@@ -606,13 +612,43 @@ public partial class Game1
         _existingSave = SaveStore.Load(); // pick up whatever the run just ending autosaved
 
         _pauseMenuOpen = false;
+        _inGameSettingsOpen = false;
         _openBlock = ClickTarget.None;
         _crewPanelOpen = false;
         _infoPanelOpen = false;
         _shipEditorOpen = false;
         _talkingToNpcId = null;
+        _sessionStartedFromEditor = false;
 
         _menuScreen = MenuScreen.Main;
+    }
+
+    // The pause menu's "ВЕРНУТЬСЯ В РЕДАКТОР" (direct user request) - only ever reachable while
+    // _sessionStartedFromEditor is true. Tears the live test session down exactly like
+    // ReturnToMainMenu does, but lands on MenuScreen.ShipEditor instead of Main - and, critically,
+    // does NOT call EnterShipEditor(): that reloads the canvas from CustomShipStore.Load()/
+    // LoadTileCanvas(), which for a just-Play-tested design is stale (HandleShipEditorPlayClicked
+    // never calls SaveTileCanvas) or blank. Every _editor* field (_editorTiles and its sibling
+    // dictionaries) is a plain Game1 instance field that a hosted session never touches at all, so
+    // leaving them alone is exactly "resume exactly where Играть left off".
+    private void ReturnToShipEditor()
+    {
+        _session?.Dispose();
+        _session = null;
+        _client = null!;
+        _sessionStarted = false;
+        _existingSave = SaveStore.Load();
+
+        _pauseMenuOpen = false;
+        _inGameSettingsOpen = false;
+        _openBlock = ClickTarget.None;
+        _crewPanelOpen = false;
+        _infoPanelOpen = false;
+        _shipEditorOpen = false;
+        _talkingToNpcId = null;
+        _sessionStartedFromEditor = false;
+
+        _menuScreen = MenuScreen.ShipEditor;
     }
 
     // What to tell the other players to type in. Resolved once, on demand - it never changes while
@@ -681,7 +717,7 @@ public partial class Game1
         else if (_menuScreen == MenuScreen.Credits)
             DrawCreditsScreen(totalSeconds);
         else if (_menuScreen == MenuScreen.Settings)
-            DrawSettingsScreen();
+            DrawSettingsScreen(totalSeconds);
         else
             DrawJoinScreen();
 
@@ -1336,44 +1372,37 @@ public partial class Game1
     private void DrawShipSelectScreen()
     {
         _spriteBatch.DrawString(_font, "Выберите корабль", new Vector2(60, 40), Color.White, 0f, Vector2.Zero, 1.4f, SpriteEffects.None, 0f);
-        // Row height shrunk from the original 70 (which only ever had to fit 4 rows) to 52 so all 6
-        // classes - Destroyer/Freighter added as items 5-6 - still fit above the fixed Продолжить/
-        // Кооп/Присоединиться lines below without overlapping them (DesignHeight=560, Game1.cs).
-        const int rowHeight = 52;
-        for (var i = 0; i < SelectableShipKinds.Length; i++)
-        {
-            var kind = SelectableShipKinds[i];
-            var y = 110 + i * rowHeight;
-            _spriteBatch.DrawString(_font, $"[{i + 1}] {ShipCatalog.Name(kind)}", new Vector2(60, y), Color.Gold, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
-            _spriteBatch.DrawString(_font, ShipCatalog.Description(kind), new Vector2(80, y + 24), Color.LightSteelBlue, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
-        }
 
+        // Direct user request ("удали все текущие корабли в разделе начать новую игру... полностью
+        // удалить из кода") - the fixed 6-class list that used to fill this left column (keyboard
+        // keys 1-6) is gone; DrawShipSelectCustomShipList's own column is untouched and is now the
+        // only way to pick a hull here.
         DrawShipSelectCustomShipList();
 
-        // Below the (now 6-row) class list - shifted down from the original 396/420/460/488 to clear
-        // the last class row's own description line.
+        // Moved back up now that the fixed class list above them is gone (used to sit at
+        // 424/448/482/508, tuned to clear that list's own last description line).
         if (_existingSave is { } save)
         {
             _spriteBatch.DrawString(_font, $"[C] Продолжить: {ShipCatalog.Name(save.ShipKind)}, {save.Credits} кред.",
-                new Vector2(60, 424), Color.LightGreen, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
+                new Vector2(60, 140), Color.LightGreen, 0f, Vector2.Zero, 1.0f, SpriteEffects.None, 0f);
             _spriteBatch.DrawString(_font, "Выбор корабля начнёт новую игру и сотрёт сохранение.",
-                new Vector2(80, 448), Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+                new Vector2(80, 164), Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
         }
 
         var hostLine = _openToNetwork
             ? $"[H] Кооп: ОТКРЫТ, порт {Anabiosis.Shared.Networking.Wire.DefaultPort} — друзья вводят {LocalAddresses()}"
             : "[H] Кооп: закрыт (игра только для вас)";
-        _spriteBatch.DrawString(_font, hostLine, new Vector2(60, 482),
+        _spriteBatch.DrawString(_font, hostLine, new Vector2(60, 198),
             _openToNetwork ? Color.LightGreen : Color.LightGray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
-        _spriteBatch.DrawString(_font, "[J] Присоединиться к чужому кораблю", new Vector2(60, 508),
+        _spriteBatch.DrawString(_font, "[J] Присоединиться к чужому кораблю", new Vector2(60, 224),
             Color.LightSkyBlue, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
     }
 
     // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
-    // Step 7) - alongside the 6 fixed classes on the left (which stay keyboard-driven, 1-6 -
-    // Destroyer/Freighter added as items 5-6 alongside the original 4), not instead of them. An
-    // invalid design still shows up here (so the player can see it exists and go fix it in the
-    // editor) but greyed out and unclickable, rather than hidden entirely.
+    // Step 7) - the only hull-selection list on this screen now (direct user request, "удали все
+    // текущие корабли... полностью удалить из кода" removed the 6 fixed classes that used to sit
+    // to its left). An invalid design still shows up here (so the player can see it exists and go
+    // fix it in the editor) but greyed out and unclickable, rather than hidden entirely.
     private void DrawShipSelectCustomShipList()
     {
         _spriteBatch.DrawString(_font, "Ваши корабли:", new Vector2(650, 80), Color.White, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);

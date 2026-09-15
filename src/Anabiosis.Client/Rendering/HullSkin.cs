@@ -38,7 +38,7 @@ public static partial class HullSkin
 
     public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, IReadOnlyList<Room> rooms,
         IReadOnlyList<AirlockOuterDoor> ports, IReadOnlyList<ShipSystemDevice> devices, Vector2 origin,
-        float forwardDegrees, ShipKind shipKind = ShipKind.Frigate, float totalSeconds = 0f,
+        float forwardDegrees, ShipKind shipKind = ShipKind.Custom, float totalSeconds = 0f,
         IReadOnlyList<ShipSystemState>? systemStates = null)
     {
         if (rooms.Count == 0)

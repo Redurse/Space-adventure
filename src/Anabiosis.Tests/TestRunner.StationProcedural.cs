@@ -107,6 +107,33 @@ internal static partial class TestRunner
             !a.Npcs.Select(n => n.Kind).SequenceEqual(b.Npcs.Select(n => n.Kind));
     }
 
+    // A free-tile-editor-built ship can put its airlock on ANY of the 4 walls (CustomShipDefinition's
+    // EdgeSide), unlike every hand-authored hull (always Right/east) - regression test for the
+    // station-orientation fix (World.cs now computes the real side via Ship.Convert.cs's
+    // InferAirlockSide and passes it through). A synthetic 10x6 "hull" rect stands in for the ship;
+    // for each side, the airlock sits in the middle of that wall, and the generated station must
+    // never land any room on top of the hull rect - the whole point of orienting away from it.
+    private static bool Station_Procedural_OrientsAwayFromShipHullOnEverySide()
+    {
+        var hull = new Room("hull", "Hull", 0f, 0f, 10f, 6f);
+        var casesBySide = new (EdgeSide Side, Vec2 Anchor)[]
+        {
+            (EdgeSide.Right, new Vec2(10f, 3f)),
+            (EdgeSide.Left, new Vec2(0f, 3f)),
+            (EdgeSide.Top, new Vec2(5f, 0f)),
+            (EdgeSide.Bottom, new Vec2(5f, 6f)),
+        };
+        foreach (var kind in AllStationKinds)
+            foreach (var (side, anchor) in casesBySide)
+            {
+                var station = Station.CreateProcedural($"orient-{side}-{kind}", kind, anchor, side);
+                foreach (var room in station.Rooms)
+                    if (RoomsOverlap(hull, room))
+                        return false;
+            }
+        return true;
+    }
+
     // The dock's own connector must land exactly on connectorAnchor regardless of kind - the exact
     // contract World.cs's GetOrCreateStation relies on to keep a docked ship's airlock lined up.
     private static bool Station_Procedural_ConnectorLandsExactlyOnTheAnchor()

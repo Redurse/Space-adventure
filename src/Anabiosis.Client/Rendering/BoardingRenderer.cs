@@ -15,6 +15,12 @@ public sealed class BoardingRenderer
 {
     private const int CrewMarkerSize = 22;
 
+    // Direct user request ("ИНДИКАТОРЫ ЗДОРОВЬЯ ВРАГОВ" in the Interface settings tab) - set once a
+    // frame from Game1's own graphics settings, gates just the health bar below, not the rest of the
+    // marker (visor/name stay visible either way, same as the reference screenshot's own toggle only
+    // affecting the bar).
+    public bool ShowHealthBars { get; set; } = true;
+
     private readonly ShipRenderer _shipRenderer;
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
@@ -47,7 +53,7 @@ public sealed class BoardingRenderer
         foreach (var door in snapshot.EnemyShip.Doors)
         {
             var state = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id);
-            _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height,
+            _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, door.IsVertical,
                 state?.IsOpen ?? false, origin, destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
         }
 
@@ -72,7 +78,7 @@ public sealed class BoardingRenderer
         foreach (var airlock in snapshot.EnemyShip.AirlockOuterDoors)
         {
             var breached = snapshot.EnemyShip.AirlockStates.FirstOrDefault(s => s.Id == airlock.Id)?.Breached ?? false;
-            _shipRenderer.DrawDoor(spriteBatch, airlock.Left, airlock.Top, airlock.Width, airlock.Height,
+            _shipRenderer.DrawDoor(spriteBatch, airlock.Left, airlock.Top, airlock.Width, airlock.Height, airlock.Width <= airlock.Height,
                 isOpen: breached, origin, leadsToVacuum: true, destroyed: breached);
         }
 
@@ -141,13 +147,16 @@ public sealed class BoardingRenderer
         spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - visorSize / 2, rect.Center.Y - visorSize / 2, visorSize, visorSize), Color.OrangeRed);
 
         // Health bar above the head - the only readout that matters while clearing a room.
-        const int barWidth = 30;
-        const int barHeight = 4;
-        var barX = rect.Center.X - barWidth / 2;
-        var barY = rect.Y - 10;
-        spriteBatch.Draw(_pixel, new Rectangle(barX, barY, barWidth, barHeight), Color.Black * 0.7f);
-        var fraction = MathHelper.Clamp(crew.Health / 60f, 0f, 1f); // EnemyCrewRuntime.MaxHealth
-        spriteBatch.Draw(_pixel, new Rectangle(barX, barY, (int)(barWidth * fraction), barHeight), Color.Red);
+        if (ShowHealthBars)
+        {
+            const int barWidth = 30;
+            const int barHeight = 4;
+            var barX = rect.Center.X - barWidth / 2;
+            var barY = rect.Y - 10;
+            spriteBatch.Draw(_pixel, new Rectangle(barX, barY, barWidth, barHeight), Color.Black * 0.7f);
+            var fraction = MathHelper.Clamp(crew.Health / 60f, 0f, 1f); // EnemyCrewRuntime.MaxHealth
+            spriteBatch.Draw(_pixel, new Rectangle(barX, barY, (int)(barWidth * fraction), barHeight), Color.Red);
+        }
 
         spriteBatch.DrawString(_font, crew.Name, new Vector2(rect.X - 8, rect.Bottom + 3), Color.LightGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }

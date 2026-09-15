@@ -1,14 +1,20 @@
-namespace Anabiosis.Shared.Model;
+﻿namespace Anabiosis.Shared.Model;
 
-// Fixed per-class layouts (game_design.md section 9 — "несколько классов кораблей... своя
-// фиксированная планировка отсеков"). Split across partials by class: this file holds the shared
-// Ship type plus CreateStarter() (the original M2 layout, now ShipKind.Frigate); Ship.Scout.cs and
-// Ship.Cruiser.cs hold the two additional classes added alongside it.
+// Direct user request ("удали все текущие корабли в разделе начать новую игру... полностью удалить
+// из кода") - every fixed/hand-authored hull class (Frigate/Scout/Cruiser/Corvette/Destroyer/
+// Freighter) is gone; ShipKind is just Custom now, built exclusively through FromCustomDefinition
+// (Ship.Custom.cs). This file holds only the shared Ship type/generic helpers every hull (player-
+// drawn or the frozen default, ShipDefaultHull.cs) goes through alike.
 public sealed partial class Ship
 {
     public IReadOnlyList<Room> Rooms { get; }
     public IReadOnlyList<Door> Doors { get; }
     public IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors { get; }
+    // M-doors-as-edges (humble-soaring-cat.md) - narrow doors that sit on the EDGE between 2
+    // already-free floor tiles instead of occupying a tile themselves. Empty for every hand-
+    // authored hull (CreateStarter/.Scout/.Cruiser/.Corvette/.CatalogHulls never place one) - only
+    // ever populated by a Ship Editor-built hull (Ship.Custom.cs's FromCustomDefinition).
+    public IReadOnlyList<ShipDoorEdge> DoorEdges { get; }
     public IReadOnlyList<Turret> Turrets { get; }
     public IReadOnlyList<HullCamera> Cameras { get; }
     public IReadOnlyList<AmmoStorage> AmmoStorages { get; }
@@ -24,6 +30,29 @@ public sealed partial class Ship
     // purely to prove the projection is lossless before any dependent system (atmosphere, movement,
     // rendering...) migrates to it one milestone at a time.
     public TileGrid Tiles { get; }
+    // Direct user bug report ("стены отображаются не на своих местах, а коллизии там же") -
+    // TileShipBuilder.BuildDefinition's own steps 3.5/3.6 (a T-junction's residual wall, or a
+    // half-block notch sitting at a region's own edge) can produce extra wall/floor tiles that
+    // don't fit into any Room's own Rects at all - Ship.Custom.cs's FromCustomDefinition paints
+    // them directly onto THIS Ship's own Tiles right after construction, which is correct for
+    // SERVER-side collision (TileMovement.cs reads Tiles directly) but was NEVER reaching the
+    // CLIENT: WorldSnapshot only ever networked Rooms/Doors/AirlockOuterDoors/WallBlocks, and the
+    // client rebuilds its OWN copy of Tiles purely by re-running TileGridRasterizer.FromRooms on
+    // those - the exact same "naive" rasterization that steps 3.5/3.6 exist to CORRECT, so the
+    // client's rendering silently reverted to the wrong, uncorrected geometry while the server's
+    // real collision (built from THIS list, once, here) stayed right. These 3 lists are Ship's own
+    // record of exactly which post-rasterization corrections were applied, so WorldSnapshot can
+    // hand them to the client to replay the identical fix (ClientTileGrid.ApplySupplementalTiles).
+    // Empty for every hand-authored hull (CreateStarter/.Scout/.Cruiser/.Corvette never need this
+    // correction - their Room rects are hand-tuned to already include their own wall ring).
+    public IReadOnlyList<TileCoord> SupplementalWallTiles { get; }
+    public IReadOnlyList<TileCoord> ForcedFloorTiles { get; }
+    public IReadOnlyList<CustomWallOpenSideDef> WallOpenSideOverrides { get; }
+    // Same reasoning as WallOpenSideOverrides just above, for WallMaterial instead - a non-Standard
+    // material (Reinforced/Window) on a tile that fell into SupplementalWallTiles (never gets a real
+    // WallBlock) would otherwise be invisible to the client the exact same way a half-block notch's
+    // WallOpenSide used to be.
+    public IReadOnlyList<CustomWallMaterialDef> WallMaterialOverrides { get; }
     // M74 (humble-soaring-cat.md) - flattened ECS-style view over every physical device fixture
     // below (ReactorBlock/DistributionBlock/BatteryBlock/HelmConsole/NavigationConsole/CardTable/
     // Jukebox/SystemDevices/Turrets/AmmoStorages/SuitLockers/StorageRacks/Cameras/ComponentMounts,
@@ -39,9 +68,15 @@ public sealed partial class Ship
     // The jukebox's physical position, or null when this hull has none - unlike CardTable this is
     // genuinely optional flavor furniture (Ship Editor only for now), not a fixture every hull gets.
     public Jukebox? Jukebox { get; }
-    // The wall terminal's physical position, or null when this hull has none - same optional
-    // flavor-furniture treatment as Jukebox, not a fixture every hull gets.
-    public Terminal? Terminal { get; }
+    // The wall terminals' physical positions - direct user request ("это в будущем будет одно из
+    // главных устройств, их будет много"): many independent instances per hull, each with its own
+    // on/off state (World.Terminals.cs), same "list of fixtures, each with its own Id" shape
+    // SuitLockers/AmmoStorages/Turrets already use, not a single optional flavor device any more.
+    public IReadOnlyList<Terminal> Terminals { get; }
+    // Direct user request ("настенную лампу... когда она установлена, она излучает свет") - same
+    // list-of-fixtures shape as Terminals, no server-side state of its own at all (purely passive,
+    // Game1.Lighting.cs lights it whenever the ship's own lamps are on).
+    public IReadOnlyList<WallLamp> WallLamps { get; }
     // Two per hull (game_design.md section 13) - a starter kit of 3 units of every hand
     // tool/tank/weapon/consumable used to live scattered across the ship as individual ToolStation
     // pickups; it now lives here instead, split across these two shelves (World.ShipPurchase.cs's
@@ -88,6 +123,18 @@ public sealed partial class Ship
     // one, and destroying the bonus room's own wall blocks would never actually remove its device.
     public IReadOnlyList<Vec2> ExtraReactorPositions { get; }
     public IReadOnlyList<Vec2> ExtraDistributionPositions { get; }
+    // Direct user request ("сделай чтобы на корабле могло быть несколько батарей") - same "bonus,
+    // not list" shape as ReactorDeviceCount/ExtraReactorPositions just above: BatteryBlock still
+    // only ever comes from the FIRST placed Battery device (or the auto-placed fallback, if the
+    // player never placed one at all - see BuildSimpleDevices's own doc comment), so this always
+    // reads at least 1 even when the raw device count is 0. World.ShipBuilding.cs's
+    // RecomputeDeviceBonuses turns extras into real stored-energy capacity (Battery.CapacityBonus),
+    // mirroring exactly how an extra reactor already turns into extra output.
+    public int BatteryDeviceCount { get; }
+    public IReadOnlyList<Vec2> ExtraBatteryPositions { get; }
+    // Direct user bug report ("щитки отображались в игре а не была просто пустота") - the "Щиток"
+    // fixture (JunctionBox.cs's own doc comment) is purely decorative, same shape as WallLamps.
+    public IReadOnlyList<JunctionBox> JunctionBoxes { get; }
 
     private readonly Dictionary<string, Room> _roomsById;
 
@@ -113,7 +160,8 @@ public sealed partial class Ship
         float forwardDegrees = 0f,
         IReadOnlyList<ComponentMount>? componentMounts = null,
         Jukebox? jukebox = null,
-        Terminal? terminal = null,
+        IReadOnlyList<Terminal>? terminals = null,
+        IReadOnlyList<WallLamp>? wallLamps = null,
         int reactorDeviceCount = 1,
         int distributionDeviceCount = 1,
         int helmDeviceCount = 1,
@@ -122,7 +170,15 @@ public sealed partial class Ship
         IReadOnlyList<NavigationConsole>? extraNavigationConsoles = null,
         IReadOnlyList<Vec2>? extraReactorPositions = null,
         IReadOnlyList<Vec2>? extraDistributionPositions = null,
+        int batteryDeviceCount = 1,
+        IReadOnlyList<Vec2>? extraBatteryPositions = null,
+        IReadOnlyList<JunctionBox>? junctionBoxes = null,
         IReadOnlyList<ShipEngine>? engines = null,
+        IReadOnlyList<TileCoord>? supplementalWallTiles = null,
+        IReadOnlyList<TileCoord>? forcedFloorTiles = null,
+        IReadOnlyList<CustomWallOpenSideDef>? wallOpenSideOverrides = null,
+        IReadOnlyList<CustomWallMaterialDef>? wallMaterialOverrides = null,
+        IReadOnlyList<ShipDoorEdge>? doorEdges = null,
         // True only for a Ship Editor-built hull (Ship.Custom.cs's FromCustomDefinition sets this) -
         // every hand-authored hull (CreateStarter/.Scout/.Cruiser/.Corvette) leaves it false. Gates
         // the Reactor's own zone-name penalty (World.Upgrades.cs's RecomputeReactorZonePenalty):
@@ -142,12 +198,17 @@ public sealed partial class Ship
         ExtraNavigationConsoles = extraNavigationConsoles ?? Array.Empty<NavigationConsole>();
         ExtraReactorPositions = extraReactorPositions ?? Array.Empty<Vec2>();
         ExtraDistributionPositions = extraDistributionPositions ?? Array.Empty<Vec2>();
+        BatteryDeviceCount = batteryDeviceCount;
+        ExtraBatteryPositions = extraBatteryPositions ?? Array.Empty<Vec2>();
+        JunctionBoxes = junctionBoxes ?? Array.Empty<JunctionBox>();
         ComponentMounts = componentMounts ?? Array.Empty<ComponentMount>();
         Jukebox = jukebox;
-        Terminal = terminal;
+        Terminals = terminals ?? Array.Empty<Terminal>();
+        WallLamps = wallLamps ?? Array.Empty<WallLamp>();
         Rooms = rooms;
         Doors = doors;
         AirlockOuterDoors = airlockOuterDoors;
+        DoorEdges = doorEdges ?? Array.Empty<ShipDoorEdge>();
         Turrets = turrets;
         Cameras = cameras;
         AmmoStorages = ammoStorages;
@@ -160,6 +221,10 @@ public sealed partial class Ship
         // life-support flanks, each with an AirlockOuterDoor on an otherwise-solid side), so any
         // block that lands exactly on a door's own footprint is dropped here, once, for every hull.
         Engines = engines ?? Array.Empty<ShipEngine>();
+        SupplementalWallTiles = supplementalWallTiles ?? Array.Empty<TileCoord>();
+        ForcedFloorTiles = forcedFloorTiles ?? Array.Empty<TileCoord>();
+        WallOpenSideOverrides = wallOpenSideOverrides ?? Array.Empty<CustomWallOpenSideDef>();
+        WallMaterialOverrides = wallMaterialOverrides ?? Array.Empty<CustomWallMaterialDef>();
         // A marching engine's own Bulkhead tile IS the hull plating at that spot (ShipEngine.cs's
         // own doc comment) - drops the ordinary WallBlock the room's own outer-wall generation would
         // otherwise ALSO place there, the same way a door's footprint already excludes one, so the
@@ -212,8 +277,8 @@ public sealed partial class Ship
         if (Jukebox is { } jukebox)
             devices.Add(new ShipDevice(jukebox.Id, DeviceKind.Jukebox, jukebox.RoomId, jukebox.X, jukebox.Y));
 
-        if (Terminal is { } terminal)
-            devices.Add(new ShipDevice(terminal.Id, DeviceKind.Terminal, terminal.RoomId, terminal.X, terminal.Y));
+        devices.AddRange(Terminals.Select(t => new ShipDevice(t.Id, DeviceKind.Terminal, t.RoomId, t.X, t.Y)));
+        devices.AddRange(WallLamps.Select(l => new ShipDevice(l.Id, DeviceKind.WallLamp, l.RoomId, l.X, l.Y)));
 
         // PowerSystemId.Secondary has no DeviceKind counterpart (ShipDevice.cs's own doc comment) -
         // a hull's "system-secondary" fixture stays on SystemDevices untouched, just absent here.
@@ -254,18 +319,14 @@ public sealed partial class Ship
 
     private string RoomIdAt(Vec2 position) => Rooms.FirstOrDefault(r => r.Contains(position))?.Id ?? SpawnRoomId;
 
-    public static Ship Create(ShipKind kind) => kind switch
-    {
-        ShipKind.Scout => CreateScout(),
-        ShipKind.Cruiser => CreateCruiser(),
-        ShipKind.Corvette => CreateCorvette(),
-        ShipKind.Destroyer => CreateDestroyer(),
-        ShipKind.Freighter => CreateFreighter(),
-        // Custom has no fixed layout to build here - callers must go through FromCustomDefinition
-        // with the player's own CustomShipDefinition instead (World.cs, World.Save.cs).
-        ShipKind.Custom => throw new InvalidOperationException("ShipKind.Custom has no fixed layout - use Ship.FromCustomDefinition."),
-        _ => CreateStarter(),
-    };
+    // Direct user request ("удали все текущие корабли... полностью удалить из кода") - ShipKind is
+    // just Custom now, which has no fixed layout of its own - every real caller goes through
+    // FromCustomDefinition (World.cs, World.Save.cs), falling back to ShipDefaultHull.Definition
+    // when no CustomShipDefinition was actually supplied. Kept as a single throwing method (not
+    // deleted outright) only so any straggling `Ship.Create(...)` call site fails loudly at the
+    // call, rather than compiling into something silently wrong.
+    public static Ship Create(ShipKind kind) =>
+        throw new InvalidOperationException("ShipKind has no fixed layout any more - use Ship.FromCustomDefinition.");
 
     // One 1x1 block per unit segment of whichever edges are actually outer hull (no neighboring
     // room on that side) — interior bulkheads between two pressurized rooms don't get blocks,
@@ -352,8 +413,27 @@ public sealed partial class Ship
     public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen,
         Func<WallBlock, bool>? isPassableBreach = null)
     {
-        var next = TileMovement.MoveAlongAxis(Tiles, position, delta, DeviceObstacles);
+        var next = TileMovement.MoveAlongAxis(Tiles, position, delta, DeviceObstacles.Concat(WallDeviceObstacles).ToList());
         return (next, TileMovement.RoomIdAt(Rooms, next) ?? roomId);
+    }
+
+    // Direct user request ("в таком случае будет полностью заполнен тайл") - a Terminal/WallLamp
+    // always fully blocks its own (X,Y) tile once placed, regardless of whether it's recessed in a
+    // half-thick wall's own free half or protruding onto an ordinary floor tile from a ordinary
+    // wall - both modes end up needing the exact same shape here, a plain full-unit box centered on
+    // the device's own already-exported tile-center position (TileShipBuilder's own convention).
+    // Unlike DeviceObstacles' own Reactor gating, this applies to every ship unconditionally - these
+    // two device kinds always have a real, well-defined 1x1 footprint, hand-authored or custom alike.
+    private IReadOnlyList<RoomLayout.RoomObstacle> WallDeviceObstacles
+    {
+        get
+        {
+            var halfExtents = new Vec2(0.5, 0.5);
+            var obstacles = new List<RoomLayout.RoomObstacle>(Terminals.Count + WallLamps.Count);
+            obstacles.AddRange(Terminals.Select(t => new RoomLayout.RoomObstacle(t.RoomId, t.Position, halfExtents)));
+            obstacles.AddRange(WallLamps.Select(l => new RoomLayout.RoomObstacle(l.RoomId, l.Position, halfExtents)));
+            return obstacles;
+        }
     }
 
     // The reactor's own machine (a catalog/editor room's reference art bakes the whole thing right
@@ -392,182 +472,37 @@ public sealed partial class Ship
 
             var (footprintWidth, footprintHeight) = CustomDeviceFootprint.Size(CustomDeviceKind.Reactor);
             var halfExtents = new Vec2(footprintWidth / 2f, footprintHeight / 2f);
-            var obstacles = new List<RoomLayout.RoomObstacle> { new(ReactorBlock.RoomId, ReactorBlock.Position, halfExtents) };
-            obstacles.AddRange(ExtraReactorPositions.Select(p => new RoomLayout.RoomObstacle(RoomIdAt(p), p, halfExtents)));
+            // Bug fix (found live: a minimal hand-authored CustomShipDefinition test fixture placed
+            // its own Reactor in a plain 4x4 room with none of the compartment catalog's guaranteed
+            // clearance - the full-size obstacle swallowed nearly the whole room, trapping a
+            // character trying to cross it and starving them of oxygen through a breached bulkhead
+            // elsewhere on the same tiny ship before they could ever get free). Only trust the exact
+            // footprint size when the room it landed in is actually big enough to leave a walkway on
+            // every side (the same >=1-unit-clearance margin the old reference-art heuristic's own
+            // doc comment describes) - skip the obstacle entirely otherwise, same as a hand-authored
+            // hull with no reference art gets today.
+            bool RoomHasClearance(string roomId)
+            {
+                var r = GetRoom(roomId);
+                return r.Width >= footprintWidth + 2 && r.Height >= footprintHeight + 2;
+            }
+
+            var obstacles = new List<RoomLayout.RoomObstacle>();
+            if (RoomHasClearance(ReactorBlock.RoomId))
+                obstacles.Add(new RoomLayout.RoomObstacle(ReactorBlock.RoomId, ReactorBlock.Position, halfExtents));
+            obstacles.AddRange(ExtraReactorPositions
+                .Select(p => (RoomId: RoomIdAt(p), Position: p))
+                .Where(x => RoomHasClearance(x.RoomId))
+                .Select(x => new RoomLayout.RoomObstacle(x.RoomId, x.Position, halfExtents)));
             return obstacles;
         }
     }
 
-    public static Ship CreateStarter()
-    {
-        var rooms = new[]
-        {
-            new Room("cockpit", "Кокпит", 0, 0, 5, 6),
-            new Room("reactor", "Реакторная", 5, 0, 5, 6),
-            new Room("corridor", "Коридор", 10, 0, 3, 6),
-            new Room("quarters", "Каюты", 13, 0, 5, 6),
-            new Room("engine", "Машинное отделение", 18, 0, 5, 6),
-            // Small airtight chamber appended at the row's far end (game_design.md Phase 3, M16):
-            // one normal door in from engine, one AirlockOuterDoor out to vacuum.
-            new Room("airlock-chamber", "Шлюзовая камера", 23, 0, 3, 6),
-        };
 
-        // Doors sit on the shared vertical wall between adjacent rooms, open around the row's
-        // mid-height (y=3) — walking near the top/bottom of a room still hits a solid wall.
-        // Every door on this hull is the same full double width on purpose - a single-tile door is
-        // real (Ship.Custom.cs/TileShipBuilder.cs already produce genuine 1-tile ones wherever two
-        // rooms only overlap by one tile), but this hull's own movement model is a plain straight-
-        // line walk with no snap-to-door-center assist, so a door narrower than the corridor's own
-        // walking line (y=3 here) silently strands the walker at the wall instead of letting them
-        // through - tried narrowing three of these five doors for variety and it broke 91 unrelated
-        // tests this way, all of them just walking straight down this same hallway.
-        var doors = new[]
-        {
-            new Door("door-cockpit-reactor", "cockpit", "reactor", 5, 3, 1.0f, Door.StandardSpanUnits),
-            new Door("door-reactor-corridor", "reactor", "corridor", 10, 3, 1.0f, Door.StandardSpanUnits),
-            new Door("door-corridor-quarters", "corridor", "quarters", 13, 3, 1.0f, Door.StandardSpanUnits),
-            new Door("door-quarters-engine", "quarters", "engine", 18, 3, 1.0f, Door.StandardSpanUnits),
-            new Door("door-engine-airlock", "engine", "airlock-chamber", 23, 3, 1.0f, Door.StandardSpanUnits),
-        };
-
-        // The chamber's far wall - opens onto vacuum, not another room (game_design.md Phase 3,
-        // M16). No interlock with door-engine-airlock: opening both at once really does vent the
-        // whole ship, same as leaving both real airlock doors open.
-        var airlockOuterDoors = new[]
-        {
-            new AirlockOuterDoor("door-airlock-vacuum", "airlock-chamber", 26, 3, 1.0f, Door.StandardSpanUnits),
-        };
-
-        // Two turrets (Phase1 MVP: "1-2 орудия"): bow ballistic in the cockpit, and the laser —
-        // "единственное исключение" per game_design.md section 2 — in the reactor room, where
-        // it's thematically wired to the power grid it draws its capacitor charge from.
-        var turrets = new[]
-        {
-            new Turret("turret-bow", "cockpit", PeriscopeX: 1.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.MagneticDamage,
-                CooldownSeconds: TurretBalance.MagneticCooldownSeconds, WeaponType: TurretWeaponType.Magnetic,
-                MagazineCapacity: TurretBalance.MagneticMagazineCapacity),
-            new Turret("turret-laser", "reactor", PeriscopeX: 6.5f, PeriscopeY: 3f,
-                MinAimDegrees: -45f, MaxAimDegrees: 45f, DamagePerShot: TurretBalance.LaserDamagePerTick,
-                CooldownSeconds: TurretBalance.LaserTickIntervalSeconds, WeaponType: TurretWeaponType.Laser,
-                MaxCharge: TurretBalance.LaserMaxCharge, ChargePerShot: TurretBalance.LaserChargePerTick,
-                RechargePerPowerUnitPerSecond: TurretBalance.LaserRechargePerPowerUnitPerSecond),
-        };
-
-        // Two hull cameras, bow and stern (M48 - "камеры как устройства корабля"): junction boxes
-        // a crew member walks up to and wires/repairs like any other system, HullCameraMount
-        // derives their actual outward-facing position on the plating from MountSide. Kept clear
-        // of the bow turret's own periscope (1.5, 3) by more than InteractionRadius.
-        var cameras = new[]
-        {
-            new HullCamera("camera-bow", "cockpit", X: 3.5f, Y: 5f, CameraMountSide.Fore),
-            new HullCamera("camera-stern", "airlock-chamber", X: 24f, Y: 1f, CameraMountSide.Aft),
-        };
-
-        // Ammo storage lives in quarters — deliberately far from the bow turret so hauling a
-        // crate across the ship (game_design.md section 2) is a real trip, not a formality.
-        var ammoStorages = new[]
-        {
-            new AmmoStorage("ammo-storage-quarters", "quarters", X: 15f, Y: 3f),
-        };
-
-        // Suit locker lives in the engine room — a third destination spread across the ship
-        // alongside the turret (cockpit) and ammo storage (quarters).
-        var suitLockers = new[]
-        {
-            new SuitLocker("suit-locker-engine", "engine", X: 20f, Y: 3f),
-        };
-
-        // Every breaker panel hangs in the reactor room, spaced apart rather than lined up one
-        // behind another, so running a wire from the distribution block to any of them is a short,
-        // uncluttered trip instead of a walk across the whole ship - same consolidation as the
-        // Corvette's reactor hall (Ship.Corvette.cs). Shields is the one system with two physical
-        // generators (design doc §1 — "несколько генераторов щита в разных частях корпуса"),
-        // matching its two drop links in WireNetwork - both still live here, not one per hull side.
-        // system-oxygen is the one exception: it stays in the corridor, because its RoomId is where
-        // the generator actually pumps air into (World.Atmosphere.cs), not just a panel location -
-        // moving it would relocate life support to a different compartment, not just tidy up wiring.
-        var systemDevices = new[]
-        {
-            new ShipSystemDevice("system-shields", "reactor", X: 7.2f, Y: 0.7f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-shields-2", "reactor", X: 8.6f, Y: 1.6f, PowerSystemId.Shields),
-            new ShipSystemDevice("system-weapon-charger", "reactor", X: 7.6f, Y: 2.2f, PowerSystemId.WeaponCharger),
-            new ShipSystemDevice("system-oxygen", "corridor", X: 12.5f, Y: 1.5f, PowerSystemId.Oxygen),
-            new ShipSystemDevice("system-secondary", "reactor", X: 8.5f, Y: 3.8f, PowerSystemId.Secondary),
-            new ShipSystemDevice("system-engine", "reactor", X: 7.2f, Y: 4.3f, PowerSystemId.Engine),
-            // Paired engine block, as every class now carries (WireNetwork.CreateDefault).
-            new ShipSystemDevice("system-engine-2", "reactor", X: 8.5f, Y: 5.2f, PowerSystemId.Engine),
-        };
-
-        // Reactor is a big, clickable block; the distribution block sits right next to it
-        // (game_design.md section 1 — "Distribution-блок рядом с реактором").
-        var reactorBlock = new ReactorBlock("reactor-block", "reactor", X: 9.5f, Y: 1f);
-        var distributionBlock = new PowerDistributionBlock("distribution-block", "reactor", X: 9.5f, Y: 3f);
-        var batteryBlock = new BatteryBlock("battery-block", "reactor", X: 9.5f, Y: 5f);
-
-        // Helm console on the bridge (game_design.md Phase 3, M15) — stand here to take manual
-        // control of the ship in open space. Moved to the cockpit's own forward bulkhead (low X,
-        // the nose side - GenerateOuterWallBlocks(rooms[0], left: true) marks X=0 as outer hull)
-        // rather than the mid-room spot it used to occupy, so the captain stands right up against
-        // the nose (M47 follow-up - "впередней части кокпита"). Kept clear of the bow turret's
-        // periscope (1.5, 3) and the card table (4, 1) by more than InteractionRadius (1.0).
-        var helmConsole = new HelmConsole("helm-console", "cockpit", X: 1.4f, Y: 1.3f);
-
-        // The scanner console (game_design.md section 5/M44) - right next to the helm (M47), both
-        // now at the cockpit's forward bulkhead so they read as one bridge station pair the
-        // captain and the scientist share, rather than one of them standing off on its own.
-        var navigationConsole = new NavigationConsole("navigation-console", "cockpit", X: 2.8f, Y: 1.3f);
-
-        // A quiet corner of the cockpit, clear of the nav console/helm/turret/mount above - two
-        // crew standing here together starts a hand of Дурак переводной (World.CardGame.cs).
-        var cardTable = new CardTable("card-table", "cockpit", X: 4f, Y: 1f);
-
-        // Aft of the card table, clear of the turret periscope (1.5, 3) and every console above.
-        var jukebox = new Jukebox("jukebox", "cockpit", X: 4f, Y: 4.5f);
-
-        // Against the cockpit's left (exterior) wall, clear of the helm/nav console pair and the
-        // turret periscope - a small wall fixture, not another floor console to walk around.
-        var terminal = new Terminal("terminal", "cockpit", X: 0.6f, Y: 1f);
-
-        // Outer-hull wall blocks: every room's top/bottom is exterior (the ship is one row
-        // wide); only cockpit's left and the airlock chamber's right are exterior side walls not
-        // covered by a dedicated door — engine's former right-side hull is now the door to the
-        // chamber, and the chamber's own right side is the dedicated AirlockOuterDoor above rather
-        // than random breachable hull (it's a small deliberate compartment, not open combat armor).
-        var wallBlocks = new List<WallBlock>();
-        wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[0], top: true, bottom: true, left: true, right: false));
-        wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[1], top: true, bottom: true, left: false, right: false));
-        wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[2], top: true, bottom: true, left: false, right: false));
-        wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[3], top: true, bottom: true, left: false, right: false));
-        wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[4], top: true, bottom: true, left: false, right: false));
-        wallBlocks.AddRange(GenerateOuterWallBlocks(rooms[5], top: true, bottom: true, left: false, right: false));
-        wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
-
-        // Two shelves: quarters (the one room that isn't already crowded with machinery) and engine
-        // (World.ShipPurchase.cs's InitializeRackSlots seeds the crew's starter gear between them).
-        var storageRacks = new[]
-        {
-            new StorageRack("rack-quarters", "quarters", X: 16f, Y: 1.5f),
-            new StorageRack("rack-engine", "engine", X: 20f, Y: 5f),
-        };
-
-        // Empty sockets for purchasable logic/sensor/actuator parts (World.ComponentMounts.cs,
-        // game_design.md section 1's wiring) - spread one or two per room, not one per possible
-        // kind, since the player chooses what to install where. One sits by the airlock door
-        // specifically for an AutoDoorController.
-        var componentMounts = new[]
-        {
-            new ComponentMount("mount-cockpit-1", "cockpit", X: 1.5f, Y: 5f),
-            new ComponentMount("mount-reactor-1", "reactor", X: 6f, Y: 1.5f),
-            new ComponentMount("mount-corridor-1", "corridor", X: 12.5f, Y: 5f),
-            new ComponentMount("mount-quarters-1", "quarters", X: 13.5f, Y: 5f),
-            new ComponentMount("mount-quarters-2", "quarters", X: 17.5f, Y: 4.5f),
-            new ComponentMount("mount-engine-door", "engine", X: 22f, Y: 4f, TargetDoorId: "door-engine-airlock"),
-        };
-
-        var corridor = rooms.First(r => r.Id == "corridor");
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
-            reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks, corridor.Center, corridor.Id,
-            cardTable, componentMounts: componentMounts, jukebox: jukebox, terminal: terminal);
-    }
+    // M-doors-as-edges follow-up (direct user request, "удали все текущие корабли... полностью
+    // удалить из кода") - CreateStarter() used to live here, the original M2 layout backing
+    // ShipKind.Frigate. Its exact shape survives as data, not code - captured once via a DIAG=1
+    // diagnostic (Ship.CreateStarter().ToDefinition()) into ShipDefaultHull.cs, which is what a
+    // fresh World/GameServer/SoloSession now falls back to when no CustomShipDefinition is
+    // supplied, so those hundreds of pre-existing callers keep behaving identically.
 }

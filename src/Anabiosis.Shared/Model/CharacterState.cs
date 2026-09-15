@@ -89,4 +89,8 @@ public sealed record CharacterState(
     // Which toggle-switch position this character last selected (World.Scanner.cs, M48 follow-up) -
     // echoed back from the server rather than trusting the client's own unconfirmed guess, the same
     // reasoning ScannerSweepDegrees already gets.
-    ScannerMode ScannerMode = ScannerMode.Directional);
+    ScannerMode ScannerMode = ScannerMode.Directional,
+    // A voice chunk from this player arrived within the last "recently speaking" window
+    // (World.Voice.cs) - direct user request, a speaking indicator every other client can see over
+    // this character's own head, not just the speaker's own local HUD label.
+    bool IsSpeaking = false);

@@ -53,7 +53,8 @@ public static class CompartmentPlacer
         IReadOnlyList<RectF> FootprintRects,
         IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind, bool IsCore, TurretMountSide MountSide, bool Rotated)> Devices,
         IReadOnlyList<(TileCoord Control, TileSide Facing, float MaxThrust, EngineRole Role)> Engines,
-        (TileSide Side, TileCoord DoorPosition)? Airlock);
+        (TileSide Side, TileCoord DoorPosition)? Airlock,
+        IReadOnlyList<(TileCoord Position, TileSide Side)> WallOpenSides);
 
     // Rotates a whole catalog entry (authored at 0 deg) by rotationSteps * 90 deg clockwise. Screen
     // convention (Y grows downward, same as everywhere else in this project - see TileSideExtensions.
@@ -73,6 +74,9 @@ public static class CompartmentPlacer
             .Select(e => (e.RelativeControl, e.Facing, e.MaxThrust, e.Role))
             .ToList();
         var footprintRects = entry.FootprintRects.ToList();
+        var wallOpenSides = entry.WallOpenSides
+            .Select(o => (o.RelativePosition, o.Side))
+            .ToList();
 
         TileCoord? airlockDoor = entry.Airlock is { } authoredAirlock
             ? RingCenter(authoredAirlock.Side, w, h)
@@ -112,6 +116,13 @@ public static class CompartmentPlacer
             for (var i = 0; i < footprintRects.Count; i++)
                 footprintRects[i] = RotateRectClockwise(footprintRects[i], h);
 
+            // A wall-ring tile's own position is a plain point (not a footprint anchor - a half-
+            // block wall is always exactly one tile), same RotatePointClockwise formula the airlock
+            // door/engine control positions above already use; its solid Side rotates the same way
+            // Engine.Facing/the airlock's own Side do.
+            for (var i = 0; i < wallOpenSides.Count; i++)
+                wallOpenSides[i] = (RotatePointClockwise(wallOpenSides[i].RelativePosition, h), RotateSideClockwise(wallOpenSides[i].Side));
+
             (w, h) = (h, w);
         }
 
@@ -119,7 +130,7 @@ public static class CompartmentPlacer
             ? (finalSide, finalDoor)
             : null;
 
-        return new RotatedCompartment(w, h, footprintRects, devices, engines, airlock);
+        return new RotatedCompartment(w, h, footprintRects, devices, engines, airlock, wallOpenSides);
     }
 
     private static TileCoord RotatePointClockwise(TileCoord point, int heightBeforeRotation) =>
@@ -221,25 +232,20 @@ public static class CompartmentPlacer
         TileCoord Abs(TileCoord local) => new(anchor.X + local.X, anchor.Y + local.Y);
 
         // 1) Footprint overlap check. Checked BEFORE any mutation so a rejected placement never
-        // corrupts the grid. Direct user request ("система отсеков по-другому") - an INTERIOR tile
-        // (no ring side at all) must always land on completely empty space, never allowed to
-        // overlap another compartment's interior OR its walls. A WALL-RING tile is more permissive:
-        // it's allowed to coincide with an EXISTING wall tile (any origin - hand-painted or another
-        // compartment's own ring), representing two compartments placed flush/overlapping and
-        // sharing that one wall tile - but still rejected if it would land on someone else's open
-        // interior floor.
+        // corrupts the grid. Direct user request ("убери механику чтобы при накладывании отсеков...
+        // они могли наезжать друг на друга... сделай это невозможным") - EVERY footprint tile, wall-
+        // ring or interior alike, must land on completely empty space. This replaces an earlier,
+        // more permissive rule ("система отсеков по-другому") that let a wall-ring tile coincide
+        // with an EXISTING wall tile (from any origin), representing two compartments placed flush/
+        // overlapping and sharing that one tile - the player found that let compartments visibly
+        // overlap each other, which is exactly what this tightens back up. A cell only ever exists
+        // in TileGrid.Cells once it has a floor (TileGrid.SetFloor's own doc comment), so "does a
+        // cell exist here at all" is already the exact "is this space occupied by anything" test.
         foreach (var local in footprintTiles)
         {
             var coord = Abs(local);
-            var existing = grid.CellAt(coord);
-            if (existing is not { HasFloor: true })
-                continue; // empty space - always fine
-
-            var isRingTile = IsRingTile(local, footprintTiles);
-            if (isRingTile && existing.Wall != TileWallKind.None)
-                continue; // wall-over-wall - explicitly allowed, see step 4 below
-
-            return CompartmentPlacementResult.Fail($"Cannot place '{entry.DisplayName}' at {coord} - already occupied.");
+            if (grid.CellAt(coord) is not null)
+                return CompartmentPlacementResult.Fail($"Cannot place '{entry.DisplayName}' at {coord} - already occupied.");
         }
 
         // 2) Every engine's Nozzle lands outside the footprint by design (CompartmentCatalog.cs's own
@@ -258,15 +264,18 @@ public static class CompartmentPlacer
 
         // 4) Stamp the wall ring. Direct user request ("стены не удалялись" - placing a compartment
         // next to another must never silently thin/remove either one's wall) - every ring tile
-        // always gets its own full wall, no neighbor-based dedup at all anymore. Two compartments
-        // placed merely touching (not literally overlapping) end up with a genuine 2-tile-thick
-        // double wall at their shared boundary instead of a thinned single tile - a deliberate
-        // trade, direct user request, in exchange for never losing a wall just by placing something
-        // next to it. The ONLY case a ring tile's own wall doesn't get (re-)stamped is when this
-        // EXACT tile already carries one (the wall-over-wall overlap case, step 1 above already
-        // allowed it): that existing wall is left completely untouched (material/HP/origin all
-        // preserved) rather than replaced - doesn't matter whose wall "wins," there's only ever one
-        // physical wall tile there either way.
+        // always gets its own full wall. Two compartments placed merely touching (not overlapping)
+        // end up with a genuine 2-tile-thick double wall at their shared boundary instead of a
+        // thinned single tile - a deliberate trade, direct user request, in exchange for never
+        // losing a wall just by placing something next to it. Step 1 above already guarantees every
+        // tile here is on completely empty ground (overlap is no longer possible at all), so unlike
+        // before there's no "already a wall here" case left to check for.
+        //
+        // Direct user request ("удали механику что если ставим стены в ряд, они почти все
+        // превращаются в полублоки... хочу сделать чтобы игрок сам выбирал") - a compartment's own
+        // wall ring stamps full-thickness walls only now; half-block is a deliberate choice made
+        // with the free-tile editor's own Wall tool afterward (Game1.ShipEditor.cs), never inferred
+        // automatically from footprint shape here.
         var airlockDoorAbs = rotated.Airlock is { } airlockSpec ? Abs(airlockSpec.DoorPosition) : (TileCoord?)null;
         foreach (var local in footprintTiles)
         {
@@ -275,12 +284,19 @@ public static class CompartmentPlacer
                           // whose every neighbor, orthogonal or diagonal, is part of this same footprint)
 
             var coord = Abs(local);
-            if (grid.CellAt(coord) is { Wall: not TileWallKind.None })
-                continue; // already a wall here (the overlap case) - leave it exactly as it was
-
             var isAirlockDoor = airlockDoorAbs is { } doorCoord && doorCoord == coord;
             grid.SetWall(coord, isAirlockDoor ? TileWallKind.Door : TileWallKind.Solid, fromCompartment: true);
         }
+
+        // 4.5) Half-block overrides - direct user bug report ("почему... в нём отсутствуют
+        // полублоки стены, хотя в исходнике они есть?"). Applied strictly after the full-thickness
+        // ring above, on top of it, same "paint the base geometry, patch in per-tile detail
+        // afterward" shape TileShipBuilder.cs's own WallMaterials/WallOpenSides overrides already
+        // use. SetWallOpenSide's own guard (TileGrid.cs) already no-ops for anything that isn't an
+        // intact Solid, non-corner tile, so an authored override that (after rotation) happens to
+        // land on a corner or the airlock door tile is silently ignored rather than corrupting it.
+        foreach (var (position, side) in rotated.WallOpenSides)
+            grid.SetWallOpenSide(Abs(position), side);
 
         // 5) Devices - every tile of the device's own REAL footprint (CustomDeviceFootprint.Size,
         // swapped when this instance is Rotated) gets the SAME deviceId, not just its anchor tile -

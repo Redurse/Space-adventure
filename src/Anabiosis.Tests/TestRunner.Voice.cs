@@ -33,10 +33,18 @@ internal static partial class TestRunner
         return chunksAgain is null || chunksAgain.Count == 0;
     }
 
+    // Radio needs a worn ItemType.Radio to transmit (World.Voice.cs's RelayVoiceChunk, direct user
+    // request matching Barotrauma's own radio-as-item model) - TakeFromRack + a drag into
+    // EquipSlot.Headset is the same "get geared up" setup every other equip test in this suite uses.
     private static bool World_Voice_RadioFlagIsRelayed()
     {
         var world = new World();
         world.SpawnCharacter(1);
+
+        var radioSlot = TakeFromRack(world, ItemType.Radio);
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Main, radioSlot),
+            MoveItemTo: new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.Headset)));
 
         var payload = new VoiceChunkPayload(new byte[] { 5, 6 }, 44100, IsRadio: true);
         world.ApplyCommand(1, new ClientCommand(1, VoiceChunk: payload));
@@ -47,6 +55,21 @@ internal static partial class TestRunner
             return false;
         var chunk = chunks[0];
         return chunk.SenderPlayerId == 1 && chunk.SampleRate == 44100 && chunk.IsRadio;
+    }
+
+    // The exact opposite of the above - no radio worn, radio chunk should be dropped silently
+    // rather than relayed (or, worse, silently downgraded to local).
+    private static bool World_Voice_RadioWithoutItemIsDropped()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        var payload = new VoiceChunkPayload(new byte[] { 5, 6 }, 44100, IsRadio: true);
+        world.ApplyCommand(1, new ClientCommand(1, VoiceChunk: payload));
+        world.Step(RealtimeStep);
+
+        var chunks = world.CreateSnapshot().VoiceChunks;
+        return chunks is null || chunks.Count == 0;
     }
 
     private static bool World_Voice_EmptySamplesAreIgnored()

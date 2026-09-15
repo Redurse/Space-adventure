@@ -297,32 +297,32 @@ internal static partial class TestRunner
     // with no door anywhere nearby. Breaking two adjacent blocks there (0.5 and 1.5) is the ONLY
     // way across at that height, so a walk-through proves RoomLayout.MoveAlongAxis's new breach
     // crossing actually works, not just that a door happened to also be in reach.
+    // Full-thickness walls again (humble-soaring-cat.md, "удали механику полублоков") - the
+    // bulkhead's own column (X:[4,5], the same wall row that also swallows the cockpit's own N
+    // hull wall above it) is solid outside the door span, so the character can only ever stand
+    // OUTSIDE that column (X<4ish) and reach in with a diagonal aim, never stand flush against
+    // the wall itself the way the old half-block model allowed.
     private static bool World_Eva_PassableInteriorBreach_WalksIntoAdjacentRoomNotVacuum()
     {
         var world = new World();
         world.SpawnCharacter(1); // corridor
         EquipCutterWithTank(world);
 
-        // Y=1.0, not 0.5: standing exactly level with the first block put it within the cutter's
-        // own pointRadius of cockpit's UNRELATED top hull block at (4.5,0) too, which won a
-        // same-tick tie against the intended target often enough to stall it at 0 damage forever -
-        // Y=1.0 clears both target blocks (0.5 away from each) while staying well clear (1.0 away)
-        // of that top wall.
-        // Bug fix follow-up (humble-soaring-cat.md, docked-movement tile collision) - Y=1.0 itself
-        // is no longer reachable (cockpit's own top wall, row 0, is a real tile now - clearance
-        // stops at 1+CharacterRadius); WalkAcrossShipTo actually lands at ~1.35. That leaves this
-        // spot only 0.35 from the SECOND block (row 1, y=1.5) but 0.85 from the intended FIRST one
-        // (row 0, y=0.5) - a straight horizontal aim used to land almost exactly between both blocks
-        // (both ~0.5 away under the old zero-thickness model) but now favors the wrong one, cutting
-        // block 2 by accident and leaving block 1 untouched. Aiming up-and-over instead (same
-        // diagonal-aim fix the second cut in World_Eva_TwoAdjacentBrokenBlocks_ArePassable already
-        // needed for its own equivalent case) keeps every early sample closer to block 1 than to
-        // block 2 or the top wall.
-        WalkAcrossShipTo(world, 4.5f, 1.0f); // cockpit, right up against the interior bulkhead
-        if (CutWallBlockAt(world, 5f, 0.5f, new Vec2(0.6, -1f).Normalized(), 4 * 30) >= 4 * 30)
+        // (4.5, 1.05) clamps to (4.5, 1.35) - blocked by the cockpit's own N hull wall row, not
+        // the bulkhead - well clear of the bulkhead column itself. Aiming from there straight at
+        // block 1 (5, 0.5) is a shallow diagonal that never comes close to any other block first.
+        WalkAcrossShipTo(world, 4.5f, 1.05f);
+        var stand1 = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var aim1 = new Vec2(5f - (float)stand1.X, 0.5f - (float)stand1.Y).Normalized();
+        if (CutWallBlockAt(world, 5f, 0.5f, aim1, 4 * 30) >= 4 * 30)
             return false;
-        MoveCharacterTo(world, 1, 4.5f, 1.5f); // same room, no door to cross
-        if (CutWallBlockAt(world, 5f, 1.5f, new Vec2(1, 0), 4 * 30) >= 4 * 30)
+
+        // Same room, no door to cross - (4.5, 2.05) sits below the door span (Y:[2,4]) too, so it
+        // reaches its own target cleanly rather than clamping against the bulkhead column.
+        MoveCharacterTo(world, 1, 4.5f, 2.05f);
+        var stand2 = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        var aim2 = new Vec2(5f - (float)stand2.X, 1.5f - (float)stand2.Y).Normalized();
+        if (CutWallBlockAt(world, 5f, 1.5f, aim2, 4 * 30) >= 4 * 30)
             return false;
 
         WalkFixedDirection(world, 1, 1f, 0f); // straight at the two-block gap just opened

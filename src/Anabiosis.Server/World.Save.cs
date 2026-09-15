@@ -48,16 +48,18 @@ public sealed partial class World
         // even split is the same thing a new campaign gets, and it beats the zero it used to be.
         PowerGrid.SplitEvenly();
 
-        if (save.ShipKind != CurrentShipKind || save.ShipKind == ShipKind.Custom)
-        {
-            CurrentShipKind = save.ShipKind;
-            _customShipDefinition = save.ShipKind == ShipKind.Custom ? save.CustomShip : null;
-            Ship = save.ShipKind == ShipKind.Custom ? Ship.FromCustomDefinition(save.CustomShip!) : Ship.Create(save.ShipKind);
-            _turretRuntimes.Clear();
-            foreach (var turret in Ship.Turrets)
-                _turretRuntimes[turret.Id] = new TurretRuntime(turret);
-            InitializeShipState();
-        }
+        // ShipKind is always Custom now (direct user request - "удали все текущие корабли...
+        // полностью удалить из кода") - two different runs can share that one enum value while
+        // still being different ships, so the Ship always gets rebuilt from whatever definition the
+        // save actually carries (falling back to the same frozen default hull a fresh World() would,
+        // ShipDefaultHull.cs's own doc comment, for the rare save predating this field).
+        CurrentShipKind = save.ShipKind;
+        _customShipDefinition = save.CustomShip ?? ShipDefaultHull.Definition;
+        Ship = Ship.FromCustomDefinition(_customShipDefinition);
+        _turretRuntimes.Clear();
+        foreach (var turret in Ship.Turrets)
+            _turretRuntimes[turret.Id] = new TurretRuntime(turret);
+        InitializeShipState();
 
         Credits = save.Credits;
 

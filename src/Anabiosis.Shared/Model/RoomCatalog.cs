@@ -56,6 +56,9 @@ public static class RoomCatalog
     // where the catalog entries that grant it are also defined) rather than being duplicated.
     public const float ReactorRoomBonusOutput = 15f; // matches ReactorOutputBonusPerLevel (World.Upgrades.cs) - one room ~= one station upgrade level
     public const float ShieldRoomCapacityBonus = 50f; // half again of ShieldSystem's own 100 base
+    // Direct user request ("сделай чтобы на корабле могло быть несколько батарей") - half again of
+    // PowerGrid's own 200 base capacity, same ratio ShieldRoomCapacityBonus already uses.
+    public const float BatteryRoomBonusCapacity = 100f;
 
     public static IReadOnlyList<RoomCatalogEntry> Entries { get; } = new[]
     {

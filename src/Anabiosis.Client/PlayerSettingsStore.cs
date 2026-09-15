@@ -13,7 +13,41 @@ namespace Anabiosis.Client;
 // write this file just re-asks each launch instead of crashing on it.
 public sealed record PlayerSettings(string? Nickname = null, CrewRole? Role = null,
     int? ResolutionWidth = null, int? ResolutionHeight = null, WindowMode? WindowMode = null,
-    bool? VSync = null, float? MasterVolume = null, float? BloomStrength = null, int? MaxParticles = null);
+    bool? VSync = null, float? SoundVolume = null, float? BloomStrength = null, int? MaxParticles = null,
+    // Voice chat activation mode (direct user request - an alternative to push-to-talk): whether
+    // the local voice channel opens automatically once the mic's own input level crosses
+    // Threshold, instead of requiring V held. Radio (R) stays push-to-talk regardless of this
+    // setting - it's a deliberate broadcast action, not something that should fire itself.
+    bool? VoiceActivationEnabled = null, float? VoiceActivationThreshold = null,
+    // Direct user request ("2 вкладка настроек как в Baротравме") - real output/input device
+    // selection plus the rest of Baротравма's own Audio tab. OutputDeviceId/InputMicrophoneName are
+    // null = "use the system default"/"use Microphone.Default", same fallback-on-missing contract
+    // AudioEngine.SelectOutputDevice and VoiceCapture.ResolveMicrophone both already keep.
+    string? OutputDeviceId = null, string? InputMicrophoneName = null,
+    float? MusicVolume = null, float? UiVolume = null, float? VoiceChatVolume = null,
+    bool? MuteOnFocusLoss = null, bool? DynamicRangeCompression = null,
+    bool? DirectionalVoiceChat = null, bool? VoiceChatPriority = null,
+    float? MicGain = null, float? DisconnectPreventionMs = null,
+    // Direct user request - a single "turn it all off" switch for players whose machine/GPU
+    // struggles with the custom-shader path (RoomLighting's per-pixel Light.fx, ScenePost's whole
+    // Post.fx bloom/grade/vignette/grain/aberration/distortion chain, the main menu's Planet.fx).
+    // Forces the same graceful null-effect fallback every one of those already has for a content
+    // build that never produced the .xnb (see Shaders.cs) - not a new code path, just the existing
+    // one flipped on deliberately instead of by accident.
+    bool? ShadersEnabled = null,
+    // Direct user request ("настройки в 3 вкладке... чтобы с перезаходом они сохранялись") - the
+    // Controls tab's rebound keys, serialized by PlayerActionBindings itself (Input/
+    // PlayerActionBindings.cs) as a flat "Action=Key;Action=Key" string rather than a nested type,
+    // matching every other field in this record.
+    string? KeyBindings = null,
+    // Direct user request ("сделай возможность выбрать английский язык") - the selector only, no
+    // localized text anywhere yet (scoped decision, confirmed with the user) - "ru" or "en".
+    string? Language = null,
+    // Interface tab toggles (direct user request, matching the reference screenshot) - each gates
+    // a real, already-existing mechanic (item tooltips, chat speech bubbles, boarding health bars)
+    // rather than being a fresh feature of its own; see DrawInterfaceTab's own doc comment for the
+    // reference-screenshot items that were deliberately left out because nothing here backs them.
+    bool? TooltipsEnabled = null, bool? ChatBubblesEnabled = null, bool? EnemyHealthBarsEnabled = null);
 
 public enum WindowMode
 {
@@ -87,7 +121,16 @@ public static class PlayerSettingsStore
         var settings = Load(path);
         return new GraphicsSettings(
             settings.ResolutionWidth, settings.ResolutionHeight, settings.WindowMode ?? Client.WindowMode.Borderless,
-            settings.VSync ?? true, settings.MasterVolume ?? 1f, settings.BloomStrength ?? 1f, settings.MaxParticles ?? Rendering.AtmosphereField.MaxParticles);
+            settings.VSync ?? true, settings.SoundVolume ?? 1f, settings.BloomStrength ?? 1f, settings.MaxParticles ?? Rendering.AtmosphereField.MaxParticles,
+            settings.VoiceActivationEnabled ?? false, settings.VoiceActivationThreshold ?? 0.12f,
+            settings.OutputDeviceId, settings.InputMicrophoneName,
+            settings.MusicVolume ?? 1f, settings.UiVolume ?? 1f, settings.VoiceChatVolume ?? 1f,
+            settings.MuteOnFocusLoss ?? false, settings.DynamicRangeCompression ?? false,
+            settings.DirectionalVoiceChat ?? false, settings.VoiceChatPriority ?? false,
+            settings.MicGain ?? 1f, settings.DisconnectPreventionMs ?? 200f,
+            settings.ShadersEnabled ?? true,
+            settings.KeyBindings, settings.Language ?? "ru",
+            settings.TooltipsEnabled ?? true, settings.ChatBubblesEnabled ?? true, settings.EnemyHealthBarsEnabled ?? true);
     }
 
     public static void SaveGraphicsSettings(GraphicsSettings graphics, string? path = null) =>
@@ -97,9 +140,28 @@ public static class PlayerSettingsStore
             ResolutionHeight = graphics.ResolutionHeight,
             WindowMode = graphics.WindowMode,
             VSync = graphics.VSync,
-            MasterVolume = graphics.MasterVolume,
+            SoundVolume = graphics.SoundVolume,
             BloomStrength = graphics.BloomStrength,
             MaxParticles = graphics.MaxParticles,
+            VoiceActivationEnabled = graphics.VoiceActivationEnabled,
+            VoiceActivationThreshold = graphics.VoiceActivationThreshold,
+            OutputDeviceId = graphics.OutputDeviceId,
+            InputMicrophoneName = graphics.InputMicrophoneName,
+            MusicVolume = graphics.MusicVolume,
+            UiVolume = graphics.UiVolume,
+            VoiceChatVolume = graphics.VoiceChatVolume,
+            MuteOnFocusLoss = graphics.MuteOnFocusLoss,
+            DynamicRangeCompression = graphics.DynamicRangeCompression,
+            DirectionalVoiceChat = graphics.DirectionalVoiceChat,
+            VoiceChatPriority = graphics.VoiceChatPriority,
+            MicGain = graphics.MicGain,
+            DisconnectPreventionMs = graphics.DisconnectPreventionMs,
+            ShadersEnabled = graphics.ShadersEnabled,
+            KeyBindings = graphics.KeyBindings,
+            Language = graphics.Language,
+            TooltipsEnabled = graphics.TooltipsEnabled,
+            ChatBubblesEnabled = graphics.ChatBubblesEnabled,
+            EnemyHealthBarsEnabled = graphics.EnemyHealthBarsEnabled,
         }, path);
 }
 
@@ -107,4 +169,13 @@ public static class PlayerSettingsStore
 // Game1.Initialize already forces today, kept as the fallback so a machine that never opens the
 // Settings screen sees no behavior change at all.
 public readonly record struct GraphicsSettings(int? ResolutionWidth, int? ResolutionHeight, WindowMode WindowMode,
-    bool VSync, float MasterVolume, float BloomStrength, int MaxParticles);
+    bool VSync, float SoundVolume, float BloomStrength, int MaxParticles,
+    bool VoiceActivationEnabled, float VoiceActivationThreshold,
+    string? OutputDeviceId = null, string? InputMicrophoneName = null,
+    float MusicVolume = 1f, float UiVolume = 1f, float VoiceChatVolume = 1f,
+    bool MuteOnFocusLoss = false, bool DynamicRangeCompression = false,
+    bool DirectionalVoiceChat = false, bool VoiceChatPriority = false,
+    float MicGain = 1f, float DisconnectPreventionMs = 200f,
+    bool ShadersEnabled = true,
+    string? KeyBindings = null, string Language = "ru",
+    bool TooltipsEnabled = true, bool ChatBubblesEnabled = true, bool EnemyHealthBarsEnabled = true);

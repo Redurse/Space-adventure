@@ -10,6 +10,62 @@ internal static partial class TestRunner
     // addressed by id instead of "nearest in range". These mirror the existing E-key tests for the
     // same actions (World_AmmoStorage_*, World_Crime_StealCrate_*, World_RepairSystem_*) one for one.
 
+    // Direct user request ("это в будущем будет одно из главных устройств, их будет много") - a
+    // minimal 2-room custom ship carrying TWO Terminal devices, one per room, to prove each toggles
+    // independently (Ship.Terminals/World.Terminals.cs, the same "list of per-instance states" shape
+    // SuitLocker already has) rather than the old single shared TerminalOn.
+    private static CustomShipDefinition BuildTwoTerminalShipDefinition() => new(
+        "Тестовый корабль с 2 терминалами",
+        new[]
+        {
+            new CustomRoomDef("a", "Мостик", 0, 0, 6, 6),
+            new CustomRoomDef("b", "Отсек", 6, 0, 6, 6),
+        },
+        new[] { new CustomDoorDef(6, 3, true, true) }, // shared wall at X=6, centered on its Y=[0,6] span
+        new[] { new CustomAirlockDef("b", EdgeSide.Right) },
+        new[]
+        {
+            new CustomDeviceDef(CustomDeviceKind.Reactor, 2, 2),
+            new CustomDeviceDef(CustomDeviceKind.Distribution, 2, 4),
+            new CustomDeviceDef(CustomDeviceKind.Helm, 4, 2),
+            new CustomDeviceDef(CustomDeviceKind.Navigation, 4, 4),
+            new CustomDeviceDef(CustomDeviceKind.Oxygen, 1, 1),
+            new CustomDeviceDef(CustomDeviceKind.SuitLocker, 9, 1),
+            new CustomDeviceDef(CustomDeviceKind.StorageRack, 9, 2),
+            new CustomDeviceDef(CustomDeviceKind.Terminal, 1, 4),
+            new CustomDeviceDef(CustomDeviceKind.Terminal, 9, 4),
+        },
+        0f,
+        EnginesRaw: new[] { new CustomEngineDef(2f, 5f, TileSide.West, 20f) });
+
+    private static bool World_ClickInteract_Terminal_TogglesOnlyTheOneClicked()
+    {
+        var world = new World(ShipKind.Custom, BuildTwoTerminalShipDefinition());
+        world.SpawnCharacter(1);
+        var terminals = world.Ship.Terminals;
+        if (terminals.Count != 2)
+            return false;
+        var (near, far) = ((float)terminals[0].X, (float)terminals[0].Y) == (1f, 4f)
+            ? (terminals[0], terminals[1])
+            : (terminals[1], terminals[0]);
+
+        MoveCharacterTo(world, 1, (float)near.X, (float)near.Y);
+        world.ApplyCommand(1, new ClientCommand(1, TerminalInteractId: near.Id));
+        world.Step(RealtimeStep);
+
+        var states = world.CreateSnapshot().Terminals!;
+        var nearState = states.Single(s => s.Block.Id == near.Id);
+        var farState = states.Single(s => s.Block.Id == far.Id);
+        if (!nearState.On || farState.On)
+            return false; // only the clicked terminal should have flipped on
+
+        // Toggling it again turns it back off, still without touching the other one.
+        world.ApplyCommand(1, new ClientCommand(1, TerminalInteractId: near.Id));
+        world.Step(RealtimeStep);
+        var after = world.CreateSnapshot().Terminals!;
+        return !after.Single(s => s.Block.Id == near.Id).On && !after.Single(s => s.Block.Id == far.Id).On;
+    }
+
     private static bool World_ClickInteract_SuitLocker_EquipsAndUnequips()
     {
         var world = new World();

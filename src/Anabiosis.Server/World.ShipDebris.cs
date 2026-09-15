@@ -88,7 +88,14 @@ public sealed partial class World
 
         var remainingRooms = def.Rooms.Where(r => r.Id != roomId).ToList();
         var remainingRoomIds = remainingRooms.Select(r => r.Id).ToHashSet();
-        var remainingDoors = def.Doors.Where(d => remainingRoomIds.Contains(d.RoomAId) && remainingRoomIds.Contains(d.RoomBId)).ToList();
+        // A door no longer authors its own room pair (humble-soaring-cat.md "Дверь как свободный
+        // объект") - resolved against the ORIGINAL room layout (def.Rooms, still including the
+        // destroyed room) since a door's own position doesn't move when a room disappears.
+        var remainingDoors = def.Doors.Where(d =>
+        {
+            var overlap = ShipLayoutGeometry.FindOverlapAt(def.Rooms, d.X, d.Y, d.Vertical);
+            return overlap is { } o && remainingRoomIds.Contains(o.RoomAId) && remainingRoomIds.Contains(o.RoomBId);
+        }).ToList();
 
         var scratchTiles = Ship.Tiles.Clone();
         var destroyedRoom = Ship.Rooms.First(r => r.Id == roomId);
@@ -110,7 +117,11 @@ public sealed partial class World
             .Select(r => r.Id)
             .ToHashSet();
         var keptRooms = remainingRooms.Where(r => keptRoomIds.Contains(r.Id)).ToList();
-        var keptDoors = remainingDoors.Where(d => keptRoomIds.Contains(d.RoomAId) && keptRoomIds.Contains(d.RoomBId)).ToList();
+        var keptDoors = remainingDoors.Where(d =>
+        {
+            var overlap = ShipLayoutGeometry.FindOverlapAt(def.Rooms, d.X, d.Y, d.Vertical);
+            return overlap is { } o && keptRoomIds.Contains(o.RoomAId) && keptRoomIds.Contains(o.RoomBId);
+        }).ToList();
         var keptAirlocks = def.Airlocks.Where(a => keptRoomIds.Contains(a.RoomId)).ToList();
 
         var detachedRooms = def.Rooms.Where(r => !keptRoomIds.Contains(r.Id)).ToList(); // the destroyed room + anything cut off from the reactor with it

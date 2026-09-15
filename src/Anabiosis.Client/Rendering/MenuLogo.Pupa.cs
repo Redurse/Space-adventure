@@ -3,18 +3,16 @@ using Microsoft.Xna.Framework;
 
 namespace Anabiosis.Client.Rendering;
 
-// The shape that breaks the word, the way Barotrauma's mudraptor breaks BARO|TRAUMA.
+// The shape that breaks the word, the way Barotrauma's mudraptor breaks BARO|TRAUMA - direct user
+// reference (a screenshot of that exact logo, "вот референс как это сделано").
 //
-// A pupa, hanging on the ANA|BIOSIS seam and overrunning the cap line and the baseline. It is there
-// because it is what the word means: anabiosis is life suspended and then resumed - an organism that
-// has stopped in every measurable way and is not dead. A pupa is the plainest picture of that, and it
-// is also what is waiting in the precursor posts, so the mark states the title twice: once in
-// letters, once in a shape.
-//
-// It was a curled larva first, twice. Both failed for the same reason: a curl is as wide as it is
-// tall, and a body thin enough to keep off the next letter was too thin to read as anything but a
-// hook. A pod is the shape that survives the constraint - narrow enough to clip only one letter's
-// edge, thick enough to carry segments and a lit flank at this size, legible in silhouette alone.
+// A small reptile hanging on the ANA|BIOSIS seam and overrunning the cap line and the baseline: a
+// head with a snout and a horn, an S-curved spine, two pairs of splayed clawed legs, a row of back
+// spikes down the lit flank, and a tail that curls at the tip. Earlier passes drew a smooth
+// symmetric pod instead (an insect pupa, tying into what "anabiosis" itself means - see the git
+// history on this file) - legible as a shape, but symmetric and limbless, which read as a capsule
+// or a drill bit rather than a creature. A creature needs the asymmetry a spine, legs and a head
+// give it; that is the whole difference this pass makes.
 public static partial class MenuLogo
 {
     // Darker than the plate it hangs in front of, deliberately. The first pass matched the steel
@@ -24,9 +22,8 @@ public static partial class MenuLogo
     private static readonly Color ShellLit = new(94, 108, 110);
     private static readonly Color ShellDeep = new(7, 10, 12);
 
-    // In glyph units, not pixels, so the pod grows with the letters. Written in pixels first, it
-    // stayed the same size when the cell was scaled up and shrank to a seed next to the word.
-    private const float PodHalf = 27f;        // half-width at the widest point
+    // In glyph units, not pixels, so the creature grows with the letters.
+    private const float PodHalf = 27f;        // torso half-width reference at its widest point
     private const float PodOver = 40f;        // how far past the letters it runs, top and bottom
 
     private static void PaintPupa(PixelCanvas c)
@@ -36,29 +33,43 @@ public static partial class MenuLogo
         var seam = (float)Pad;
         for (var i = 0; i < 3; i++)
             seam += (Advance(Word[i]) + LetterGap) * UnitScale;
-        // Nudged off the middle of the gap and onto the letter before it. Sitting dead on the seam
-        // it took the left stem off the B, and a B without its stem reads as two bumps; the A it
-        // covers instead loses part of a splayed leg, which the eye fills in.
         seam -= LetterGap * UnitScale * 0.5f + 9f;
 
         var top = PadY - PodOver * UnitScale;
         var bottom = PadY + CellHeight * UnitScale + PodOver * UnitScale;
         var span = bottom - top;
+        var maxHalf = PodHalf * UnitScale;
 
-        // A slight lean, so it hangs rather than stands. Straight, it reads as a rivet.
-        static float Axis(float seam, float t) => seam + MathF.Sin(t * 2.3f) * 3.2f - 1.5f;
-
-        // Widest above centre and drawn to a point at the tail: an insect pupa, not an egg.
-        static float Half(float t)
+        // An S-curved spine - two frequencies so it reads as a live pose rather than a single
+        // lean, with the tail whipping into a tighter curl over its last stretch.
+        static float Axis(float seam, float t)
         {
-            var w = PodHalf * UnitScale * MathF.Pow(MathF.Sin(MathF.PI * MathF.Pow(Math.Clamp(t, 0f, 1f), 0.55f)), 0.62f);
-            return t > 0.86f ? w * (1f - (t - 0.86f) / 0.14f * 0.75f) : w;
+            var curl = t > 0.86f ? (t - 0.86f) / 0.14f : 0f;
+            return seam + MathF.Sin(t * 3.1f) * 6.5f + MathF.Sin(t * 1.4f + 0.6f) * 3f - 2f + curl * curl * 10f;
+        }
+
+        // Head, torso, tail - a creature's own proportions, not one smooth taper. 0-0.14 is the
+        // head narrowing into a neck, 0.14-0.78 the torso (a slight ripple stands in for ribs),
+        // 0.78-1 the tail running out to a point.
+        float Half(float t)
+        {
+            if (t < 0.05f) return MathHelper.Lerp(0f, maxHalf * 0.55f, t / 0.05f);
+            if (t < 0.14f) return MathHelper.Lerp(maxHalf * 0.55f, maxHalf * 0.42f, (t - 0.05f) / 0.09f);
+            if (t < 0.78f)
+            {
+                var u = (t - 0.14f) / 0.64f;
+                var ribs = 1f + MathF.Sin(u * MathF.PI * 3f) * 0.10f;
+                return MathHelper.Lerp(maxHalf, maxHalf * 0.5f, u) * ribs;
+            }
+            var tailT = (t - 0.78f) / 0.22f;
+            return MathHelper.Lerp(maxHalf * 0.5f, 0f, MathF.Pow(tailT, 0.7f));
         }
 
         DropShadow(c, seam, top, span, Axis, Half);
         Body(c, seam, top, span, Axis, Half);
-        Segments(c, seam, top, span, Axis, Half);
-        Silk(c, seam, top);
+        BackSpikes(c, seam, top, span, Axis, Half);
+        Legs(c, seam, top, span, Axis, Half);
+        Head(c, seam, top, span, Axis, Half);
     }
 
     private static void DropShadow(PixelCanvas c, float seam, float top, float span,
@@ -89,7 +100,7 @@ public static partial class MenuLogo
             var cx = axis(seam, t);
             var y = top + i;
 
-            // Shaded across the pod the same way the hull in the backdrop is shaded across its
+            // Shaded across the body the same way the hull in the backdrop is shaded across its
             // barrel: a bright edge up-left, body, then shadow. Two values would make a stripe;
             // four make a rounded thing.
             for (var s = -w; s <= w; s += 0.5f)
@@ -101,55 +112,103 @@ public static partial class MenuLogo
                     : n < 0.40f ? Shell
                     : Mix(Shell, ShellDeep, (n - 0.40f) / 0.60f);
 
-                // Chitin is not smooth. Keyed off position so it stays put between bakes.
+                // Hide is not smooth. Keyed off position so it stays put between bakes.
                 var grain = PixelCanvas.Hash((int)(t * 400f), (int)(n * 24f));
                 c.Px(cx + s, y, Mix(col, ShellDeep, grain * 0.20f), 1f);
             }
         }
     }
 
-    private static void Segments(PixelCanvas c, float seam, float top, float span,
-                                 Func<float, float, float> axis, Func<float, float> half)
+    // A row of small back spikes down the lit flank of the torso - the one feature that reads as
+    // "reptile" rather than "worm" at this size, echoing the reference's own spiked dorsal ridge.
+    private static void BackSpikes(PixelCanvas c, float seam, float top, float span,
+                                   Func<float, float, float> axis, Func<float, float> half)
     {
-        // Abdominal rings across the lower two thirds, each bowed downward. Flat lines would read as
-        // a barcode; the bow is what says the surface they lie on is curved.
-        for (var k = 0; k < 7; k++)
+        for (var k = 0; k < 6; k++)
         {
-            var t = 0.40f + k * 0.075f;
+            var t = 0.10f + k * 0.10f;
             var w = half(t);
-            if (w < 1.2f)
+            if (w < 1.5f)
                 continue;
-            var cx = axis(seam, t);
-            var y = top + t * span;
-            for (var s = -w * 0.92f; s <= w * 0.92f; s += 0.5f)
-            {
-                var n = s / w;
-                var bow = (1f - n * n) * 2.4f;
-                c.Px(cx + s, y + bow, ShellDeep, 0.75f);
-                c.Px(cx + s, y + bow - 1f, ShellLit, 0.28f);
-            }
-        }
-
-        // Wing cases: two long ridges down the lit flank of the upper half, which is the one feature
-        // that makes a pod read specifically as a pupa rather than as a seed or a cocoon.
-        for (var side = 0; side < 2; side++)
-        for (var i = 0; i <= (int)(span * 0.42f); i++)
-        {
-            var t = 0.16f + i / span;
-            var w = half(t);
-            if (w < 2f)
-                continue;
-            var cx = axis(seam, t);
-            c.Px(cx + w * (side == 0 ? -0.42f : -0.06f), top + t * span, ShellDeep, 0.34f);
+            var baseX = axis(seam, t) - w * 0.78f;
+            var baseY = top + t * span;
+            var spikeLen = 4.5f + w * 0.28f;
+            var tipX = baseX - spikeLen * 0.55f;
+            var tipY = baseY - spikeLen * 0.85f;
+            c.Line(baseX, baseY, tipX, tipY, ShellDeep, 0.9f);
+            c.Line(baseX + 0.9f, baseY, tipX + 0.9f, tipY, ShellLit, 0.32f);
         }
     }
 
-    private static void Silk(PixelCanvas c, float seam, float top)
+    // Two pairs of splayed, clawed legs - what actually turns the silhouette into an animal rather
+    // than a fish or a slug. Each is a two-segment capsule ending in a small fan of claw lines.
+    private static void Legs(PixelCanvas c, float seam, float top, float span,
+                             Func<float, float, float> axis, Func<float, float> half)
     {
-        // What it is hanging by. Two threads, because one reads as a scratch on the plate.
-        var x = seam - 1.5f;
-        c.Line(x, top - 6f, x + 1.5f, top + 4f, ShellLit, 0.45f);
-        c.Line(x + 3f, top - 6f, x + 1f, top + 4f, ShellLit, 0.30f);
-        c.Disc(x + 1.2f, top - 6f, 2.2f, Shell, 0.85f);
+        DrawLeg(c, seam, top, span, axis, half, 0.34f, -1f);
+        DrawLeg(c, seam, top, span, axis, half, 0.36f, 1f);
+        DrawLeg(c, seam, top, span, axis, half, 0.58f, -1f);
+        DrawLeg(c, seam, top, span, axis, half, 0.60f, 1f);
+    }
+
+    private static void DrawLeg(PixelCanvas c, float seam, float top, float span,
+                                Func<float, float, float> axis, Func<float, float> half, float t, float side)
+    {
+        var w = half(t);
+        var originX = axis(seam, t) + w * side * 0.85f;
+        var originY = top + t * span;
+        var reach = 8f + w * 0.55f;
+        var kneeX = originX + side * reach * 0.5f;
+        var kneeY = originY + reach * 0.35f;
+        var footX = originX + side * reach * 0.95f;
+        var footY = originY + reach * 1.05f;
+
+        ThickLine(c, originX, originY, kneeX, kneeY, 2.4f, ShellDeep, 0.92f);
+        ThickLine(c, kneeX, kneeY, footX, footY, 1.7f, ShellDeep, 0.92f);
+        c.Px(originX - side * 0.6f, originY, ShellLit, 0.28f);
+
+        // Three short claws fanning out from the foot.
+        var legAngle = MathF.Atan2(footY - kneeY, footX - kneeX);
+        for (var k = -1; k <= 1; k++)
+        {
+            var clawAngle = legAngle + k * 0.5f;
+            var clawX = footX + MathF.Cos(clawAngle) * 3.2f;
+            var clawY = footY + MathF.Sin(clawAngle) * 3.2f;
+            c.Line(footX, footY, clawX, clawY, ShellDeep, 0.85f);
+        }
+    }
+
+    // A short jaw line and a single back-swept horn - just enough to say "head", not "blob".
+    private static void Head(PixelCanvas c, float seam, float top, float span,
+                             Func<float, float, float> axis, Func<float, float> half)
+    {
+        const float t = 0.05f;
+        var cx = axis(seam, t);
+        var cy = top + t * span;
+        var w = half(t);
+
+        c.Line(cx - w * 0.3f, cy + 1.5f, cx + w * 1.3f, cy + 4f, ShellDeep, 0.8f);
+        c.Line(cx - w * 0.6f, cy - 1f, cx - w * 2.4f, cy - 7f, ShellDeep, 0.9f);
+        c.Line(cx - w * 0.3f, cy - 1.5f, cx - w * 1.9f, cy - 6.4f, ShellLit, 0.3f);
+    }
+
+    // Draws a smooth capsule between two points by stamping discs along it - enough width control
+    // for a leg segment without needing a real stroked-polygon primitive.
+    private static void ThickLine(PixelCanvas c, float x0, float y0, float x1, float y1, float width, Color color, float a)
+    {
+        var dx = x1 - x0;
+        var dy = y1 - y0;
+        var len = MathF.Sqrt(dx * dx + dy * dy);
+        if (len < 0.01f)
+        {
+            c.Disc(x0, y0, width * 0.5f, color, a);
+            return;
+        }
+        var steps = (int)(len * 1.5f) + 1;
+        for (var i = 0; i <= steps; i++)
+        {
+            var t = i / (float)steps;
+            c.Disc(x0 + dx * t, y0 + dy * t, width * 0.5f, color, a);
+        }
     }
 }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -75,16 +75,65 @@ public partial class Game1
     private static readonly float[] EditorForwardOptions = { 0f, 90f, 180f, -90f };
 
     private EditorTool _editorTool = EditorTool.Floor;
-    private static readonly CustomDeviceKind[] EditorDeviceKinds = Enum.GetValues<CustomDeviceKind>();
+    // M-doors-as-edges (humble-soaring-cat.md) - CustomDeviceKind.TripleDoor excluded here: it was a
+    // purely cosmetic stand-in for a REAL 3-tile-span door before the edge model made one possible
+    // (see Game1.ShipEditor.DeviceTabs.cs's own doc comment on WallItems's "Тройная дверь"), which
+    // now lives in that palette as a real Door-tool span instead - listing the old cosmetic kind
+    // here too (the "Все" tab's own auto-generated catch-all) would put two identically-labelled
+    // "Тройная дверь" buttons in the palette, one a real door and one an inert decoration. The kind
+    // itself, and every bit of code that renders/round-trips it, stays untouched for any save that
+    // already placed one - only newly PLACING it from a palette button is what this removes.
+    private static readonly CustomDeviceKind[] EditorDeviceKinds =
+        Enum.GetValues<CustomDeviceKind>().Where(k => k != CustomDeviceKind.TripleDoor).ToArray();
     private CustomDeviceKind _editorSelectedDeviceKind = EditorDeviceKinds[0];
     // Which Wall-tool variant is currently selected (direct user request - "усиленная стена"/
     // "иллюминатор") - a palette sub-choice, not its own EditorTool, same as _editorSelectedDeviceKind
     // is for the Device tool. Applied by HandleWallToolInput to every tile SetWall places.
     private WallMaterial _editorWallMaterial = WallMaterial.Standard;
-    // Which Door-tool variant is selected (direct user request - "дверь занимающая 1 на 2 тайла"):
-    // false places one ordinary 1-tile door per click/drag-endpoint, true links exactly the first 2
-    // tiles of a drag into one wide door via TileGrid.LinkDoors. See HandleDoorToolInput.
-    private bool _editorDoorWide;
+    // Direct user request ("удали механику что если ставим стены в ряд, они почти все превращаются
+    // в полублоки... хочу сделать чтобы игрок сам выбирал") - half-block used to be inferred
+    // automatically (RecomputeWallOpenSide, TileGridRasterizer.FromRooms's own claim-counting,
+    // CompartmentPlacer.Stamp's own OpenSideOf - all three removed) from footprint shape; now it's
+    // a genuine palette sub-choice, same shape _editorWallMaterial already is - "Полублочная стена"
+    // sets this true instead of picking a WallMaterial. _editorWallHalfBlockSide is which side of
+    // the tile stays solid (the OPPOSITE side is the free, walkable half - TileCell.WallOpenSide's
+    // own doc comment), cycled with R the same rotate-then-place way Door/Engine already work.
+    private bool _editorWallHalfBlock;
+    private TileSide _editorWallHalfBlockSide = TileSide.North;
+    private bool _prevWallRotateKeyDown;
+    // Which Door-tool variant is selected (direct user request - "дверь занимающая 1 на 2 тайла",
+    // then "сделай тоже самое с тройной дверью, чтобы она занимала 2 на 3 тайла") - how many
+    // parallel edges PlaceEdgeDoor places at once, sharing one Id (DoorEdgeGroupAt's own doc
+    // comment): 1 narrow, 2 wide, 3 triple. Was a bool (WideDoor) before the edge model existed; the
+    // ONE remaining exception is span==2, which still tries the OLD tile-based compartment-boundary
+    // special case FIRST (HandleDoorToolInput) - see DoorSpanTiles below, kept only for that.
+    private int _editorDoorSpanTiles = 1;
+    // Direct user request ("расставлял их как устройства со своим размером") - doors are placed the
+    // same rotate-then-click way every other rotatable device is (Engine's own
+    // _editorEnginePendingFacing), not by dragging: R toggles which axis a multi-segment door's
+    // extra tiles extend along, matching CustomDoorDef.Vertical/ShipLayoutGeometry.RoomPairOverlap.
+    // Vertical's own meaning (true = the shared wall is a vertical line, span runs along Y).
+    // M-doors-as-edges (humble-soaring-cat.md) - a narrow (span==1) door reuses this same flag too,
+    // for the exact same reason: which of the hovered tile's own East/South neighbor it pairs with
+    // to form the new edge door's flanking floor tiles (PlaceEdgeDoor).
+    private bool _editorDoorPendingVertical = true;
+    private bool _prevDoorRotateKeyDown;
+    // M-doors-as-edges - a stable, ever-increasing id so no two edge doors placed in the same
+    // session ever collide (TileGrid.AddDoorEdge's own id, unlike the old tile-based door, is never
+    // resynthesized later at export time - the editor is the sole source of truth for it).
+    private int _editorNextDoorEdgeId;
+    // Which of the two wall-mountable kinds the Terminal tool currently places (direct user request -
+    // "на стену размером с полублок можно крепить только терминал и настенную лампу") - a palette
+    // sub-choice, same shape as _editorWallMaterial/_editorDoorSpanTiles. Applied by
+    // HandleTerminalToolInput.
+    private CustomDeviceKind _editorSelectedWallDeviceKind = CustomDeviceKind.Terminal;
+    // Direct user request ("добавь возможность вращать терминалы на r") - which mount side the
+    // floor-adjacent placement mode prefers, cycled the same West->North->East->South->West way
+    // _editorEnginePendingFacing is, for the (rare but real) case a hovered tile has more than one
+    // valid full-thickness wall neighbor to choose from. HandleTerminalToolInput tries this side
+    // FIRST and only falls back to the fixed scan order if it isn't actually valid here.
+    private TileSide _editorWallDevicePendingSide = TileSide.North;
+    private bool _prevWallDeviceRotateKeyDown;
 
     // The tile canvas itself, plus a couple of things TileCell doesn't carry that the editor still
     // needs to know for rendering/removal: which CustomDeviceKind a given device tile actually is
@@ -153,6 +202,13 @@ public partial class Game1
     private readonly Dictionary<string, HashSet<TileCoord>> _editorCompartmentTiles = new();
     private readonly Dictionary<string, HashSet<TileCoord>> _editorCompartmentProtected = new();
     private int _editorNextCompartmentInstance;
+    // Direct user request ("чтобы игра говорила что так делать нельзя") - a short-lived rejection
+    // toast, drawn over the canvas by DrawEditorCanvas while Environment.TickCount64 (plain wall-
+    // clock milliseconds - this is a transient UI cue, not gameplay state, so it doesn't need to be
+    // threaded through from GameTime the way in-session timers are) is still under the deadline.
+    private const long EditorToastMilliseconds = 2200;
+    private string? _editorToastMessage;
+    private long _editorToastUntilTicks;
 
     private (int X, int Y)? _editorFloorDragStart;
     private TileCoord? _editorWallDragStart;
@@ -215,8 +271,7 @@ public partial class Game1
         }
         _editorTool = EditorTool.Floor;
         _editorWallMaterial = WallMaterial.Standard;
-        _editorDoorWide = false;
-        _editorDoorDragStart = null;
+        _editorDoorSpanTiles = 1;
         _editorCurrentSlotName = null; // the scratch slot isn't necessarily saved under any name yet
         _editorSaveAsPrompting = false;
         _editorLoadListOpen = false;
@@ -310,7 +365,7 @@ public partial class Game1
         }
         if (_editorLoadListOpen)
         {
-            HandleEditorLoadListInput(leftClicked);
+            HandleEditorLoadListInput(leftClicked, keyboard);
             return;
         }
 
@@ -323,13 +378,13 @@ public partial class Game1
                 HandleFloorToolInput(leftClicked, leftReleased, rightClicked);
                 break;
             case EditorTool.Wall:
-                HandleWallToolInput(leftClicked, leftReleased, rightClicked);
+                HandleWallToolInput(leftClicked, leftReleased, rightClicked, keyboard);
                 break;
             case EditorTool.Door:
-                HandleDoorToolInput(leftClicked, leftReleased, rightClicked);
+                HandleDoorToolInput(leftClicked, rightClicked, keyboard);
                 break;
             case EditorTool.Terminal:
-                HandleTerminalToolInput(leftClicked, rightClicked);
+                HandleTerminalToolInput(leftClicked, rightClicked, keyboard);
                 break;
             case EditorTool.Device:
                 HandleDeviceToolInput(leftClicked, rightClicked, keyboard);
@@ -376,7 +431,10 @@ public partial class Game1
         var maxY = Math.Max(start.Y, endCell.Y);
         for (var x = minX; x <= maxX; x++)
             for (var y = minY; y <= maxY; y++)
-                _editorTiles.SetFloor(new TileCoord(x, y), true);
+            {
+                var coord = new TileCoord(x, y);
+                _editorTiles.SetFloor(coord, true);
+            }
     }
 
     // Point placement (one click, one tile) plus a line drag for speed (direct user request) - mouse-
@@ -385,8 +443,22 @@ public partial class Game1
     // simplest thing that covers "wall a corridor" without inventing a stairstep convention). Every
     // filled tile still needs a floor already there (TileGrid.SetWall's own precondition) - tiles
     // without one are silently skipped rather than refusing the whole line.
-    private void HandleWallToolInput(bool leftClicked, bool leftReleased, bool rightClicked)
+    private void HandleWallToolInput(bool leftClicked, bool leftReleased, bool rightClicked, KeyboardState keyboard)
     {
+        // R cycles which side of the tile the SOLID half sits on (same rotate-then-place shape as
+        // Door/Engine) - only meaningful while the half-block variant is actually selected, but read
+        // unconditionally so switching to it later already shows a sensible last-picked side.
+        var rDown = keyboard.IsKeyDown(Keys.R);
+        if (rDown && !_prevWallRotateKeyDown)
+            _editorWallHalfBlockSide = _editorWallHalfBlockSide switch
+            {
+                TileSide.West => TileSide.North,
+                TileSide.North => TileSide.East,
+                TileSide.East => TileSide.South,
+                _ => TileSide.West,
+            };
+        _prevWallRotateKeyDown = rDown;
+
         if (rightClicked)
         {
             if (GridCellAt(_designMouse) is { } cell && _editorTiles.CellAt(new TileCoord(cell.X, cell.Y)) is { Wall: not TileWallKind.None })
@@ -423,6 +495,7 @@ public partial class Game1
             if (_editorTiles.CellAt(coord) is not { HasFloor: true, DeviceId: null })
                 continue;
             _editorTiles.SetWall(coord, TileWallKind.Solid, material: _editorWallMaterial);
+            _editorTiles.SetWallOpenSide(coord, _editorWallHalfBlock ? _editorWallHalfBlockSide : null);
             EvictTerminalsAtJunctions(coord);
         }
     }
@@ -448,24 +521,93 @@ public partial class Game1
         }
     }
 
-    private TileCoord? _editorDoorDragStart;
+    // The 2 barrier tiles a WIDE door placed at `anchor` right now would occupy (Vertical: extend
+    // along Y, same "shared wall is a vertical line" meaning CustomDoorDef.Vertical/
+    // ShipLayoutGeometry.RoomPairOverlap.Vertical already use) - the ONLY caller left is
+    // HandleDoorToolInput's own compartment-boundary special case (span==2 exclusively, the one
+    // sub-case that stays on the OLD tile model - see that method's own doc comment); the narrow and
+    // ordinary-floor wide/triple cases all moved to PlaceEdgeDoor's own span-generic geometry instead.
+    private List<TileCoord> DoorSpanTiles(TileCoord anchor) => new()
+    {
+        anchor,
+        _editorDoorPendingVertical ? new TileCoord(anchor.X, anchor.Y + 1) : new TileCoord(anchor.X + 1, anchor.Y),
+    };
+
+    // Every footprint tile of a door - barrier tile → anchor (its own first barrier tile) - so a
+    // right-click ANYWHERE in the door's own footprint removes it, the same "click any occupied
+    // tile" convenience _editorDeviceFootprint already gives the Reactor (direct user request -
+    // "расставлял их как устройства со своим размером"). Populated on placement, pruned on removal.
+    private readonly Dictionary<TileCoord, TileCoord> _editorDoorFootprint = new();
+
+    // The orientation a NARROW door was actually placed with (_editorDoorPendingVertical at commit
+    // time), keyed by its own barrier tile - direct user bug report ("после поворота двери при
+    // выставлении она всё равно ставится под одним и тем же углом"): a lone barrier tile has no
+    // partner to infer orientation from the way a wide door's pair does (DrawEditorDoorTile's own
+    // `partner.X == coord.X` check), so DrawEditorDoorTile used to fall back to guessing from
+    // floor-neighbors alone (InferDoorTileVertical) - which silently ignored R whenever a tile
+    // happened to have floor on every side (both orientations geometrically "valid"). Remembering
+    // the real placement-time choice here fixes that; InferDoorTileVertical stays only as the
+    // fallback for a door tile that predates this dictionary (loaded from an old save).
+    private readonly Dictionary<TileCoord, bool> _editorDoorVertical = new();
+
+    // The 2 tiles flanking ONE barrier tile, perpendicular to the wall it sits on (West/East for a
+    // Vertical wall, North/South otherwise) - together with the barrier tile itself, this is the
+    // door's own footprint for editor bookkeeping purposes (humble-soaring-cat.md "Дверь как
+    // устройство со своим footprint'ом"). Only the compartment-boundary special case still uses
+    // this now (RegisterFootprint below) - every free-floor door span (narrow/wide/triple) moved to
+    // the edge model (HandleEdgeDoorToolInput/PlaceEdgeDoor), which never touches a flanking tile at
+    // all (CanPlaceDoorEdge simply refuses placement if one isn't already bare floor, instead of
+    // clearing a stray wall the way the old tile-based placement used to).
+    private static IEnumerable<TileCoord> DoorFlankingTiles(TileCoord barrier, bool vertical)
+    {
+        yield return (vertical ? TileSide.West : TileSide.North).Offset(barrier);
+        yield return (vertical ? TileSide.East : TileSide.South).Offset(barrier);
+    }
 
     // A door is its own toggleable wall variant (TileGrid.cs) - can go straight onto bare floor, or
     // replace an existing solid wall. Clicking an existing door removes it back to bare floor
     // (there's nothing else for this tool to do to a door tile, so both directions share one button).
-    // Wide mode (_editorDoorWide, direct user request - "дверь занимающая 1 на 2 тайла") reuses the
-    // Wall tool's own drag-a-line gesture, but only ever links the FIRST 2 tiles of that drag into
-    // one door (TileGrid.LinkDoors) - a longer drag doesn't chain more doors, and a bare click (no
-    // real drag) still places one ordinary single-tile door.
-    private void HandleDoorToolInput(bool leftClicked, bool leftReleased, bool rightClicked)
+    // Direct user request ("расставлял их как устройства со своим размером") - placed the same
+    // rotate-then-click way every other rotatable device is (Engine's own R-cycled pending facing),
+    // not by dragging: R toggles _editorDoorPendingVertical, a single click commits DoorSpanTiles'
+    // own span at the hovered tile.
+    private void HandleDoorToolInput(bool leftClicked, bool rightClicked, KeyboardState keyboard)
     {
+        // M-doors-as-edges (humble-soaring-cat.md) - direct user requests ("я хочу полностью
+        // переделать двери... давай вначале передалем дверь которая размером в 1 тайл", then "сделай
+        // тоже самое с... широкой дверью", then "...с тройной дверью"): every span EXCEPT 2 is a
+        // completely separate placement model now (N parallel edges between already-free floor
+        // tiles, never a tile of its own) - split off into its own method entirely. Span==2 alone
+        // stays threaded through the span-based logic below, since it's the one case that still has
+        // to try the OLD tile-based compartment-boundary special case FIRST (never asked to change)
+        // before falling back to the same edge model the other spans use exclusively.
+        if (_editorDoorSpanTiles != 2)
+        {
+            HandleEdgeDoorToolInput(leftClicked, rightClicked, keyboard, _editorDoorSpanTiles);
+            return;
+        }
+
+        var rDown = keyboard.IsKeyDown(Keys.R);
+        if (rDown && !_prevDoorRotateKeyDown)
+            _editorDoorPendingVertical = !_editorDoorPendingVertical;
+        _prevDoorRotateKeyDown = rDown;
+
         if (rightClicked)
         {
             if (GridCellAt(_designMouse) is not { } removeCell)
                 return;
-            var removeCoord = new TileCoord(removeCell.X, removeCell.Y);
+            var clicked = new TileCoord(removeCell.X, removeCell.Y);
+            // Clicking anywhere in the door's own footprint (device-style) resolves to its actual
+            // barrier tile - clicking the barrier tile itself is just the anchor-equals-itself case.
+            var removeCoord = _editorDoorFootprint.TryGetValue(clicked, out var doorAnchor) ? doorAnchor : clicked;
             if (_editorTiles.CellAt(removeCoord) is not { Wall: TileWallKind.Door } current)
+            {
+                // M-doors-as-edges (wide) - no OLD-style Door tile here (that only ever exists for
+                // the compartment-boundary special case below), so this is either a wide door built
+                // on plain free floor via the new edge model, or genuinely nothing at all.
+                RemoveDoorEdgeGroupAt(clicked);
                 return;
+            }
             // M83 - a Docking compartment's own airlock door tile is a protected core tile (per
             // CompartmentPlacer.Stamp's own ProtectedTiles) and must never be touched by this tool at
             // all - not converted to None, not "restored" to Solid either (M82's own RestoreKind logic
@@ -484,50 +626,61 @@ public partial class Game1
 
             // Removing one tile of a linked wide door takes its partner with it - the pair reads as
             // ONE door to the player, not two narrow ones that happen to touch.
+            var removedBarriers = new List<TileCoord> { removeCoord };
             if (current.DoorGroupId is { } groupId)
                 foreach (var partner in _editorTiles.Cells
                     .Where(kv => kv.Value.DoorGroupId == groupId && kv.Key != removeCoord)
                     .Select(kv => kv.Key).ToList())
+                {
                     _editorTiles.SetWall(partner, RestoreKind(partner));
+                    removedBarriers.Add(partner);
+                }
             _editorTiles.SetWall(removeCoord, RestoreKind(removeCoord));
+            // Prune every footprint tile this door claimed - both barrier tiles removed above, and
+            // both their flanking floor tiles (never themselves touched, just bookkeeping entries).
+            foreach (var barrier in removedBarriers)
+            {
+                _editorDoorFootprint.Remove(barrier);
+                _editorDoorVertical.Remove(barrier);
+                foreach (var flank in _editorDoorFootprint.Where(kv => kv.Value == barrier).Select(kv => kv.Key).ToList())
+                    _editorDoorFootprint.Remove(flank);
+            }
             return;
         }
 
-        if (!_editorDoorWide)
-        {
-            if (!leftClicked || GridCellAt(_designMouse) is not { } cell)
-                return;
-            var coord = new TileCoord(cell.X, cell.Y);
-            if (_editorTiles.CellAt(coord) is not { HasFloor: true, DeviceId: null })
-                return;
-            _editorTiles.SetWall(coord, TileWallKind.Door);
-            EvictTerminalsAtJunctions(coord);
+        if (!leftClicked || GridCellAt(_designMouse) is not { } cell)
             return;
-        }
-
-        if (leftClicked)
-        {
-            if (GridCellAt(_designMouse) is { } cell)
-                _editorDoorDragStart = new TileCoord(cell.X, cell.Y);
-            return;
-        }
-        if (!leftReleased || _editorDoorDragStart is not { } start)
-            return;
-        _editorDoorDragStart = null;
-
-        var end = GridCellAt(_designMouse) is { } endCell ? new TileCoord(endCell.X, endCell.Y) : start;
-        var span = LineBetween(start, end).Take(2).ToList();
+        var anchor = new TileCoord(cell.X, cell.Y);
+        var span = DoorSpanTiles(anchor);
 
         // M82 (humble-soaring-cat.md) - direct user rule: a door may replace the wall on the boundary
         // between two ALREADY-PLACED compartments only if that boundary is exactly 2 tiles long and
         // neither of those tiles borders open space/vacuum (a genuine interior seam, never a stretch
         // of the outer hull). Tried FIRST, on the whole 2-tile span at once - both tiles must
         // independently qualify (TryResolveCompartmentBoundaryDoor) AND agree on the very same
-        // compartment pair, so a drag can't straddle a corner into a third compartment. If it doesn't
-        // apply (not a wall at all, an ordinary hull wall, or a corner), fall through unchanged to the
-        // original floor-based interpretation below - the two cases are mutually exclusive per tile (a
-        // tile is either bare floor or already carries a wall), so there's no ambiguity about which
-        // one a given drag means. No partial application: either both tiles convert, or neither does.
+        // compartment pair. If it doesn't apply (not a wall at all, an ordinary hull wall, or a
+        // corner), fall through unchanged to the original floor-based interpretation below - the two
+        // cases are mutually exclusive per tile (a tile is either bare floor or already carries a
+        // wall), so there's no ambiguity about which one a given click means. No partial
+        // application: either both tiles convert, or neither does.
+        // Every footprint tile of `barriers` (the barrier tiles themselves plus each one's own 2
+        // flanking floor tiles, DoorFlankingTiles) mapped to the first barrier as anchor - lets a
+        // right-click ANYWHERE in the door's footprint remove it (see _editorDoorFootprint's own
+        // doc comment).
+        void RegisterFootprint(IReadOnlyList<TileCoord> barriers)
+        {
+            if (barriers.Count == 0)
+                return;
+            var footprintAnchor = barriers[0];
+            foreach (var barrier in barriers)
+            {
+                _editorDoorFootprint[barrier] = footprintAnchor;
+                _editorDoorVertical[barrier] = _editorDoorPendingVertical;
+                foreach (var flank in DoorFlankingTiles(barrier, _editorDoorPendingVertical))
+                    _editorDoorFootprint[flank] = footprintAnchor;
+            }
+        }
+
         if (span.Count == 2
             && TryResolveCompartmentBoundaryDoor(span[0], out var boundaryOwnerA, out var boundaryOwnerB)
             && TryResolveCompartmentBoundaryDoor(span[1], out var otherOwnerA, out var otherOwnerB)
@@ -539,20 +692,118 @@ public partial class Game1
                 EvictTerminalsAtJunctions(spanCoord);
             }
             _editorTiles.LinkDoors(span[0], span[1]);
+            RegisterFootprint(span);
             return;
         }
 
-        var placed = new List<TileCoord>();
-        foreach (var spanCoord in span)
+        // M-doors-as-edges (wide) - direct user request ("сделай по аналогии дверь 1 на 2... назови
+        // ее широкой дверью"): not a compartment boundary (already handled above), so this is the
+        // ordinary case - a genuine 4-tile free-floor footprint, placed via PlaceEdgeDoor rather
+        // than converting `span`'s 2 tiles into Door TILES the old way (that old conversion loop,
+        // including its own airlock-flank leniency, is gone - a wide edge door needs real floor on
+        // both sides now, same tradeoff the narrow door already accepted; a genuine hull airlock
+        // still works via the OLD tile model - see the compartment-boundary branch above and the
+        // "Шлюз" tool, neither one touched here). `anchor` alone is enough (PlaceEdgeDoor derives
+        // both its own axes from _editorDoorPendingVertical directly, the same source `span` itself
+        // was computed from) - `span`/RegisterFootprint above are used ONLY by the compartment-
+        // boundary branch now, not dead code.
+        PlaceEdgeDoor(anchor, 2);
+    }
+
+    // M-doors-as-edges (humble-soaring-cat.md) - every span except 2 (narrow=1, triple=3, and any
+    // future span) shares this ONE handler: a barrier made of `spanTiles` parallel edges sitting on
+    // the EDGE between the hovered tile/its span-neighbors and their counterparts toward
+    // _editorDoorPendingVertical's own direction (South if true, East if false), never a tile of its
+    // own. Direct user rule, quoted verbatim for the narrow case: "эта дверь занимала ровно 2 тайла,
+    // не больше не меньше... чтобы блоки рядом не удаляллись... дверь нельзя ставить никуда кроме
+    // свободных клеток" - PlaceEdgeDoor never auto-clears a neighboring wall; CanPlaceDoorEdge simply
+    // refuses the whole placement if ANY flanking tile isn't already bare, deviceless floor.
+    private void HandleEdgeDoorToolInput(bool leftClicked, bool rightClicked, KeyboardState keyboard, int spanTiles)
+    {
+        var rDown = keyboard.IsKeyDown(Keys.R);
+        if (rDown && !_prevDoorRotateKeyDown)
+            _editorDoorPendingVertical = !_editorDoorPendingVertical;
+        _prevDoorRotateKeyDown = rDown;
+
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var anchor = new TileCoord(cell.X, cell.Y);
+
+        if (rightClicked)
         {
-            if (_editorTiles.CellAt(spanCoord) is not { HasFloor: true, DeviceId: null })
-                continue;
-            _editorTiles.SetWall(spanCoord, TileWallKind.Door);
-            EvictTerminalsAtJunctions(spanCoord);
-            placed.Add(spanCoord);
+            RemoveDoorEdgeGroupAt(anchor);
+            return;
         }
-        if (placed.Count == 2)
-            _editorTiles.LinkDoors(placed[0], placed[1]);
+
+        if (leftClicked)
+            PlaceEdgeDoor(anchor, spanTiles);
+    }
+
+    // Every (Coord, Side) key in _editorTiles.DoorEdges that shares an Id with whatever edge (if
+    // any) touches `anchor` on one of its 4 sides - a narrow door is always a group of 1, a wide/
+    // triple door (PlaceEdgeDoor below) a group of 2/3 sharing one Id, same "one id, several
+    // physical edges" trick World.Doors.cs's own ToggleDoor/_doorEdgeOpen already rely on to toggle
+    // every segment of a multi-tile door together with no extra plumbing. Empty if `anchor` touches
+    // no edge.
+    private List<(TileCoord Coord, TileSide Side)> DoorEdgeGroupAt(TileCoord anchor)
+    {
+        string? id = null;
+        foreach (var side in TileSideExtensions.All)
+            if (_editorTiles.DoorEdgeAt(anchor, side) is { } edge)
+            {
+                id = edge.Id;
+                break;
+            }
+        if (id is null)
+            return new List<(TileCoord, TileSide)>();
+        return _editorTiles.DoorEdges.Where(kv => kv.Value.Id == id).Select(kv => (kv.Key.Coord, kv.Key.Side)).ToList();
+    }
+
+    // Right-click removal for EVERY edge-based door span (narrow/wide/triple alike) - removes every
+    // physical edge in the group at once, so a multi-segment door never gets left half-removed (one
+    // segment gone, others still standing) no matter which of its own tiles the player actually
+    // clicked.
+    private void RemoveDoorEdgeGroupAt(TileCoord anchor)
+    {
+        foreach (var (coord, side) in DoorEdgeGroupAt(anchor))
+            _editorTiles.RemoveDoorEdge(coord, side);
+    }
+
+    // Direct user requests ("сделай по аналогии дверь 1 на 2 т е дверь занимающую 4 клетки и назови
+    // ее широкой дверью", then "сделай тоже самое с тройной дверью, чтобы она занимала 2 на 3
+    // тайла") - the exact same edge-between-2-tiles primitive as the narrow door, just `spanTiles`
+    // PARALLEL edges (sharing one Id, see DoorEdgeGroupAt's own doc comment) instead of one, so the
+    // barrier's own span runs `spanTiles` tiles along the seam instead of 1 - a genuine
+    // spanTiles-by-2-free-floor footprint (spanTiles*2 tiles total: 2 for narrow, 4 for wide, 6 for
+    // triple), never a tile of its own, same "no auto-clearing, no partial placement" rules the
+    // narrow door already had. `side` (perpendicular to the seam, which room is A vs B) reuses
+    // _editorDoorPendingVertical exactly like the narrow door; the span axis (which direction the
+    // door's own width runs) is simply whichever axis `side` ISN'T - always extended toward +1 (no
+    // separate rotation state for it, same 2-choices-via-1-key simplicity the OLD tile-based Wide
+    // door already had). All-or-nothing: either every one of the `spanTiles` positions is already
+    // free floor, or nothing gets placed at all.
+    private void PlaceEdgeDoor(TileCoord anchor, int spanTiles)
+    {
+        var side = _editorDoorPendingVertical ? TileSide.South : TileSide.East;
+        var spanOffset = side is TileSide.East or TileSide.West ? new TileCoord(0, 1) : new TileCoord(1, 0);
+        var anchors = Enumerable.Range(0, spanTiles)
+            .Select(i => new TileCoord(anchor.X + spanOffset.X * i, anchor.Y + spanOffset.Y * i))
+            .ToList();
+
+        if (anchors.Any(a => !_editorTiles.CanPlaceDoorEdge(a, side)))
+        {
+            _editorToastMessage = spanTiles switch
+            {
+                1 => "Нельзя поставить дверь - нужны 2 свободные соседние клетки пола.",
+                2 => "Нельзя поставить широкую дверь - нужны 4 свободные клетки пола (2 на 2).",
+                _ => $"Нельзя поставить тройную дверь - нужны {spanTiles * 2} свободных клеток пола ({spanTiles} на 2).",
+            };
+            _editorToastUntilTicks = Environment.TickCount64 + EditorToastMilliseconds;
+            return;
+        }
+        var id = $"door-edge-{_editorNextDoorEdgeId++}";
+        foreach (var a in anchors)
+            _editorTiles.AddDoorEdge(a, side, id);
     }
 
     // M82 - does `coord` sit on a genuine interior seam between two already-placed compartments? Only
@@ -600,33 +851,76 @@ public partial class Game1
         return true;
     }
 
-    // Mounts to whichever side actually has a wall/door neighbor (TileGrid.PlaceTerminal's own
-    // precondition), checked in a fixed North/South/East/West order rather than asking the player to
-    // aim at a specific edge - a terminal tile usually only has one wall-kind neighbor to begin with.
-    // Refused entirely (direct user request) if the tile itself sits at a construction junction - see
-    // IsAtConstructionJunction's own doc comment.
-    private void HandleTerminalToolInput(bool leftClicked, bool rightClicked)
+    // Which side a floor-adjacent wall device would mount to at `coord` - the player's own rotated
+    // preference (_editorWallDevicePendingSide, direct user request "добавь возможность вращать
+    // терминалы на r") if it's actually valid here, else the first valid side in fixed North/South/
+    // East/West order (the original, pre-rotation behavior - covers the overwhelming majority of
+    // tiles, which only ever have exactly one qualifying neighbor anyway). A qualifying neighbor
+    // must be a Solid/Door wall that is NOT itself half-thick (direct user report - "стены в пол
+    // блока... это можно было сделать только в том же тайле что и стена": a half-thick wall
+    // neighbor already has its own free half to recess into instead, via PlaceRecessedWallDevice).
+    private TileSide? FindWallDeviceMountSide(TileCoord coord)
     {
+        bool Qualifies(TileSide side) => _editorTiles.CellAt(side.Offset(coord)) is { Wall: not TileWallKind.None, WallOpenSide: null };
+        if (Qualifies(_editorWallDevicePendingSide))
+            return _editorWallDevicePendingSide;
+        foreach (var side in TileSideExtensions.All)
+            if (Qualifies(side))
+                return side;
+        return null;
+    }
+
+    // Mounts to whichever side actually has a wall/door neighbor (TileGrid.PlaceWallDevice's own
+    // precondition) - FindWallDeviceMountSide's own rotated-preference-then-fixed-order search.
+    // Refused entirely (direct user request) if the tile itself sits at a construction junction -
+    // see IsAtConstructionJunction's own doc comment. Places whichever kind the palette sub-choice
+    // currently selects (direct user request, restricting this tool to Terminal and WallLamp only) -
+    // _editorSelectedWallDeviceKind.
+    private void HandleTerminalToolInput(bool leftClicked, bool rightClicked, KeyboardState keyboard)
+    {
+        var rDown = keyboard.IsKeyDown(Keys.R);
+        if (rDown && !_prevWallDeviceRotateKeyDown)
+        {
+            _editorWallDevicePendingSide = _editorWallDevicePendingSide switch
+            {
+                TileSide.North => TileSide.East,
+                TileSide.East => TileSide.South,
+                TileSide.South => TileSide.West,
+                _ => TileSide.North,
+            };
+        }
+        _prevWallDeviceRotateKeyDown = rDown;
+
         if (GridCellAt(_designMouse) is not { } cell)
             return;
         var coord = new TileCoord(cell.X, cell.Y);
+        var kind = _editorSelectedWallDeviceKind;
         if (rightClicked)
         {
-            if (_editorTiles.CellAt(coord) is { TerminalId: not null })
-                _editorTiles.RemoveTerminal(coord);
+            if (_editorTiles.CellAt(coord) is { WallDeviceId: not null })
+                _editorTiles.RemoveWallDevice(coord);
             return;
         }
-        if (!leftClicked || _editorTiles.CellAt(coord) is not { HasFloor: true, TerminalId: null })
+        if (_editorTiles.CellAt(coord) is not { } targetCell)
+            return;
+
+        // Direct user request (a device can mount into a half-thick wall's own free half) - clicking
+        // directly ON a non-corner half-thick wall tile recesses the device there instead of the
+        // floor-adjacent mount below. No junction guard needed here - a genuine corner already has
+        // WallOpenSide == null, and a straight wall run's own neighbors can never satisfy
+        // IsAtConstructionJunction's own two-adjacent-sides test.
+        if (leftClicked && targetCell is { Wall: TileWallKind.Solid, WallOpenSide: not null, WallDeviceId: null })
+        {
+            _editorTiles.PlaceRecessedWallDevice(coord, kind, $"{kind}-{coord.X}-{coord.Y}".ToLowerInvariant());
+            return;
+        }
+
+        if (!leftClicked || targetCell is not { HasFloor: true, WallDeviceId: null })
             return;
         if (IsAtConstructionJunction(coord))
             return;
-        foreach (var side in TileSideExtensions.All)
-        {
-            if (_editorTiles.CellAt(side.Offset(coord)) is not { Wall: not TileWallKind.None })
-                continue;
-            _editorTiles.PlaceTerminal(coord, side, $"terminal-{coord.X}-{coord.Y}");
-            return;
-        }
+        if (FindWallDeviceMountSide(coord) is { } mountSide)
+            _editorTiles.PlaceWallDevice(coord, mountSide, kind, $"{kind}-{coord.X}-{coord.Y}".ToLowerInvariant());
     }
 
     // Something meant to hang flat against a single wall (today, only Terminal) reads as wrong if
@@ -662,10 +956,15 @@ public partial class Game1
         foreach (var side in TileSideExtensions.All)
         {
             var neighbor = side.Offset(coord);
-            if (_editorTiles.CellAt(neighbor) is { TerminalId: not null } && IsAtConstructionJunction(neighbor))
-                _editorTiles.RemoveTerminal(neighbor);
+            if (_editorTiles.CellAt(neighbor) is { WallDeviceId: not null } && IsAtConstructionJunction(neighbor))
+                _editorTiles.RemoveWallDevice(neighbor);
         }
     }
+
+    // Direct user request ("удали механику что если ставим стены в ряд, они почти все превращаются
+    // в полублоки") - live per-tile WallOpenSide classification used to happen here automatically on
+    // every Wall/Floor/Door edit; removed. Half-block is a deliberate palette choice now
+    // (_editorWallHalfBlock/_editorWallHalfBlockSide, applied directly in HandleWallToolInput).
 
     // A device needs bare floor on EVERY tile of its footprint (no wall/door/other device already on
     // any of them, TileGrid.PlaceDevice's own precondition, checked tile-by-tile before placing any
@@ -874,7 +1173,15 @@ public partial class Game1
         var instance = $"compartment-{_editorNextCompartmentInstance++}";
         var result = CompartmentPlacer.Stamp(_editorTiles, entry, anchor, _editorCompartmentPendingRotation, instance);
         if (!result.Success)
-            return; // silent reject, same convention every other tool's own precondition checks use
+        {
+            // Direct user request ("чтобы игра говорила что так делать нельзя") - a short-lived
+            // toast over the canvas instead of the silent reject every other tool's own precondition
+            // check still uses; overlapping another compartment is common enough to click into by
+            // accident (unlike, say, a device tool's occupied-tile check) that it earns real feedback.
+            _editorToastMessage = "Нельзя разместить отсек - место уже занято.";
+            _editorToastUntilTicks = Environment.TickCount64 + EditorToastMilliseconds;
+            return;
+        }
 
         foreach (var device in result.Devices)
         {
@@ -901,23 +1208,14 @@ public partial class Game1
                 for (var y = (int)footprintRect.Y; y < (int)footprintRect.Bottom; y++)
                     allTiles.Add(new TileCoord(anchor.X + x, anchor.Y + y));
 
-        // Direct user request ("система отсеков по-другому") - a wall-ring tile is now allowed to
-        // coincide with an EXISTING compartment's own wall tile (CompartmentPlacer.Stamp's own new
-        // overlap rule); that shared tile stays owned by whichever compartment claimed it FIRST, so
-        // this placement's own bookkeeping must not steal it - removing this NEW compartment later
-        // must never clear a tile the earlier one still depends on. (The reverse - removing the
-        // EARLIER compartment while this one still needs the shared tile - is a known, accepted
-        // limitation: the tile really is singular, "doesn't matter which stays" per the user's own
-        // answer, and removal wasn't part of that request.)
-        var ownedTiles = new HashSet<TileCoord>();
+        // CompartmentPlacer.Stamp already rejected this placement outright if any of these tiles
+        // belonged to anything else at all (including another compartment's own wall ring - direct
+        // user request, "убери механику... наезжать друг на друга"), so every tile here is
+        // guaranteed to be exclusively this compartment's own - no shared-ownership bookkeeping
+        // needed any more.
         foreach (var t in allTiles)
-        {
-            if (_editorCompartmentAt.ContainsKey(t))
-                continue; // already owned by another, still-standing compartment - leave it be
             _editorCompartmentAt[t] = instance;
-            ownedTiles.Add(t);
-        }
-        _editorCompartmentTiles[instance] = ownedTiles;
+        _editorCompartmentTiles[instance] = allTiles;
         _editorCompartmentProtected[instance] = new HashSet<TileCoord>(result.ProtectedTiles);
     }
 
@@ -932,33 +1230,14 @@ public partial class Game1
         && _editorCompartmentProtected.TryGetValue(instanceId, out var protectedTiles)
         && protectedTiles.Contains(coord);
 
-    // The one genuinely tricky part of removal: CompartmentPlacer.Stamp's own placement-time wall
-    // dedup (M80) means a compartment placed touching an EARLIER one never grew its own wall on the
-    // shared boundary - it deduped down to plain floor there instead, leaving the earlier compartment's
-    // own wall as the sole 1-tile separator. Removing THIS compartment (whichever one it is) is safe on
-    // its own shared-boundary tiles that still carry a wall (nothing else depended on them), but if a
-    // NEIGHBORING, still-standing compartment was the one whose ring got deduped away against THIS one
-    // (i.e. this compartment was placed FIRST and the neighbor came second, deduping against it), that
-    // neighbor's boundary now has a hole where this compartment's own wall used to be its shared
-    // separator - repaint a fresh wall there before this compartment's own tiles are cleared.
+    // Every tile a compartment owns is now exclusively its own (CompartmentPlacer.Stamp rejects
+    // placement outright if any tile - wall-ring or interior - would land on something else's
+    // ground at all), so removing one can never leave a neighboring, still-standing compartment
+    // missing a wall it depended on - there is no shared tile left to repair.
     private void RemoveCompartmentAt(string instanceId)
     {
         if (!_editorCompartmentTiles.TryGetValue(instanceId, out var tiles))
             return;
-
-        foreach (var coord in tiles)
-        {
-            if (_editorTiles.CellAt(coord) is not { Wall: TileWallKind.Solid })
-                continue; // not one of this compartment's own ring tiles - interior tiles have no wall
-            foreach (var side in TileSideExtensions.All)
-            {
-                var outward = side.Offset(coord);
-                if (!_editorCompartmentAt.TryGetValue(outward, out var neighborInstance) || neighborInstance == instanceId)
-                    continue; // exterior space, or still this same compartment - nothing to repair
-                if (_editorTiles.CellAt(outward) is { Wall: TileWallKind.None, HasFloor: true })
-                    _editorTiles.SetWall(outward, TileWallKind.Solid); // restore the neighbor's own boundary
-            }
-        }
 
         foreach (var coord in tiles)
         {
@@ -1058,7 +1337,7 @@ public partial class Game1
             return; // Play is drawn disabled in this state - a stray click just does nothing
         CustomShipStore.Save(definition);
         SaveStore.Delete(); // a fresh run on this hull, same as picking a fixed class on ShipSelect
-        StartHostedSession(ShipKind.Custom, loadFrom: null, customShip: definition);
+        StartHostedSession(ShipKind.Custom, loadFrom: null, customShip: definition, fromShipEditor: true);
     }
 
     private void HandleShipEditorNewClicked()

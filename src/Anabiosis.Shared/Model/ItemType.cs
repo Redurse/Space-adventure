@@ -59,4 +59,9 @@ public enum ItemType
     // "quiet number, not a real Item slot" treatment AmmoStorage's own stock already gets before a
     // crate is ever taken off the rack.
     HullPlating,
+    // Worn into EquipSlot.Headset (EquipSlotDefinitions) - required to transmit on the radio voice
+    // channel (World.Voice.cs's RelayVoiceChunk gates IsRadio chunks on this); local proximity
+    // voice needs no item at all. Direct user request, matching Barotrauma's own radio-as-item
+    // model instead of a free always-available channel.
+    Radio,
 }

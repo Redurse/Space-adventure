@@ -29,6 +29,15 @@ public sealed partial class World
             SyncDoorTile(Ship.Tiles, TileGridRasterizer.DoorTileCoords(new[] { Ship.GetRoom(airlock.RoomId) }, airlock.X, airlock.Y, airlock.Width, airlock.Height), airlock.Id);
         SyncWallBlockTiles(Ship.Tiles, Ship.Rooms, Ship.WallBlocks);
 
+        // M-doors-as-edges - same reconciliation-every-tick shape as SyncDoorTile above, just
+        // against Ship.Tiles.DoorEdges (keyed by Coord/Side, TileGrid.AddDoorEdge already ran once
+        // in Ship.Custom.cs) instead of a Cells lookup - an edge door has no Cells entry of its own.
+        foreach (var edge in Ship.DoorEdges)
+        {
+            Ship.Tiles.SetDoorEdgeOpen(edge.Coord, edge.Side, IsDoorOpen(edge.Id));
+            Ship.Tiles.SetDoorEdgeHp(edge.Coord, edge.Side, DoorHp(edge.Id));
+        }
+
         // M73 - Station.MoveAlongAxis now also reads Tiles, so its doors need the same open-state
         // mirror (no wall HP to sync: a station is never actually breachable - Station.WallBlocks.cs's
         // own comment). Without this, TileCell.DoorOpen's bool default (false) would make every

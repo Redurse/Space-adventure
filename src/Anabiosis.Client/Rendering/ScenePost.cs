@@ -62,7 +62,14 @@ public sealed class ScenePost : IDisposable
         _blur = effect?.Techniques["Blur"];
     }
 
-    public bool Available => _effect is not null;
+    // Direct user request - a settings-screen switch that forces the whole post chain off (bloom,
+    // grade, vignette, grain, dither, aberration, tonemap, relief/specular, distortion ripple) at
+    // runtime, on top of whatever TryLoad already decided at content-load time. Begin/Available
+    // treat this exactly like "the effect never loaded" - same fallback the caller already has for
+    // that case, just reached deliberately instead of by a missing content build.
+    public bool Enabled { get; set; } = true;
+
+    public bool Available => _effect is not null && Enabled;
 
     // Linear scale on the scene before anything is added to it. Doubles as a flash or fade knob.
     public float Exposure { get; set; } = 1.25f;
@@ -194,7 +201,7 @@ public sealed class ScenePost : IDisposable
     // should clear and draw the backbuffer itself, exactly as it did before this class existed.
     public bool Begin(Color clear)
     {
-        if (_effect is null || !EnsureTargets())
+        if (_effect is null || !Enabled || !EnsureTargets())
             return false;
 
         _device.SetRenderTarget(_scene);

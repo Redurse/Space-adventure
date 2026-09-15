@@ -2,20 +2,24 @@ using Anabiosis.Shared.Model;
 
 internal static partial class TestRunner
 {
-    // Direct user request ("система отсеков по-другому") - a compartment's own wall-ring tiles are
-    // now allowed to coincide with an EXISTING compartment's wall tiles (representing two
-    // compartments placed flush/overlapping and sharing that one wall), while its INTERIOR must
-    // still never overlap anything at all. These tests exercise CompartmentPlacer.Stamp directly
-    // with two plain 5x5 entries (no devices/engines - irrelevant to this rule), not real catalog
-    // content.
+    // Direct user request ("убери механику чтобы при накладывании отсеков... они могли наезжать
+    // друг на друга... сделай это невозможным") - a compartment's own footprint, wall-ring tiles
+    // included, must now land on completely empty space; landing on ANY existing tile at all -
+    // even just one wall coinciding with another compartment's own wall - is rejected. This
+    // supersedes an earlier, more permissive rule ("система отсеков по-другому") that allowed
+    // exactly the wall-over-wall overlap this test now proves is refused. These tests exercise
+    // CompartmentPlacer.Stamp directly with two plain 5x5 entries (no devices/engines - irrelevant
+    // to this rule), not real catalog content.
     private static CompartmentCatalogEntry PlainSquareEntry(string id) => new(
         id, "Тест", CompartmentType.Cockpit, Width: 5, Height: 5,
         Devices: Array.Empty<CompartmentDeviceSpec>(), Engines: Array.Empty<CompartmentEngineSpec>());
 
-    // B's anchor is offset by exactly (Width-1) from A - B's own left wall column (local x=0) lands
-    // on the SAME absolute column as A's own right wall column (local x=4), a perfect wall-over-wall
-    // overlap the whole column's height, while both interiors (A: x1-3, B: x5-7) stay well apart.
-    private static bool CompartmentPlacer_WallOverWallOverlap_IsAllowedAndDedupes()
+    // B's anchor is offset by exactly (Width-1) from A - B's own left wall column (local x=0) would
+    // land on the SAME absolute column as A's own right wall column (local x=4), a perfect wall-
+    // over-wall overlap the whole column's height, even though both interiors (A: x1-3, B: x5-7)
+    // stay well apart - still rejected outright, and the grid is left completely untouched by B's
+    // own failed attempt (A's own wall column survives exactly as it was).
+    private static bool CompartmentPlacer_WallOverWallOverlap_IsRejected()
     {
         var grid = new TileGrid();
         var a = PlainSquareEntry("a");
@@ -26,28 +30,19 @@ internal static partial class TestRunner
             return false;
 
         var resultB = CompartmentPlacer.Stamp(grid, b, new TileCoord(4, 0), rotationSteps: 0, instanceId: "b-1");
-        if (!resultB.Success)
+        if (resultB.Success)
             return false;
 
-        // The shared column (x=4) must still carry exactly one, undamaged wall tile at every row,
-        // tagged as compartment-placed (from A's original stamp - B's own attempt at that same tile
-        // was skipped entirely, never overwriting it).
+        // A's own wall column (x=4) must be completely unaffected by B's rejected attempt.
         for (var y = 0; y < 5; y++)
         {
             var cell = grid.CellAt(new TileCoord(4, y));
             if (cell is not { Wall: TileWallKind.Solid, WallFromCompartment: true })
                 return false;
         }
-
-        // Both interiors are still genuinely open floor with no wall.
-        for (var y = 1; y <= 3; y++)
-        {
-            if (grid.CellAt(new TileCoord(2, y)) is not { HasFloor: true, Wall: TileWallKind.None })
-                return false;
-            if (grid.CellAt(new TileCoord(6, y)) is not { HasFloor: true, Wall: TileWallKind.None })
-                return false;
-        }
-        return true;
+        // B never got so much as its own interior floor down - a rejected Stamp must leave the grid
+        // completely untouched, not partially applied.
+        return grid.CellAt(new TileCoord(6, 2)) is null;
     }
 
     // B's anchor is offset by (Width-2) from A - B's own left wall column would land one tile INSIDE

@@ -19,7 +19,7 @@ namespace Anabiosis.Shared.Model;
 // no function of its own yet (wiring is out of scope through M74 - see the plan's own decisions).
 public enum DeviceKind
 {
-    Reactor, Distribution, Battery, Helm, Navigation, CardTable, Jukebox, Terminal,
+    Reactor, Distribution, Battery, Helm, Navigation, CardTable, Jukebox, Terminal, WallLamp,
     Engine, Shields, WeaponCharger, Oxygen,
     TurretBallistic, TurretLaser, TurretMachineGun,
     AmmoStorage, SuitLocker, StorageRack, Camera, ComponentMount, Junction,

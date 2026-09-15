@@ -475,8 +475,11 @@ internal static partial class TestRunner
         }
 
         var after = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        // Row 0 (the corridor's own leading Top edge) is a full tile of solid wall - clearance stops
-        // at y=1+CharacterRadius, not at the old y=CharacterRadius the zero-thickness model gave.
-        return Math.Abs(after.X - 11.5) < 0.01 && Math.Abs(after.Y - (1.0 + RoomLayout.CharacterRadius)) < 0.01;
+        // Row 0 (the corridor's own leading Top edge) is a full-thick wall tile (direct user
+        // request, humble-soaring-cat.md - "удали механику что если ставим стены в ряд, они почти
+        // все превращаются в полублоки"; TileGridRasterizer.FromRooms no longer auto-infers a half-
+        // open side for a straight run) - clearance stops at y=1+CharacterRadius, not the original
+        // y=CharacterRadius zero-thickness model from before tiles existed at all.
+        return Math.Abs(after.X - 11.5) < 0.01 && Math.Abs(after.Y - (1f + RoomLayout.CharacterRadius)) < 0.01;
     }
 }

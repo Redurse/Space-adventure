@@ -16,26 +16,56 @@ public sealed record CustomShipTileCanvas(
     IReadOnlyList<CustomShipTileCanvas.TileRecord> Tiles,
     IReadOnlyList<CustomShipTileCanvas.DeviceRecord> Devices,
     IReadOnlyList<CustomShipTileCanvas.ZoneRecord> Zones,
-    IReadOnlyList<CustomShipTileCanvas.EngineRecord>? EnginesRaw = null)
+    IReadOnlyList<CustomShipTileCanvas.EngineRecord>? EnginesRaw = null,
+    // M-doors-as-edges (humble-soaring-cat.md) - the narrow-door-as-edge-between-2-tiles primitive
+    // (TileGrid.DoorEdges) lives entirely off to the side of the ordinary Tiles list above (an edge
+    // has no Cells entry of its own), so it needs its own save-format list, same "defaults to empty
+    // for every save from before this existed" convention as EnginesRaw.
+    IReadOnlyList<CustomShipTileCanvas.DoorEdgeRecord>? DoorEdgesRaw = null,
+    // Direct user bug report ("стены неправильно отрисовываются, та же проблема что решали
+    // раньше") - a save from before the manual-only half-block system (humble-soaring-cat.md) was
+    // written by the OLD always-on auto-inference (Game1.ShipEditor.cs's now-deleted
+    // RecomputeWallOpenSide, TileGridRasterizer's now-deleted openSideClaims), which used to stamp
+    // WallOpenSide onto nearly every straight wall run automatically - NOT a deliberate per-tile
+    // player choice the new Wall tool's half-block toggle makes. Reloading such a save without this
+    // marker would faithfully replay those stale flags as if the player had hand-picked half-block
+    // for dozens of tiles at once (confirmed against a real save, "БРЕД" - 71 of its 89 solid walls
+    // still carried a leftover WallOpenSide from the old mechanic). False for every save written
+    // before this field existed (JSON deserialization falls back to this default for a missing
+    // property); BuildEditorTileCanvas always sets it true on any save going forward, since only the
+    // new manual toggle can produce a WallOpenSide today. ApplyEditorTileCanvas strips every
+    // WallOpenSide on load when this is false, rather than trusting them.
+    bool ManualHalfBlockWalls = false)
 {
     // Defaulted/nullable (same convention CustomShipDefinition.EnginesRaw/Engines already uses) so a
     // save file from before the real ShipEngine editor tool existed - which has no "EnginesRaw"
     // property at all - deserializes to an empty list instead of null/crashing.
     public IReadOnlyList<EngineRecord> Engines { get; init; } = EnginesRaw ?? new List<EngineRecord>();
+    public IReadOnlyList<DoorEdgeRecord> DoorEdges { get; init; } = DoorEdgesRaw ?? new List<DoorEdgeRecord>();
 
     // One entry per tile the player ever painted (TileGrid.Cells only ever holds cells with
     // HasFloor true - SetFloor(false) removes the dictionary entry entirely - so this always is,
-    // but the field stays explicit rather than assumed). Wall/DoorOpen/TerminalId/TerminalWallSide/
-    // WallMaterial/DoorGroupId mirror TileCell directly; WallHp isn't persisted - the editor never
-    // damages a wall, every reload gets a fresh full-health one, same as a newly-painted tile would.
-    // WallMaterial defaults to Standard and DoorGroupId to null for every save from before either
-    // existed, matching what a freshly-painted tile already defaulted to.
-    // FromCompartment defaults to false for every save from before the Compartment tool's own
+    // but the field stays explicit rather than assumed). Wall/DoorOpen/WallDeviceId/
+    // WallDeviceMountSide/WallMaterial/DoorGroupId mirror TileCell directly; WallHp isn't
+    // persisted - the editor never damages a wall, every reload gets a fresh full-health one, same
+    // as a newly-painted tile would. WallMaterial defaults to Standard and DoorGroupId to null for
+    // every save from before either existed, matching what a freshly-painted tile already defaulted
+    // to. FromCompartment defaults to false for every save from before the Compartment tool's own
     // distinct wall colour existed (TileCell.WallFromCompartment) - a hand-painted wall, which is
     // exactly what it already was.
+    // WallDeviceKind/WallDeviceRecessed/WallOpenSide default to null/false/null for every save from
+    // before the wall-mounted device mode existed (direct user request, "их будет много"; WallLamp
+    // follow-up "терминал и настенную лампу") - no wall device there at all, exactly what it
+    // already was. WallOpenSide IS persisted (unlike WallHp) even though TileGridRasterizer.
+    // FromRooms re-derives it for the real exported ship from scratch every time - the editor's own
+    // live preview has no equivalent re-derivation for a reloaded canvas (CompartmentPlacer.Stamp
+    // only computes it at the moment of a fresh stamp, and Game1.ShipEditor.cs's own
+    // RecomputeWallOpenSide only runs at paint time), so persisting it directly is what lets a
+    // reloaded recessed device's own wall tile still qualify for PlaceRecessedWallDevice.
     public sealed record TileRecord(int X, int Y, bool HasFloor, TileWallKind Wall, bool DoorOpen,
-        string? TerminalId, TileSide? TerminalWallSide,
-        WallMaterial WallMaterial = WallMaterial.Standard, string? DoorGroupId = null, bool FromCompartment = false);
+        string? WallDeviceId, TileSide? WallDeviceMountSide,
+        WallMaterial WallMaterial = WallMaterial.Standard, string? DoorGroupId = null, bool FromCompartment = false,
+        bool WallDeviceRecessed = false, TileSide? WallOpenSide = null, CustomDeviceKind? WallDeviceKind = null);
 
     // Only the device's own anchor (top-left) tile and kind - CustomDeviceFootprint.Size(Kind)
     // recomputes which other tiles it occupies on load (Game1.ShipEditor.cs's own
@@ -48,6 +78,11 @@ public sealed record CustomShipTileCanvas(
     // own anchor and facing; EngineFootprintTiles(anchor, Facing) recomputes the Bulkhead/Nozzle tiles
     // on load, same "anchor is enough" convention DeviceRecord already uses for a multi-tile device.
     public sealed record EngineRecord(int X, int Y, TileSide Facing);
+
+    // Mirrors TileGrid's own canonical edge key (Side is always East or South) - Id is persisted
+    // (not resynthesized on load) since it's the same id ApplyEditorTileCanvas hands straight back
+    // to TileGrid.AddDoorEdge, and TileShipBuilder later copies it verbatim into the exported ship.
+    public sealed record DoorEdgeRecord(int X, int Y, TileSide Side, string Id);
 
     // Kind defaults to null for every save from before typed zones existed - an untyped, purely
     // cosmetic zone, same as today.

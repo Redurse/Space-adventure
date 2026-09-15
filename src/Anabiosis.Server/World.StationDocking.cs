@@ -168,6 +168,13 @@ public sealed partial class World
         foreach (var (coord, cell) in Station.Tiles.Cells)
             if (!merged.Cells.ContainsKey(coord))
                 merged.Cells[coord] = cell;
+        // M-doors-as-edges - same plain-union reasoning as Cells above: a door edge only ever sits
+        // between 2 tiles of the SAME structure (the ship editor never lets one span a coordinate
+        // the station also occupies), so there's no possible key collision to resolve here either.
+        foreach (var (key, edge) in Ship.Tiles.DoorEdges)
+            merged.DoorEdges[key] = edge;
+        foreach (var (key, edge) in Station.Tiles.DoorEdges)
+            merged.DoorEdges[key] = edge;
         return merged;
     }
 

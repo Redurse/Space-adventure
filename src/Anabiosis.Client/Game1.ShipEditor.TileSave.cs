@@ -17,8 +17,8 @@ public partial class Game1
         var tiles = _editorTiles.Cells
             .Select(kv => new CustomShipTileCanvas.TileRecord(
                 kv.Key.X, kv.Key.Y, kv.Value.HasFloor, kv.Value.Wall, kv.Value.DoorOpen,
-                kv.Value.TerminalId, kv.Value.TerminalWallSide, kv.Value.WallMaterial, kv.Value.DoorGroupId,
-                kv.Value.WallFromCompartment))
+                kv.Value.WallDeviceId, kv.Value.WallDeviceMountSide, kv.Value.WallMaterial, kv.Value.DoorGroupId,
+                kv.Value.WallFromCompartment, kv.Value.WallDeviceRecessed, kv.Value.WallOpenSide, kv.Value.WallDeviceKind))
             .ToList();
         var devices = _editorDeviceKinds
             .Select(kv => new CustomShipTileCanvas.DeviceRecord(kv.Key.X, kv.Key.Y, kv.Value,
@@ -31,7 +31,13 @@ public partial class Game1
         var engines = _editorEngineFacing
             .Select(kv => new CustomShipTileCanvas.EngineRecord(kv.Key.X, kv.Key.Y, kv.Value))
             .ToList();
-        return new CustomShipTileCanvas(tiles, devices, zones, engines);
+        var doorEdges = _editorTiles.DoorEdges
+            .Select(kv => new CustomShipTileCanvas.DoorEdgeRecord(kv.Key.Coord.X, kv.Key.Coord.Y, kv.Key.Side, kv.Value.Id))
+            .ToList();
+        // Any WallOpenSide on _editorTiles right now only ever got there via the new Wall tool's
+        // own half-block toggle (HandleWallToolInput) - the old always-on auto-inference that used
+        // to write it on the player's behalf is gone - so this save's flags are always deliberate.
+        return new CustomShipTileCanvas(tiles, devices, zones, engines, ManualHalfBlockWalls: true, DoorEdgesRaw: doorEdges);
     }
 
     // Replays the saved data through the SAME TileGrid mutators the editor's own tools use (floors
@@ -63,6 +69,11 @@ public partial class Game1
                 continue;
             var coord = new TileCoord(t.X, t.Y);
             _editorTiles.SetWall(coord, t.Wall, material: t.WallMaterial, fromCompartment: t.FromCompartment);
+            // A save without ManualHalfBlockWalls predates the manual-only half-block system - its
+            // WallOpenSide values are leftovers from the old, now-deleted auto-inference, not a
+            // deliberate player choice, so they're dropped rather than faithfully replayed.
+            if (canvas.ManualHalfBlockWalls && t.WallOpenSide is { } openSide)
+                _editorTiles.SetWallOpenSide(coord, openSide);
             if (t.Wall == TileWallKind.Door && t.DoorOpen)
                 _editorTiles.SetDoorOpen(coord, true);
         }
@@ -74,6 +85,23 @@ public partial class Game1
             var members = group.Select(t => new TileCoord(t.X, t.Y)).ToList();
             if (members.Count == 2)
                 _editorTiles.LinkDoors(members[0], members[1]);
+        }
+        // M-doors-as-edges - both flanking tiles are already plain floor by this point (the floor
+        // loop at the very top ran for every tile this save has, and neither flank of a genuine edge
+        // door ever carries a Wall entry at all), so CanPlaceDoorEdge's guard always passes here for
+        // any legitimately-saved edge; AddDoorEdge is skipped rather than thrown for a
+        // stale/corrupted coordinate instead of crashing the whole load.
+        _editorNextDoorEdgeId = 0;
+        foreach (var e in canvas.DoorEdges)
+        {
+            var coord = new TileCoord(e.X, e.Y);
+            if (_editorTiles.CanPlaceDoorEdge(coord, e.Side))
+                _editorTiles.AddDoorEdge(coord, e.Side, e.Id);
+            // Keeps freshly-placed ids (HandleNarrowDoorEdgeToolInput) from ever colliding with one
+            // this same save already used, regardless of what a future save format change might name
+            // them - only the "door-edge-N" ids THIS session's own placement ever produces matter.
+            if (e.Id.StartsWith("door-edge-") && int.TryParse(e.Id.Substring("door-edge-".Length), out var n) && n >= _editorNextDoorEdgeId)
+                _editorNextDoorEdgeId = n + 1;
         }
         foreach (var d in canvas.Devices)
         {
@@ -99,8 +127,18 @@ public partial class Game1
                 _editorEngineFootprint[occupied] = control;
         }
         foreach (var t in canvas.Tiles)
-            if (t.TerminalId is not null && t.TerminalWallSide is { } side)
-                _editorTiles.PlaceTerminal(new TileCoord(t.X, t.Y), side, t.TerminalId);
+        {
+            if (t.WallDeviceId is not { } deviceId)
+                continue;
+            var coord = new TileCoord(t.X, t.Y);
+            // A save from before WallLamp existed never had a WallDeviceKind at all - Terminal was
+            // the only wall-mountable kind back then, so that's the safe fallback here.
+            var kind = t.WallDeviceKind ?? CustomDeviceKind.Terminal;
+            if (t.WallDeviceRecessed)
+                _editorTiles.PlaceRecessedWallDevice(coord, kind, deviceId);
+            else if (t.WallDeviceMountSide is { } side)
+                _editorTiles.PlaceWallDevice(coord, side, kind, deviceId);
+        }
         foreach (var z in canvas.Zones)
             _editorZones.Add(new EditorZone(z.Name, z.Tiles.Select(p => new TileCoord(p.X, p.Y)).ToHashSet(), z.Kind));
     }

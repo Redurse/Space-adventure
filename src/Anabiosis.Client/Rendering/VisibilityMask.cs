@@ -47,6 +47,9 @@ public sealed class VisibilityMask : IDisposable
     private readonly GraphicsDevice _device;
     private readonly BasicEffect _effect;
     private readonly List<float> _offsets = new();
+    // Scratch buffer for ShadowCast.FilterNearby - reused across both AddLightPolygon calls in one
+    // Build (cone, then the ambient halo) rather than a fresh List each time.
+    private readonly List<WallSegment> _nearbyWalls = new();
     private RenderTarget2D? _target;
     private VertexPositionColor[] _vertices = new VertexPositionColor[3 * 256];
     private int _vertexCount;
@@ -119,8 +122,13 @@ public sealed class VisibilityMask : IDisposable
         // A full circle has no sides to fade, so the angular term is only ever applied to a cone.
         _coneSpan = full ? 0f : span;
 
-        ShadowCast.CollectRayOffsets(_offsets, walls, eye, start, span, full);
-        BuildTriangles(walls, eye, start, radius, origin, full, flatBrightness);
+        // See ShadowCast.FilterNearby's own doc comment - a wall farther than this polygon's own
+        // radius could never be hit by its own cast anyway (direct user report, "проблема из-за
+        // низкого фпс" - this is the same fix RoomLighting.AddLight needed, just for the player's
+        // own sight cone/ambient halo instead of a room's lamp).
+        ShadowCast.FilterNearby(_nearbyWalls, walls, eye, radius);
+        ShadowCast.CollectRayOffsets(_offsets, _nearbyWalls, eye, start, span, full);
+        BuildTriangles(_nearbyWalls, eye, start, radius, origin, full, flatBrightness);
     }
 
     // The finished mask itself, for passes that need to know how lit a pixel is rather than just

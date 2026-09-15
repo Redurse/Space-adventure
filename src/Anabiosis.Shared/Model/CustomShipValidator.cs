@@ -55,9 +55,13 @@ public static class CustomShipValidator
             if (!def.Rooms.Any(r => Contains(r, device.X, device.Y)))
                 errors.Add("Устройство стоит вне отсека.");
 
+        // A door no longer authors its own room pair (humble-soaring-cat.md "Дверь как свободный
+        // объект") - it's valid only if its own (X, Y, Vertical) genuinely lands on some pair of
+        // rooms' shared boundary, the same geometric test Ship.Custom.cs's BuildDoors relies on to
+        // resolve RoomAId/RoomBId at all.
         foreach (var door in def.Doors)
-            if (!roomsById.ContainsKey(door.RoomAId) || !roomsById.ContainsKey(door.RoomBId))
-                errors.Add("Дверь ссылается на несуществующий отсек.");
+            if (ShipLayoutGeometry.FindOverlapAt(def.Rooms, door.X, door.Y, door.Vertical) is null)
+                errors.Add($"Дверь в точке ({door.X}, {door.Y}) не стоит на границе между двумя отсеками.");
 
         var overlaps = ShipLayoutGeometry.FindRoomPairOverlaps(def.Rooms);
         foreach (var airlock in def.Airlocks)

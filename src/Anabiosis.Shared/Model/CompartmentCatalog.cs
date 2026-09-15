@@ -1,4 +1,4 @@
-namespace Anabiosis.Shared.Model;
+﻿namespace Anabiosis.Shared.Model;
 
 // M80 (humble-soaring-cat.md) - the first of 5 milestones (M80-M84) replacing free-tile painting
 // with a Cosmoteer/Space-Haven-style "place a whole pre-baked compartment, then outfit it" building
@@ -50,6 +50,18 @@ public sealed record CompartmentEngineSpec(TileCoord RelativeControl, TileSide F
 // - see CustomShipDefinition.cs's own doc comment). Always the compartment's own protected core.
 public sealed record CompartmentAirlockSpec(TileSide Side);
 
+// Direct user bug report ("почему когда ты сохраняешь чертеж отсека... в нём отсутствуют
+// полублоки стены, хотя в исходнике они есть?") - a wall-ring tile the SOURCE blueprint had
+// deliberately painted as a half-block (TileCell.WallOpenSide, the free-tile editor's own manual
+// Wall-tool toggle) used to be silently discarded the moment that blueprint was transcribed into a
+// catalog entry - CompartmentPlacer.Stamp's own wall ring is unconditionally full-thickness
+// (CompartmentPlacer.cs's own doc comment on why - AUTOMATIC inference from footprint shape is
+// still never done), and until now there was nowhere on CompartmentCatalogEntry to even carry an
+// AUTHORED half-block choice through. RelativePosition is the wall-ring tile's own local (X,Y)
+// (same authored-at-rotation-0 space FootprintRects/Devices/Engines already use); Side is which
+// half stays solid, same TileSide convention TileCell.WallOpenSide itself uses.
+public sealed record CompartmentWallOpenSideSpec(TileCoord RelativePosition, TileSide Side);
+
 // M91 (humble-soaring-cat.md, non-rectangular compartments) - FootprintRects is a UNION of 1+
 // axis-aligned pieces instead of exactly one W x H rectangle, same generalization as Room.cs/
 // CustomRoomDef's own M86. The (Width, Height) constructor is kept as the compat path every
@@ -61,13 +73,20 @@ public sealed record CompartmentCatalogEntry(
     IReadOnlyList<RectF> FootprintRects,
     IReadOnlyList<CompartmentDeviceSpec> Devices,
     IReadOnlyList<CompartmentEngineSpec> Engines,
-    CompartmentAirlockSpec? Airlock = null)
+    CompartmentAirlockSpec? Airlock = null,
+    IReadOnlyList<CompartmentWallOpenSideSpec>? WallOpenSidesRaw = null)
 {
     public CompartmentCatalogEntry(string Id, string DisplayName, CompartmentType Type, int Width, int Height,
-        IReadOnlyList<CompartmentDeviceSpec> Devices, IReadOnlyList<CompartmentEngineSpec> Engines, CompartmentAirlockSpec? Airlock = null)
-        : this(Id, DisplayName, Type, new[] { new RectF(0, 0, Width, Height) }, Devices, Engines, Airlock)
+        IReadOnlyList<CompartmentDeviceSpec> Devices, IReadOnlyList<CompartmentEngineSpec> Engines, CompartmentAirlockSpec? Airlock = null,
+        IReadOnlyList<CompartmentWallOpenSideSpec>? WallOpenSidesRaw = null)
+        : this(Id, DisplayName, Type, new[] { new RectF(0, 0, Width, Height) }, Devices, Engines, Airlock, WallOpenSidesRaw)
     {
     }
+
+    // Empty for every entry that never authored a half-block wall (every entry before this
+    // milestone, and most since - same optional-defaults convention CustomShipDefinition.
+    // WallOpenSidesRaw already established).
+    public IReadOnlyList<CompartmentWallOpenSideSpec> WallOpenSides { get; init; } = WallOpenSidesRaw ?? Array.Empty<CompartmentWallOpenSideSpec>();
 
     // Derived bounding box - kept for every existing read site (Ship Editor palette previews etc.)
     // that only ever wants "a" size. Equals the true single rect exactly whenever FootprintRects has
@@ -84,113 +103,386 @@ public static class CompartmentCatalog
     private static readonly CompartmentDeviceSpec[] NoDevices = Array.Empty<CompartmentDeviceSpec>();
     private static readonly CompartmentEngineSpec[] NoEngines = Array.Empty<CompartmentEngineSpec>();
 
-    // Cleared at the user's own direct request ("вместо всех текущих отсеков я буду присылать новые
-    // вариации") - every hand-authored entry this milestone originally shipped with is gone, and is
-    // being replaced one reference image at a time. Every client call site (Game1.ShipEditor.
-    // DeviceTabs.cs's own palette, Game1.ShipEditor.cs/.Draw.cs's Find lookups) already handles an
-    // empty/missing entry gracefully, so the catalog compiles and runs fine at any point during this
-    // replacement.
+    // Replacement round (direct user request, "давай сейчас я создам множество новых отсеков а все
+    // старые сейчас удалим... как я сделаю новые отсеки я тебе скажу") - byte-exact transcription of
+    // 10 of the user's own saved designs (%LocalAppData%\Anabiosis\custom-ships\), same method as
+    // every earlier transcription in this project's history: RectilinearDecomposition.Decompose
+    // against the FULL painted tile set from each .tiles.json (including its own wall ring),
+    // coordinates normalized to (0,0), devices/engines/half-block walls read straight from
+    // CustomShipTileCanvas.DeviceRecord/EngineRecord/TileRecord - a one-off DIAG=1 diagnostic script,
+    // reverted after use. An 11th save ("Инжинерный отсек", no number) was skipped - it shares
+    // engineering-a's own exact footprint but carries zero devices, reading as an earlier, since-
+    // superseded draft of the same room rather than its own distinct design; flagged to the user
+    // rather than guessed past.
     //
-    // reactor-a/b/c: 3 reference screenshots from the user, all labelled "N тип реакторного отсека" -
-    // same reactor prop, same 3-door composition (double door north, single doors east/west), each
-    // reference just drawn with progressively more open floor around that core and a chamfered/
-    // octagon-ish OUTER hull silhouette that gets more pronounced from a to c. Originally the
-    // chamfered corners were dropped as unreproducible (this milestone's architecture used to be
-    // plain WxH rectangles only) - the user then asked for genuine non-rectangular compartments in
-    // general (humble-soaring-cat.md M86-M91), so reactor-d below is the first entry that actually
-    // reproduces the cut-corner silhouette, using the same reactor/door composition as a/b/c. Anchor
-    // in each centers the Reactor's 4x4 footprint (CustomDeviceFootprint.Size) inside the ring - see
-    // TileShipBuilder.cs's own doc comment on why a multi-tile device's RelativePosition is its
-    // footprint's top-left anchor, not its center. Doors are NOT baked in here - they come from
-    // TileShipBuilder's own gap-closing when two placed compartments touch (confirmed with the
-    // user), not CompartmentAirlockSpec (which stays Docking-only).
+    // IsCore follows the same per-type convention already established before this catalog's own
+    // clearing: Engine's engine and Reactor's reactor are always core (CompartmentEngineSpec/the
+    // Reactor device are each their type's one defining reason to exist); Engineering marks every
+    // device core (Fabricator/Deconstructor/ConstructionBench/StorageRack/Camera alike - "каждое —
+    // отдельная, незаменимая причина существования отсека", the same rule this project's own history
+    // already applied to it); Cockpit marks only Helm+Navigation core (CardTable/Jukebox/Camera are
+    // replaceable furniture); Weapons marks its turrets/weapon panels core, Camera not; Distribution
+    // marks exactly ONE Distribution panel core (DistributionPanels' own established rule), every
+    // Battery/Junction/Camera replaceable. Docking ("Шлюз 1") authored no door of its own in the
+    // canvas at all (an airlock's Side is a catalog-author choice, not something painted -
+    // CompartmentAirlockSpec's own doc comment - RingCenter places its door automatically once a Side
+    // is picked) - West chosen arbitrarily on this small, symmetric 4x3 vestibule with no other
+    // constraint favouring any particular side.
     public static IReadOnlyList<CompartmentCatalogEntry> Entries { get; } = new[]
     {
         new CompartmentCatalogEntry(
-            Id: "reactor-a",
-            DisplayName: "Реакторный отсек (тип 1)",
-            Type: CompartmentType.Reactor,
-            Width: 10,
-            Height: 9,
-            Devices: OneDevice(CustomDeviceKind.Reactor, 3, 2),
-            Engines: NoEngines),
+            Id: "engine-a",
+            DisplayName: "Двигатель 1",
+            Type: CompartmentType.Engine,
+            Width: 3, Height: 6,
+            Devices: NoDevices,
+            Engines: new[] { new CompartmentEngineSpec(new TileCoord(1, 4), TileSide.South, MaxThrust: 8f, Role: EngineRole.Marching) },
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 4), TileSide.East),
+            }),
         new CompartmentCatalogEntry(
-            Id: "reactor-b",
-            DisplayName: "Реакторный отсек (тип 2)",
-            Type: CompartmentType.Reactor,
-            Width: 12,
-            Height: 10,
-            Devices: OneDevice(CustomDeviceKind.Reactor, 4, 3),
-            Engines: NoEngines),
-        new CompartmentCatalogEntry(
-            Id: "reactor-c",
-            DisplayName: "Реакторный отсек (тип 3)",
-            Type: CompartmentType.Reactor,
-            Width: 13,
-            Height: 9,
-            Devices: OneDevice(CustomDeviceKind.Reactor, 4, 2),
-            Engines: NoEngines),
-        // 12x10 bbox with a 2x2 square cut off each of its 4 corners - a 3-rectangle octagon
-        // decomposition (middle band the full width, top/bottom bands narrowed by the cut) - the
-        // first entry that actually reproduces references 2/3's chamfered silhouette instead of
-        // approximating it with a plain rectangle.
-        new CompartmentCatalogEntry(
-            Id: "reactor-d",
-            DisplayName: "Реакторный отсек (тип 4, со срезанными углами)",
-            Type: CompartmentType.Reactor,
+            Id: "engineering-a",
+            DisplayName: "Инжинерный отсек 1",
+            Type: CompartmentType.Engineering,
             FootprintRects: new[]
             {
-                new RectF(0, 2, 12, 6),
-                new RectF(2, 0, 8, 2),
-                new RectF(2, 8, 8, 2),
+                new RectF(2, 0, 5, 12),
+                new RectF(1, 2, 1, 8),
+                new RectF(7, 2, 1, 8),
+                new RectF(0, 3, 1, 6),
+                new RectF(8, 3, 1, 6),
             },
-            Devices: OneDevice(CustomDeviceKind.Reactor, 4, 3),
-            Engines: NoEngines),
-        // 3 rounds of guessing this shape from a static reference screenshot all came back wrong
-        // (direct user rejection each time - "на скриншоте вообще другая форма кокпита, абсолютно
-        // другая"), so the user built it in the Ship Editor and saved it ("Кокпит 2") instead - this
-        // entry is a byte-exact transcription of that save's own .tiles.json (no guessing left): a
-        // 5-wide x 2-tall windowed "nose" (WallMaterial.Window on its own perimeter in the source
-        // file) sitting on a 7-wide x 7-tall main cabin. Navigation/Helm both Rotated (standing
-        // consoles, 2-wide x 3-tall), placed side by side in the cabin's upper-middle rows exactly
-        // where the user put them. Doors are NOT baked in (same convention as every other entry -
-        // they come from stitching), even though the source save has 2 double doors (left/right
-        // flanks) and 1 single door (bottom, centered) of its own.
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Fabricator, new TileCoord(1, 4), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Deconstructor, new TileCoord(5, 4), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.ConstructionBench, new TileCoord(3, 1), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.StorageRack, new TileCoord(6, 8), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.StorageRack, new TileCoord(2, 8), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.StorageRack, new TileCoord(5, 8), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.StorageRack, new TileCoord(3, 8), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Camera, new TileCoord(3, 9), IsCore: true, Rotated: true),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 9), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 10), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 11), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 11), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 11), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 9), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 10), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 5), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 7), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 5), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 7), TileSide.West),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "weapons-a",
+            DisplayName: "Орудийный отсек 1",
+            Type: CompartmentType.Weapons,
+            FootprintRects: new[]
+            {
+                new RectF(2, 0, 5, 12),
+                new RectF(1, 2, 1, 8),
+                new RectF(7, 2, 1, 8),
+                new RectF(0, 3, 1, 6),
+                new RectF(8, 3, 1, 6),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.TurretBallistic, new TileCoord(1, 4), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.TurretLaser, new TileCoord(5, 4), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.WeaponPanel, new TileCoord(6, 3), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.WeaponPanel, new TileCoord(2, 3), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Camera, new TileCoord(2, 8), IsCore: false),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 5), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 7), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 10), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 10), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 5), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 7), TileSide.East),
+            }),
         new CompartmentCatalogEntry(
             Id: "cockpit-a",
-            DisplayName: "Кокпит (тип 1)",
+            DisplayName: "Кокпит 1",
             Type: CompartmentType.Cockpit,
             FootprintRects: new[]
             {
-                new RectF(1, 0, 5, 2),
-                new RectF(0, 2, 7, 7),
+                new RectF(2, 0, 3, 10),
+                new RectF(1, 1, 1, 9),
+                new RectF(5, 1, 1, 9),
+                new RectF(0, 4, 1, 6),
+                new RectF(6, 4, 1, 6),
             },
             Devices: new[]
             {
-                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(1, 3), IsCore: true, Rotated: true),
-                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(4, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(4, 5), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(1, 5), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.CardTable, new TileCoord(4, 2), IsCore: false, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Jukebox, new TileCoord(2, 2), IsCore: false, Rotated: true),
             },
-            Engines: NoEngines),
-        // Second variant, same file-transcription approach - a byte-exact read of the user's own
-        // "Кокпит 3" save. A shallower, wider shape than cockpit-a: a 9-wide x 1-tall notch on top of
-        // an 11-wide x 4-tall main cabin. Navigation/Helm both UNROTATED here (the cabin's own
-        // interior is only 4 rows deep, enough for the flat 3-wide x 2-tall orientation, not the
-        // standing one cockpit-a uses) - matches the source save exactly.
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 8), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 5), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 7), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 5), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 7), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 8), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 9), TileSide.South),
+            }),
         new CompartmentCatalogEntry(
             Id: "cockpit-b",
-            DisplayName: "Кокпит (тип 2)",
+            DisplayName: "Кокпит 2",
             Type: CompartmentType.Cockpit,
             FootprintRects: new[]
             {
-                new RectF(1, 0, 9, 1),
-                new RectF(0, 1, 11, 4),
+                new RectF(0, 0, 11, 4),
+                new RectF(2, 4, 7, 3),
+                new RectF(4, 7, 3, 1),
             },
             Devices: new[]
             {
-                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(2, 1), IsCore: true),
-                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(6, 1), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(3, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(6, 3), IsCore: true, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Camera, new TileCoord(9, 2), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Jukebox, new TileCoord(8, 2), IsCore: false, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.CardTable, new TileCoord(2, 2), IsCore: false, Rotated: true),
             },
-            Engines: NoEngines),
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 6), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 6), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 7), TileSide.South),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "cockpit-c",
+            DisplayName: "Кокпит 3",
+            Type: CompartmentType.Cockpit,
+            FootprintRects: new[]
+            {
+                new RectF(1, 0, 5, 10),
+                new RectF(0, 1, 1, 8),
+                new RectF(6, 1, 1, 8),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(2, 3), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(2, 5), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Camera, new TileCoord(4, 1), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Jukebox, new TileCoord(3, 2), IsCore: false, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.CardTable, new TileCoord(3, 7), IsCore: false, Rotated: true),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 5), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 7), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 5), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 7), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 2), TileSide.East),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "reactor-a",
+            DisplayName: "Реакторный отсек 1",
+            Type: CompartmentType.Reactor,
+            Width: 9, Height: 8,
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Reactor, new TileCoord(1, 2), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.SmallStorage, new TileCoord(7, 6), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.FuelRodStorage, new TileCoord(7, 1), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Oxygen, new TileCoord(5, 5), IsCore: false, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Secondary, new TileCoord(5, 2), IsCore: false, Rotated: true),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 5), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 5), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 7), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 7), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 7), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 7), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 7), TileSide.South),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "docking-a",
+            DisplayName: "Шлюз 1",
+            Type: CompartmentType.Docking,
+            Width: 4, Height: 3,
+            Devices: NoDevices,
+            Engines: NoEngines,
+            Airlock: new CompartmentAirlockSpec(TileSide.West),
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 2), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 2), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 1), TileSide.East),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "distribution-a",
+            DisplayName: "Щитовая 1",
+            Type: CompartmentType.Distribution,
+            FootprintRects: new[]
+            {
+                new RectF(1, 0, 5, 9),
+                new RectF(0, 1, 1, 7),
+                new RectF(6, 1, 1, 7),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Distribution, new TileCoord(3, 2), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Battery, new TileCoord(1, 6), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Battery, new TileCoord(5, 6), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(1, 5), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(1, 4), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(1, 3), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(5, 3), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(5, 4), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(5, 5), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Camera, new TileCoord(4, 7), IsCore: false),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 5), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 5), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 8), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 8), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 8), TileSide.South),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "distribution-b",
+            DisplayName: "Щитовая 2",
+            Type: CompartmentType.Distribution,
+            FootprintRects: new[]
+            {
+                new RectF(1, 0, 10, 4),
+                new RectF(0, 1, 1, 3),
+                new RectF(11, 1, 1, 3),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Distribution, new TileCoord(2, 1), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Battery, new TileCoord(9, 1), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(4, 1), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(6, 1), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(7, 1), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(5, 1), IsCore: false),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(11, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(10, 3), TileSide.South),
+            }),
     };
 
     // A non-overlapping grid of Distribution panels filling the compartment's own interior (never the

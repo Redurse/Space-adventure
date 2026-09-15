@@ -32,15 +32,13 @@ internal static partial class TestRunner
         return seenRegions.Count == rooms.Count && tiles.Regions.Count == rooms.Count;
     }
 
-    private static bool TileGridRasterizer_HandAuthoredShipHulls_OneRegionPerRoom()
+    // Used to loop over every hand-authored hull (Scout/Frigate/Cruiser/Corvette, all removed -
+    // direct user request, "удали все текущие корабли... полностью удалить из кода"); the one hull
+    // left, ShipDefaultHull's own frozen default, still needs the exact same guarantee.
+    private static bool TileGridRasterizer_DefaultHull_OneRegionPerRoom()
     {
-        foreach (var kind in new[] { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette })
-        {
-            var ship = Ship.Create(kind);
-            if (!EachRoomCenterMapsToItsOwnDistinctRegion(ship.Rooms, ship.Tiles))
-                return false;
-        }
-        return true;
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
+        return EachRoomCenterMapsToItsOwnDistinctRegion(ship.Rooms, ship.Tiles);
     }
 
     private static bool TileGridRasterizer_EveryEnemyHull_OneRegionPerRoom()
@@ -70,7 +68,7 @@ internal static partial class TestRunner
     // cockpit-reactor door (which sits entirely on column 5, inside reactor's own rectangle).
     private static bool TileGridRasterizer_FrigateCockpit_ExactInteriorTileCount()
     {
-        var ship = Ship.Create(ShipKind.Frigate);
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
         var cockpit = ship.Rooms.First(r => r.Id == "cockpit");
         var regionId = ship.Tiles.RegionIdAt(new TileCoord((int)cockpit.Center.X, (int)cockpit.Center.Y));
         if (regionId is null)
@@ -82,5 +80,22 @@ internal static partial class TestRunner
                 if (!region.Tiles.Contains(new TileCoord(x, y)))
                     return false;
         return region.Tiles.Count == 16;
+    }
+
+    // Direct user request ("удали механику что если ставим стены в ряд, они почти все превращаются
+    // в полублоки... хочу сделать чтобы игрок сам выбирал") - TileGridRasterizer.FromRooms used to
+    // infer WallOpenSide automatically for any straight (non-corner) wall run; that inference is
+    // gone. Every wall tile it produces - straight run, corner, door, or otherwise - now stays
+    // full-thickness (null) unless something ELSE (Ship.Custom.cs's own ApplyWallOpenSides, sourced
+    // from a player's explicit Wall-tool choice in the free-tile editor) sets it afterward.
+    // Regression guard against the removed automatic inference quietly coming back.
+    private static bool TileGridRasterizer_NeverInfersOpenSideAutomatically()
+    {
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
+        for (var x = 0; x <= 5; x++)
+            for (var y = 0; y <= 5; y++)
+                if (ship.Tiles.CellAt(new TileCoord(x, y)) is { Wall: TileWallKind.Solid, WallOpenSide: not null })
+                    return false;
+        return true;
     }
 }

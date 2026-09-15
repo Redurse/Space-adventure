@@ -7,10 +7,21 @@ namespace Anabiosis.Client.Rendering;
 // panel, a turret, the helm - all of those take priority and Esc closes them instead, see
 // Game1.Update). Four stacked buttons matching the reference layout; the third one is picked out
 // in red as the only one here that actually ends something, rather than just toggling a view.
+// "НАСТРОЙКИ" (direct user request) opens the real Settings screen (Game1.Settings.cs) as a nested
+// layer over this panel - Game1.cs's own _inGameSettingsOpen flag decides which of the two gets
+// drawn/handled each frame, this panel itself doesn't need to know settings exists at all.
+//
+// A 5th button, "ВЕРНУТЬСЯ В РЕДАКТОР" (direct user request - "если играешь в редакторе... в
+// менюшке ескейпа вернуться в редактор"), only ever shows up while testing a ship via the Ship
+// Editor's own "Играть" button (Game1's _sessionStartedFromEditor) - a normal campaign session has
+// no editor canvas to go back to. PanelHeight always reserves room for it (a panel that changes
+// size depending on session type would need to recompute/re-centre PauseMenuPanelOrigin, which is a
+// static-readonly field evaluated once - simpler to always leave the space and just not draw/hit-
+// test the last slot than to make the panel's own size a runtime concern).
 public sealed class PauseMenuPanel
 {
     public const int PanelWidth = 320;
-    public const int PanelHeight = 268;
+    public const int PanelHeight = 326;
     private const int ButtonWidth = 280;
     private const int ButtonHeight = 44;
     private const int Gap = 14;
@@ -23,7 +34,8 @@ public sealed class PauseMenuPanel
     private static readonly Color EndRoundFill = new(150, 45, 45);
     private static readonly Color EndRoundFillHover = new(178, 55, 55);
 
-    private static readonly string[] Labels = { "ПРОДОЛЖИТЬ", "НАСТРОЙКИ (скоро)", "ЗАКОНЧИТЬ РАУНД", "ГЛАВНОЕ МЕНЮ" };
+    private static readonly string[] Labels =
+        { "ПРОДОЛЖИТЬ", "НАСТРОЙКИ", "ЗАКОНЧИТЬ РАУНД", "ГЛАВНОЕ МЕНЮ", "ВЕРНУТЬСЯ В РЕДАКТОР" };
 
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
@@ -40,12 +52,13 @@ public sealed class PauseMenuPanel
         (int)panelOrigin.Y + TopPadding + index * (ButtonHeight + Gap),
         ButtonWidth, ButtonHeight);
 
-    public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint)
+    public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint, bool showReturnToEditor)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
         PanelFrame.Draw(spriteBatch, _pixel, panelRect, PanelBackground, PanelBorder, 0.97f, BorderThickness);
 
-        for (var i = 0; i < Labels.Length; i++)
+        var visibleCount = showReturnToEditor ? Labels.Length : Labels.Length - 1;
+        for (var i = 0; i < visibleCount; i++)
         {
             var isEndRound = i == 2;
             DrawButton(spriteBatch, GetButtonRect(i, panelOrigin), Labels[i],

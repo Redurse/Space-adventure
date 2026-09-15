@@ -1,7 +1,8 @@
 using System;
 using System.Collections.Generic;
-using Microsoft.Xna.Framework.Content;
-using Microsoft.Xna.Framework.Media;
+using System.IO;
+using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 
 namespace Anabiosis.Client.Audio;
 
@@ -18,6 +19,11 @@ namespace Anabiosis.Client.Audio;
 // And the order is a shuffled bag, not a coin flip. Pure random repeats itself in clumps, which
 // players read as a bug ("why this one again"), while a bag guarantees all five come round before
 // any repeats - with a check that a reshuffle cannot put the same track twice across the seam.
+//
+// Routes through GameAudioEngine now (direct user request, real output-device selection) instead of
+// MonoGame's MediaPlayer/Song - all 5 tracks are opened once at construction (same "load everything
+// up front" shape as before) and replayed by rewinding the same reader, rather than reloading from
+// disk each time.
 public sealed class GameMusic
 {
     // Asset names under Content/Music. Five full-length tracks, roughly one to four minutes each -
@@ -40,11 +46,12 @@ public sealed class GameMusic
     // Music sits under the effects. It is the bed, not the event.
     private const float MusicLevel = 0.55f;
 
-    // MediaPlayer reports Stopped for a moment after Play as well as after a track finishes, so a
-    // track is not tested for having ended until it has plausibly started.
-    private const double SettleSeconds = 1.5;
+    // A freshly-started track isn't tested for having ended until it has plausibly started - avoids
+    // a false "finished" read from OneShotSampleProvider on the very first Read() call.
+    private const double SettleSeconds = 0.5;
 
-    private readonly List<Song> _songs = new();
+    private readonly GameAudioEngine _engine;
+    private readonly List<(ISampleProvider Sample, WaveStream Reader)> _tracks = new();
     private readonly List<int> _bag = new();
     private readonly Random _random = new();
 
@@ -54,35 +61,38 @@ public sealed class GameMusic
     private double _startedAt;
     private double _nextStartAt;
     private float _master = 1f;
+    private OneShotSampleProvider? _current;
+    private VolumeSampleProvider? _currentVolume;
 
-    public GameMusic(ContentManager content)
+    public GameMusic(GameAudioEngine engine)
     {
+        _engine = engine;
         foreach (var name in TrackNames)
         {
-            try
-            {
-                _songs.Add(content.Load<Song>("Music/" + name));
-            }
-            catch (Exception)
-            {
-                // A missing track costs that track, never the game - the same contract GameSounds
-                // and Shaders.TryLoad keep.
-            }
+            var path = Path.Combine(GameAudioEngine.ContentRoot, "Music", name + ".mp3");
+            if (AudioFile.TryOpen(path) is { } opened)
+                _tracks.Add((AudioFile.ToMasterFormat(opened.Sample), opened.Reader));
+            // A missing track costs that track, never the game - the same contract GameSounds
+            // and Shaders.TryLoad keep.
         }
     }
 
-    public bool Available => _songs.Count > 0;
+    public bool Available => _tracks.Count > 0;
 
     /// <summary>How many tracks actually loaded. Public so the check in Anabiosis.ShaderCheck can
     /// tell "the content build dropped the music" apart from "the music is meant to be silent".</summary>
-    public int TrackCount => _songs.Count;
+    public int TrackCount => _tracks.Count;
 
-    /// <summary>The settings screen's master volume, applied on top of the music's own level.</summary>
+    /// <summary>Whether a track is actively mixed in right now - same "is it audibly playing" signal
+    /// Anabiosis.ShaderCheck used to read off MonoGame's own MediaPlayer.State.</summary>
+    public bool IsPlaying => _current is not null;
+
+    /// <summary>The settings screen's music-bus volume, applied on top of the music's own level.</summary>
     public void SetMasterVolume(float master)
     {
         _master = Math.Clamp(master, 0f, 1f);
-        if (_running)
-            MediaPlayer.Volume = MusicLevel * _master;
+        if (_currentVolume is not null)
+            _currentVolume.Volume = MusicLevel * _master * _engine.MusicVolume;
     }
 
     /// <summary>Called every frame while a round is live. Idempotent on the first call.</summary>
@@ -94,8 +104,6 @@ public sealed class GameMusic
         if (!_running)
         {
             _running = true;
-            MediaPlayer.IsRepeating = false;
-            MediaPlayer.Volume = MusicLevel * _master;
             _nextStartAt = nowSeconds + Gap(MinFirstGapSeconds, MaxFirstGapSeconds);
             return;
         }
@@ -103,8 +111,9 @@ public sealed class GameMusic
         if (_playing >= 0)
         {
             // Still going, or too soon to tell.
-            if (nowSeconds - _startedAt < SettleSeconds || MediaPlayer.State == MediaState.Playing)
+            if (nowSeconds - _startedAt < SettleSeconds || _current is not { Finished: true })
                 return;
+            StopCurrent();
             _playing = -1;
             _nextStartAt = nowSeconds + Gap(MinGapSeconds, MaxGapSeconds);
             return;
@@ -114,17 +123,20 @@ public sealed class GameMusic
             return;
 
         var next = TakeFromBag();
+        var (sample, reader) = _tracks[next];
         try
         {
-            MediaPlayer.Volume = MusicLevel * _master;
-            MediaPlayer.Play(_songs[next]);
+            reader.Position = 0;
+            _currentVolume = new VolumeSampleProvider(sample) { Volume = MusicLevel * _master * _engine.MusicVolume };
+            _current = new OneShotSampleProvider(_currentVolume);
+            _engine.AddMixerInput(_current);
             _playing = next;
             _startedAt = nowSeconds;
         }
         catch (Exception)
         {
-            // Some machines have no media stack at all. Fall back to silence rather than retrying
-            // every frame forever.
+            // Some machines have no working audio device at all. Fall back to silence rather than
+            // retrying every frame forever.
             _playing = -1;
             _nextStartAt = nowSeconds + MaxGapSeconds;
         }
@@ -137,14 +149,15 @@ public sealed class GameMusic
             return;
         _running = false;
         _playing = -1;
-        try
-        {
-            MediaPlayer.Stop();
-        }
-        catch (Exception)
-        {
-            // Nothing to do about it, and nothing that depends on it.
-        }
+        StopCurrent();
+    }
+
+    private void StopCurrent()
+    {
+        if (_current is not null)
+            _engine.RemoveMixerInput(_current);
+        _current = null;
+        _currentVolume = null;
     }
 
     private double Gap(double min, double max) => min + _random.NextDouble() * (max - min);
@@ -153,7 +166,7 @@ public sealed class GameMusic
     {
         if (_bag.Count == 0)
         {
-            for (var i = 0; i < _songs.Count; i++)
+            for (var i = 0; i < _tracks.Count; i++)
                 _bag.Add(i);
             for (var i = _bag.Count - 1; i > 0; i--)
             {
@@ -162,7 +175,7 @@ public sealed class GameMusic
             }
             // The seam between two bags is the one place a shuffle can still repeat: if the fresh
             // bag ends with what the last one ended with, that track plays twice in a row.
-            if (_songs.Count > 1 && _bag[^1] == _lastTaken)
+            if (_tracks.Count > 1 && _bag[^1] == _lastTaken)
                 (_bag[^1], _bag[0]) = (_bag[0], _bag[^1]);
         }
 

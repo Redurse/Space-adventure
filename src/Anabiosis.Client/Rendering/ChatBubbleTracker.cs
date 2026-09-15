@@ -15,6 +15,11 @@ public sealed class ChatBubbleTracker
     private readonly Dictionary<int, (string Text, float Remaining)> _bubbles = new();
     private int _lastSeenId;
 
+    // Direct user request ("Облака с текстом" in the Interface settings tab) - set once a frame
+    // from Game1's own graphics settings. Update still tracks new messages while disabled (so a
+    // bubble is ready to show the instant this is turned back on), only BubbleFor's readout is gated.
+    public bool Enabled { get; set; } = true;
+
     public void Update(IReadOnlyList<ChatLogEntry>? chatLog, float deltaSeconds)
     {
         if (chatLog is { Count: > 0 })
@@ -45,7 +50,7 @@ public sealed class ChatBubbleTracker
     // null if this player has no active bubble. alpha fades over the last ~1.5s.
     public (string Text, float Alpha)? BubbleFor(int playerId)
     {
-        if (!_bubbles.TryGetValue(playerId, out var bubble))
+        if (!Enabled || !_bubbles.TryGetValue(playerId, out var bubble))
             return null;
         var alpha = bubble.Remaining < 1.5f ? bubble.Remaining / 1.5f : 1f;
         return (bubble.Text, alpha);

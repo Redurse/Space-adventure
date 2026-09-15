@@ -17,8 +17,15 @@ namespace Anabiosis.Shared.Model;
 // Standard for every hand-authored hull and every custom ship built before this existed - only a
 // Ship-Editor-painted Reinforced/Window tile (Game1.ShipEditor.TileBridge.cs's WallMaterials export)
 // ever produces anything else (Ship.Custom.cs's ApplyWallMaterials).
+// WallOpenSide (direct user request - "хочу сделать чтобы игрок сам выбирал" полублочную стену)
+// mirrors Material's own shape: null for every ordinary full-thickness wall, set only for a tile the
+// Ship Editor's own Wall tool explicitly painted as half-block (Ship.Custom.cs's ApplyWallOpenSides).
+// This is the ONLY reason the client can tell a half-block wall apart from a full one at all - the
+// client's own re-rasterization (ShipRenderer.GetLiveShipTiles) has no way to derive it from Room
+// geometry any more (TileGridRasterizer.FromRooms no longer infers it automatically), so it reads
+// this field straight off the matching WallBlock the same way it already reads Material.
 public sealed record WallBlock(string Id, string RoomId, float X, float Y, bool IsInterior = false, string? OtherRoomId = null,
-    WallMaterial Material = WallMaterial.Standard)
+    WallMaterial Material = WallMaterial.Standard, TileSide? WallOpenSide = null)
 {
     public Vec2 Position => new(X, Y);
 }

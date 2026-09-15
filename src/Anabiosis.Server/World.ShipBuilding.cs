@@ -102,7 +102,12 @@ public sealed partial class World
         if (newRoomOverlaps.Count == 0)
             return null;
 
-        var newDoors = def.Doors.Concat(newRoomOverlaps.Select(o => new CustomDoorDef(o.RoomAId, o.RoomBId))).ToList();
+        // A door no longer authors its own room pair (humble-soaring-cat.md "Дверь как свободный
+        // объект") - centered on the overlap exactly like the old code did, just expressed as a
+        // position instead of a room-id pair; Ship.Custom.cs's BuildDoors re-derives RoomAId/RoomBId
+        // from this same position once the appended room is actually built.
+        var newDoors = def.Doors.Concat(newRoomOverlaps.Select(o =>
+            new CustomDoorDef(o.Vertical ? o.At : o.OverlapCenter, o.Vertical ? o.OverlapCenter : o.At, o.Vertical, Wide: true))).ToList();
         // Content-каталог отсеков - a device-carrying catalog entry's own device(s), already
         // positioned inside newRoom's own bounds (TryBuildRoom) - appended alongside the room itself.
         var newDevices = devices is { Count: > 0 } ? def.Devices.Concat(devices).ToList() : def.Devices;
@@ -242,6 +247,9 @@ public sealed partial class World
         _reactorRoomBonusOutput = RoomCatalog.ReactorRoomBonusOutput * Math.Max(0, Ship.ReactorDeviceCount - 1);
         ApplyUpgradeEffects(); // re-derives PowerGrid.Reactor.OutputBonus from both sources together
         Shield.CapacityBonus = Ship.SystemDevices.Sum(d => d.CapacityBonus);
+        // Direct user request ("сделай чтобы на корабле могло быть несколько батарей") - same "bonus,
+        // not list" shape as the reactor output line just above.
+        PowerGrid.Battery.SetCapacityBonus(RoomCatalog.BatteryRoomBonusCapacity * Math.Max(0, Ship.BatteryDeviceCount - 1));
     }
 
     private IReadOnlyList<PendingRoomBuildState> CreatePendingRoomBuildStates() =>
@@ -267,7 +275,15 @@ public sealed partial class World
             return;
 
         var remainingRooms = def.Rooms.Where(r => r.Id != roomId).ToList();
-        var remainingDoors = def.Doors.Where(d => d.RoomAId != roomId && d.RoomBId != roomId).ToList();
+        // A door no longer authors its own room pair (humble-soaring-cat.md "Дверь как свободный
+        // объект") - resolved against the ORIGINAL room layout (the demolished room's own rect is
+        // still needed to tell whether a door touched it at all), same geometric lookup
+        // Ship.Custom.cs's BuildDoors itself relies on.
+        var remainingDoors = def.Doors.Where(d =>
+        {
+            var overlap = ShipLayoutGeometry.FindOverlapAt(def.Rooms, d.X, d.Y, d.Vertical);
+            return overlap is null || (overlap.Value.RoomAId != roomId && overlap.Value.RoomBId != roomId);
+        }).ToList();
         var remainingAirlocks = def.Airlocks.Where(a => a.RoomId != roomId).ToList();
         var remainingDevices = def.Devices.Where(d =>
             !(d.X >= demolished.X && d.X <= demolished.X + demolished.Width &&
@@ -316,6 +332,11 @@ public sealed partial class World
             .Concat(s.ComponentMounts.Select(m => m.Id)).Concat(s.StorageRacks.Select(r => r.Id))
             .Concat(s.SuitLockers.Select(l => l.Id)).Concat(s.AmmoStorages.Select(a => a.Id))
             .Concat(s.Cameras.Select(c => c.Id)).Concat(s.SystemDevices.Select(d => d.Id))
+            // Terminal is now per-instance-stateful too (_terminalOn, World.Terminals.cs) - same
+            // reason SuitLocker/AmmoStorage are listed above: a build/demolish that adds/removes
+            // one must take the full-reset branch (InitializeShipState -> InitializeTerminals)
+            // rather than the incremental one, or a stale/missing dictionary entry would result.
+            .Concat(s.Terminals.Select(t => t.Id))
             // Direct user request (Cosmoteer-style marching engines) - a build/demolish that
             // adds/removes one must take the "device graph changed" full-reset branch below
             // (InitializeShipState, which calls InitializeEngines) rather than the incremental one.

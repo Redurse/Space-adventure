@@ -35,6 +35,19 @@ public partial class Game1
     private static Rectangle GetEditorLoadRowDeleteRect(int index) => new(524, 120 + index * 30, 40, 26);
     private static Rectangle GetEditorLoadCloseRect() => new(216, 460, 100, 26);
 
+    // Direct user request ("сделай возможность листать сохраненные чертежи в редакторе") - the list
+    // above shows one fixed-height row per name with no scrolling of its own; once saved designs
+    // outgrew a single page's worth of rows (this project's own compartment-blueprint saves already
+    // do), later names would draw right past GetEditorLoadCloseRect and off the bottom of the box
+    // entirely, unreachable. Paged instead of scrolled - same "one screenful, flip with a button"
+    // feel the word "листать" itself asks for, and reuses GetEditorLoadRowRect/RowDeleteRect
+    // completely unchanged (callers just pass a LOCAL, within-page index 0..RowsPerPage-1 and add
+    // the page offset themselves - HandleEditorLoadListInput/DrawEditorLoadList do this identically).
+    private const int EditorLoadRowsPerPage = 10;
+    private static Rectangle GetEditorLoadPrevPageRect() => new(216, 422, 60, 26);
+    private static Rectangle GetEditorLoadPageLabelRect() => new(284, 422, 148, 26);
+    private static Rectangle GetEditorLoadNextPageRect() => new(440, 422, 60, 26);
+
     // Tile-painting redo - the Zone tool's own naming prompt, same small-modal convention as
     // "Сохранить как" above.
     // Grown to fit the 4 zone-type quick-select buttons (direct user request - all 4 described zone
@@ -87,6 +100,7 @@ public partial class Game1
         if (GetEditorActionRect(EditorAction.Load).Contains(point))
         {
             _editorLoadListOpen = true;
+            _editorLoadListPage = 0;
             return true;
         }
         if (GetEditorActionRect(EditorAction.Play).Contains(point))

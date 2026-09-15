@@ -72,10 +72,51 @@ public static class ShadowCast
         return best;
     }
 
+    // Whether a wall stands anywhere on the straight line between two arbitrary points - the voice
+    // chat occlusion check (VoicePlayback), not an angular sweep like the two callers above. Reuses
+    // Cast unchanged: casting from `a` straight at `b` and checking whether the nearest hit lands
+    // short of `b` itself is exactly "is something in the way".
+    public static bool IsBlocked(Vector2 a, Vector2 b, IReadOnlyList<WallSegment> walls)
+    {
+        var toB = b - a;
+        var distance = toB.Length();
+        if (distance < 1e-4f)
+            return false;
+        var hit = Cast(a, toB / distance, walls, distance);
+        return hit < distance - 0.05f;
+    }
+
     public static float Wrap(float angle)
     {
         const float twoPi = MathF.PI * 2f;
         angle %= twoPi;
         return angle < 0 ? angle + twoPi : angle;
+    }
+
+    // Direct user report ("проблема из-за низкого фпс") - both callers (RoomLighting, once per lamp;
+    // VisibilityMask, once or twice per frame for the player's own sight) pass Cast the exact same
+    // `radius` as its own maxDistance, and Cast already rejects any hit at distance >= maxDistance -
+    // so a wall whose CLOSEST point to `point` is already farther than `radius` could never register
+    // a hit from this point no matter which direction is tried. Filtering those out before
+    // CollectRayOffsets/Cast ever run over them is exact, not an approximation - it only skips work
+    // that was always going to be thrown away. This matters most exactly where the original slowdown
+    // was found: a single room's own lamp (a few units' reach) shadow-cast against the WHOLE docked
+    // ship+station's combined wall list (hundreds of segments) is almost entirely wasted work once
+    // this filter is in place, cut down to just the handful of walls actually near that lamp.
+    public static void FilterNearby(List<WallSegment> into, IReadOnlyList<WallSegment> walls, Vector2 point, float radius)
+    {
+        into.Clear();
+        var radiusSquared = radius * radius;
+        foreach (var wall in walls)
+        {
+            var a = new Vector2(wall.Ax, wall.Ay);
+            var b = new Vector2(wall.Bx, wall.By);
+            var ab = b - a;
+            var lengthSquared = ab.LengthSquared();
+            var t = lengthSquared > 1e-6f ? Math.Clamp(Vector2.Dot(point - a, ab) / lengthSquared, 0f, 1f) : 0f;
+            var closest = a + ab * t;
+            if (Vector2.DistanceSquared(closest, point) <= radiusSquared)
+                into.Add(wall);
+        }
     }
 }

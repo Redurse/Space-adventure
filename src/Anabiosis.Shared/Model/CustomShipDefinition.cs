@@ -55,14 +55,33 @@ public sealed record CustomRoomDef(string Id, string Name, IReadOnlyList<RectF> 
     }
 }
 
-// One optional passage on the boundary shared by these two rooms - at most one per room pair,
-// centered on whatever range they actually share (Ship.Custom.cs works out where and how big).
-public sealed record CustomDoorDef(string RoomAId, string RoomBId);
+// A door is now a freely placed object (humble-soaring-cat.md "Дверь как свободный объект") -
+// (X, Y) is its own exact center, in the SAME continuous world-unit convention Door.X/Y already
+// uses (sitting exactly on whichever room boundary it's placed on), not derived from a room pair.
+// Vertical means the shared wall it sits on is a vertical line (rooms side by side along X) - same
+// meaning as ShipLayoutGeometry.RoomPairOverlap.Vertical, authored directly since the editor always
+// knows it trivially at the moment of placement (which existing wall tile was clicked). Wide is a
+// genuine authored choice now (previously always "as wide as the shared wall allows, up to
+// Door.StandardSpanUnits") - false gives a 1-unit-span door, true the old up-to-2-unit span.
+// RoomAId/RoomBId are no longer part of the input at all - Ship.Custom.cs's BuildDoors resolves
+// them from geometry via ShipLayoutGeometry.FindOverlapAt, matching this exact position against
+// the room layout's own shared boundaries (which also naturally supports more than one door on the
+// same room pair - the old RoomAId/RoomBId-keyed model capped at one, see TileShipBuilder.cs's own
+// doorPairs HashSet this replaces).
+// Id is an optional override, defaulting to null for every ordinary editor-placed door (which never
+// had a stable id concept to begin with - Ship.Custom.cs's BuildDoors auto-numbers "door-N" exactly
+// as before whenever this is absent). ShipDefaultHull.cs's own frozen definition is the one caller
+// that DOES set it - direct user request ("удали все текущие корабли... полностью удалить из кода")
+// - so the old CreateStarter() hull's own literal door ids ("door-cockpit-reactor" etc, which a wide
+// swath of the test suite hardcodes) survive being rebuilt through FromCustomDefinition instead of
+// silently renumbering into something no existing test could possibly have anticipated.
+public sealed record CustomDoorDef(float X, float Y, bool Vertical, bool Wide, string? Id = null);
 
 // One optional outer hull door on a room's side that has no neighboring room at all - the whole
 // side stops being breachable hull once this exists (matches the hand-authored hulls' own airlock
-// chambers, whose dedicated outer wall never gets ordinary WallBlocks either - see Ship.cs).
-public sealed record CustomAirlockDef(string RoomId, EdgeSide Side);
+// chambers, whose dedicated outer wall never gets ordinary WallBlocks either - see Ship.cs). Id is
+// the same optional override CustomDoorDef's own doc comment explains, for the exact same reason.
+public sealed record CustomAirlockDef(string RoomId, EdgeSide Side, string? Id = null);
 
 // A painted wall tile whose material isn't the default Standard (direct user request - "усиленная
 // стена"/"иллюминатор", humble-soaring-cat.md M76 follow-up). X/Y are the SAME hull-local tile
@@ -71,6 +90,20 @@ public sealed record CustomAirlockDef(string RoomId, EdgeSide Side);
 // generated block's own tile coordinate up here (via TileGridRasterizer.WallBlockTileCoord) and
 // copies the match onto that WallBlock. Standard tiles simply have no entry here at all.
 public sealed record CustomWallMaterialDef(int X, int Y, WallMaterial Material);
+
+// Direct user request ("удали механику что если ставим стены в ряд, они почти все превращаются в
+// полублоки... хочу сделать чтобы игрок сам выбирал") - which tile is a deliberately-placed half-
+// block wall, and which side of it stays solid (TileCell.WallOpenSide's own doc comment - the free,
+// walkable half is the OPPOSITE side). X/Y are the same hull-local tile coordinates
+// CustomWallMaterialDef already uses. Only ever present for a tile the free-tile editor's own Wall
+// tool explicitly painted as half-block - nothing infers this from footprint shape any more.
+public sealed record CustomWallOpenSideDef(int X, int Y, TileSide Side);
+
+// M-doors-as-edges (humble-soaring-cat.md) - a narrow door edge, keyed the same canonical way
+// TileGrid.CanonicalEdgeKey stores it (Side is always East or South). Unlike CustomWallOpenSideDef,
+// this is never inferred/detected from geometry on export (TileShipBuilder just copies
+// TileGrid.DoorEdges verbatim) - the editor is the only source of truth for where these sit.
+public sealed record CustomDoorEdgeDef(int X, int Y, TileSide Side, string Id);
 
 public enum CustomDeviceKind
 {
@@ -154,6 +187,14 @@ public enum CustomDeviceKind
     ShieldGeneratorSmall,
     ShieldGeneratorLarge,
     WeaponPanel,
+    // Direct user request ("тройная дверь... по аналогии как работают остальные устройства") - a
+    // real 3-tile-span door isn't representable by the actual Door/tile-editor pipeline without a
+    // much larger change (CustomDoorDef.Wide is a bool, not a size; TileGrid.LinkDoors only ever
+    // links a strict PAIR of tiles into one door). Same "placeable but cosmetic" workaround every
+    // other genuinely new kind on this list already carries - no Ship.FromCustomDefinition case,
+    // themed (DeviceSkin.Face.TripleDoor) to look like the real in-game door art rather than
+    // inventing a new look.
+    TripleDoor,
 }
 
 public sealed record CustomDeviceDef(
@@ -174,7 +215,31 @@ public sealed record CustomDeviceDef(
     // kind devices": every hand-authored hull already ships 2 Shields-system devices for wiring/
     // allocation purposes unrelated to a physical generator room, so a raw count would silently
     // double the starting shield capacity of every existing fixed-class ship. This stays 0 for those.
-    float CapacityBonus = 0f);
+    float CapacityBonus = 0f,
+    // Terminal/WallLamp-only - which side of this device's own (X,Y) tile its half-block visual
+    // sits on (direct user request, "занимал половину блока и визуально выглядел в соответствии с
+    // полублоком"; TileGrid.TileCell.WallDeviceMountSide's own doc comment explains recessed vs
+    // protruding). Null only for a save from before this field existed - Ship.Custom.cs falls back
+    // to North rather than crashing on an old definition.
+    TileSide? WallDeviceFacingSide = null,
+    // Direct user bug report ("в кокпите в самой игре устройства не повернуты как в редакторе") -
+    // whether this device's own footprint had Width/Height swapped before it was placed (the free-
+    // tile editor's own _editorDeviceRotation, R key - CustomDeviceFootprint.Size(Kind) gives the
+    // UNrotated shape). TileShipBuilder.BuildDefinition already used this to compute the CENTER
+    // position it exports here, but never exported the flag itself - so a rotated Helm/Navigation
+    // (the only two rotatable kinds with a real, rendered Ship-side object; every other rotatable
+    // kind - workbenches, Bed, ShuttleHangar - stays cosmetic-only in real gameplay regardless) came
+    // out the wrong way round in the actual game every time. Defaults to false for every call site
+    // that predates this (hand-authored hulls, older saves) - exactly today's unrotated behavior.
+    bool Rotated = false,
+    // Optional override, defaulting to null for every ordinary editor-placed device - Ship.Custom.cs's
+    // BuildTurrets/BuildSimpleDevices/BuildWallDevices all auto-number an id ("turret-N", "kind-N",
+    // ...) exactly as before whenever this is absent, no behavior change for a real player's own
+    // design. ShipDefaultHull.cs's own frozen definition sets it (direct user request, "удали все
+    // текущие корабли... полностью удалить из кода") so the old CreateStarter() hull's own literal
+    // ids ("turret-bow", "ammo-storage-quarters", ...) survive the rebuild - a wide swath of the test
+    // suite hardcodes those exact strings.
+    string? Id = null);
 
 public sealed record CustomShipDefinition(
     string Name,
@@ -189,10 +254,41 @@ public sealed record CustomShipDefinition(
     IReadOnlyList<CustomWallMaterialDef>? WallMaterialsRaw = null,
     // Direct user request (Cosmoteer-style marching engines) - defaults to empty for every call site
     // that predates them, exactly like WallMaterialsRaw above.
-    IReadOnlyList<CustomEngineDef>? EnginesRaw = null)
+    IReadOnlyList<CustomEngineDef>? EnginesRaw = null,
+    // TileShipBuilder.BuildDefinition's own step 3.6 ("отсеки в игре опять не совпадают") - extra
+    // wall tiles a T-junction's own private ring needed that no room's Rects could safely include
+    // (see that step's own doc comment for why: TileGridRasterizer.FromRooms and ShipLayoutGeometry.
+    // FindRoomPairOverlaps both treat every Rects entry as real room geometry, which a residual
+    // wall-only sliver isn't). Painted directly onto the real Ship's own Tiles grid after
+    // TileGridRasterizer.FromRooms has already built it (Ship.Custom.cs) - never part of Rooms/
+    // Rects at all. Defaults to empty for every call site that predates this (hand-authored hulls,
+    // older saves, the one test call site) - exactly today's behavior, no change.
+    IReadOnlyList<TileCoord>? SupplementalWallTilesRaw = null,
+    // The other half of the same step 3.6 fix: every tile that was genuinely open floor in the
+    // player's own painted canvas (TileGrid.SealedRegion.Tiles, before any Rects/ring-absorption
+    // reasoning), so it can be forced back to plain floor after TileGridRasterizer.FromRooms - which
+    // rasterizes purely from Rects/room-edge-adjacency and has no way to know that a particular
+    // edge tile of one room's own rect is supposed to stay open because the true hull wall sits one
+    // tile further out (a supplemental wall tile, above) instead. Forcing every one of these open
+    // is always safe (by construction, none of them was ever a wall/door in the original canvas) and
+    // needs no per-tile judgment about why the rasterizer might have walled it. Defaults to empty
+    // for every pre-existing call site, same as SupplementalWallTilesRaw.
+    IReadOnlyList<TileCoord>? ForcedFloorTilesRaw = null,
+    // Direct user request ("хочу сделать чтобы игрок сам выбирал") - defaults to empty for every
+    // call site that predates manual half-block walls (hand-authored hulls, older saved
+    // definitions) - exactly today's "every wall full-thickness" behavior.
+    IReadOnlyList<CustomWallOpenSideDef>? WallOpenSidesRaw = null,
+    // M-doors-as-edges (humble-soaring-cat.md) - the new narrow-door-as-edge-between-2-tiles
+    // primitive (TileGrid.DoorEdges). Defaults to empty for every call site that predates this
+    // (hand-authored hulls, older saves) - exactly today's "no edge doors" behavior.
+    IReadOnlyList<CustomDoorEdgeDef>? DoorEdgesRaw = null)
 {
     public IReadOnlyList<CustomWallMaterialDef> WallMaterials { get; init; } = WallMaterialsRaw ?? Array.Empty<CustomWallMaterialDef>();
     public IReadOnlyList<CustomEngineDef> Engines { get; init; } = EnginesRaw ?? Array.Empty<CustomEngineDef>();
+    public IReadOnlyList<TileCoord> SupplementalWallTiles { get; init; } = SupplementalWallTilesRaw ?? Array.Empty<TileCoord>();
+    public IReadOnlyList<TileCoord> ForcedFloorTiles { get; init; } = ForcedFloorTilesRaw ?? Array.Empty<TileCoord>();
+    public IReadOnlyList<CustomWallOpenSideDef> WallOpenSides { get; init; } = WallOpenSidesRaw ?? Array.Empty<CustomWallOpenSideDef>();
+    public IReadOnlyList<CustomDoorEdgeDef> DoorEdges { get; init; } = DoorEdgesRaw ?? Array.Empty<CustomDoorEdgeDef>();
 
     public static CustomShipDefinition Empty { get; } = new(
         "Мой корабль", Array.Empty<CustomRoomDef>(), Array.Empty<CustomDoorDef>(),

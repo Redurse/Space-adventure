@@ -38,7 +38,7 @@ public sealed class GameServer
     // avoids ever touching the real campaign's autosave). customShip carries a Ship Editor layout
     // when shipKind is Custom; loadFrom's own CustomShip covers the "continue a custom-hull run"
     // case when the caller didn't already pass one explicitly.
-    public GameServer(ShipKind shipKind = ShipKind.Frigate, SaveGame? loadFrom = null, string? savePath = null,
+    public GameServer(ShipKind shipKind = ShipKind.Custom, SaveGame? loadFrom = null, string? savePath = null,
         CustomShipDefinition? customShip = null, bool isTutorial = false)
     {
         _world = new World(shipKind, customShip ?? loadFrom?.CustomShip);

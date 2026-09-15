@@ -36,6 +36,7 @@ public static class ItemDefinitions
 
     private static string DisplayNameForBaseItem(ItemType type) => type switch
     {
+        ItemType.Radio => "рация",
         ItemType.AmmoCrate => "ящик патронов",
         ItemType.Spacesuit => "скафандр",
         ItemType.Wrench => "гаечный ключ",
@@ -64,6 +65,7 @@ public static class ItemDefinitions
 
     private static string ShortLabelForBaseItem(ItemType type) => type switch
     {
+        ItemType.Radio => "Рц",
         ItemType.AmmoCrate => "П",
         ItemType.Spacesuit => "С",
         ItemType.Wrench => "К",

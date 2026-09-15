@@ -259,7 +259,13 @@ public static class DeckPlates
 
     // The tint ShipRenderer multiplies these by. Baked in here so the plates carry their own colour
     // and a warm patch can actually come out warm rather than being flattened by a grey multiply.
-    private static readonly Color Tint = new(35, 40, 47);
+    // Brightened from the original (35,40,47) - direct user request ("хочу чтобы в игре пол был как
+    // в редакторе, а я его вообще не вижу"): the seam/bolt/wear relief below is real, but at that
+    // original near-black base a ±10-20% brightness ripple reads as flat at ordinary gameplay camera
+    // distance (only really visible standing right on top of it, unlike the Ship Editor's own
+    // simpler-but-brighter placeholder checkerboard). Same relief math, just given enough base
+    // brightness for it to actually read from a normal top-down view.
+    private static readonly Color Tint = new(60, 68, 80);
 
     private static float Hash(int x, int y, int s)
     {
@@ -357,22 +363,25 @@ public static class DeckPlates
             default:
             {
                 // The diagonal crest this ship's deck already had - kept, because the point of the
-                // pass is a better-made version of this floor, not a different floor.
+                // pass is a better-made version of this floor, not a different floor. Amplitude
+                // raised alongside the seams/bolts above, same reason.
                 var diagonal = (x + y) % 12;
-                if (diagonal < 2) v += 0.040f;
-                else if (diagonal < 4) v -= 0.050f;
-                else if (diagonal is 8 or 9) v += 0.015f;
+                if (diagonal < 2) v += 0.065f;
+                else if (diagonal < 4) v -= 0.075f;
+                else if (diagonal is 8 or 9) v += 0.025f;
                 break;
             }
         }
 
         // Seams every 24, so a tile is four panels - the cadence the deck already had, but cut into
-        // the metal instead of drawn on top of it.
+        // the metal instead of drawn on top of it. Deeper than the original ±0.20/+0.07 - the panel
+        // grid is the one feature that has to read at a glance from normal gameplay zoom, the same
+        // way the Ship Editor's own placeholder checkerboard does.
         int sx = x % 24, sy = y % 24;
         if (sx == 0 || sy == 0)
-            v -= 0.20f;
+            v -= 0.30f;
         else if (sx == 1 || sy == 1)
-            v += 0.07f;
+            v += 0.12f;
 
         // Bolts at the corners of each panel.
         int bx = Math.Min(sx, 23 - sx), by = Math.Min(sy, 23 - sy);
@@ -381,9 +390,9 @@ public static class DeckPlates
             var d = MathF.Sqrt((bx - 2) * (bx - 2) + (by - 2) * (by - 2));
             if (d < 1.9f)
             {
-                v -= 0.12f;
+                v -= 0.18f;
                 if (by < 2)
-                    v += 0.20f;
+                    v += 0.28f;
             }
         }
 
@@ -399,7 +408,7 @@ public static class DeckPlates
             var dy = MathF.Min(MathF.Abs(y - wy), TileSize - MathF.Abs(y - wy));
             var d = MathF.Sqrt(dx * dx + dy * dy);
             if (d < r)
-                v -= (1f - d / r) * 0.055f;
+                v -= (1f - d / r) * 0.075f;
         }
 
         return MathHelper.Clamp(v, 0.30f, 1.15f);

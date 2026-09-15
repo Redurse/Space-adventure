@@ -301,25 +301,11 @@ internal static partial class TestRunner
         return insideSomewhere && outsideSomewhere;
     }
 
-    // The gap between the Corvette's engine pylons is open space. The bounding box the boots used
-    // to walk on covers it, so a crewman could stroll across the hole with nothing underfoot.
-    private static bool HullSilhouette_TreatsTheGapBetweenPylonsAsOpenSpace()
-    {
-        var rooms = Ship.Create(ShipKind.Corvette).Rooms;
-        var gap = new Vec2(6.75f, 17f); // below the reactor hall, between the two side bays
-
-        var insideBoundingBox = gap.X >= rooms.Min(r => r.Left) && gap.X <= rooms.Max(r => r.Right) &&
-                                gap.Y >= rooms.Min(r => r.Top) && gap.Y <= rooms.Max(r => r.Bottom);
-
-        // Standing there should put the boots on the nearest real plating, not leave them hanging
-        // in the middle of the notch.
-        var stood = HullSilhouette.SnapToSurface(rooms, gap, 0.35f);
-
-        return insideBoundingBox
-            && !HullSilhouette.Contains(rooms, gap)
-            && HullSilhouette.DistanceOutside(rooms, gap) > 0.5f
-            && Math.Abs(HullSilhouette.DistanceOutside(rooms, stood) - 0.35f) < 0.02f;
-    }
+    // HullSilhouette_TreatsTheGapBetweenPylonsAsOpenSpace used to live here, testing the gap between
+    // the Corvette's own engine pylons - the only hand-authored hull with a genuine non-rectangular
+    // notch in its own bounding box. Removed along with that hull class (direct user request, "удали
+    // все текущие корабли... полностью удалить из кода") rather than hand-building an equivalent
+    // notched Custom fixture just to keep exercising this exact shape.
 
     private static bool World_Ship_CollidesWithAsteroid_StopsShipAndBreachesHull()
     {

@@ -5,6 +5,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using Anabiosis.Client.Audio;
+using Anabiosis.Client.Input;
 using Anabiosis.Client.Networking;
 using Anabiosis.Client.Rendering;
 using Anabiosis.Server;
@@ -19,13 +20,15 @@ namespace Anabiosis.Client;
 // lifecycle methods (Update/Draw) that call into them.
 public partial class Game1
 {
-    private static Vec2 ReadMoveInput(KeyboardState keyboard)
+    // Arrow keys stay hardcoded, on top of whatever the bindings say (PlayerActionBindings' own doc
+    // comment) - a second, never-rebound way to move that today's players can already rely on.
+    private static Vec2 ReadMoveInput(KeyboardState keyboard, PlayerActionBindings bindings)
     {
         float x = 0, y = 0;
-        if (keyboard.IsKeyDown(Keys.A) || keyboard.IsKeyDown(Keys.Left)) x -= 1;
-        if (keyboard.IsKeyDown(Keys.D) || keyboard.IsKeyDown(Keys.Right)) x += 1;
-        if (keyboard.IsKeyDown(Keys.W) || keyboard.IsKeyDown(Keys.Up)) y -= 1;
-        if (keyboard.IsKeyDown(Keys.S) || keyboard.IsKeyDown(Keys.Down)) y += 1;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveLeft)) || keyboard.IsKeyDown(Keys.Left)) x -= 1;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveRight)) || keyboard.IsKeyDown(Keys.Right)) x += 1;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveUp)) || keyboard.IsKeyDown(Keys.Up)) y -= 1;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveDown)) || keyboard.IsKeyDown(Keys.Down)) y += 1;
         return new Vec2(x, y);
     }
 
@@ -69,11 +72,11 @@ public partial class Game1
     private static float ShortestAngle(float degrees) => ((degrees % 360f) + 540f) % 360f - 180f;
 
     // Reused for aim while manning a turret вЂ” movement is locked server-side at that point.
-    private static float ReadAimDirection(KeyboardState keyboard)
+    private static float ReadAimDirection(KeyboardState keyboard, PlayerActionBindings bindings)
     {
         float dir = 0;
-        if (keyboard.IsKeyDown(Keys.A) || keyboard.IsKeyDown(Keys.Left)) dir -= 1;
-        if (keyboard.IsKeyDown(Keys.D) || keyboard.IsKeyDown(Keys.Right)) dir += 1;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveLeft)) || keyboard.IsKeyDown(Keys.Left)) dir -= 1;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveRight)) || keyboard.IsKeyDown(Keys.Right)) dir += 1;
         return dir;
     }
 
@@ -567,14 +570,43 @@ public partial class Game1
         // out of the rest of the frame before anything downstream can touch a null _client.
         if (_pauseMenuOpen)
         {
-            if (PauseMenuPanel.GetButtonRect(0, PauseMenuPanelOrigin).Contains(_designMouse))
-                _pauseMenuOpen = false; // Продолжить
-            else if (PauseMenuPanel.GetButtonRect(2, PauseMenuPanelOrigin).Contains(_designMouse))
-                Exit(); // Закончить раунд - just flags the game loop to stop, safe to call anytime
-            else if (PauseMenuPanel.GetButtonRect(3, PauseMenuPanelOrigin).Contains(_designMouse))
-                _pendingReturnToMainMenu = true; // Главное меню
-            // Button 1 (Настройки) has no screen behind it yet - a dim placeholder, same convention
-            // as the top-bar "Управление" button before it got the ship editor.
+            // Settings, once opened (Button 1 below), is a nested layer over these same 4 buttons -
+            // its own clicks are handled separately by HandleSettingsScreen (called from Game1.cs's
+            // Update whenever _inGameSettingsOpen is set), so none of the 4 pause-menu button rects
+            // should react to a click meant for the panel drawn over them.
+            if (!_inGameSettingsOpen)
+            {
+                if (PauseMenuPanel.GetButtonRect(0, PauseMenuPanelOrigin).Contains(_designMouse))
+                {
+                    PlayUiClick();
+                    _pauseMenuOpen = false; // Продолжить
+                }
+                else if (PauseMenuPanel.GetButtonRect(1, PauseMenuPanelOrigin).Contains(_designMouse))
+                {
+                    PlayUiClick();
+                    EnterSettingsScreen(); // Настройки - stages every field from what's currently live
+                    _inGameSettingsOpen = true;
+                }
+                else if (PauseMenuPanel.GetButtonRect(2, PauseMenuPanelOrigin).Contains(_designMouse))
+                {
+                    PlayUiClick();
+                    Exit(); // Закончить раунд - just flags the game loop to stop, safe to call anytime
+                }
+                else if (PauseMenuPanel.GetButtonRect(3, PauseMenuPanelOrigin).Contains(_designMouse))
+                {
+                    PlayUiClick();
+                    _pendingReturnToMainMenu = true; // Главное меню
+                }
+                // Direct user request ("если играешь в редакторе... вернуться в редактор") - only
+                // reachable while this test session actually came from the Ship Editor's own
+                // "Играть" button; the panel itself always reserves the space (PauseMenuPanel's own
+                // PanelHeight), but a normal campaign session never draws or hit-tests this button.
+                else if (_sessionStartedFromEditor && PauseMenuPanel.GetButtonRect(4, PauseMenuPanelOrigin).Contains(_designMouse))
+                {
+                    PlayUiClick();
+                    _pendingReturnToEditor = true; // Вернуться в редактор
+                }
+            }
             return (-1, -1, null, -1, false, false, null, null);
         }
 
@@ -1015,14 +1047,6 @@ public partial class Game1
 
             if (talkingToKind == NpcKind.Shipwright)
             {
-                for (var i = 0; i < StationPanel.PurchasableShipKinds.Length; i++)
-                {
-                    if (!StationPanel.GetShipRect(i, StationPanelOrigin).Contains(_designMouse))
-                        continue;
-                    _pendingShipPurchase = StationPanel.PurchasableShipKinds[i];
-                    return (-1, -1, null, -1, false, false, null, null);
-                }
-
                 // M61 - "Снести <последний построенный>" button.
                 if (snapshot is not null && StationPanel.LastBuiltRoomId(snapshot.Rooms) is { } lastRoomId &&
                     StationPanel.GetDemolishLastRoomRect(StationPanelOrigin).Contains(_designMouse))
@@ -1090,6 +1114,39 @@ public partial class Game1
             }
         }
 
+        var myPosition = new Vec2(me.X, me.Y);
+        bool NearEnough(Vec2 blockPosition) => (blockPosition - myPosition).Length() < TurretInteractionRadius;
+        var origin = ComputeCamera(snapshot, me).Origin;
+
+        // Direct user bug report ("не могу нажать на рычаг") - the reactor's own management panel
+        // (fuel rods) opens centred on screen, which can genuinely land right on top of the levers'
+        // own on-screen position (they sit just outside the reactor's world-space rect, not
+        // necessarily outside wherever a CENTRED panel happens to be drawn). The "swallow any click
+        // inside an already-open panel" guard right below this used to run BEFORE the levers ever
+        // got a chance, so opening the reactor's panel first (a very natural thing to try) then
+        // silently ate every subsequent lever click. Moved above that guard entirely - a lever isn't
+        // "content of the open panel" the way a slot/button is, it's an independent world control
+        // that just happens to render nearby, so it should never be shadowed by a panel being open
+        // at all, the reactor's own included. Guarded on !me.OnStation same as everything else that
+        // reads myPosition against a ship-local position (me.OnStation's own doc comment further
+        // down) - moving this check above that guard means it has to state the precondition itself
+        // now instead of inheriting it for free from running after that return.
+        if (!me.OnStation && NearEnough(snapshot.ReactorBlock.Position))
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                if (!ShipRenderer.GetReactorLeverRect(i, snapshot.ReactorBlock, origin).Contains(_designMouse))
+                    continue;
+                switch (i)
+                {
+                    case 0: _pendingToggleLights = true; break;
+                    case 1: _pendingToggleReactorEmergency = true; break;
+                    case 2: _pendingToggleDoorsLocked = true; break;
+                }
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+        }
+
         // Everything above this point is the open panel's own controls - slots, pins, buttons.
         // Everything below is the world underneath it. Since panels open centred they now sit right
         // on top of the ship interior, so a click inside one that hit none of its controls would
@@ -1099,9 +1156,6 @@ public partial class Game1
         if (CurrentPanelHousing() is { } openPanelBounds && openPanelBounds.Contains(_designMouse))
             return (-1, -1, null, -1, false, false, null, null);
 
-        var myPosition = new Vec2(me.X, me.Y);
-        bool NearEnough(Vec2 blockPosition) => (blockPosition - myPosition).Length() < TurretInteractionRadius;
-        var origin = ComputeCamera(snapshot, me).Origin;
         // humble-soaring-cat.md - every RepairDeviceId candidate below needs the same "damaged AND
         // holding the right tool" gate World.Interact.cs's own E-key branches already use.
         bool HoldingRepairTool() =>
@@ -1138,25 +1192,6 @@ public partial class Game1
                 ? ClickTarget.None
                 : ClickTarget.ForConnections(componentId);
 
-        // The reactor's 3 physical levers - checked before the reactor's own "open the panel" click
-        // below so they don't get shadowed by it (same ordering convention as the fuel-rod slots
-        // while the panel is already open, just above).
-        if (NearEnough(snapshot.ReactorBlock.Position))
-        {
-            for (var i = 0; i < 3; i++)
-            {
-                if (!ShipRenderer.GetReactorLeverRect(i, snapshot.ReactorBlock, origin).Contains(_designMouse))
-                    continue;
-                switch (i)
-                {
-                    case 0: _pendingToggleLights = true; break;
-                    case 1: _pendingToggleReactorEmergency = true; break;
-                    case 2: _pendingToggleDoorsLocked = true; break;
-                }
-                return (-1, -1, null, -1, false, false, null, null);
-            }
-        }
-
         // Content-каталог отсеков/Ship Editor - a catalog-built reactor's own console can be much
         // bigger than the hand-authored default; ReactorRectIfNear (Game1.Interactables.cs) already
         // accounts for that, same rect hover uses.
@@ -1174,21 +1209,27 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, null);
         }
 
-        if (snapshot.Jukebox is { } jukebox && BlockRectIfNear(jukebox.Block.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } jukeboxRect && jukeboxRect.Contains(_designMouse))
+        var (jukeboxWidth, jukeboxHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Jukebox);
+        if (snapshot.Jukebox is { } jukebox && BlockRectIfNear(jukebox.Block.Position, myPosition, jukeboxWidth, jukeboxHeight, origin) is { } jukeboxRect && jukeboxRect.Contains(_designMouse))
         {
             _openBlock = _openBlock.Kind == BlockKind.Jukebox ? ClickTarget.None : ClickTarget.Jukebox;
             return (-1, -1, null, -1, false, false, null, null);
         }
 
-        // The terminal has no panel of its own - one click is the whole "gesture" (direct user
-        // request), so this just fires the toggle straight away instead of opening _openBlock.
-        if (snapshot.Terminal is { } terminal && BlockRectIfNear(terminal.Block.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } terminalRect && terminalRect.Contains(_designMouse))
+        // No panel of its own - one click is the whole "gesture" (direct user request), so this
+        // just fires that ONE terminal's own toggle straight away instead of opening _openBlock.
+        // Many independent terminals now ("их будет много") - same per-instance hit-test loop
+        // SuitLockers uses below, keyed by id rather than a single shared toggle.
+        foreach (var terminal in snapshot.Terminals ?? Array.Empty<TerminalState>())
         {
-            _pendingTerminalToggle = true;
+            if (BlockRectIfNear(terminal.Block.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is not { } terminalRect || !terminalRect.Contains(_designMouse))
+                continue;
+            _pendingTerminalInteractId = terminal.Block.Id;
             return (-1, -1, null, -1, false, false, null, null);
         }
 
-        if (BlockRectIfNear(snapshot.DistributionBlock.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } distributionRect && distributionRect.Contains(_designMouse))
+        var (distWidth, distHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Distribution);
+        if (BlockRectIfNear(snapshot.DistributionBlock.Position, myPosition, distWidth, distHeight, origin) is { } distributionRect && distributionRect.Contains(_designMouse))
         {
             if (HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.DistributionBlock.Id)?.Damaged ?? false))
             {
@@ -1202,7 +1243,8 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, null);
         }
 
-        if (BlockRectIfNear(snapshot.BatteryBlock.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } batteryRect && batteryRect.Contains(_designMouse))
+        var (batteryWidth, batteryHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Battery);
+        if (BlockRectIfNear(snapshot.BatteryBlock.Position, myPosition, batteryWidth, batteryHeight, origin) is { } batteryRect && batteryRect.Contains(_designMouse))
         {
             if (HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.BatteryBlock.Id)?.Damaged ?? false))
             {
@@ -1216,13 +1258,15 @@ public partial class Game1
         // Helm/navigation console repair (RepairableBlockKinds.Helm/.Navigation) - neither console
         // has a click-to-open panel of its own (both are entered with [E] instead), so this is the
         // only click behavior either one gets: repair when broken and holding the right tool.
-        if (BlockRectIfNear(snapshot.HelmConsole.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } helmRect && helmRect.Contains(_designMouse) &&
+        var (helmWidth, helmHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Helm, snapshot.HelmConsole.Rotated);
+        if (BlockRectIfNear(snapshot.HelmConsole.Position, myPosition, helmWidth, helmHeight, origin) is { } helmRect && helmRect.Contains(_designMouse) &&
             HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.HelmConsole.Id)?.Damaged ?? false))
         {
             _pendingRepairDeviceId = snapshot.HelmConsole.Id;
             return (-1, -1, null, -1, false, false, null, null);
         }
-        if (BlockRectIfNear(snapshot.NavigationConsole.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } navRect && navRect.Contains(_designMouse) &&
+        var (navWidth, navHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Navigation, snapshot.NavigationConsole.Rotated);
+        if (BlockRectIfNear(snapshot.NavigationConsole.Position, myPosition, navWidth, navHeight, origin) is { } navRect && navRect.Contains(_designMouse) &&
             HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.NavigationConsole.Id)?.Damaged ?? false))
         {
             _pendingRepairDeviceId = snapshot.NavigationConsole.Id;
@@ -1231,18 +1275,20 @@ public partial class Game1
 
         // Turret (World.Interact.cs branches 6+8 - reload/repair/man), one click covers all three
         // the same way [E] already does, resolved server-side by state (World.ClickInteract.cs).
+        var (turretWidth, turretHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.TurretBallistic);
         foreach (var turret in snapshot.Turrets)
         {
-            if (BlockRectIfNear(turret.PeriscopePosition, myPosition, ShipRenderer.MediumBlockSize, origin) is not { } rect || !rect.Contains(_designMouse))
+            if (BlockRectIfNear(turret.PeriscopePosition, myPosition, turretWidth, turretHeight, origin) is not { } rect || !rect.Contains(_designMouse))
                 continue;
             _pendingTurretInteractId = turret.Id;
             return (-1, -1, null, -1, false, false, null, null);
         }
 
         // Ammo storage (World.Interact.cs branch 7 - take a crate).
+        var (ammoWidth, ammoHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.AmmoStorage);
         foreach (var storage in snapshot.AmmoStorages)
         {
-            if (BlockRectIfNear(storage.Position, myPosition, ShipRenderer.NormalBlockSize, origin) is not { } rect || !rect.Contains(_designMouse))
+            if (BlockRectIfNear(storage.Position, myPosition, ammoWidth, ammoHeight, origin) is not { } rect || !rect.Contains(_designMouse))
                 continue;
             _pendingAmmoStorageInteractId = storage.Id;
             return (-1, -1, null, -1, false, false, null, null);
@@ -1253,7 +1299,8 @@ public partial class Game1
         // rather than the choice panel appearing automatically just from standing near it. A game
         // already in progress (CardGamePanel/FrontsGamePanel) is unaffected - only the pre-game
         // choice step below is gated on this.
-        if (BlockRectIfNear(snapshot.CardTable.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } cardTableRect && cardTableRect.Contains(_designMouse))
+        var (cardTableWidth, cardTableHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.CardTable);
+        if (BlockRectIfNear(snapshot.CardTable.Position, myPosition, cardTableWidth, cardTableHeight, origin) is { } cardTableRect && cardTableRect.Contains(_designMouse))
         {
             _openBlock = _openBlock.Kind == BlockKind.CardTable ? ClickTarget.None : ClickTarget.CardTable;
             return (-1, -1, null, -1, false, false, null, null);
@@ -1264,9 +1311,10 @@ public partial class Game1
         // in Update()), same asymmetric in/out as HelmConsole's own E-toggle would give it if that
         // toggled both ways, but deliberately doesn't here.
 
+        var (rackWidth, rackHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.StorageRack);
         foreach (var rack in snapshot.StorageRacks)
         {
-            if (BlockRectIfNear(rack.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is not { } rect || !rect.Contains(_designMouse))
+            if (BlockRectIfNear(rack.Position, myPosition, rackWidth, rackHeight, origin) is not { } rect || !rect.Contains(_designMouse))
                 continue;
             _openBlock = _openBlock.Kind == BlockKind.Rack && _openBlock.TargetComponentId == rack.Id
                 ? ClickTarget.None
@@ -1277,9 +1325,10 @@ public partial class Game1
         // Suit locker (World.Interact.cs branch 16 - equip/unequip) - a click on the locker now
         // performs the actual take/put-back directly (humble-soaring-cat.md's "Полный переход на
         // клик как в Baro"), the same instant action [E] already did; no more read-only view step.
+        var (lockerWidth, lockerHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.SuitLocker);
         foreach (var locker in snapshot.SuitLockers)
         {
-            if (BlockRectIfNear(locker.Position, myPosition, ShipRenderer.NormalBlockSize, origin) is not { } rect || !rect.Contains(_designMouse))
+            if (BlockRectIfNear(locker.Position, myPosition, lockerWidth, lockerHeight, origin) is not { } rect || !rect.Contains(_designMouse))
                 continue;
             _pendingSuitLockerInteractId = locker.Id;
             return (-1, -1, null, -1, false, false, null, null);
@@ -1318,9 +1367,10 @@ public partial class Game1
         // Hull cameras (M48) - not a ShipSystemDevice (WireGraphFactory's own comment explains why),
         // but the same click-to-repair as one, resolved by the same RepairDeviceId (World.ClickInteract.cs
         // finds it among Ship.Cameras by id).
+        var (camWidth, camHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Camera);
         foreach (var camera in snapshot.Cameras)
         {
-            if (BlockRectIfNear(camera.InteriorPosition, myPosition, ShipRenderer.NormalBlockSize, origin) is not { } rect || !rect.Contains(_designMouse))
+            if (BlockRectIfNear(camera.InteriorPosition, myPosition, camWidth, camHeight, origin) is not { } rect || !rect.Contains(_designMouse))
                 continue;
             if (HoldingRepairTool() && (snapshot.SystemStates.FirstOrDefault(s => s.DeviceId == camera.Id)?.Damaged ?? false))
             {
@@ -1492,7 +1542,8 @@ public partial class Game1
             // A destroyed door (World.Doors.cs) repairs on click instead of toggling (which would be
             // a no-op against a jammed-open door anyway) - same priority every other repairable
             // device above already gives its own click.
-            bool DoorDestroyed(string doorId) => snapshot.DoorStates.FirstOrDefault(s => s.DoorId == doorId)?.Destroyed ?? false;
+            bool DoorDestroyed(string doorId) => snapshot.DoorStates.FirstOrDefault(s => s.DoorId == doorId)?.Destroyed
+                ?? snapshot.DoorEdgeStates?.FirstOrDefault(s => s.Id == doorId)?.Destroyed ?? false;
 
             foreach (var door in snapshot.Doors)
             {
@@ -1516,6 +1567,21 @@ public partial class Game1
                     return (-1, -1, null, -1, false, false, null, null);
                 }
                 return (-1, -1, null, -1, false, false, null, outerDoor.Id);
+            }
+
+            // M-doors-as-edges - reuses ClientCommand.DoorToggleId's own existing id space (no
+            // protocol change, ToggleDoor already checks both dictionaries), same repair-instead-of-
+            // toggle priority the two loops above already give a destroyed door.
+            foreach (var edge in snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>())
+            {
+                if (DoorEdgeRectIfNear(edge, doorClickPosition, origin) is not { } rect || !rect.Contains(_designMouse))
+                    continue;
+                if (HoldingRepairTool() && DoorDestroyed(edge.Id))
+                {
+                    _pendingRepairDeviceId = edge.Id;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+                return (-1, -1, null, -1, false, false, null, edge.Id);
             }
 
             // Aboard a boarded hull the doors are the fight: they start closed, and opening one lets
@@ -1601,15 +1667,15 @@ public partial class Game1
     // joystick that set a world-space thrust vector, which meant the pilot could aim the ship's
     // course but never its heading - and on a hull whose guns and airlock face particular
     // directions, heading is the thing you actually steer.
-    private static (float Throttle, float Turn) ReadHelmInput(KeyboardState keyboard)
+    private static (float Throttle, float Turn) ReadHelmInput(KeyboardState keyboard, PlayerActionBindings bindings)
     {
         var throttle = 0f;
-        if (keyboard.IsKeyDown(Keys.W)) throttle += 1f;
-        if (keyboard.IsKeyDown(Keys.X)) throttle -= 1f;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveUp))) throttle += 1f;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.HelmReverseThrottle))) throttle -= 1f;
 
         var turn = 0f;
-        if (keyboard.IsKeyDown(Keys.A)) turn -= 1f;
-        if (keyboard.IsKeyDown(Keys.D)) turn += 1f;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveLeft))) turn -= 1f;
+        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveRight))) turn += 1f;
 
         return (throttle, turn);
     }

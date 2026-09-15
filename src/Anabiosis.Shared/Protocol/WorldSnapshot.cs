@@ -183,6 +183,38 @@ public sealed record WorldSnapshot(
     // BOTH to choose it, so CardTableChoicePanel can show "ждём второго игрока" instead of nothing
     // happening. Null/empty whenever no one has voted (or the table isn't in the choosing state).
     IReadOnlyList<int>? CardTableDurakVotes = null,
-    // The wall terminal's block + on/off (World.cs) - null when this hull has no terminal device
-    // at all (Ship.Terminal), same "device may not exist" shape Jukebox already uses.
-    TerminalState? Terminal = null);
+    // Every wall terminal's block + its own independent on/off (World.Terminals.cs) - direct user
+    // request ("их будет много"), same "list of per-instance states" shape SuitLockerStates already
+    // uses, not a single optional device any more. Empty (not null) when this hull has none.
+    IReadOnlyList<TerminalState>? Terminals = null,
+    // Every wall lamp's own physical position (Ship.WallLamps) - direct user request ("настенную
+    // лампу... когда она установлена, она излучает свет"). Purely passive, no state of its own to
+    // track server-side at all - Game1.Lighting.cs lights it whenever the ship's own lamps are on,
+    // the same ReactorLevers.LightsOn/power-fraction mood every room lamp already reads.
+    IReadOnlyList<WallLamp>? WallLamps = null,
+    // Direct user bug report ("стены отображаются не на своих местах, а коллизии там же") - a
+    // Ship Editor-built hull's own post-rasterization corrections (Ship.SupplementalWallTiles/
+    // ForcedFloorTiles/WallOpenSideOverrides, TileShipBuilder.BuildDefinition's steps 3.5/3.6) used
+    // to only ever reach the SERVER's own Tiles grid - the client re-rasterizes its OWN copy purely
+    // from Rooms/Doors/AirlockOuterDoors (ShipRenderer.GetLiveShipTiles), which can never represent
+    // these corrections on its own (that's exactly why they exist as separate bolt-on lists rather
+    // than folded into Room.Rects), so the client's rendering silently reverted to the wrong, naive
+    // geometry the server had already corrected past. Null/empty for every hand-authored hull.
+    IReadOnlyList<TileCoord>? SupplementalWallTiles = null,
+    IReadOnlyList<TileCoord>? ForcedFloorTiles = null,
+    IReadOnlyList<CustomWallOpenSideDef>? WallOpenSideOverrides = null,
+    // Same reasoning as WallOpenSideOverrides just above, for WallMaterial (Reinforced/Window)
+    // instead - direct user bug report ("не вижу ничего через стену являющейся иллюминатором") a
+    // Window tile that fell into SupplementalWallTiles (no real WallBlock) would otherwise never
+    // reach the client's own material-aware TileOccluders check.
+    IReadOnlyList<CustomWallMaterialDef>? WallMaterialOverrides = null,
+    // Direct user bug report ("щитки отображались в игре а не была просто пустота") - purely
+    // decorative fixtures, same shape as WallLamps above.
+    IReadOnlyList<JunctionBox>? JunctionBoxes = null,
+    // M-doors-as-edges (humble-soaring-cat.md) - the new narrow-door-as-a-barrier-between-2-tiles
+    // primitive. Geometry (Ship.DoorEdges - Id/RoomAId/RoomBId/Coord/Side, immutable once built) and
+    // live open/Hp state (DoorEdgeState, mirrors DoorState) are networked separately, same split
+    // Doors/DoorStates already uses - resent every tick like every other list here (no delta/diff
+    // protocol in this codebase). Null/empty for every hand-authored hull.
+    IReadOnlyList<ShipDoorEdge>? DoorEdges = null,
+    IReadOnlyList<DoorEdgeState>? DoorEdgeStates = null);

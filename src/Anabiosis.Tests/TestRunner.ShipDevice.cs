@@ -9,7 +9,7 @@ internal static partial class TestRunner
 
     private static bool Ship_Devices_StarterHull_HasExpectedCountsPerKind()
     {
-        var ship = Ship.CreateStarter();
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
         var byKind = ship.Devices.GroupBy(d => d.Kind).ToDictionary(g => g.Key, g => g.Count());
 
         int Count(DeviceKind kind) => byKind.TryGetValue(kind, out var n) ? n : 0;
@@ -46,17 +46,23 @@ internal static partial class TestRunner
     }
 
     // Every entry must carry a distinct Id and the same position as its source fixture - two turrets
-    // of different kinds is the simplest real N>1-of-a-family case the starter hull already has.
+    // of different kinds is the simplest real N>1-of-a-family case the default hull already has.
+    // Looked up by KIND rather than a literal id like "turret-bow"/"turret-laser" - FromCustomDefinition
+    // always renumbers device/turret ids from scratch (BuildTurrets' own "turret-{index}" scheme),
+    // same known simplification a whole-hull swap already has, so a hand-authored hull's own literal
+    // ids never survive the round trip into ShipDefaultHull's frozen definition.
     private static bool Ship_Devices_Turrets_MapToDistinctEntriesWithMatchingKindAndPosition()
     {
-        var ship = Ship.CreateStarter();
-        var bow = ship.Devices.Single(d => d.Id == "turret-bow");
-        var laser = ship.Devices.Single(d => d.Id == "turret-laser");
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
+        var bowTurret = ship.Turrets.Single(t => t.WeaponType == TurretWeaponType.Magnetic);
+        var laserTurret = ship.Turrets.Single(t => t.WeaponType == TurretWeaponType.Laser);
+        var bow = ship.Devices.Single(d => d.Id == bowTurret.Id);
+        var laser = ship.Devices.Single(d => d.Id == laserTurret.Id);
         return bow.Kind == DeviceKind.TurretBallistic
             && laser.Kind == DeviceKind.TurretLaser
             && bow.Id != laser.Id
-            && bow.Position == ship.Turrets.First(t => t.Id == "turret-bow").PeriscopePosition
-            && laser.Position == ship.Turrets.First(t => t.Id == "turret-laser").PeriscopePosition;
+            && bow.Position == bowTurret.PeriscopePosition
+            && laser.Position == laserTurret.PeriscopePosition;
     }
 
     // A second reactor built via the content-каталог отсеков path (ExtraReactorPositions - Ship.cs's

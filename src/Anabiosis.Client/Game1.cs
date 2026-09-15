@@ -6,6 +6,7 @@ using Microsoft.Xna.Framework.Audio;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using Anabiosis.Client.Audio;
+using Anabiosis.Client.Input;
 using Anabiosis.Client.Networking;
 using Anabiosis.Client.Rendering;
 using Anabiosis.Server; // SaveStore only - the client owns the save slot's lifetime (new game vs. continue)
@@ -244,11 +245,24 @@ public partial class Game1 : Game
     private bool _chatJustOpenedThisFrame;
     private ChatPanel _chatPanel = null!;
     private readonly ChatBubbleTracker _chatBubbleTracker = new();
+    // Real output-device selection (direct user request, "как в Baротравме") - replaces MonoGame's
+    // own SoundEffect/MediaPlayer output entirely with an NAudio/WASAPI mixer (Audio/GameAudioEngine.cs's
+    // own doc comment explains why). Constructed eagerly here (not in LoadContent) since the Settings
+    // screen's device dropdown needs EnumerateOutputDevices() to work even before a round starts.
+    private readonly GameAudioEngine _audioEngine = new();
+
     // Push-to-talk voice chat (direct user request, "как в Баротравме", local + radio) - one
     // capture helper for THIS client's own mic, one playback helper for every OTHER player's
     // incoming voice (Audio/VoiceCapture.cs, Audio/VoicePlayback.cs).
     private readonly VoiceCapture _voiceCapture = new();
-    private readonly VoicePlayback _voicePlayback = new();
+    private VoicePlayback _voicePlayback = null!;
+
+    // Direct user request ("в Baротравме... микрофон активируется и передаёт звук в уши") - a local
+    // mic-monitor for the Settings screen's own Audio tab, entirely separate from the multiplayer
+    // voice chat above (Audio/MicMonitor.cs's own doc comment explains why). Started/stopped each
+    // frame in UpdateCore based on which settings tab is open. Constructed in LoadContent (alongside
+    // _voicePlayback) rather than here - a field initializer can't reference another instance field.
+    private MicMonitor _micMonitor = null!;
     private FieldRenderer _fieldRenderer = null!;
     private ExternalCameraPanel _externalCameraPanel = null!;
     private StationRenderer _stationRenderer = null!;
@@ -268,6 +282,10 @@ public partial class Game1 : Game
     // What ApplyGraphicsSettings last actually applied - the Settings screen (Game1.Settings.cs)
     // reads this to seed its staged edits when opened, and to know what "Отмена" should revert to.
     private GraphicsSettings _graphicsSettings;
+    // The live, parsed form of _graphicsSettings.KeyBindings - every gameplay Keys.X check in
+    // UpdateCore below reads through this instead of a literal, so a rebind (Controls settings tab)
+    // takes effect the moment ApplyGraphicsSettings runs.
+    private PlayerActionBindings _keyBindings = new();
     private RackPanel _rackPanel = null!;
     private ConnectionsPanel _connectionsPanel = null!;
     private SuitLockerPanel _suitLockerPanel = null!;
@@ -332,6 +350,13 @@ public partial class Game1 : Game
     // Esc's own menu (Game1.Update) - opens only once nothing else is open, edge-triggered like
     // every other single-key toggle in this project (holding it down mustn't flip it every frame).
     private bool _pauseMenuOpen;
+    // Direct user request ("чтобы во время игры при нажатии на одну из кнопок в esc (настройки)
+    // также можно было зайти в них") - the pause menu's own "НАСТРОЙКИ" button now opens the real
+    // Settings screen (Game1.Settings.cs) as a nested layer over the pause menu, rather than the
+    // dim "(скоро)" placeholder it used to be. _pauseMenuOpen stays true the whole time (Escape and
+    // every gameplay-input guard already gates on it), so nothing but Draw/Update's own dispatch of
+    // WHICH panel to show/handle needs to know about this flag.
+    private bool _inGameSettingsOpen;
     private bool _prevEscapeDown;
     // Dev cheat panel (Rendering/CheatPanel.cs) - Ё/OemTilde toggles it, same edge-triggered
     // single-key convention as the pause menu and the galactic map above.
@@ -345,11 +370,13 @@ public partial class Game1 : Game
     // top of the next Update - see that check's own comment for why this can't just call
     // ReturnToMainMenu() directly from inside the click handler.
     private bool _pendingReturnToMainMenu;
-    // Edge-triggered hull purchase, cleared the frame after it's sent - HandleMouseClick's return
-    // tuple is already at its practical limit, so this one rides as a field instead.
-    private ShipKind? _pendingShipPurchase;
-    // M60 - the Shipwright's own "Построить" list, same edge-triggered field pattern as
-    // _pendingShipPurchase right above.
+    // Set by the pause menu's "ВЕРНУТЬСЯ В РЕДАКТОР" click (Game1.Input.cs, only reachable while
+    // _sessionStartedFromEditor is true) - same "can't call ReturnToShipEditor() directly from the
+    // click handler" reasoning as _pendingReturnToMainMenu above.
+    private bool _pendingReturnToEditor;
+    // M60 - the Shipwright's own "Построить" list, edge-triggered, cleared the frame after it's
+    // sent - HandleMouseClick's return tuple is already at its practical limit, so this one rides
+    // as a field instead.
     private BuildRoomRequest? _pendingBuildRoom;
     // Content-каталог отсеков - click-to-place UI: which catalog entry is currently being placed
     // (set by StationBuildPanel's own module row, cleared on confirm or cancel - see
@@ -413,9 +440,10 @@ public partial class Game1 : Game
     private bool _pendingJukeboxPrevTrack;
     private bool _pendingJukeboxVolumeUp;
     private bool _pendingJukeboxVolumeDown;
-    // The wall terminal's single on/off toggle - one click on the physical block itself, no panel,
-    // edge-triggered/cleared the same way.
-    private bool _pendingTerminalToggle;
+    // Which specific wall terminal was clicked - direct user request ("их будет много"), same
+    // click-a-specific-instance-by-id shape as _pendingSuitLockerInteractId, edge-triggered/cleared
+    // the same way (replaced the old single shared toggle-key flag).
+    private string? _pendingTerminalInteractId;
     // The galaxy map's own camera - purely a client view of server-authoritative positions, so it
     // lives here rather than in any snapshot. Zoom via scroll wheel, pan via right-drag; both only
     // read while the navigation console is actually open.
@@ -518,6 +546,13 @@ public partial class Game1 : Game
     // fullscreen changes nothing about the layout code, only how big it ends up on screen.
     private const int DesignWidth = 1200;
     private const int DesignHeight = 560;
+
+    // Direct user request ("напиши версию как в баротравме") - a small always-on build stamp in
+    // the bottom-left corner, same corner/font/color treatment as Barotrauma's own version line.
+    // There's no CI/git revision available to this project (no repo here), so this is just the
+    // assembly's own version number rather than a fabricated build hash.
+    private const string GameVersionText = "Anabiosis v0.1.0 (Windows)";
+    private static readonly Color VersionTextColor = new Color(190, 195, 200) * 0.6f;
 
     private Matrix _renderScale = Matrix.Identity;
     private Vector2 _renderOffset = Vector2.Zero;
@@ -670,9 +705,11 @@ public partial class Game1 : Game
         DrawLoadingFrame("ЗАГРУЗКА...", 75);
 
         _existingSave = SaveStore.Load();
-        _sounds = new GameSounds(Content);
-        _music = new GameMusic(Content);
-        _jukeboxAudio = new JukeboxAudio(Content);
+        _sounds = new GameSounds(_audioEngine);
+        _music = new GameMusic(_audioEngine);
+        _jukeboxAudio = new JukeboxAudio(_audioEngine);
+        _voicePlayback = new VoicePlayback(_audioEngine);
+        _micMonitor = new MicMonitor(_audioEngine);
         DrawLoadingFrame("ЗАГРУЗКА...", 90);
         // The one raster texture asset in an otherwise fully-procedural game (ItemIcons.cs draws
         // every other icon from flat primitives) - same defensive load as everything else here, so an
@@ -816,6 +853,7 @@ public partial class Game1 : Game
     private void ApplyGraphicsSettings(GraphicsSettings settings)
     {
         _graphicsSettings = settings;
+        _keyBindings = PlayerActionBindings.FromSettingsString(settings.KeyBindings);
         var display = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
         switch (settings.WindowMode)
         {
@@ -841,13 +879,42 @@ public partial class Game1 : Game
         _graphics.ApplyChanges();
         UpdateRenderScale();
 
-        SoundEffect.MasterVolume = Math.Clamp(settings.MasterVolume, 0f, 1f);
-        _music?.SetMasterVolume(settings.MasterVolume);
+        // Real output-device selection (direct user request) - GameAudioEngine now owns everything
+        // SoundEffect.MasterVolume/MediaPlayer used to (see GameAudioEngine.cs's own doc comment).
+        _audioEngine.SelectOutputDevice(settings.OutputDeviceId);
+        _audioEngine.SoundVolume = Math.Clamp(settings.SoundVolume, 0f, 1f);
+        _audioEngine.MusicVolume = Math.Clamp(settings.MusicVolume, 0f, 1f);
+        _audioEngine.UiVolume = Math.Clamp(settings.UiVolume, 0f, 1f);
+        _audioEngine.VoiceVolume = Math.Clamp(settings.VoiceChatVolume, 0f, 2f);
+        _audioEngine.DynamicRangeCompression = settings.DynamicRangeCompression;
+        _music?.SetMasterVolume(settings.SoundVolume);
+        _voicePlayback.DirectionalVoiceChat = settings.DirectionalVoiceChat;
+        _voicePlayback.VoiceChatPriority = settings.VoiceChatPriority;
+        _voiceCapture.SelectedMicrophoneName = settings.InputMicrophoneName;
+        _voiceCapture.MicGainMultiplier = Math.Clamp(settings.MicGain, 1f, 9f);
+        _voiceCapture.DisconnectPreventionMs = Math.Clamp(settings.DisconnectPreventionMs, 0f, 2000f);
         if (_scenePost is not null)
         {
-            _scenePost.BloomStrength = settings.BloomStrength;
-            _scenePost.WideBloomStrength = settings.BloomStrength * 0.55f;
+            _scenePost.Enabled = settings.ShadersEnabled;
+            if (settings.ShadersEnabled)
+            {
+                _scenePost.BloomStrength = settings.BloomStrength;
+                _scenePost.WideBloomStrength = settings.BloomStrength * 0.55f;
+            }
+            else
+            {
+                // Direct user request ("не было вообще никаких эффектов, даже астигматизма" -
+                // chromatic aberration) - Enabled=false already makes Begin() skip the whole chain
+                // (Present becomes a no-op, see its own _capturing guard), so this is belt-and-
+                // suspenders: every numeric knob the composite shader reads - bloom, vignette,
+                // grain, dither, aberration, tonemap, relief/specular, distortion - goes to its own
+                // literal zero too, so there is no live value left anywhere that could read as "on"
+                // if some future caller ever reached Present() by a path that doesn't check Enabled.
+                _scenePost.NoPost();
+            }
         }
+        if (_roomLighting is not null)
+            _roomLighting.Enabled = settings.ShadersEnabled;
         AtmosphereField.MaxParticles = Math.Max(0, settings.MaxParticles);
     }
 
@@ -954,7 +1021,18 @@ public partial class Game1 : Game
         {
             if (_pauseMenuOpen)
             {
-                _pauseMenuOpen = false;
+                // Settings, when open, is one layer deeper than the pause menu's own 4 buttons -
+                // same "one thing at a time" priority the block below already gives every other
+                // overlay, so Escape steps back to the pause menu first rather than closing both
+                // at once. A pending Controls-tab rebind capture is one layer deeper still - Escape
+                // cancels just that (rather than rebinding the action to Escape itself) before it's
+                // ever allowed to close the settings screen underneath it.
+                if (_inGameSettingsOpen && _awaitingRebindAction is not null)
+                    _awaitingRebindAction = null;
+                else if (_inGameSettingsOpen)
+                    _inGameSettingsOpen = false;
+                else
+                    _pauseMenuOpen = false;
             }
             else if (_externalCameraFullscreenIndex is not null)
             {
@@ -981,13 +1059,21 @@ public partial class Game1 : Game
             }
         }
 
+        // The Settings screen opened from the pause menu (Game1.Input.cs's own click handling sets
+        // _inGameSettingsOpen) is otherwise self-contained - HandleSettingsScreen already reads the
+        // mouse itself, the same way it does from the pre-session menu (Game1.Menu.cs's HandleMenu),
+        // just reached from a different caller.
+        if (_pauseMenuOpen && _inGameSettingsOpen)
+            HandleSettingsScreen(keyboard);
+
         // Enter opens the crew chat box (direct user request, "как в Баротравме") - only from
         // gameplay, and only when nothing else already has keyboard focus, so it doesn't fire while
         // the pause menu is up. Edge-triggered like every other key here; _chatJustOpenedThisFrame
         // guards the same physical keystroke's TextInput '\r' from being read as an immediate
         // submit/close by OnChatTextInput below.
-        var enterDown = keyboard.IsKeyDown(Keys.Enter);
-        if (enterDown && !_prevGameplayKeyboard.IsKeyDown(Keys.Enter) && !_chatFocused && !_pauseMenuOpen)
+        var openChatKey = _keyBindings.Get(PlayerAction.OpenChat);
+        var enterDown = keyboard.IsKeyDown(openChatKey);
+        if (enterDown && !_prevGameplayKeyboard.IsKeyDown(openChatKey) && !_chatFocused && !_pauseMenuOpen)
         {
             _chatFocused = true;
             _chatJustOpenedThisFrame = true;
@@ -996,8 +1082,9 @@ public partial class Game1 : Game
         // M opens the GALACTIC map (game_design.md - two-tier map) from anywhere, unlike the
         // system-level one (GalaxyMapPanel), which still needs walking up to the navigation
         // console - edge-triggered like F11 above, or holding the key would flip it every frame.
-        var galacticMapToggleDown = keyboard.IsKeyDown(Keys.M);
-        if (galacticMapToggleDown && !_prevGameplayKeyboard.IsKeyDown(Keys.M) && !_pauseMenuOpen)
+        var galacticMapKey = _keyBindings.Get(PlayerAction.ToggleGalacticMap);
+        var galacticMapToggleDown = keyboard.IsKeyDown(galacticMapKey);
+        if (galacticMapToggleDown && !_prevGameplayKeyboard.IsKeyDown(galacticMapKey) && !_pauseMenuOpen)
         {
             _galacticMapOpen = !_galacticMapOpen;
             if (_galacticMapOpen)
@@ -1017,12 +1104,14 @@ public partial class Game1 : Game
         // Z swaps between Arc (banked turning, tied to speed) and Rcs (free rotation) at the helm
         // (World.ShipField.cs, M41) - edge-triggered like M above, or holding it down would flip
         // the mode every frame.
-        var toggleControlModeKeyPressed = isAtHelm && !_chatFocused && keyboard.IsKeyDown(Keys.Z) && !_prevGameplayKeyboard.IsKeyDown(Keys.Z);
+        var toggleHelmModeKey = _keyBindings.Get(PlayerAction.ToggleHelmMode);
+        var toggleControlModeKeyPressed = isAtHelm && !_chatFocused && keyboard.IsKeyDown(toggleHelmModeKey) && !_prevGameplayKeyboard.IsKeyDown(toggleHelmModeKey);
 
         // L lands/takes off (M55) - same edge-triggered shape as Z above. World.PlanetLanding.cs's
         // own CanLandNow is what actually refuses to arm it away from a landable body's surface, so
         // this is sent unconditionally too.
-        var toggleLandingKeyPressed = isAtHelm && !_chatFocused && keyboard.IsKeyDown(Keys.L) && !_prevGameplayKeyboard.IsKeyDown(Keys.L);
+        var toggleLandingKey = _keyBindings.Get(PlayerAction.ToggleLanding);
+        var toggleLandingKeyPressed = isAtHelm && !_chatFocused && keyboard.IsKeyDown(toggleLandingKey) && !_prevGameplayKeyboard.IsKeyDown(toggleLandingKey);
 
         // Push-to-talk voice (direct user request, "как в Баротравме") - V for local (proximity),
         // R for radio (heard ship-wide through RadioVoiceFilter). Held, not edge-triggered like
@@ -1034,8 +1123,46 @@ public partial class Game1 : Game
         // Also excluded while the ship editor is open: its own Engine tool (Game1.ShipEditor.cs's
         // HandleEngineToolInput) already binds R to cycle the pending engine's facing, so without
         // this the same keypress would both rotate the ghost AND start a radio transmission.
-        var voiceLocalKeyDown = !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.V);
-        var voiceRadioKeyDown = !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(Keys.R);
+        // Voice activation (direct user request, Settings' own Audio tab) - synced every frame
+        // rather than only on Apply, so a mid-session settings change takes effect immediately.
+        _voiceCapture.VoiceActivationMode = _graphicsSettings.VoiceActivationEnabled;
+        _voiceCapture.VoiceActivationThreshold = _graphicsSettings.VoiceActivationThreshold;
+
+        // Direct user request ("Заглушить при переключении окна") - re-checked every frame the same
+        // way voice activation is, so it takes effect immediately and un-mutes the instant focus
+        // comes back without needing another settings Apply.
+        _audioEngine.Muted = _graphicsSettings.MuteOnFocusLoss && !IsActive;
+        _audioEngine.SweepFinishedOneShots();
+
+        // Direct user request (Interface settings tab) - re-checked every frame like the audio
+        // settings above, so a mid-session Apply takes effect immediately without a reconnect.
+        _chatBubbleTracker.Enabled = _graphicsSettings.ChatBubblesEnabled;
+        _boardingRenderer.ShowHealthBars = _graphicsSettings.EnemyHealthBarsEnabled;
+
+        // Direct user request ("в Baротравме... микрофон активируется") - only while the Settings
+        // screen's own Audio tab is actually open, matching Barotrauma's own calibration-only
+        // behavior; reads the STAGED (not yet applied) device/gain/volume so moving a slider updates
+        // what you hear immediately, same as every other live-preview control on this tab.
+        var wantMicMonitor = _menuScreen == MenuScreen.Settings && _settingsTab == SettingsTab.Audio;
+        if (wantMicMonitor)
+        {
+            _micMonitor.SelectedMicrophoneName = _stagedInputMicrophoneName;
+            _micMonitor.GainMultiplier = Math.Clamp(_stagedMicGain, 1f, 9f);
+            _micMonitor.Volume = Math.Clamp(_stagedVoiceChatVolume, 0f, 2f);
+            _micMonitor.Start();
+        }
+        else
+        {
+            _micMonitor.Stop();
+        }
+
+        var voiceRadioKeyDown = !_chatFocused && !_shipEditorOpen && keyboard.IsKeyDown(_keyBindings.Get(PlayerAction.RadioPushToTalk));
+        // In voice-activation mode the local channel wants to stay open continuously rather than
+        // waiting on V - except while R is actually held, so pressing radio still cleanly takes
+        // over from an already-open local mic instead of the "always wants it" VAD condition
+        // permanently starving the radio branch below.
+        var voiceLocalKeyDown = !_chatFocused && !_shipEditorOpen &&
+            (_voiceCapture.VoiceActivationMode ? !voiceRadioKeyDown : keyboard.IsKeyDown(_keyBindings.Get(PlayerAction.VoicePushToTalk)));
         if (!_voiceCapture.IsRecording)
         {
             if (voiceLocalKeyDown)
@@ -1048,8 +1175,8 @@ public partial class Game1 : Game
             _voiceCapture.StopTalking();
         }
 
-        var interactDown = keyboard.IsKeyDown(Keys.E);
-        var spaceDown = keyboard.IsKeyDown(Keys.Space);
+        var interactDown = keyboard.IsKeyDown(_keyBindings.Get(PlayerAction.Interact));
+        var spaceDown = keyboard.IsKeyDown(_keyBindings.Get(PlayerAction.Fire));
         var interactPressed = (interactDown && !_prevInteractDown) || escapeSendsInteract;
         var spacePressed = spaceDown && !_prevFireDown;
         _prevInteractDown = interactDown;
@@ -1081,12 +1208,12 @@ public partial class Game1 : Game
         // Chat eats WASD as typed characters while focused (same idea as window 3's own search box
         // above it) - the character just stands still rather than getting walked around by whatever
         // letters happen to spell the message.
-        var move = (isManningTurret || isAtHelm || _chatFocused) ? Vec2.Zero : ReadMoveInput(keyboard);
+        var move = (isManningTurret || isAtHelm || _chatFocused) ? Vec2.Zero : ReadMoveInput(keyboard, _keyBindings);
         _evaThrustLocal = Vec2.Zero;
         // The barrel traverses toward wherever the cursor is; A/D still nudge it for anyone who
         // wants the keyboard. Either way it's a rate, not a snap - the gun swings at its own
         // traverse speed (World.Combat.cs), so leading a moving target is a skill.
-        var keyboardAim = isManningTurret ? ReadAimDirection(keyboard) : 0f;
+        var keyboardAim = isManningTurret ? ReadAimDirection(keyboard, _keyBindings) : 0f;
         var aimDirection = keyboardAim != 0f || !isManningTurret ? keyboardAim : ReadTurretAimTowardCursor();
         var mouse = Mouse.GetState();
 
@@ -1322,6 +1449,13 @@ public partial class Game1 : Game
             base.Update(gameTime);
             return;
         }
+        if (_pendingReturnToEditor)
+        {
+            _pendingReturnToEditor = false;
+            ReturnToShipEditor();
+            base.Update(gameTime);
+            return;
+        }
 
         // Number-row hotkey for holding a slot's item, same edge-triggered field a hold-strip click
         // sends - only when nothing else already claimed this tick's toggle.
@@ -1334,9 +1468,9 @@ public partial class Game1 : Game
         // the ship just coasts on whatever heading it already had, same as while any other console
         // is open, rather than the pilot's own typing also steering it.
         var flightControlsLive = isAtHelm && !_chatFocused;
-        if (flightControlsLive && keyboard.IsKeyDown(Keys.S))
+        if (flightControlsLive && keyboard.IsKeyDown(_keyBindings.Get(PlayerAction.HelmStabilize)))
             _helmStabilizeLatched = true;
-        var (helmThrottle, helmTurn) = flightControlsLive ? ReadHelmInput(keyboard) : (0f, 0f);
+        var (helmThrottle, helmTurn) = flightControlsLive ? ReadHelmInput(keyboard, _keyBindings) : (0f, 0f);
         if (helmThrottle != 0f || helmTurn != 0f)
             _helmStabilizeLatched = false; // taking the controls back cancels the brake
         var stabilizeEngaged = isAtHelm && _helmStabilizeLatched;
@@ -1362,7 +1496,6 @@ public partial class Game1 : Game
             lookDirection = ShipLocalFrame.ToWorldDirection(lookDirection, rotation);
         }
 
-        var shipPurchase = _pendingShipPurchase;
         var buildRoom = _pendingBuildRoom;
         _pendingBuildRoom = null;
         var demolishRoomId = _pendingDemolishRoomId;
@@ -1381,7 +1514,6 @@ public partial class Game1 : Game
         var flipHeadingPressed = _pendingFlipHeading;
         var scannerPingPressed = _pendingScannerPing;
         var requestedScannerMode = _requestedScannerMode;
-        _pendingShipPurchase = null; // edge-triggered: sent exactly once per click
         _pendingQuestKind = null;
         _pendingDock = false;
         _pendingHireCandidateId = null;
@@ -1415,11 +1547,13 @@ public partial class Game1 : Game
         var ammoStorageInteractId = _pendingAmmoStorageInteractId;
         var stealCrateId = _pendingStealCrateId;
         var repairDeviceId = _pendingRepairDeviceId;
+        var terminalInteractId = _pendingTerminalInteractId;
         _pendingSuitLockerInteractId = null;
         _pendingTurretInteractId = null;
         _pendingAmmoStorageInteractId = null;
         _pendingStealCrateId = null;
         _pendingRepairDeviceId = null;
+        _pendingTerminalInteractId = null;
 
         var abandonQuestPressed = _pendingAbandonQuest;
         _pendingAbandonQuest = false;
@@ -1463,9 +1597,6 @@ public partial class Game1 : Game
         _pendingJukeboxPrevTrack = false;
         _pendingJukeboxVolumeUp = false;
         _pendingJukeboxVolumeDown = false;
-
-        var terminalTogglePressed = _pendingTerminalToggle;
-        _pendingTerminalToggle = false;
 
         // Right-click backs out one step of a pending wire-lay without walking back to its start pin
         // - the last fixed bend if there is one, the whole anchor otherwise (World.Wiring.cs's
@@ -1539,7 +1670,7 @@ public partial class Game1 : Game
         // capture-send-clear lifecycle as chatMessage above, so a mic buffer is never resent.
         var voiceChunk = _voiceCapture.TakePendingChunk();
 
-        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, shipPurchase, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
+        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
             _client.LatestSnapshot?.ServerTimestampMs ?? 0, (float?)wireBendAt?.X, (float?)wireBendAt?.Y,
@@ -1548,8 +1679,8 @@ public partial class Game1 : Game
             jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed,
             fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, _engineerFocusDeviceId, flipHeadingPressed,
             buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk,
-            chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed, terminalTogglePressed,
-            suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId);
+            chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed,
+            suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1577,10 +1708,35 @@ public partial class Game1 : Game
         if (_client.LatestSnapshot is { } snapshotForVoice)
         {
             var myVoicePosition = myCharacter is { } myVoiceChar ? new Vec2(myVoiceChar.X, myVoiceChar.Y) : Vec2.Zero;
-            _voicePlayback.Update(snapshotForVoice.VoiceChunks, myVoicePosition,
+
+            // The same wall-occlusion test the sight cone uses (Game1.Lighting.cs's own
+            // BuildVisibilityMask), not shared with it directly (that method's own wall list is a
+            // local variable scoped to a single Draw call, not something Update can reach into), but
+            // now reading through the same cached TileGrid (ShipRenderer.GetLiveShipTiles) rather
+            // than rasterizing a separate, redundant copy of the exact same ship every tick. Interior
+            // doors only (not airlocks/windows/breaches, unlike the sight cone's own gap list) - a
+            // reasonable simplification for "does a wall muffle this voice", not a requirement that
+            // every edge case sight handles also muffles voice identically.
+            var voiceGaps = new List<SightGap>();
+            foreach (var door in snapshotForVoice.Doors)
+                if (snapshotForVoice.DoorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? true)
+                    voiceGaps.Add(Occluders.ToGap(door));
+            var voiceTiles = _shipRenderer.GetLiveShipTiles(snapshotForVoice);
+            var voiceWalls = TileOccluders.Build(voiceTiles, voiceGaps);
+
+            // Direct user bug report ("микрофон активируется и передаёт в уши какие-то звуки") - the
+            // server relays every chunk to every connection as one shared snapshot (World.Voice.cs
+            // has no per-recipient filtering at all, by design - it's the same broadcast every other
+            // WorldSnapshot field uses), which includes the LOCAL player's own just-sent chunk right
+            // back to them. VoicePlayback itself has no notion of "which player is me" to filter this
+            // on its own, so it's excluded here, at the one place that already knows both.
+            var voiceChunksExcludingSelf = snapshotForVoice.VoiceChunks?
+                .Where(c => c.SenderPlayerId != _client.PlayerId).ToList();
+            _voicePlayback.Update(voiceChunksExcludingSelf, myVoicePosition,
                 senderId => snapshotForVoice.Characters.FirstOrDefault(c => c.PlayerId == senderId) is { } sender
                     ? new Vec2(sender.X, sender.Y)
-                    : (Vec2?)null);
+                    : (Vec2?)null,
+                (a, b) => ShadowCast.IsBlocked(new Vector2((float)a.X, (float)a.Y), new Vector2((float)b.X, (float)b.Y), voiceWalls));
         }
 
         _effectTracker.Step((float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1666,6 +1822,12 @@ public partial class Game1 : Game
         _diagLastDrawMs = diagDrawStopwatch.Elapsed.TotalMilliseconds;
     }
 
+    private void DrawVersionFooter()
+    {
+        var position = new Vector2(8, DesignHeight - 16);
+        _spriteBatch.DrawString(_font, GameVersionText, position, VersionTextColor, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+    }
+
     private void DrawCore(GameTime gameTime)
     {
         if (!_sessionStarted)
@@ -1702,7 +1864,20 @@ public partial class Game1 : Game
                 }
                 else
                 {
+                    // Direct user report ("текст в меню настроек неточный, как будто с помехами") -
+                    // every screen here except Main is almost entirely text/UI chrome (Settings,
+                    // Ship Editor, Ship Select, Credits, Join), not the kind of scene content
+                    // Aberration's own default strength was tuned against. ApplyMenuPostLook's own
+                    // doc comment already diagnosed exactly this failure mode for the planet's city
+                    // lights ("on features one or two pixels across... reads as broken pixels, red
+                    // and green confetti") and turned it down for Main; a glyph stroke is the same
+                    // kind of thin, high-contrast feature, so every other pre-session screen needs
+                    // the same fix, just all the way to zero rather than Main's own 0.10 - none of
+                    // them are a backdrop scene that benefits from the lens effect at all.
+                    var savedAberration = _scenePost.Aberration;
+                    _scenePost.Aberration = 0f;
                     _scenePost.Present(_spriteBatch, menuSeconds);
+                    _scenePost.Aberration = savedAberration;
                 }
             }
 
@@ -1712,6 +1887,7 @@ public partial class Game1 : Game
             // menu (and every other pre-session screen) had no cursor at all. Plain arrow throughout -
             // there is no session snapshot yet to compute a hovered-interactable hand cursor from.
             _spriteBatch.Begin(transformMatrix: _renderScale);
+            DrawVersionFooter();
             GameCursor.Draw(_spriteBatch, _pixel, _designMouse.ToVector2(), false);
             _spriteBatch.End();
 
@@ -2135,7 +2311,7 @@ public partial class Game1 : Game
                 case BlockKind.Rack:
                     var rackOffset = CurrentOpenRackOffset(hudSnapshot);
                     _rackPanel.Draw(_spriteBatch, hudSnapshot, RackPanelOrigin, rackOffset, totalSeconds);
-                    if (_dragFrom is null && HoveredRackSlotIndex(hudSnapshot, rackOffset) is { } hoveredRackSlot
+                    if (_graphicsSettings.TooltipsEnabled && _dragFrom is null && HoveredRackSlotIndex(hudSnapshot, rackOffset) is { } hoveredRackSlot
                         && hudSnapshot.RackSlots[rackOffset + hoveredRackSlot] is { } hoveredRackItem)
                     {
                         var rackSlotRect = RackPanel.GetSlotRect(hoveredRackSlot, RackPanelOrigin);
@@ -2172,7 +2348,10 @@ public partial class Game1 : Game
             // text above. Plain text, no icon glyph - DebugFont.spritefont only covers Latin-1/
             // Cyrillic/basic punctuation (its own doc comment: a missing glyph has crashed
             // DrawString outright before), so an emoji here would just draw as garbled '?' filler.
-            if (_voiceCapture.IsRecording)
+            // IsTransmitting, not IsRecording - in voice-activation mode the mic can be open the
+            // whole session without this label showing "ГОВОРИТ" the whole time too; push-to-talk
+            // (and radio, always) sets both true together so nothing changes for that case.
+            if (_voiceCapture.IsTransmitting)
             {
                 var voiceLabel = _voiceCapture.IsRadio ? "РАЦИЯ" : "ГОВОРИТ";
                 _spriteBatch.DrawString(_font, voiceLabel, ChatPanelOrigin + new Vector2(0, -20f),
@@ -2368,7 +2547,7 @@ public partial class Game1 : Game
 
             // Full item info while hovering a slot - skipped mid-drag, where "what's under the
             // cursor" means the drag, not whatever slot it happens to be passing over.
-            if (_dragFrom is null && myInventory is not null && HoveredMainSlotIndex(myInventory, rowOrigin) is { } hoveredSlot
+            if (_graphicsSettings.TooltipsEnabled && _dragFrom is null && myInventory is not null && HoveredMainSlotIndex(myInventory, rowOrigin) is { } hoveredSlot
                 && myInventory.MainSlots[hoveredSlot] is { } hoveredItem)
             {
                 var slotRect = InventoryPanel.GetMainSlotRect(hoveredSlot, rowOrigin);
@@ -2383,8 +2562,10 @@ public partial class Game1 : Game
 
             // Last of all - the one overlay that's meant to sit over literally everything else,
             // including the reticle (there's nothing to aim at while it's up).
-            if (_pauseMenuOpen)
-                _pauseMenuPanel.Draw(_spriteBatch, PauseMenuPanelOrigin, _designMouse);
+            if (_pauseMenuOpen && _inGameSettingsOpen)
+                DrawSettingsScreen(totalSeconds);
+            else if (_pauseMenuOpen)
+                _pauseMenuPanel.Draw(_spriteBatch, PauseMenuPanelOrigin, _designMouse, _sessionStartedFromEditor);
             else if (_cheatPanelOpen)
                 _cheatPanel.Draw(_spriteBatch, CheatPanelOrigin, _designMouse);
         }
@@ -2427,6 +2608,7 @@ public partial class Game1 : Game
         // never show one without the other. Drawn dead last, after every panel, so the highlight
         // is never painted over and the cursor sits exactly where the OS's own (now hidden) one
         // would.
+        DrawVersionFooter();
         var hoveredRect = ComputeHoveredInteractable(_client.LatestSnapshot);
         if (hoveredRect is { } highlightRect)
             ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, highlightRect, Color.Gold, 2);

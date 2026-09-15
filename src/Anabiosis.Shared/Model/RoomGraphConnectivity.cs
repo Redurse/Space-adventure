@@ -2,11 +2,14 @@ namespace Anabiosis.Shared.Model;
 
 // M61 - the general "does this room graph stay connected" utility the plan (humble-soaring-cat.md)
 // calls for, built on the simplest possible case first (World.ShipBuilding.cs's TryDemolishRoom,
-// docked, one room at a time, player-initiated). Plain BFS over the door graph - CustomDoorDef is
-// already exactly this graph's edge list (Ship.ToDefinition() emits one per real inter-room Door;
-// an AirlockOuterDoor is an edge to open space, not to another room, so it never appears here and
-// correctly plays no part in room-to-room reachability). M63's structural-detachment check and
-// M65's enemy-generator connectivity check are both meant to reuse this unchanged.
+// docked, one room at a time, player-initiated). Plain BFS over the door graph - each CustomDoorDef
+// resolves to exactly one edge of it via ShipLayoutGeometry.FindOverlapAt (a door no longer authors
+// its own room pair - "Дверь как свободный объект" - so this is now a geometric lookup against
+// `rooms` instead of reading door.RoomAId/RoomBId directly; Ship.ToDefinition() emits one door per
+// real inter-room Door, so this stays exactly this graph's edge list). An AirlockOuterDoor is an
+// edge to open space, not to another room, so it never appears here and correctly plays no part in
+// room-to-room reachability. M63's structural-detachment check and M65's enemy-generator
+// connectivity check are both meant to reuse this unchanged.
 public static class RoomGraphConnectivity
 {
     // Every room reachable from `fromRoomId` by crossing zero or more doors - a plain reachability
@@ -18,10 +21,12 @@ public static class RoomGraphConnectivity
             adjacency[room.Id] = new List<string>();
         foreach (var door in doors)
         {
-            if (adjacency.TryGetValue(door.RoomAId, out var fromA))
-                fromA.Add(door.RoomBId);
-            if (adjacency.TryGetValue(door.RoomBId, out var fromB))
-                fromB.Add(door.RoomAId);
+            if (ShipLayoutGeometry.FindOverlapAt(rooms, door.X, door.Y, door.Vertical) is not { } overlap)
+                continue; // not a real edge - CustomShipValidator is the one that should be catching this
+            if (adjacency.TryGetValue(overlap.RoomAId, out var fromA))
+                fromA.Add(overlap.RoomBId);
+            if (adjacency.TryGetValue(overlap.RoomBId, out var fromB))
+                fromB.Add(overlap.RoomAId);
         }
 
         var visited = new HashSet<string>();

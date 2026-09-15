@@ -56,7 +56,7 @@ public partial class Game1
 
     private void DrawMenuPlanet(Rectangle pane, float totalSeconds)
     {
-        if (_planetEffect is null || _planetSurface is null)
+        if (_planetEffect is null || _planetSurface is null || !_graphicsSettings.ShadersEnabled)
             return;
 
         var radius = pane.Width * PlanetRadius;

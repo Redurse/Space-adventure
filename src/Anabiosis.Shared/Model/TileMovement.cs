@@ -27,7 +27,7 @@ public static class TileMovement
     public static Vec2 MoveAlongAxis(TileGrid tiles, Vec2 position, Vec2 delta, IReadOnlyList<RoomLayout.RoomObstacle>? obstacles = null)
     {
         var next = position + delta;
-        if (IsClear(tiles, next) && !BlocksPosition(obstacles, next))
+        if (IsClear(tiles, position, next) && !BlocksPosition(obstacles, next))
             return next;
 
         // A wall is now a genuine, full 1-unit-thick tile (not the old model's zero-width line at
@@ -40,7 +40,7 @@ public static class TileMovement
         // fails the clearance check, don't also refuse to move away from it - that would trap the
         // character in the wall forever, since every subsequent move would fail the same check for
         // the same reason. Only enforce "stay clear" once the character is actually in a clear spot.
-        if (!IsClear(tiles, position))
+        if (!IsClear(tiles, position, position))
             return next;
 
         // Slide as close to the wall as this move can get, rather than freezing at the pre-move
@@ -55,7 +55,7 @@ public static class TileMovement
         {
             var mid = (lo + hi) / 2f;
             var candidate = position + delta * mid;
-            if (IsClear(tiles, candidate) && !BlocksPosition(obstacles, candidate))
+            if (IsClear(tiles, position, candidate) && !BlocksPosition(obstacles, candidate))
                 lo = mid;
             else
                 hi = mid;
@@ -65,13 +65,29 @@ public static class TileMovement
 
     // Every tile the character's own clearance box could possibly overlap - at most a 2x2 tile
     // area, since CharacterRadius*2 (0.7) is less than one tile unit, so sampling all four corners
-    // of that box is guaranteed to touch every tile the box actually intersects.
-    private static bool IsClear(TileGrid tiles, Vec2 position)
+    // of that box is guaranteed to touch every tile the box actually intersects. `anchor` is the
+    // start-of-tick position this whole move began from (the SAME fixed point across the entire
+    // binary search in MoveAlongAxis, never a previous candidate) - direct user request ("я хочу
+    // полностью переделать двери", the edge-based narrow door): a door edge sits between two tiles
+    // rather than occupying one, so per-tile walkability alone can never see it - for each sampled
+    // corner, if moving from `anchor` to `position` actually crosses into a different tile, that
+    // specific crossing must also clear TileGrid.IsWalkableAcrossEdge. Passing anchor == position
+    // (both "is my current spot clear" checks in MoveAlongAxis do this) naturally skips the edge
+    // check entirely - nothing crosses if nothing moved.
+    private static bool IsClear(TileGrid tiles, Vec2 anchor, Vec2 position)
     {
         foreach (var (dx, dy) in Corners)
         {
-            var coord = new TileCoord((int)Math.Floor(position.X + dx), (int)Math.Floor(position.Y + dy));
-            if (tiles.CellAt(coord) is not { } cell || !TileGrid.IsWalkable(cell))
+            var cx = position.X + dx;
+            var cy = position.Y + dy;
+            var coord = new TileCoord((int)Math.Floor(cx), (int)Math.Floor(cy));
+            if (tiles.CellAt(coord) is not { } cell || !TileGrid.IsWalkable(cell, coord, new Vec2(cx, cy)))
+                return false;
+
+            var ax = anchor.X + dx;
+            var ay = anchor.Y + dy;
+            var anchorCoord = new TileCoord((int)Math.Floor(ax), (int)Math.Floor(ay));
+            if (anchorCoord != coord && !tiles.IsWalkableAcrossEdge(anchorCoord, coord))
                 return false;
         }
         return true;

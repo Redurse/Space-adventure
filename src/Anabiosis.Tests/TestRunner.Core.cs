@@ -78,7 +78,11 @@ internal static partial class TestRunner
 
     private static bool GameServer_Tick_AppliesMoveCommandFromClient()
     {
-        var spawn = Ship.CreateStarter().SpawnPoint;
+        // FromCustomDefinition's own SpawnPoint (the Helm's position) rather than the deleted
+        // CreateStarter's own explicit corridor-center spawn (Ship.cs's own doc comment on why those
+        // two differ) - `new GameServer()` below builds through FromCustomDefinition now, so this
+        // has to match whichever spawn point THAT path actually produces.
+        var spawn = Ship.FromCustomDefinition(ShipDefaultHull.Definition).SpawnPoint;
 
         var server = new GameServer();
         var transport = new InProcessTransport();
@@ -96,18 +100,20 @@ internal static partial class TestRunner
 
     private static bool Ship_MoveAlongAxis_BlocksAtWallWithoutDoor()
     {
-        var ship = Ship.CreateStarter();
-        // Start deep enough in the room that the start position itself isn't inside the top wall's
-        // own tile (cockpit's Top row is now a real, solid tile - see TileGridRasterizer.FromRooms).
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
+        // Direct user request (humble-soaring-cat.md, "удали механику что если ставим стены в
+        // ряд, они почти все превращаются в полублоки") - TileGridRasterizer.FromRooms no longer
+        // auto-infers WallOpenSide for a straight run, so cockpit's Top row (y in [0,1)) is full-
+        // thickness again, same as every hand-authored hull before that feature ever existed.
         var (pos, roomId) = ship.MoveAlongAxis(new Vec2(2.5f, 2f), "cockpit", new Vec2(0, -1f), _ => true);
-        // Clamped CharacterRadius short of the top hull wall's face, one tile deeper into the room
-        // than the old zero-width-wall model (the wall now consumes the room's own leading/Top row).
+        // Clamped CharacterRadius short of the wall's own solid face (Y=1.0), the full-thickness
+        // boundary.
         return roomId == "cockpit" && Math.Abs(pos.Y - (1f + RoomLayout.CharacterRadius)) < 0.01f;
     }
 
     private static bool Ship_MoveAlongAxis_PassesThroughAlignedDoor()
     {
-        var ship = Ship.CreateStarter();
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
         // Near the cockpit/reactor wall (x=5) at the door's y=3 — should cross through.
         var (pos, roomId) = ship.MoveAlongAxis(new Vec2(4.9f, 3f), "cockpit", new Vec2(0.3f, 0), _ => true);
         return roomId == "reactor" && Math.Abs(pos.X - 5.2f) < 0.01f;
@@ -115,7 +121,7 @@ internal static partial class TestRunner
 
     private static bool Ship_MoveAlongAxis_BlockedWhenMisalignedWithDoor()
     {
-        var ship = Ship.CreateStarter();
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
         // Same wall, but y=1.5 is outside the door's opening (tile rows 2-3) — should hit the wall,
         // stopping CharacterRadius short of it rather than exactly on it (see RoomLayout.cs). y=1.5
         // instead of the old y=0.5 so the start position itself isn't sitting inside the cockpit's
@@ -140,7 +146,7 @@ internal static partial class TestRunner
     // actually have the reference art it's meant to match).
     private static bool Ship_MoveAlongAxis_HandAuthoredReactorRoomHasNoObstacle()
     {
-        var ship = Ship.CreateStarter();
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
         var (pos, roomId) = ship.MoveAlongAxis(new Vec2(9.5f, 1f), "reactor", new Vec2(0f, 1f), _ => true);
         return roomId == "reactor" && Math.Abs(pos.Y - 2f) < 0.01f; // moved freely, no obstacle
     }
@@ -152,7 +158,7 @@ internal static partial class TestRunner
             new CustomRoomDef("reactor-room", "Реакторный отсек", 0f, 0f, 9f, 9f),
             new CustomRoomDef("utility-room", "Служебный отсек", 9f, 0f, 12f, 9f),
         };
-        var doors = new[] { new CustomDoorDef("reactor-room", "utility-room") };
+        var doors = new[] { new CustomDoorDef(9, 4.5f, true, true) }; // shared wall at X=9, centered on its Y=[0,9] span
         var airlocks = new[] { new CustomAirlockDef("utility-room", EdgeSide.Right) };
         var devices = new[]
         {
@@ -209,7 +215,7 @@ internal static partial class TestRunner
     // would guess from the value alone.
     private static bool World_NewCampaign_StartsWithAnEqualShareForEverySystem()
     {
-        var world = new World(ShipKind.Frigate);
+        var world = new World(ShipKind.Custom);
         world.StartCampaign();
 
         var systems = Enum.GetValues<PowerSystemId>();
@@ -225,7 +231,7 @@ internal static partial class TestRunner
     // would reach the tutorial too.
     private static bool World_TutorialWorld_StartsWithNothingAllocated()
     {
-        var world = new World(ShipKind.Frigate);
+        var world = new World(ShipKind.Custom);
         world.StartTutorial();
         return Enum.GetValues<PowerSystemId>().All(s => world.PowerGrid.GetAllocation(s) < 0.01f);
     }

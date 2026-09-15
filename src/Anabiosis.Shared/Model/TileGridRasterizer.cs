@@ -60,6 +60,21 @@ public static class TileGridRasterizer
                         grid.SetFloor(new TileCoord(x, y), true);
             }
 
+        // Direct user request ("удали механику что если ставим стены в ряд, они почти все
+        // превращаются в полублоки... хочу сделать чтобы игрок сам выбирал") - this used to collect
+        // which EdgeSide (Left/Top/Right/Bottom) produced each wall tile and automatically give any
+        // straight (non-corner) run half-thickness treatment. Removed entirely: every wall tile
+        // rasterized from Room geometry now stays full-thickness by default. A half-block wall is a
+        // deliberate player choice now (the free-tile editor's own Wall tool, Game1.ShipEditor.cs),
+        // carried through CustomShipDefinition.WallOpenSides and applied post-rasterization
+        // (Ship.Custom.cs), same "paint the base geometry here, patch in per-tile detail afterward"
+        // shape SupplementalWallTiles/ForcedFloorTiles/WallMaterials already use.
+        void WallTile(TileCoord coord)
+        {
+            EnsureFloor(grid, coord);
+            grid.SetWall(coord, TileWallKind.Solid);
+        }
+
         foreach (var room in rooms)
             foreach (var rect in room.Rects)
             {
@@ -77,17 +92,17 @@ public static class TileGridRasterizer
                 // room's own trailing-side check below is what stays silent for its half).
                 for (var y = top; y < bottom; y++)
                     if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Left, y))
-                        WallTile(grid, new TileCoord(left, y));
+                        WallTile(new TileCoord(left, y));
                 for (var x = left; x < right; x++)
                     if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Top, x))
-                        WallTile(grid, new TileCoord(x, top));
+                        WallTile(new TileCoord(x, top));
 
                 for (var y = rect.Y; y < rect.Bottom; y += 1f)
                     if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Right, y) && !Station.IsUnitCoveredByOtherRoom(rooms, room, rect, EdgeSide.Right, y))
-                        WallTile(grid, new TileCoord(right - 1, RoundToInt(y)));
+                        WallTile(new TileCoord(right - 1, RoundToInt(y)));
                 for (var x = rect.X; x < rect.Right; x += 1f)
                     if (!Station.IsUnitCoveredBySameRoom(room, rect, EdgeSide.Bottom, x) && !Station.IsUnitCoveredByOtherRoom(rooms, room, rect, EdgeSide.Bottom, x))
-                        WallTile(grid, new TileCoord(RoundToInt(x), bottom - 1));
+                        WallTile(new TileCoord(RoundToInt(x), bottom - 1));
             }
 
         // A Door/AirlockOuterDoor is a StandardSpanUnits(2)-wide rectangle centered on the wall it
@@ -116,12 +131,6 @@ public static class TileGridRasterizer
             RasterizeDoor(grid, new[] { rooms.First(r => r.Id == airlock.RoomId) }, airlock.X, airlock.Y, airlock.Width, airlock.Height);
 
         return grid;
-    }
-
-    private static void WallTile(TileGrid grid, TileCoord coord)
-    {
-        EnsureFloor(grid, coord);
-        grid.SetWall(coord, TileWallKind.Solid);
     }
 
     private static void RasterizeDoor(TileGrid grid, IReadOnlyList<Room> rooms, float centerX, float centerY, float width, float height)

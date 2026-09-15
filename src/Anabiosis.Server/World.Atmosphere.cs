@@ -55,6 +55,17 @@ public sealed partial class World
             deltas[outerDoor.RoomId] = deltas.GetValueOrDefault(outerDoor.RoomId) - flow;
         }
 
+        // M-doors-as-edges - identical formula to the interior-door loop above, just against
+        // Ship.DoorEdges' own RoomAId/RoomBId (looked up once in Ship.Custom.cs) instead of Doors'.
+        foreach (var edge in Ship.DoorEdges)
+        {
+            if (!IsDoorOpen(edge.Id))
+                continue;
+            var flow = OxygenDiffusionRatePerSecond * (_roomOxygen[edge.RoomAId] - _roomOxygen[edge.RoomBId]) * (float)deltaSeconds;
+            deltas[edge.RoomAId] = deltas.GetValueOrDefault(edge.RoomAId) - flow;
+            deltas[edge.RoomBId] = deltas.GetValueOrDefault(edge.RoomBId) + flow;
+        }
+
         foreach (var (roomId, delta) in deltas)
             _roomOxygen[roomId] += delta;
 

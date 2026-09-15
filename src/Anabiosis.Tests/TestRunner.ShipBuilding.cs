@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -241,69 +241,22 @@ internal static partial class TestRunner
             && world.CreateSnapshot().PendingRoomBuilds is not { Count: > 0 };
     }
 
-    // The whole downstream plan (M61 onward) leans on Ship.ToDefinition()/FromCustomDefinition being
-    // a lossless round trip for every hand-authored hull, not just editor-drawn ones - this is the
-    // guard test the plan's own M60 design calls out by name. Structural counts rather than exact id
-    // equality: FromCustomDefinition always renumbers device ids from scratch (same known
-    // simplification a whole-hull swap already has), so ids are expected to change; the physical
-    // shape (room/door/airlock/device counts, and legality) must not.
-    private static bool World_ShipBuilding_ToDefinitionRoundTrip_PreservesEveryHandAuthoredHull()
-    {
-        foreach (var kind in new[] { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette })
-        {
-            var original = Ship.Create(kind);
-            var def = original.ToDefinition();
-
-            if (CustomShipValidator.Validate(def).Count > 0)
-                return false; // a hand-authored hull's own definition must already be legal
-
-            var rebuilt = Ship.FromCustomDefinition(def);
-
-            if (rebuilt.Rooms.Count != original.Rooms.Count) return false;
-            if (rebuilt.Doors.Count != original.Doors.Count) return false;
-            if (rebuilt.AirlockOuterDoors.Count != original.AirlockOuterDoors.Count) return false;
-            if (rebuilt.Turrets.Count != original.Turrets.Count) return false;
-            if (rebuilt.Cameras.Count != original.Cameras.Count) return false;
-            if (rebuilt.ComponentMounts.Count != original.ComponentMounts.Count) return false;
-            if (rebuilt.AmmoStorages.Count != original.AmmoStorages.Count) return false;
-            if (rebuilt.SuitLockers.Count != original.SuitLockers.Count) return false;
-            if (rebuilt.StorageRacks.Count != original.StorageRacks.Count) return false;
-            // Every original room id must still exist, at the same footprint - what everything else
-            // in World (character RoomId, oxygen dictionaries, etc.) actually keys off.
-            foreach (var room in original.Rooms)
-            {
-                var match = rebuilt.Rooms.FirstOrDefault(r => r.Id == room.Id);
-                if (match is null || match.X != room.X || match.Y != room.Y || match.Width != room.Width || match.Height != room.Height)
-                    return false;
-            }
-
-            // Each airlock has to land on the exact same WALL, not just anywhere on its own room -
-            // Ship.Corvette.cs's own two airlocks sit off-centre along their wall (by design), which
-            // is exactly the case that broke a naive nearest-midpoint inference in ToDefinition()'s
-            // own InferAirlockSide the first time this test was written.
-            foreach (var airlock in original.AirlockOuterDoors)
-            {
-                var room = original.GetRoom(airlock.RoomId);
-                var onRight = MathF.Abs(airlock.X - room.Right) < 0.01f;
-                var onLeft = MathF.Abs(airlock.X - room.Left) < 0.01f;
-                var onBottom = MathF.Abs(airlock.Y - room.Bottom) < 0.01f;
-                var rebuiltMatch = rebuilt.AirlockOuterDoors.FirstOrDefault(a => a.RoomId == airlock.RoomId);
-                if (rebuiltMatch is null)
-                    return false;
-                var rebuiltOnRight = MathF.Abs(rebuiltMatch.X - room.Right) < 0.01f;
-                var rebuiltOnLeft = MathF.Abs(rebuiltMatch.X - room.Left) < 0.01f;
-                var rebuiltOnBottom = MathF.Abs(rebuiltMatch.Y - room.Bottom) < 0.01f;
-                if (onRight != rebuiltOnRight || onLeft != rebuiltOnLeft || onBottom != rebuiltOnBottom)
-                    return false;
-            }
-        }
-        return true;
-    }
+    // World_ShipBuilding_ToDefinitionRoundTrip_PreservesEveryHandAuthoredHull used to live here,
+    // proving ToDefinition()/FromCustomDefinition round-tripped every hand-authored hull losslessly -
+    // removed along with those hulls (direct user request, "удали все текущие корабли... полностью
+    // удалить из кода"). The same round trip is what produced ShipDefaultHull.cs's own frozen
+    // definition in the first place (captured via a DIAG=1 diagnostic that compared original vs.
+    // replayed room/door/airlock/device/turret/componentMount counts one last time before this test
+    // was removed), and TestRunner.CustomShip.cs's own tests still cover the round trip for
+    // editor-drawn Custom ships generally.
 
     // M61 - RoomGraphConnectivity is a plain BFS over the door graph, tested directly against
     // hand-built graphs rather than through a real hull: a line (connected end to end), a ring
     // (still connected even with a redundant extra edge), and a graph with a genuinely disconnected
-    // island - the exact three shapes the plan itself calls out for this utility.
+    // island - the exact three shapes the plan itself calls out for this utility. A door no longer
+    // authors its own room pair (humble-soaring-cat.md "Дверь как свободный объект") - every edge
+    // below is a genuine geometric position on a real shared wall, resolved back to a room pair by
+    // ShipLayoutGeometry.FindOverlapAt exactly like a real hull's doors would be.
     private static bool RoomGraphConnectivity_DetectsConnectedAndDisconnectedGraphs()
     {
         var rooms = new[]
@@ -313,15 +266,32 @@ internal static partial class TestRunner
             new CustomRoomDef("c", "C", 2, 0, 1, 1),
         };
 
-        var line = new[] { new CustomDoorDef("a", "b"), new CustomDoorDef("b", "c") };
+        var line = new[] { new CustomDoorDef(1, 0.5f, true, false), new CustomDoorDef(2, 0.5f, true, false) };
         if (!RoomGraphConnectivity.AllReachable(rooms, line, "a"))
             return false;
 
-        var ring = new[] { new CustomDoorDef("a", "b"), new CustomDoorDef("b", "c"), new CustomDoorDef("c", "a") };
-        if (!RoomGraphConnectivity.AllReachable(rooms, ring, "a"))
+        // "a" and "c" don't share a wall in the 3-in-a-row layout above (only "line"/"island" need
+        // that one) - a genuine ring needs a 4th room closing the loop back to the first, laid out
+        // as a 2x2 block (p top-left, q top-right, r bottom-right, s bottom-left) so EVERY edge,
+        // including the redundant loop-closing one (s-p), sits on a real shared wall.
+        var ringRooms = new[]
+        {
+            new CustomRoomDef("p", "P", 0, 0, 1, 1),
+            new CustomRoomDef("q", "Q", 1, 0, 1, 1),
+            new CustomRoomDef("r", "R", 1, 1, 1, 1),
+            new CustomRoomDef("s", "S", 0, 1, 1, 1),
+        };
+        var ring = new[]
+        {
+            new CustomDoorDef(1, 0.5f, true, false),    // p-q, wall x=1
+            new CustomDoorDef(1.5f, 1, false, false),   // q-r, wall y=1
+            new CustomDoorDef(1, 1.5f, true, false),    // r-s, wall x=1
+            new CustomDoorDef(0.5f, 1, false, false),   // s-p, wall y=1 - the redundant, loop-closing edge
+        };
+        if (!RoomGraphConnectivity.AllReachable(ringRooms, ring, "p"))
             return false;
 
-        var island = new[] { new CustomDoorDef("a", "b") }; // "c" has no door to anything
+        var island = new[] { new CustomDoorDef(1, 0.5f, true, false) }; // "c" has no door to anything
         if (RoomGraphConnectivity.AllReachable(rooms, island, "a"))
             return false;
         if (RoomGraphConnectivity.ReachableFrom(rooms, island, "a").Count != 2)

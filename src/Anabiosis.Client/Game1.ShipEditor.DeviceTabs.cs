@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -26,7 +26,7 @@ namespace Anabiosis.Client;
 // file's own earlier note that these needed a real model extension first - WallMaterial.cs (Solid's
 // own "skin") and TileCell.DoorGroupId (links two Door tiles into one wide door) now exist, so these
 // are ordinary palette entries like everything else, just ones that also set a tool sub-choice
-// (_editorWallMaterial/_editorDoorWide) alongside _editorTool - see PaletteItem below.
+// (_editorWallMaterial/_editorDoorSpanTiles) alongside _editorTool - see PaletteItem below.
 public partial class Game1
 {
     private enum DeviceTab { ShipControl, Airlock, Storage, Production, Power, Furniture, Weapons, Walls, Compartments, All }
@@ -47,11 +47,22 @@ public partial class Game1
     private enum EditorPanelMode { Objects, Modifications }
     private EditorPanelMode _editorPanelMode = EditorPanelMode.Objects;
 
-    // Material/WideDoor are the tool's own sub-choice (meaningful only when Tool is Wall/Door
-    // respectively) - selecting the item sets _editorWallMaterial/_editorDoorWide alongside
+    // Material/DoorSpanTiles are the tool's own sub-choice (meaningful only when Tool is Wall/Door
+    // respectively) - selecting the item sets _editorWallMaterial/_editorDoorSpanTiles alongside
     // _editorTool, the same way selecting a device entry sets _editorSelectedDeviceKind.
+    // DoorSpanTiles (humble-soaring-cat.md, M-doors-as-edges) - how many parallel edges the Door
+    // tool places at once (1 narrow, 2 wide, 3 triple - PlaceEdgeDoor's own doc comment): was a bool
+    // WideDoor before the edge model existed (a real N-tile-span door needed changes to CustomDoorDef/
+    // TileGrid.LinkDoors/TileShipBuilder a bool couldn't express - see CustomDeviceKind.TripleDoor's
+    // own doc comment for the cosmetic-only workaround that used to be), generalized to an int the
+    // moment the edge model made an arbitrary span trivial (DoorEdgeGroupAt/PlaceEdgeDoor don't care
+    // how many segments share an Id).
     private readonly record struct PaletteItem(string Label, EditorTool Tool, CustomDeviceKind? Kind = null,
-        WallMaterial? Material = null, bool WideDoor = false, string? CompartmentId = null);
+        WallMaterial? Material = null, int DoorSpanTiles = 1, string? CompartmentId = null,
+        // Direct user request ("хочу сделать чтобы игрок сам выбирал" полублочную стену) - same
+        // tool-sub-choice shape as Material/DoorSpanTiles above, just for the Wall tool's half-block
+        // variant instead of a WallMaterial.
+        bool HalfBlockWall = false);
 
     private static PaletteItem DeviceItem(CustomDeviceKind kind) => new(CustomDeviceCatalog.Name(kind), EditorTool.Device, kind);
 
@@ -59,11 +70,15 @@ public partial class Game1
     // up to the real ShipEngine mechanic - see Game1.ShipEditor.cs's own "Engine" EditorTool) -
     // replaced by one real engine placement tool below, not a palette entry at all (it needs its own
     // directional 3-tile placement flow, not the generic 1x1/4x4 device footprint machinery).
+    // Direct user request ("сделай чтобы терминал в редакторе был в 1 вкладке управления
+    // корабля") - Terminal moved here from FurnitureItems; still the same wall-mounting tool
+    // (EditorTool.Terminal), just listed under this tab now.
     private static readonly PaletteItem[] ShipControlItems =
     {
         DeviceItem(CustomDeviceKind.Helm), DeviceItem(CustomDeviceKind.Navigation),
         new("Двигатель", EditorTool.Engine),
         DeviceItem(CustomDeviceKind.Camera),
+        new("Терминал", EditorTool.Terminal, CustomDeviceKind.Terminal),
     };
 
     // "Шлюз" itself reuses the Door tool (an airlock is just a door on the outer hull, inferred by
@@ -93,14 +108,18 @@ public partial class Game1
         DeviceItem(CustomDeviceKind.Battery), DeviceItem(CustomDeviceKind.Junction), DeviceItem(CustomDeviceKind.PowerConduit),
     };
 
-    // Terminal reuses its own existing tool (mounts to a wall's side, doesn't occupy a floor slot the
-    // way every real device does) - included here per direct user request, not a CustomDeviceKind.
+    // WallLamp reuses the SAME wall-mounting tool Terminal does (direct user request - "на стену
+    // размером с полублок можно крепить только терминал и настенную лампу") - mount to a wall's own
+    // side instead of the generic open-floor footprint every other device here uses, so it isn't a
+    // plain DeviceItem; Kind picks it, the same way it picks _editorSelectedDeviceKind for an
+    // ordinary Device-tool entry (HandleDeviceTabClick). Terminal's own entry now lives under
+    // ShipControlItems instead (direct user request).
     private static readonly PaletteItem[] FurnitureItems =
     {
         DeviceItem(CustomDeviceKind.Table), DeviceItem(CustomDeviceKind.Chair), DeviceItem(CustomDeviceKind.Sofa),
-        DeviceItem(CustomDeviceKind.Bed), DeviceItem(CustomDeviceKind.Nightstand), DeviceItem(CustomDeviceKind.WallLamp),
+        DeviceItem(CustomDeviceKind.Bed), DeviceItem(CustomDeviceKind.Nightstand),
         DeviceItem(CustomDeviceKind.Spotlight), DeviceItem(CustomDeviceKind.Lamp), DeviceItem(CustomDeviceKind.DecorativePlant),
-        new("Терминал", EditorTool.Terminal),
+        new("Настенная лампа", EditorTool.Terminal, CustomDeviceKind.WallLamp),
     };
 
     // "Лазерное орудие"/"Автопушка"/"Рельсотрон" map onto the existing TurretLaser/TurretMachineGun/
@@ -114,13 +133,33 @@ public partial class Game1
     };
 
     // "Двойная дверь"/"Блок иллюминатора" deliberately absent - see this file's own top comment.
+    // "Тройная дверь" (direct user request - "сделай тоже самое с тройной дверью, чтобы она
+    // занимала 2 на 3 тайла") used to be a plain, cosmetic DeviceItem (CustomDeviceKind.TripleDoor -
+    // still exists, still round-trips any OLD save that already placed one, just no longer reachable
+    // from this palette) back when a real 3-tile-span door needed changes a bool WideDoor couldn't
+    // express; now it's the Door tool's 3rd DoorSpanTiles variant, same edge-based mechanic as
+    // "Дверь"/"Широкая дверь" - a real movement/sight/atmosphere barrier, not a decoration.
     private static readonly PaletteItem[] WallItems =
     {
         new("Стена", EditorTool.Wall, Material: WallMaterial.Standard),
         new("Усиленная стена", EditorTool.Wall, Material: WallMaterial.Reinforced),
         new("Иллюминатор", EditorTool.Wall, Material: WallMaterial.Window),
-        new("Дверь", EditorTool.Door, WideDoor: false),
-        new("Широкая дверь", EditorTool.Door, WideDoor: true),
+        // Direct user request ("хочу сделать чтобы игрок сам выбирал") - places a half-block wall
+        // instead of a full one; R rotates which side stays solid before placing (HandleWallToolInput).
+        new("Полублочная стена", EditorTool.Wall, HalfBlockWall: true),
+        // Direct user request ("сделай новый вид стены полублочный иллюминатор") - Material and
+        // HalfBlockWall are already fully independent choices (HandleWallToolInput applies both to
+        // every tile it paints, TileGrid.SetWall/SetWallOpenSide never coupled the two together), so
+        // this combination needed no new mechanic at all - just the palette entry that reaches it.
+        // The solid half reads as glass (WallMaterialTint's own Window case, same tint a full
+        // иллюминатор already gets) and is see-through (TileOccluders.IsOccluding excludes Window
+        // material before it ever checks WallOpenSide) while still blocking movement like any other
+        // wall material does (TileMovement.IsWalkable never reads WallMaterial) - the free half is
+        // already open floor either way.
+        new("Полублочный иллюминатор", EditorTool.Wall, Material: WallMaterial.Window, HalfBlockWall: true),
+        new("Дверь", EditorTool.Door, DoorSpanTiles: 1),
+        new("Широкая дверь", EditorTool.Door, DoorSpanTiles: 2),
+        new("Тройная дверь", EditorTool.Door, DoorSpanTiles: 3),
     };
 
     // M81 (humble-soaring-cat.md) - one entry per CompartmentCatalog variant (M80, already complete,
@@ -139,7 +178,12 @@ public partial class Game1
     // AmmoStorage/SuitLocker/StorageRack/CardTable/Jukebox/ComponentMount/Secondary/WeaponCharger)
     // still show up here - nothing is ever unreachable, even before every kind has its own curated tab.
     private static readonly PaletteItem[] AllItems =
-        new PaletteItem[] { new("Стена", EditorTool.Wall), new("Дверь", EditorTool.Door), new("Терминал", EditorTool.Terminal) }
+        new PaletteItem[]
+            {
+                new("Стена", EditorTool.Wall), new("Дверь", EditorTool.Door),
+                new("Терминал", EditorTool.Terminal, CustomDeviceKind.Terminal),
+                new("Настенная лампа", EditorTool.Terminal, CustomDeviceKind.WallLamp),
+            }
             .Concat(EditorDeviceKinds.Select(DeviceItem))
             .ToArray();
 
@@ -344,14 +388,23 @@ public partial class Game1
             if (!GetDeviceItemRect(i).Contains(point))
                 continue;
             _editorTool = items[i].Tool;
-            if (items[i].Kind is { } kind)
+            if (items[i].Tool == EditorTool.Device && items[i].Kind is { } kind)
                 _editorSelectedDeviceKind = kind;
+            // Direct user request ("на стену размером с полублок можно крепить только терминал и
+            // настенную лампу") - same sub-choice shape as _editorWallMaterial/_editorDoorSpanTiles below,
+            // gated by Tool so picking Terminal/WallLamp never corrupts the Device tool's own last
+            // selection (and vice versa).
+            if (items[i].Tool == EditorTool.Terminal && items[i].Kind is { } wallDeviceKind)
+                _editorSelectedWallDeviceKind = wallDeviceKind;
             if (items[i].CompartmentId is { } compartmentId)
                 _editorSelectedCompartmentId = compartmentId;
             if (items[i].Tool == EditorTool.Wall)
+            {
                 _editorWallMaterial = items[i].Material ?? WallMaterial.Standard;
+                _editorWallHalfBlock = items[i].HalfBlockWall;
+            }
             if (items[i].Tool == EditorTool.Door)
-                _editorDoorWide = items[i].WideDoor;
+                _editorDoorSpanTiles = items[i].DoorSpanTiles;
             return true;
         }
         return false;
@@ -374,14 +427,24 @@ public partial class Game1
         if (item.Kind is { } kind)
             return CustomDeviceCatalog.Tint(kind);
         if (item.Tool == EditorTool.Wall)
+            // Material and HalfBlockWall are independent choices (direct user request - "полублочный
+            // иллюминатор") - Material picks the base colour first (a half-block Window item must
+            // still read as glass, not the same flat grey every other half-block wall gets), and only
+            // a Standard-material half-block falls back to the muted grey that used to be the ONLY
+            // half-block colour.
             return item.Material switch
             {
                 WallMaterial.Reinforced => new Color(90, 95, 105),
                 WallMaterial.Window => new Color(140, 210, 235),
-                _ => new Color(150, 150, 160),
+                _ => item.HalfBlockWall ? new Color(150, 150, 160) * 0.6f : new Color(150, 150, 160),
             };
         if (item.Tool == EditorTool.Door)
-            return item.WideDoor ? new Color(200, 160, 100) : new Color(160, 130, 90);
+            return item.DoorSpanTiles switch
+            {
+                2 => new Color(200, 160, 100),
+                3 => new Color(220, 140, 70),
+                _ => new Color(160, 130, 90),
+            };
         return item.Tool switch
         {
             EditorTool.Terminal => new Color(100, 180, 190),
@@ -413,8 +476,11 @@ public partial class Game1
         CustomDeviceKind.Engine or CustomDeviceKind.EngineSmall or CustomDeviceKind.EngineMedium
             or CustomDeviceKind.EngineLarge or CustomDeviceKind.WarpEngine => DeviceSkin.Face.Engine,
         CustomDeviceKind.Shields or CustomDeviceKind.ShieldGeneratorSmall or CustomDeviceKind.ShieldGeneratorLarge => DeviceSkin.Face.Shields,
-        CustomDeviceKind.WeaponCharger or CustomDeviceKind.WeaponPanel or CustomDeviceKind.TurretBallistic
-            or CustomDeviceKind.TurretLaser or CustomDeviceKind.TurretMachineGun or CustomDeviceKind.DefensiveTurret => DeviceSkin.Face.Weapons,
+        CustomDeviceKind.WeaponCharger or CustomDeviceKind.WeaponPanel => DeviceSkin.Face.Weapons,
+        // Direct user request ("сделай чтобы все турели занимали 3 на 3") - own dedicated face
+        // now, split out of Weapons (that's the charging STATION's look, not the gun itself).
+        CustomDeviceKind.TurretBallistic or CustomDeviceKind.TurretLaser
+            or CustomDeviceKind.TurretMachineGun or CustomDeviceKind.DefensiveTurret => DeviceSkin.Face.Turret,
         CustomDeviceKind.Secondary => DeviceSkin.Face.Auxiliary,
         CustomDeviceKind.StorageRack or CustomDeviceKind.SmallStorage or CustomDeviceKind.LargeStorage
             or CustomDeviceKind.FuelRodStorage or CustomDeviceKind.Morgue or CustomDeviceKind.AmmoStorage => DeviceSkin.Face.Rack,
@@ -422,6 +488,16 @@ public partial class Game1
         CustomDeviceKind.Helm => DeviceSkin.Face.Helm,
         CustomDeviceKind.SuitLocker => DeviceSkin.Face.Locker,
         CustomDeviceKind.Jukebox => DeviceSkin.Face.Jukebox,
+        // Direct user request - the "производство" tab's 4 workbenches, previously all Generic.
+        CustomDeviceKind.ConstructionBench => DeviceSkin.Face.ConstructionBench,
+        CustomDeviceKind.Fabricator => DeviceSkin.Face.Fabricator,
+        CustomDeviceKind.Deconstructor => DeviceSkin.Face.Deconstructor,
+        CustomDeviceKind.WeaponWorkbench => DeviceSkin.Face.WeaponWorkbench,
+        // Direct user request - a real bed and a real shuttle hangar bay, previously both Generic.
+        CustomDeviceKind.Bed => DeviceSkin.Face.Bed,
+        CustomDeviceKind.ShuttleHangar => DeviceSkin.Face.ShuttleHangar,
+        // Direct user request - "тройная дверь", themed to look like the real in-game door.
+        CustomDeviceKind.TripleDoor => DeviceSkin.Face.TripleDoor,
         _ => DeviceSkin.Face.Generic,
     };
 
@@ -429,13 +505,28 @@ public partial class Game1
     {
         if (item.Kind == CustomDeviceKind.Reactor && _editorReactorTexture is { } reactorTex)
             _spriteBatch.Draw(reactorTex, rect, Color.White);
+        else if (item.Tool == EditorTool.Wall && item.HalfBlockWall)
+        {
+            // Direct user bug report ("текстура полублочной стены в менюшке не соответствует
+            // действительности") - the old branch below drew the SAME full wall texture every
+            // other Wall item uses, just tinted a duller grey - never actually showed the half-
+            // block shape at all. Matches exactly how a placed half-block tile really renders
+            // (DrawEditorWallTile's own forcedRect branch: a flat half-filled rect, floor showing
+            // through the free half) - and reads _editorWallHalfBlockSide LIVE, so rotating with R
+            // while this item is selected updates the icon immediately, answering "видно как она
+            // повернута" right in the palette before a single tile is placed.
+            _spriteBatch.Draw(_pixel, rect, new Color(46, 52, 66));
+            var solidHalf = EditorHalfRect(rect, _editorWallHalfBlockSide);
+            _spriteBatch.Draw(_pixel, solidHalf, new Color(120, 130, 150));
+            DrawRectOutline(solidHalf, Color.Black, 1f);
+        }
         else if (item.Tool == EditorTool.Wall && _editorWallVerticalTexture is { } wallTex)
             // Reinforced/Window (direct user request) reuse the same real wall texture, just tinted -
             // no bespoke art exists for either variant yet, same "reuse real art" convention this
             // file's own top comment already established for device icons.
             _spriteBatch.Draw(wallTex, rect, ItemTint(item));
         else if (item.Kind is { } kind)
-            _spriteBatch.Draw(DeviceIconSkin.Get(FaceForKind(kind), rect.Width, lit: true), rect, Color.White);
+            _spriteBatch.Draw(DeviceIconSkin.Get(FaceForKind(kind), rect.Width, rect.Height, lit: true), rect, Color.White);
         else
         {
             DrawItemIcon(rect, ItemTint(item));
@@ -500,9 +591,16 @@ public partial class Game1
                 : item.CompartmentId is { } compartmentId
                     ? _editorTool == EditorTool.Compartment && compartmentId == _editorSelectedCompartmentId
                     : item.Tool == EditorTool.Wall
-                        ? _editorTool == EditorTool.Wall && _editorWallMaterial == (item.Material ?? WallMaterial.Standard)
+                        // Direct user request ("полублочный иллюминатор") - Material is now always
+                        // compared, even for a half-block item (used to be skipped whenever
+                        // HalfBlockWall was true, back when only ONE half-block item - Standard
+                        // material - existed at all, so it could never actually disagree; now a
+                        // half-block Window item would otherwise show as "selected" alongside the
+                        // half-block Standard one any time either was picked).
+                        ? _editorTool == EditorTool.Wall && _editorWallHalfBlock == item.HalfBlockWall
+                          && _editorWallMaterial == (item.Material ?? WallMaterial.Standard)
                         : item.Tool == EditorTool.Door
-                            ? _editorTool == EditorTool.Door && _editorDoorWide == item.WideDoor
+                            ? _editorTool == EditorTool.Door && _editorDoorSpanTiles == item.DoorSpanTiles
                             : _editorTool == item.Tool;
 
             DrawItemArt(iconRect, item);

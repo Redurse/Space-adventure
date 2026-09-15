@@ -46,12 +46,22 @@ public sealed class RoomLighting : IDisposable
     // low dynamic range behaviour exactly.
     public float Intensity { get; set; } = 3.2f;
 
+    // Direct user request - the settings-screen "disable shaders" switch. Forces Build onto the
+    // same BasicEffect vertex-colour fan the constructor's own doc comment already describes as the
+    // fallback for "the content build hasn't produced Shaders/Light" - runtime-selected instead of
+    // load-time-selected, nothing else about the lighting (still on, still shaped by walls/lamps)
+    // changes.
+    public bool Enabled { get; set; } = true;
+
     private readonly GraphicsDevice _device;
     private readonly BasicEffect _effect;
     // Null when the content build has not produced Shaders/Light - the vertex-colour path below
     // still works and looks nearly the same, just faceted along the ray fan.
     private readonly Effect? _lightEffect;
     private readonly List<float> _offsets = new();
+    // Scratch buffer for ShadowCast.FilterNearby - reused across every lamp in a single Build call
+    // (own doc comment there) rather than a fresh List per lamp.
+    private readonly List<WallSegment> _nearbyWalls = new();
     private RenderTarget2D? _target;
     private VertexPositionColor[] _vertices = new VertexPositionColor[3 * 512];
     private int _vertexCount;
@@ -78,7 +88,7 @@ public sealed class RoomLighting : IDisposable
         if (!EnsureTarget())
             return false;
 
-        if (_lightEffect is not null)
+        if (_lightEffect is not null && Enabled)
         {
             RasterizePerPixel(walls, lights, renderScale, floor, origin);
             return true;
@@ -96,17 +106,22 @@ public sealed class RoomLighting : IDisposable
     // itself, and pre-faded vertices would apply the curve twice.
     private void AddLight(IReadOnlyList<WallSegment> walls, PointLight light, Vector2 origin, bool fadeIntoVertices)
     {
-        ShadowCast.CollectRayOffsets(_offsets, walls, light.Position, 0f, MathF.PI * 2f, full: true);
+        // See ShadowCast.FilterNearby's own doc comment - a wall farther than the lamp's own radius
+        // could never be hit by this lamp's own cast anyway, so it never needs to reach
+        // CollectRayOffsets/Cast at all. This is what actually made a docked ship+station's combined
+        // wall list affordable per-lamp (direct user report, "проблема из-за низкого фпс").
+        ShadowCast.FilterNearby(_nearbyWalls, walls, light.Position, light.Radius);
+        ShadowCast.CollectRayOffsets(_offsets, _nearbyWalls, light.Position, 0f, MathF.PI * 2f, full: true);
 
         var rayCount = _offsets.Count;
         Grow(_vertexCount + rayCount * 3);
         var center = new VertexPositionColor(
             new Vector3(origin + light.Position * ShipRenderer.PixelsPerUnit, 0f), light.Color);
 
-        var previous = RimVertex(_offsets[0], walls, light, origin, fadeIntoVertices);
+        var previous = RimVertex(_offsets[0], _nearbyWalls, light, origin, fadeIntoVertices);
         for (var i = 1; i <= rayCount; i++)
         {
-            var current = RimVertex(_offsets[i % rayCount], walls, light, origin, fadeIntoVertices);
+            var current = RimVertex(_offsets[i % rayCount], _nearbyWalls, light, origin, fadeIntoVertices);
             _vertices[_vertexCount++] = center;
             _vertices[_vertexCount++] = previous;
             _vertices[_vertexCount++] = current;

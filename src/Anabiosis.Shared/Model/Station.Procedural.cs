@@ -161,7 +161,15 @@ public sealed partial class Station
     // every hand-authored and Ship-Editor-built hull - so this connector, and therefore the whole
     // generated shape hung off it, only ever needs a straight translation to follow a hull swap,
     // never a rotation (World.cs's RebuildStationLayouts relies on exactly this).
-    public static Station CreateProcedural(string pointId, StationKind kind, Vec2 connectorAnchor)
+    // airlockSide: which wall of the SHIP's own room the docking airlock sits on (Ship.Convert.cs's
+    // InferAirlockSide) - defaults to Right, the one hand-authored hulls (Corvette/Cruiser/Frigate)
+    // always use, so every pre-existing call site (tests, Station.Default.cs, GalaxyMapPanel's
+    // schematic preview) keeps behaving exactly as before. World.cs is the one caller that computes
+    // and passes the ship's REAL side, since the free-tile Ship Editor lets a player put an airlock
+    // on any of the 4 walls - the layout below is built assuming the door faces east/Right (hull to
+    // the west) and then re-oriented around connectorAnchor for the other 3 sides, rather than
+    // re-deriving 4 separate coordinate formulas by hand (see ReorientPoint's own doc comment).
+    public static Station CreateProcedural(string pointId, StationKind kind, Vec2 connectorAnchor, EdgeSide airlockSide = EdgeSide.Right)
     {
         var rng = new Random(SeedFrom(pointId));
         var mandatory = MandatoryModulesFor(kind);
@@ -209,8 +217,8 @@ public sealed partial class Station
         {
             var span = MathF.Min(Door.StandardSpanUnits, overlap.OverlapLength);
             doors.Add(overlap.Vertical
-                ? new Door($"{pointId}-door-{doorIndex++}", overlap.RoomAId, overlap.RoomBId, overlap.At, overlap.OverlapCenter, 1.0f, span)
-                : new Door($"{pointId}-door-{doorIndex++}", overlap.RoomAId, overlap.RoomBId, overlap.OverlapCenter, overlap.At, span, 1.0f));
+                ? new Door($"{pointId}-door-{doorIndex++}", overlap.RoomAId, overlap.RoomBId, overlap.At, overlap.OverlapCenter, 1.0f, span, Vertical: true)
+                : new Door($"{pointId}-door-{doorIndex++}", overlap.RoomAId, overlap.RoomBId, overlap.OverlapCenter, overlap.At, span, 1.0f, Vertical: false));
         }
 
         var npcs = new List<StationNpc>();
@@ -243,10 +251,65 @@ public sealed partial class Station
         var shiftedDoors = doors.Select(d => d with { X = d.X + offsetX, Y = d.Y + offsetY }).ToList();
         var shiftedNpcs = npcs.Select(npc => npc with { X = npc.X + offsetX, Y = npc.Y + offsetY }).ToList();
         var shiftedCrates = crates.Select(c => c with { X = c.X + offsetX, Y = c.Y + offsetY }).ToList();
+
+        // Everything above is built assuming the airlock faces east (hull to the west) - true for
+        // every hand-authored hull, never guaranteed for a free-tile-editor-built one (any of the 4
+        // EdgeSide values). Rather than re-deriving 4 separate coordinate formulas by hand (easy to
+        // get subtly wrong - Left only needs a mirror, Top/Bottom need axes swapped AND each room's
+        // own Width/Height to swap too), reorient the whole already-built east-facing layout as one
+        // rigid transform pivoting on connectorAnchor: identity for Right, a mirror for Left, a +/-90°
+        // rotation for Bottom/Top. ReorientRect/ReorientPoint below implement this generically by
+        // transforming a rect's two opposite corners as plain points and re-deriving Width/Height from
+        // the result, so the same formula is correct for every side without a case-by-case rederivation.
+        if (airlockSide != EdgeSide.Right)
+        {
+            rooms = rooms.Select(r => { var (x, y, w, h) = ReorientRect(r.X, r.Y, r.Width, r.Height, connectorAnchor, airlockSide); return new Room(r.Id, r.Name, x, y, w, h); }).ToList();
+            var flipDoorAxis = airlockSide is EdgeSide.Top or EdgeSide.Bottom;
+            shiftedDoors = shiftedDoors.Select(d =>
+            {
+                var (x, y, w, h) = ReorientRect(d.X - d.Width / 2f, d.Y - d.Height / 2f, d.Width, d.Height, connectorAnchor, airlockSide);
+                return d with { X = x + w / 2f, Y = y + h / 2f, Width = w, Height = h, Vertical = flipDoorAxis ? !d.Vertical : d.Vertical };
+            }).ToList();
+            shiftedNpcs = shiftedNpcs.Select(npc => { var (x, y) = ReorientPoint(npc.X, npc.Y, connectorAnchor, airlockSide); return npc with { X = x, Y = y }; }).ToList();
+            shiftedCrates = shiftedCrates.Select(c => { var (x, y) = ReorientPoint(c.X, c.Y, connectorAnchor, airlockSide); return c with { X = x, Y = y }; }).ToList();
+        }
+
         var (anchorX, anchorY) = connectorAnchor.AsFloat();
         var shipConnector = new AirlockOuterDoor($"{pointId}-connector", rooms[0].Id, anchorX, anchorY, 1.0f, Door.StandardSpanUnits);
 
         return new Station(rooms, shiftedDoors, shipConnector, shiftedNpcs, shiftedCrates, WorldCenter, rooms[0].Id);
+    }
+
+    // Maps a point built under the "airlock faces east" assumption onto its correct position for the
+    // ship's REAL airlock side, pivoting on connectorAnchor (which always stays fixed in place - it's
+    // the ship's own door). Right is the identity (already correct). Left is a plain mirror across the
+    // vertical line through the anchor. Bottom/Top are a +90°/-90° rotation - verified against "a
+    // point due east of the anchor must land due south (Bottom) / due north (Top) of it": rotating
+    // (anchor.X + d, anchor.Y) by +90° around anchor gives (anchor.X, anchor.Y + d), and by -90° gives
+    // (anchor.X, anchor.Y - d), which is exactly Bottom's/Top's own docking direction.
+    private static (float X, float Y) ReorientPoint(float x, float y, Vec2 anchor, EdgeSide airlockSide)
+    {
+        var (ax, ay) = anchor.AsFloat();
+        return airlockSide switch
+        {
+            EdgeSide.Right => (x, y),
+            EdgeSide.Left => (2f * ax - x, y),
+            EdgeSide.Bottom => (ax - (y - ay), ay + (x - ax)),
+            EdgeSide.Top => (ax + (y - ay), ay - (x - ax)),
+            _ => (x, y),
+        };
+    }
+
+    // Same reorientation, applied to a rect by transforming its two opposite corners as plain points
+    // and re-deriving Width/Height (Min/Max rather than a per-side formula) - a 90° rotation swaps
+    // which of Width/Height ends up on which world axis, and taking the corners' own min/max gets
+    // that right automatically instead of needing a separate "swap Width and Height for Bottom/Top"
+    // rule spelled out by hand.
+    private static (float X, float Y, float Width, float Height) ReorientRect(float x, float y, float width, float height, Vec2 anchor, EdgeSide airlockSide)
+    {
+        var (x1, y1) = ReorientPoint(x, y, anchor, airlockSide);
+        var (x2, y2) = ReorientPoint(x + width, y + height, anchor, airlockSide);
+        return (MathF.Min(x1, x2), MathF.Min(y1, y2), MathF.Abs(x2 - x1), MathF.Abs(y2 - y1));
     }
 
     // The user's own stated range for a station's total room count (mandatory + secondary - see

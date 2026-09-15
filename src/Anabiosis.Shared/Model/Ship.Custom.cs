@@ -20,6 +20,7 @@ public sealed partial class Ship
         var wallBlocks = BuildWallBlocks(def);
         wallBlocks.AddRange(GenerateInteriorWallBlocks(rooms));
         ApplyWallMaterials(wallBlocks, rooms, def.WallMaterials);
+        ApplyWallOpenSides(wallBlocks, rooms, def.WallOpenSides);
 
         var reactorDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Reactor);
         var distributionDevice = def.Devices.First(d => d.Kind == CustomDeviceKind.Distribution);
@@ -41,10 +42,20 @@ public sealed partial class Ship
         var navigationDeviceCount = def.Devices.Count(d => d.Kind == CustomDeviceKind.Navigation);
         var extraReactorPositions = ExtraPositionsOfKind(def, CustomDeviceKind.Reactor);
         var extraDistributionPositions = ExtraPositionsOfKind(def, CustomDeviceKind.Distribution);
-        var extraHelmConsoles = ExtraPositionsOfKind(def, CustomDeviceKind.Helm)
-            .Select((p, i) => new HelmConsole($"helm-console-extra-{i + 1}", RoomIdAt(rooms, p), p.AsFloat().X, p.AsFloat().Y)).ToList();
-        var extraNavigationConsoles = ExtraPositionsOfKind(def, CustomDeviceKind.Navigation)
-            .Select((p, i) => new NavigationConsole($"navigation-console-extra-{i + 1}", RoomIdAt(rooms, p), p.AsFloat().X, p.AsFloat().Y)).ToList();
+        // Direct user request ("сделай чтобы на корабле могло быть несколько батарей") - Battery is
+        // genuinely optional (unlike Reactor/Distribution above), so the raw count can be 0 - always
+        // at least 1 here since BatteryBlock itself always exists (the placed one, or the auto-
+        // placed fallback right next to the reactor) regardless of how many the player actually drew.
+        var batteryDeviceCount = Math.Max(1, def.Devices.Count(d => d.Kind == CustomDeviceKind.Battery));
+        var extraBatteryPositions = ExtraPositionsOfKind(def, CustomDeviceKind.Battery);
+        // Direct user bug report ("устройства не повернуты как в редакторе") - unlike
+        // ExtraPositionsOfKind's own Vec2-only shape (fine for Reactor/Distribution, both square),
+        // Helm/Navigation need their own Rotated flag carried through too, so these two go straight
+        // to def.Devices instead.
+        var extraHelmConsoles = def.Devices.Where(d => d.Kind == CustomDeviceKind.Helm).Skip(1)
+            .Select((d, i) => new HelmConsole($"helm-console-extra-{i + 1}", RoomIdAt(rooms, d), d.X, d.Y, d.Rotated)).ToList();
+        var extraNavigationConsoles = def.Devices.Where(d => d.Kind == CustomDeviceKind.Navigation).Skip(1)
+            .Select((d, i) => new NavigationConsole($"navigation-console-extra-{i + 1}", RoomIdAt(rooms, d), d.X, d.Y, d.Rotated)).ToList();
 
         // The reactor now always draws its own fixed 4x4-tile texture (ShipRenderer.ReactorBlockSize),
         // guaranteed by the Ship Editor's own footprint placement rules - so SizeScale stays at its
@@ -59,8 +70,8 @@ public sealed partial class Ship
         var batteryBlock = batteryDevice is not null
             ? new BatteryBlock("battery-block", RoomIdAt(rooms, batteryDevice), batteryDevice.X, batteryDevice.Y)
             : new BatteryBlock("battery-block", RoomIdAt(rooms, reactorDevice), reactorDevice.X + 1f, reactorDevice.Y + 1f);
-        var helmConsole = new HelmConsole("helm-console", RoomIdAt(rooms, helmDevice), helmDevice.X, helmDevice.Y);
-        var navigationConsole = new NavigationConsole("navigation-console", RoomIdAt(rooms, navigationDevice), navigationDevice.X, navigationDevice.Y);
+        var helmConsole = new HelmConsole("helm-console", RoomIdAt(rooms, helmDevice), helmDevice.X, helmDevice.Y, helmDevice.Rotated);
+        var navigationConsole = new NavigationConsole("navigation-console", RoomIdAt(rooms, navigationDevice), navigationDevice.X, navigationDevice.Y, navigationDevice.Rotated);
 
         var systemDevices = BuildSystemDevices(def, rooms);
         var turrets = BuildTurrets(def, rooms);
@@ -70,6 +81,11 @@ public sealed partial class Ship
             (id, roomId, x, y) => new SuitLocker(id, roomId, x, y));
         var storageRacks = BuildSimpleDevices(def, rooms, CustomDeviceKind.StorageRack,
             (id, roomId, x, y) => new StorageRack(id, roomId, x, y));
+        // Direct user bug report ("щитки отображались в игре а не была просто пустота") - purely
+        // decorative, same "many independent instances" shape as the 3 above, just with no
+        // dedicated mechanic behind it at all (JunctionBox.cs's own doc comment).
+        var junctionBoxes = BuildSimpleDevices(def, rooms, CustomDeviceKind.Junction,
+            (id, roomId, x, y) => new JunctionBox(id, roomId, x, y));
 
         var cardTableDevice = def.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.CardTable);
         var cardTable = cardTableDevice is not null
@@ -85,7 +101,7 @@ public sealed partial class Ship
             .Select((d, i) => new HullCamera($"camera-{i + 1}", RoomIdAt(rooms, d), d.X, d.Y, d.CameraSide ?? CameraMountSide.Aft))
             .ToList();
         var componentMounts = def.Devices.Where(d => d.Kind == CustomDeviceKind.ComponentMount)
-            .Select((d, i) => new ComponentMount($"mount-{i + 1}", RoomIdAt(rooms, d), d.X, d.Y, d.TargetDoorId))
+            .Select((d, i) => new ComponentMount(d.Id ?? $"mount-{i + 1}", RoomIdAt(rooms, d), d.X, d.Y, d.TargetDoorId))
             .ToList();
 
         // Unlike CardTable, genuinely optional - a hull the player never dropped one onto simply
@@ -95,24 +111,89 @@ public sealed partial class Ship
             ? new Jukebox("jukebox", RoomIdAt(rooms, jukeboxDevice), jukeboxDevice.X, jukeboxDevice.Y)
             : null;
 
-        var terminalDevice = def.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.Terminal);
-        var terminal = terminalDevice is not null
-            ? new Terminal("terminal", RoomIdAt(rooms, terminalDevice), terminalDevice.X, terminalDevice.Y)
-            : null;
+        // Direct user request ("это в будущем будет одно из главных устройств, их будет много") -
+        // one physical terminal per placed device, same "many independent instances" shape
+        // AmmoStorage/SuitLocker/StorageRack already use, not the old "at most one per ship" model.
+        var terminals = BuildWallDevices(def, rooms, CustomDeviceKind.Terminal,
+            (id, roomId, x, y, facingSide) => new Terminal(id, roomId, x, y, facingSide));
+        // "на стену размером с полублок можно крепить только терминал и настенную лампу... когда
+        // она установлена, она излучает свет" - same wall-mounted shape as Terminal, no on/off state
+        // of its own (Game1.Lighting.cs lights it whenever the ship's own lamps are on).
+        var wallLamps = BuildWallDevices(def, rooms, CustomDeviceKind.WallLamp,
+            (id, roomId, x, y, facingSide) => new WallLamp(id, roomId, x, y, facingSide));
 
         var engines = def.Engines
             .Select((e, i) => new ShipEngine($"engine-{i + 1}", RoomIdAt(rooms, new Vec2(e.X, e.Y)), e.X, e.Y, e.Facing, e.MaxThrust, e.Role))
             .ToList();
 
-        return new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
+        // M-doors-as-edges (humble-soaring-cat.md) - RoomAId/RoomBId are looked up once here, same
+        // "Room.Contains on each flanking tile" technique every other device's RoomId already uses
+        // above - both flanking tiles are always ordinary floor tiles of SOME room (CanPlaceDoorEdge
+        // required free floor on both when the editor placed this), never a corridor-less gap.
+        var doorEdges = def.DoorEdges
+            .Select(d => new ShipDoorEdge(d.Id,
+                RoomIdAt(rooms, new Vec2(d.X + 0.5f, d.Y + 0.5f)),
+                RoomIdAt(rooms, d.Side switch
+                {
+                    TileSide.East => new Vec2(d.X + 1.5f, d.Y + 0.5f),
+                    _ => new Vec2(d.X + 0.5f, d.Y + 1.5f),
+                }),
+                new TileCoord(d.X, d.Y), d.Side))
+            .ToList();
+
+        var ship = new Ship(rooms, doors, airlockOuterDoors, turrets, cameras, ammoStorages, suitLockers, systemDevices, wallBlocks,
             reactorBlock, distributionBlock, batteryBlock, navigationConsole, helmConsole, storageRacks,
             helmConsole.Position, helmConsole.RoomId, cardTable, def.ForwardDegrees, componentMounts: componentMounts, jukebox: jukebox,
-            terminal: terminal,
+            terminals: terminals, wallLamps: wallLamps,
             reactorDeviceCount: reactorDeviceCount, distributionDeviceCount: distributionDeviceCount,
             helmDeviceCount: helmDeviceCount, navigationDeviceCount: navigationDeviceCount,
             extraHelmConsoles: extraHelmConsoles, extraNavigationConsoles: extraNavigationConsoles,
             extraReactorPositions: extraReactorPositions, extraDistributionPositions: extraDistributionPositions,
-            engines: engines, isCustomBuilt: true);
+            batteryDeviceCount: batteryDeviceCount, extraBatteryPositions: extraBatteryPositions,
+            junctionBoxes: junctionBoxes,
+            engines: engines,
+            supplementalWallTiles: def.SupplementalWallTiles, forcedFloorTiles: def.ForcedFloorTiles,
+            wallOpenSideOverrides: def.WallOpenSides, wallMaterialOverrides: def.WallMaterials, doorEdges: doorEdges, isCustomBuilt: true);
+
+        // TileShipBuilder.BuildDefinition's own step 3.6 - extra wall tiles a T-junction's own
+        // private ring needed that couldn't safely be folded into any room's Rects (see that step's
+        // own doc comment). Painted directly onto the already-built Tiles grid, after
+        // TileGridRasterizer.FromRooms (Ship's own constructor) has already run - genuinely just
+        // extra wall material, never room geometry, so this can never disturb Rooms/Doors/Airlocks
+        // or anything derived from them above.
+        foreach (var coord in def.SupplementalWallTiles)
+        {
+            ship.Tiles.SetFloor(coord, true);
+            ship.Tiles.SetWall(coord, TileWallKind.Solid);
+        }
+        // The other half of the same fix: force every tile that was genuinely open floor in the
+        // player's own painted canvas back to plain floor - TileGridRasterizer.FromRooms rasterizes
+        // purely from room-rect/edge-adjacency geometry and has no way to know a particular edge
+        // tile of a room's own rect is supposed to stay open because the true hull wall moved one
+        // tile further out (one of the SupplementalWallTiles above). Always safe: none of these
+        // coordinates was ever a wall/door in the original canvas.
+        foreach (var coord in def.ForcedFloorTiles)
+            if (ship.Tiles.CellAt(coord) is { Wall: not TileWallKind.None })
+                ship.Tiles.SetWall(coord, TileWallKind.None);
+
+        // Direct user request ("хочу сделать чтобы игрок сам выбирал" полублочную стену) - the real
+        // collision half of ApplyWallOpenSides above (that one only reaches WallBlock, which the
+        // client reads for rendering; TileMovement.cs's own position-aware IsWalkable reads THIS
+        // grid instead). SetWallOpenSide's own guard (TileGrid.cs) already no-ops for anything that
+        // isn't an intact Solid tile, so this can never misfire onto a door/breach/no-wall tile even
+        // if a stale coordinate somehow survived a later edit.
+        foreach (var openSide in def.WallOpenSides)
+            ship.Tiles.SetWallOpenSide(new TileCoord(openSide.X, openSide.Y), openSide.Side);
+
+        // M-doors-as-edges - the edge itself lives on the live TileGrid (movement/occlusion/atmosphere
+        // all read Tiles.DoorEdges directly), not on the Ship.DoorEdges list above (that's just the
+        // Id/RoomAId/RoomBId metadata). Applied last, after SupplementalWallTiles/ForcedFloorTiles/
+        // WallOpenSides have already settled every tile's final Wall/HasFloor state, so
+        // CanPlaceDoorEdge's own "both flanking tiles already free floor" guard sees the ship's true
+        // final geometry rather than an intermediate rasterization artifact.
+        foreach (var edge in def.DoorEdges)
+            ship.Tiles.AddDoorEdge(new TileCoord(edge.X, edge.Y), edge.Side, edge.Id);
+        return ship;
     }
 
     private static string RoomIdAt(List<Room> rooms, CustomDeviceDef device) =>
@@ -135,28 +216,22 @@ public sealed partial class Ship
 
     private static List<Door> BuildDoors(CustomShipDefinition def)
     {
-        var overlaps = ShipLayoutGeometry.FindRoomPairOverlaps(def.Rooms);
         var doors = new List<Door>();
         var index = 0;
         foreach (var doorDef in def.Doors)
         {
-            var found = false;
-            foreach (var overlap in overlaps)
-            {
-                var matches = (overlap.RoomAId == doorDef.RoomAId && overlap.RoomBId == doorDef.RoomBId)
-                    || (overlap.RoomAId == doorDef.RoomBId && overlap.RoomBId == doorDef.RoomAId);
-                if (!matches)
-                    continue;
-
-                var span = MathF.Min(Door.StandardSpanUnits, overlap.OverlapLength);
-                doors.Add(overlap.Vertical
-                    ? new Door($"door-{index++}", overlap.RoomAId, overlap.RoomBId, overlap.At, overlap.OverlapCenter, 1.0f, span)
-                    : new Door($"door-{index++}", overlap.RoomAId, overlap.RoomBId, overlap.OverlapCenter, overlap.At, span, 1.0f));
-                found = true;
-                break;
-            }
-            if (!found)
-                throw new InvalidOperationException($"Door between {doorDef.RoomAId} and {doorDef.RoomBId} has no shared wall.");
+            var overlap = ShipLayoutGeometry.FindOverlapAt(def.Rooms, doorDef.X, doorDef.Y, doorDef.Vertical)
+                ?? throw new InvalidOperationException($"Door at ({doorDef.X}, {doorDef.Y}) has no shared wall there.");
+            var span = doorDef.Wide ? MathF.Min(Door.StandardSpanUnits, overlap.OverlapLength) : 1f;
+            // Vertical passed explicitly (not left to Door.IsVertical's own Width<=Height
+            // fallback) - the one producer of a genuinely 1x1 narrow door, where Width==Height==1
+            // is truly ambiguous (humble-soaring-cat.md "Дверь как устройство со своим
+            // footprint'ом").
+            var id = doorDef.Id ?? $"door-{index}";
+            index++;
+            doors.Add(doorDef.Vertical
+                ? new Door(id, overlap.RoomAId, overlap.RoomBId, doorDef.X, doorDef.Y, 1.0f, span, Vertical: true)
+                : new Door(id, overlap.RoomAId, overlap.RoomBId, doorDef.X, doorDef.Y, span, 1.0f, Vertical: false));
         }
         return doors;
     }
@@ -172,9 +247,11 @@ public sealed partial class Ship
             var (midX, midY) = ShipLayoutGeometry.SideMidpoint(room, airlockDef.Side);
             var span = MathF.Min(Door.StandardSpanUnits, ShipLayoutGeometry.SideLength(room, airlockDef.Side));
             var vertical = airlockDef.Side is EdgeSide.Left or EdgeSide.Right;
+            var id = airlockDef.Id ?? $"airlock-{index}";
+            index++;
             airlocks.Add(vertical
-                ? new AirlockOuterDoor($"airlock-{index++}", room.Id, midX, midY, 1.0f, span)
-                : new AirlockOuterDoor($"airlock-{index++}", room.Id, midX, midY, span, 1.0f));
+                ? new AirlockOuterDoor(id, room.Id, midX, midY, 1.0f, span)
+                : new AirlockOuterDoor(id, room.Id, midX, midY, span, 1.0f));
         }
         return airlocks;
     }
@@ -290,6 +367,27 @@ public sealed partial class Ship
         }
     }
 
+    // Direct user request ("хочу сделать чтобы игрок сам выбирал" полублочную стену) - identical
+    // shape to ApplyWallMaterials above, just setting WallBlock.WallOpenSide instead of Material.
+    // This is what makes a manually-painted half-block wall visible to the CLIENT at all (WallBlock
+    // is the one representation already synced every tick via WorldSnapshot) - ship.Tiles itself
+    // (set directly in FromCustomDefinition, right below this method's own call site) is what makes
+    // it real for SERVER-SIDE collision (TileMovement.cs's own position-aware IsWalkable).
+    private static void ApplyWallOpenSides(List<WallBlock> wallBlocks, List<Room> rooms, IReadOnlyList<CustomWallOpenSideDef> openSides)
+    {
+        if (openSides.Count == 0)
+            return;
+        var sideByTile = openSides.ToDictionary(o => new TileCoord(o.X, o.Y), o => o.Side);
+        var roomsById = rooms.ToDictionary(r => r.Id);
+        for (var i = 0; i < wallBlocks.Count; i++)
+        {
+            var block = wallBlocks[i];
+            var coord = TileGridRasterizer.WallBlockTileCoord(block, rooms, roomsById[block.RoomId]);
+            if (sideByTile.TryGetValue(coord, out var side))
+                wallBlocks[i] = block with { WallOpenSide = side };
+        }
+    }
+
     private static readonly IReadOnlyDictionary<CustomDeviceKind, PowerSystemId> SystemDeviceKinds = new Dictionary<CustomDeviceKind, PowerSystemId>
     {
         [CustomDeviceKind.Engine] = PowerSystemId.Engine,
@@ -306,7 +404,7 @@ public sealed partial class Ship
         {
             var placed = def.Devices.Where(d => d.Kind == kind).ToList();
             for (var i = 0; i < placed.Count; i++)
-                devices.Add(new ShipSystemDevice($"system-{system}-{i + 1}".ToLowerInvariant(), RoomIdAt(rooms, placed[i]), placed[i].X, placed[i].Y, system,
+                devices.Add(new ShipSystemDevice(placed[i].Id ?? $"system-{system}-{i + 1}".ToLowerInvariant(), RoomIdAt(rooms, placed[i]), placed[i].X, placed[i].Y, system,
                     ThrustBonus: placed[i].ThrustBonus, TurnBonus: placed[i].TurnBonus, CapacityBonus: placed[i].CapacityBonus));
         }
         return devices;
@@ -319,22 +417,24 @@ public sealed partial class Ship
         foreach (var device in def.Devices.Where(d => d.Kind is CustomDeviceKind.TurretBallistic or CustomDeviceKind.TurretLaser or CustomDeviceKind.TurretMachineGun))
         {
             var roomId = RoomIdAt(rooms, device);
+            var id = device.Id ?? $"turret-{index}";
+            index++;
             // The editor's own placeable catalog (CustomDeviceKind) still only offers the first two
             // slots - the Magnetic cannon just sits behind the same "ballistic" icon it always has.
             // TurretMachineGun (M60 follow-up) isn't offered by the editor either, but round-trips
             // the Cruiser's own hand-authored 3rd turret (Ship.Cruiser.cs) instead of dropping it.
             turrets.Add(device.Kind switch
             {
-                CustomDeviceKind.TurretBallistic => new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
+                CustomDeviceKind.TurretBallistic => new Turret(id, roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
                     DamagePerShot: TurretBalance.MagneticDamage, CooldownSeconds: TurretBalance.MagneticCooldownSeconds,
                     WeaponType: TurretWeaponType.Magnetic, MagazineCapacity: TurretBalance.MagneticMagazineCapacity,
                     MountSide: device.MountSide),
-                CustomDeviceKind.TurretMachineGun => new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
+                CustomDeviceKind.TurretMachineGun => new Turret(id, roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
                     DamagePerShot: TurretBalance.MachineGunDamagePerPellet, CooldownSeconds: TurretBalance.MachineGunCooldownSeconds,
                     WeaponType: TurretWeaponType.MachineGun, MagazineCapacity: TurretBalance.MachineGunMagazineCapacity,
                     PelletsPerBurst: TurretBalance.MachineGunPelletsPerBurst, PelletSpreadDegrees: TurretBalance.MachineGunPelletSpreadDegrees,
                     MountSide: device.MountSide),
-                _ => new Turret($"turret-{index++}", roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
+                _ => new Turret(id, roomId, device.X, device.Y, MinAimDegrees: -45f, MaxAimDegrees: 45f,
                     DamagePerShot: TurretBalance.LaserDamagePerTick, CooldownSeconds: TurretBalance.LaserTickIntervalSeconds,
                     WeaponType: TurretWeaponType.Laser, MaxCharge: TurretBalance.LaserMaxCharge,
                     ChargePerShot: TurretBalance.LaserChargePerTick,
@@ -350,7 +450,22 @@ public sealed partial class Ship
         var placed = def.Devices.Where(d => d.Kind == kind).ToList();
         var result = new List<T>();
         for (var i = 0; i < placed.Count; i++)
-            result.Add(create($"{kind}-{i + 1}".ToLowerInvariant(), RoomIdAt(rooms, placed[i]), placed[i].X, placed[i].Y));
+            result.Add(create(placed[i].Id ?? $"{kind}-{i + 1}".ToLowerInvariant(), RoomIdAt(rooms, placed[i]), placed[i].X, placed[i].Y));
+        return result;
+    }
+
+    // Same shape as BuildSimpleDevices, for the two wall-mounted kinds (Terminal/WallLamp) that also
+    // need their own FacingSide (direct user request, "визуально выглядел в соответствии с
+    // полублоком") - falls back to North for a save from before this field existed rather than
+    // crashing (WallDeviceFacingSide is nullable exactly for that backward-compat case).
+    private static List<T> BuildWallDevices<T>(CustomShipDefinition def, List<Room> rooms, CustomDeviceKind kind,
+        Func<string, string, float, float, TileSide, T> create)
+    {
+        var placed = def.Devices.Where(d => d.Kind == kind).ToList();
+        var result = new List<T>();
+        for (var i = 0; i < placed.Count; i++)
+            result.Add(create(placed[i].Id ?? $"{kind}-{i + 1}".ToLowerInvariant(), RoomIdAt(rooms, placed[i]), placed[i].X, placed[i].Y,
+                placed[i].WallDeviceFacingSide ?? TileSide.North));
         return result;
     }
 }

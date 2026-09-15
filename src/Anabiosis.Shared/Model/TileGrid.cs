@@ -73,8 +73,33 @@ public sealed class TileCell
     // them paired through remove/save/load.
     public string? DoorGroupId;
     public string? DeviceId;    // at most one device per cell; occupies the floor slot, blocks movement
-    public string? TerminalId;  // at most one terminal per cell; does NOT occupy the floor slot, does NOT block movement
-    public TileSide? TerminalWallSide; // which neighbor direction must carry a wall for the terminal to mount against
+    // A wall-mounted device (direct user request - "на стену размером с полублок можно крепить
+    // только терминал и настенную лампу"; TileGrid.PlaceWallDevice/PlaceRecessedWallDevice enforce
+    // that restriction) - at most one per cell. WallDeviceKind is null exactly when WallDeviceId is.
+    public string? WallDeviceId;
+    public CustomDeviceKind? WallDeviceKind;
+    // Which side of THIS tile the device's own half-block visual sits on - meaningful whenever
+    // WallDeviceId is set, in EITHER mode: for a recessed device (WallDeviceRecessed true) that's
+    // the free half, the OPPOSITE of this same tile's own WallOpenSide; for a floor-adjacent device
+    // (false) it's the neighbor direction that actually carries the wall it's mounted on. Purely
+    // which way the visual faces - see WallDeviceRecessed's own doc comment for COLLISION.
+    public TileSide? WallDeviceMountSide;
+    // Direct user request ("не угловые клетки занимали только половину блока") - meaningful only
+    // when Wall == Solid, and only for a STRAIGHT wall run (exactly one outward-facing side, as if
+    // this room stood alone - TileGridRasterizer.FromRooms computes it per-edge at generation time).
+    // Null means either no wall, a Door, a breached-irrelevant wall, or a genuine CORNER (two edges
+    // met here) - all of those stay full-thickness, unchanged from before this field existed. When
+    // set, the SOLID half of the tile sits on this side; the free/walkable half is the opposite side
+    // (TileSideExtensions.Opposite) - see TileGrid.IsWalkable's position-aware overload.
+    public TileSide? WallOpenSide;
+    // True when the wall-mounted device sits recessed in THIS tile's own free half
+    // (PlaceRecessedWallDevice) rather than protruding onto an ordinary adjacent floor tile
+    // (PlaceWallDevice/WallDeviceMountSide). Both modes fully block their own tile once placed
+    // (IsWalkable's own WallDeviceId check) - a recessed one fills its own free half while the
+    // wall's own solid half already blocks the rest of the same tile; a floor-adjacent one occupies
+    // its whole floor tile like any ordinary device. Only the VISUAL differs: both still draw as a
+    // half-block on WallDeviceMountSide's own side, never the full tile (ShipRenderer's own draw).
+    public bool WallDeviceRecessed;
     // Direct user request ("система отсеков по-другому") - true when this wall was placed by the
     // Ship Editor's "place a whole compartment" tool (CompartmentPlacer.Stamp) rather than painted by
     // hand with the free-tile Wall tool. No gameplay meaning at all (WallMaterial already carries
@@ -94,6 +119,21 @@ public sealed class SealedRegion
     public bool LeaksToVacuum; // true if any member tile borders true vacuum (no cell at all) rather than a wall/door
 }
 
+// Direct user request ("я хочу полностью переделать двери" - the narrow/1-tile door specifically,
+// humble-soaring-cat.md) - a door as a barrier that lives on the EDGE between two adjacent floor
+// tiles, rather than occupying a tile of its own the way TileWallKind.Door does. Both flanking
+// tiles stay ordinary open floor (HasFloor:true, Wall:None) at all times - only this edge-level
+// object decides whether movement/sight/region-connectivity crosses between them. Mirrors exactly
+// what a Door tile already carries (an open flag plus HP/breach) - see TileGrid's own edge API
+// below for how it plugs into region topology/collision/occlusion the same way a Door tile does.
+public sealed class TileDoorEdge
+{
+    public string Id = "";
+    public bool Open;
+    public float Hp;
+    public float MaxHp;
+}
+
 // M70 - the tile grid itself: sparse (Dictionary<TileCoord, TileCell>, not a 2D array) because a
 // hull grows in any direction as it's built, including negative coordinates, with no known bounding
 // box up front - the same "quiet dictionary keyed by id" pattern World.WallBlocks.cs and
@@ -111,8 +151,44 @@ public sealed class TileGrid
     public Dictionary<TileCoord, TileCell> Cells { get; } = new();
     public Dictionary<int, SealedRegion> Regions { get; } = new();
     public Dictionary<TileCoord, int> RegionIdOf { get; } = new();
+    // Door-edge barriers (see TileDoorEdge's own doc comment) - keyed by a CANONICAL (coord, side)
+    // pair so the same edge is never stored twice: always the tile with the smaller coordinate,
+    // always East or South (CanonicalEdgeKey below), regardless of which of the two flanking tiles
+    // a caller happens to ask from.
+    public Dictionary<(TileCoord Coord, TileSide Side), TileDoorEdge> DoorEdges { get; } = new();
 
     public TileCell? CellAt(TileCoord coord) => Cells.TryGetValue(coord, out var cell) ? cell : null;
+
+    // Normalizes (coord, side) to whichever of the two equivalent forms is canonical - a caller on
+    // the "far" side of an edge (e.g. asking from the East neighbor about its own West side) gets
+    // the same key a caller on the "near" side would. Only East/West and North/South pairs are
+    // ever equivalent to each other (an edge has exactly 2 sides it can be described from).
+    private static (TileCoord Coord, TileSide Side) CanonicalEdgeKey(TileCoord coord, TileSide side) => side switch
+    {
+        TileSide.West => (side.Offset(coord), TileSide.East),
+        TileSide.North => (side.Offset(coord), TileSide.South),
+        _ => (coord, side),
+    };
+
+    // The door edge between `coord` and its neighbor on `side`, if any - looked up canonically, so
+    // it doesn't matter which of the two flanking tiles/sides a caller asks from.
+    public TileDoorEdge? DoorEdgeAt(TileCoord coord, TileSide side) =>
+        DoorEdges.TryGetValue(CanonicalEdgeKey(coord, side), out var edge) ? edge : null;
+
+    // An edge blocks region connectivity/movement/sight exactly like an intact wall/door tile does
+    // (IsBlockingForRegion's own "regardless of open/closed, only breach matters" rule) - only a
+    // breached (Hp<=0) edge stops mattering.
+    private bool IsBlockingEdge(TileCoord coord, TileSide side) => DoorEdgeAt(coord, side) is { Hp: > 0 };
+
+    // Both flanking tiles must already be ordinary, empty open floor - no wall, no door, no device
+    // on either one (direct user request: "чтобы блоки рядом не удалялись" - this door never
+    // converts or clears anything, it only ever occupies the seam between two tiles that were
+    // already exactly what they needed to be) - and there must be no door edge there yet.
+    public bool CanPlaceDoorEdge(TileCoord coord, TileSide side)
+    {
+        bool IsFreeFloor(TileCoord c) => CellAt(c) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
+        return IsFreeFloor(coord) && IsFreeFloor(side.Offset(coord)) && DoorEdgeAt(coord, side) is null;
+    }
 
     public int? RegionIdAt(TileCoord coord) => RegionIdOf.TryGetValue(coord, out var id) ? id : null;
 
@@ -135,14 +211,19 @@ public sealed class TileGrid
                 WallMaterial = cell.WallMaterial,
                 DoorGroupId = cell.DoorGroupId,
                 DeviceId = cell.DeviceId,
-                TerminalId = cell.TerminalId,
-                TerminalWallSide = cell.TerminalWallSide,
+                WallDeviceId = cell.WallDeviceId,
+                WallDeviceKind = cell.WallDeviceKind,
+                WallDeviceMountSide = cell.WallDeviceMountSide,
                 WallFromCompartment = cell.WallFromCompartment,
+                WallOpenSide = cell.WallOpenSide,
+                WallDeviceRecessed = cell.WallDeviceRecessed,
             };
         foreach (var (id, region) in Regions)
             clone.Regions[id] = new SealedRegion { Id = region.Id, Tiles = new HashSet<TileCoord>(region.Tiles), LeaksToVacuum = region.LeaksToVacuum };
         foreach (var (coord, id) in RegionIdOf)
             clone.RegionIdOf[coord] = id;
+        foreach (var (key, edge) in DoorEdges)
+            clone.DoorEdges[key] = new TileDoorEdge { Id = edge.Id, Open = edge.Open, Hp = edge.Hp, MaxHp = edge.MaxHp };
         return clone;
     }
 
@@ -159,12 +240,73 @@ public sealed class TileGrid
     {
         if (!cell.HasFloor || cell.DeviceId != null)
             return false;
+        // A wall-mounted device (Terminal/WallLamp) always fully blocks its own tile now (direct
+        // user request, "в таком случае будет полностью заполнен тайл") - a recessed one already
+        // fills its own free half while the wall's own solid half blocks the rest; a floor-adjacent
+        // one occupies its whole floor tile like any ordinary device, just drawn as a half-block
+        // flush against the wall it mounts on (ShipRenderer's own wall-device draw).
+        if (cell.WallDeviceId != null)
+            return false;
         return cell.Wall switch
         {
             TileWallKind.None => true,
             TileWallKind.Door => cell.DoorOpen && cell.WallHp > 0 || cell.WallHp <= 0,
             TileWallKind.Solid => cell.WallHp <= 0,
             _ => false,
+        };
+    }
+
+    // Direct user request ("не угловые клетки занимали только половину блока... через неё можно
+    // ходить") - position-aware overload used only by TileMovement's per-corner sampling. Every
+    // other case (corner/door/breached/no-wall/no-floor) delegates straight to the tile-level
+    // IsWalkable(cell) above, unchanged - this only special-cases an intact, half-thick, non-corner
+    // Solid wall, which is the one situation where "walkable" genuinely depends on WHERE inside the
+    // tile the point falls, not just which tile it's in.
+    public static bool IsWalkable(TileCell cell, TileCoord coord, Vec2 position)
+    {
+        if (cell.Wall == TileWallKind.Solid && cell.WallHp > 0 && cell.WallOpenSide is { } openSide)
+            return cell.WallDeviceId is null && !IsInSolidHalf(coord, position, openSide);
+        return IsWalkable(cell);
+    }
+
+    // Direct user request ("я хочу полностью переделать двери") - used by TileMovement's own
+    // corner-sampling alongside the per-tile IsWalkable checks above: is stepping from `from` into
+    // the adjacent tile `to` blocked by an intact, closed door edge between them? Same "open OR
+    // breached is walkable, otherwise not" contract TileWallKind.Door's own IsWalkable already has -
+    // an instance method (not static like IsWalkable above) since edges live on THIS grid's own
+    // DoorEdges dictionary, not on a single TileCell a caller could pass in directly.
+    public bool IsWalkableAcrossEdge(TileCoord from, TileCoord to)
+    {
+        if (SideTo(from, to) is not { } side)
+            return true; // not actually adjacent (e.g. same tile, or a diagonal corner check) - nothing to check
+        if (DoorEdgeAt(from, side) is not { } edge)
+            return true;
+        return edge.Open && edge.Hp > 0 || edge.Hp <= 0;
+    }
+
+    private static TileSide? SideTo(TileCoord from, TileCoord to) => (to.X - from.X, to.Y - from.Y) switch
+    {
+        (1, 0) => TileSide.East,
+        (-1, 0) => TileSide.West,
+        (0, 1) => TileSide.South,
+        (0, -1) => TileSide.North,
+        _ => null,
+    };
+
+    // North = -Y, South = +Y, East = +X, West = -X (TileSideExtensions' own convention) - the solid
+    // half sits on `solidSide`, occupying the [0, 0.5) or [0.5, 1) fraction of the tile's own local
+    // square on the matching axis.
+    private static bool IsInSolidHalf(TileCoord coord, Vec2 position, TileSide solidSide)
+    {
+        var fx = position.X - coord.X;
+        var fy = position.Y - coord.Y;
+        return solidSide switch
+        {
+            TileSide.North => fy < 0.5,
+            TileSide.South => fy >= 0.5,
+            TileSide.West => fx < 0.5,
+            TileSide.East => fx >= 0.5,
+            _ => throw new ArgumentOutOfRangeException(nameof(solidSide)),
         };
     }
 
@@ -186,6 +328,15 @@ public sealed class TileGrid
         {
             if (!Cells.TryGetValue(coord, out var cell) || !cell.HasFloor)
                 return; // nothing to remove
+            // M-doors-as-edges (humble-soaring-cat.md) - a door edge is NOT part of the TileCell
+            // being removed below (it lives in the separate DoorEdges dictionary, keyed by coord+
+            // side rather than riding along on either flanking tile's own cell), so it would
+            // otherwise survive this tile's own floor being erased entirely, left pointing at a
+            // coordinate that no longer has one. Removed on every side BEFORE the cell itself goes,
+            // same "can't outlive their floor" rule every other dependent here already follows.
+            foreach (var side in TileSideExtensions.All)
+                if (DoorEdgeAt(coord, side) is not null)
+                    RemoveDoorEdge(coord, side);
             // Wall/device/terminal cannot outlive their floor - pull the tile out of its region
             // first (if it was a member), then drop the cell entirely.
             if (IsRegionMember(cell))
@@ -202,6 +353,17 @@ public sealed class TileGrid
         if (!Cells.TryGetValue(coord, out var cell) || !cell.HasFloor)
             throw new InvalidOperationException($"Cannot place a wall at {coord} without a floor there first.");
 
+        // M-doors-as-edges - a door edge's own placement guard (CanPlaceDoorEdge) requires both
+        // flanking tiles to stay bare, wall-free floor for as long as the edge stands; painting an
+        // actual wall/door TILE directly onto one of those flanks (the editor's Wall tool has no
+        // reason to know about a neighboring edge) would silently leave that invariant broken, so any
+        // edge still anchored to `coord` is removed first - same "can't outlive its precondition"
+        // rule SetFloor's own removal branch already follows for this same dictionary.
+        if (kind != TileWallKind.None)
+            foreach (var side in TileSideExtensions.All)
+                if (DoorEdgeAt(coord, side) is not null)
+                    RemoveDoorEdge(coord, side);
+
         var wasMember = IsRegionMember(cell);
         cell.Wall = kind;
         cell.WallHp = kind == TileWallKind.None ? 0f : hp;
@@ -209,6 +371,13 @@ public sealed class TileGrid
         // whatever was requested; clearing a wall or replacing it with a door both reset to Standard.
         cell.WallMaterial = kind == TileWallKind.Solid ? material : WallMaterial.Standard;
         cell.WallFromCompartment = kind != TileWallKind.None && fromCompartment;
+        // WallOpenSide is only ever meaningful for an intact Solid wall (see its own doc comment) -
+        // clearing the wall or replacing it with a Door both reset it to null, same "not a material
+        // variant any more" rule WallMaterial follows above. Callers that DO want a fresh Solid wall
+        // to carry an open side call SetWallOpenSide separately afterwards (TileGridRasterizer only
+        // knows corner-vs-straight once every wall tile in the pass has been stamped).
+        if (kind != TileWallKind.Solid)
+            cell.WallOpenSide = null;
         if (kind != TileWallKind.Door)
         {
             cell.DoorOpen = false;
@@ -234,6 +403,105 @@ public sealed class TileGrid
         cellB.DoorGroupId = groupId;
     }
 
+    // Direct user request ("я хочу полностью переделать двери" - the narrow/1-tile door) - installs
+    // a fresh, full-health door edge between `coord` and its `side` neighbor. Both tiles were
+    // already ordinary open floor and STAY that way - unlike SetWall, this never touches either
+    // tile's own Wall/DeviceId. If the two tiles are (as they normally are, being adjacent open
+    // floor) currently in the same region, that region may now split into two - the exact same kind
+    // of split placing a wall/door TILE on a floor tile already causes, just triggered from an edge
+    // instead of a cell (SplitRegionIfDisconnected handles the "is there another path around" case
+    // correctly on its own, same as it always has).
+    public void AddDoorEdge(TileCoord coord, TileSide side, string id, float hp = 100f, float maxHp = 100f)
+    {
+        if (!CanPlaceDoorEdge(coord, side))
+            throw new InvalidOperationException($"Cannot place a door edge at {coord}/{side} - both flanking tiles must already be empty open floor.");
+        var key = CanonicalEdgeKey(coord, side);
+        DoorEdges[key] = new TileDoorEdge { Id = id, Open = false, Hp = hp, MaxHp = maxHp };
+        TrySplitAcrossEdge(coord, side);
+    }
+
+    // Removes a door edge entirely (as opposed to breaching it - see DamageDoorEdge/RepairDoorEdge
+    // below for HP-driven, repairable breaches). If the two flanking tiles ended up in different
+    // regions while the edge stood, removing it reunites them - same MergeRegionsInto step
+    // OnTileBecameRegionMember already uses for an ordinary floor tile reconnecting two pockets.
+    public void RemoveDoorEdge(TileCoord coord, TileSide side)
+    {
+        var key = CanonicalEdgeKey(coord, side);
+        if (!DoorEdges.Remove(key))
+            return;
+        TryMergeAcrossEdge(coord, side);
+    }
+
+    // Never changes region topology - same "open/closed is purely cosmetic for sealing purposes"
+    // contract SetDoorOpen already has for a tile-based door (IsBlockingForRegion only cares about
+    // Hp, not Open).
+    public void SetDoorEdgeOpen(TileCoord coord, TileSide side, bool open)
+    {
+        if (DoorEdgeAt(coord, side) is { } edge)
+            edge.Open = open;
+    }
+
+    // Mirrors DamageWall/RepairWall/SetWallHp - reducing Hp to zero or below breaches the edge,
+    // which (for region purposes only) behaves exactly like removing it outright; repairing it back
+    // above zero re-seals it. Movement/sight already read Hp directly (IsBlockingEdge), so those
+    // follow along with no extra bookkeeping.
+    public void DamageDoorEdge(TileCoord coord, TileSide side, float amount)
+    {
+        if (DoorEdgeAt(coord, side) is not { } edge)
+            return;
+        var wasBlocking = edge.Hp > 0;
+        edge.Hp = MathF.Max(0f, edge.Hp - amount);
+        if (wasBlocking && edge.Hp <= 0)
+            TryMergeAcrossEdge(coord, side);
+    }
+
+    public void RepairDoorEdge(TileCoord coord, TileSide side, float amount)
+    {
+        if (DoorEdgeAt(coord, side) is not { } edge)
+            return;
+        var wasBlocking = edge.Hp > 0;
+        edge.Hp = MathF.Min(edge.MaxHp, edge.Hp + amount);
+        if (!wasBlocking && edge.Hp > 0)
+            TrySplitAcrossEdge(coord, side);
+    }
+
+    // M72-style reconciliation entry point (World.TileSync.cs mirrors an authoritative HP value
+    // every tick rather than replaying individual damage/repair deltas) - same shape as SetWallHp.
+    public void SetDoorEdgeHp(TileCoord coord, TileSide side, float hp)
+    {
+        if (DoorEdgeAt(coord, side) is not { } edge)
+            return;
+        var wasBlocking = edge.Hp > 0;
+        edge.Hp = MathF.Max(0f, hp);
+        var isBlockingNow = edge.Hp > 0;
+        if (wasBlocking && !isBlockingNow)
+            TryMergeAcrossEdge(coord, side);
+        else if (!wasBlocking && isBlockingNow)
+            TrySplitAcrossEdge(coord, side);
+    }
+
+    // A just-breached (or just-removed) edge no longer blocks ConnectedNeighbors - if that leaves
+    // its two flanking tiles in different regions, merge them (mirrors OnTileBecameRegionMember's
+    // own reunion logic, just triggered from an edge disappearing instead of a tile appearing).
+    private void TryMergeAcrossEdge(TileCoord coord, TileSide side)
+    {
+        var neighbor = side.Offset(coord);
+        if (RegionIdOf.TryGetValue(coord, out var regionId) && RegionIdOf.TryGetValue(neighbor, out var neighborRegionId) && regionId != neighborRegionId)
+        {
+            MergeRegionsInto(regionId, new[] { neighborRegionId });
+            RecomputeLeak(regionId);
+        }
+    }
+
+    // A just-repaired (or just-added) edge might now cut its two flanking tiles' shared region in
+    // two (mirrors AddDoorEdge's own split trigger).
+    private void TrySplitAcrossEdge(TileCoord coord, TileSide side)
+    {
+        var neighbor = side.Offset(coord);
+        if (RegionIdOf.TryGetValue(coord, out var regionId) && RegionIdOf.TryGetValue(neighbor, out var neighborRegionId) && regionId == neighborRegionId)
+            SplitRegionIfDisconnected(regionId);
+    }
+
     // M72 follow-up (World.TileSync.cs) - mirrors a live WallBlock's own Material onto its tile, the
     // same "reconcile against an already-known authoritative value" shape SetWallHp already uses.
     // Never changes region topology (material is purely cosmetic/HP-cap, like WallHp itself).
@@ -241,6 +509,16 @@ public sealed class TileGrid
     {
         if (Cells.TryGetValue(coord, out var cell) && cell.Wall == TileWallKind.Solid)
             cell.WallMaterial = material;
+    }
+
+    // Direct user request ("не угловые клетки занимали только половину блока") - separate from
+    // SetWall itself because "is this tile a corner" is only knowable once every wall tile in a
+    // whole generation pass has been stamped (TileGridRasterizer.FromRooms collects claims across
+    // all 4 edge-loops before calling this) - same no-op-if-not-Solid guard SetWallMaterial uses.
+    public void SetWallOpenSide(TileCoord coord, TileSide? side)
+    {
+        if (Cells.TryGetValue(coord, out var cell) && cell.Wall == TileWallKind.Solid)
+            cell.WallOpenSide = side;
     }
 
     public void SetDoorOpen(TileCoord coord, bool open)
@@ -309,23 +587,69 @@ public sealed class TileGrid
             cell.DeviceId = null;
     }
 
-    public void PlaceTerminal(TileCoord coord, TileSide wallSide, string terminalId)
+    // Direct user request ("на стену размером с полублок можно крепить только терминал и настенную
+    // лампу") - only these two kinds mount to a wall at all; everything else still goes through
+    // PlaceDevice's own ordinary open-floor footprint instead.
+    private static readonly IReadOnlySet<CustomDeviceKind> WallMountableKinds =
+        new HashSet<CustomDeviceKind> { CustomDeviceKind.Terminal, CustomDeviceKind.WallLamp };
+
+    private static void RequireWallMountable(CustomDeviceKind kind)
     {
-        if (!Cells.TryGetValue(coord, out var cell) || !cell.HasFloor)
-            throw new InvalidOperationException($"Cannot place a terminal at {coord} without a floor there first.");
-        var neighbor = wallSide.Offset(coord);
-        if (!Cells.TryGetValue(neighbor, out var neighborCell) || neighborCell.Wall == TileWallKind.None)
-            throw new InvalidOperationException($"Cannot place a terminal at {coord} facing {wallSide} - no wall there to mount against.");
-        cell.TerminalId = terminalId;
-        cell.TerminalWallSide = wallSide;
+        if (!WallMountableKinds.Contains(kind))
+            throw new InvalidOperationException($"{kind} cannot be wall-mounted - only Terminal and WallLamp can.");
     }
 
-    public void RemoveTerminal(TileCoord coord)
+    // Protrudes onto an ordinary floor tile from a neighboring FULL-thickness wall only (a
+    // half-thick one already has its own free half to embed into instead - PlaceRecessedWallDevice
+    // below - so protruding from it too would be redundant, direct user report: "стены в пол блока
+    // являются стенами и на них якобы можно крепить лампу... для таких стен это должно быть
+    // невозможно и это можно было сделать только в том же тайле что и стена"). Direct user request
+    // ("в таком случае будет полностью заполнен тайл") - occupies its WHOLE tile for collision
+    // (IsWalkable's own WallDeviceId check), same as any ordinary device, even though it still
+    // visually reads as a half-block flush against the wall (ShipRenderer's own draw).
+    public void PlaceWallDevice(TileCoord coord, TileSide wallSide, CustomDeviceKind kind, string deviceId)
+    {
+        RequireWallMountable(kind);
+        if (!Cells.TryGetValue(coord, out var cell) || !cell.HasFloor)
+            throw new InvalidOperationException($"Cannot place {kind} at {coord} without a floor there first.");
+        var neighbor = wallSide.Offset(coord);
+        if (!Cells.TryGetValue(neighbor, out var neighborCell) || neighborCell.Wall == TileWallKind.None)
+            throw new InvalidOperationException($"Cannot place {kind} at {coord} facing {wallSide} - no wall there to mount against.");
+        if (neighborCell.WallOpenSide is not null)
+            throw new InvalidOperationException($"Cannot place {kind} at {coord} facing {wallSide} - that wall is half-thick, recess into it instead.");
+        cell.WallDeviceId = deviceId;
+        cell.WallDeviceKind = kind;
+        cell.WallDeviceMountSide = wallSide;
+    }
+
+    public void RemoveWallDevice(TileCoord coord)
     {
         if (!Cells.TryGetValue(coord, out var cell))
             return;
-        cell.TerminalId = null;
-        cell.TerminalWallSide = null;
+        cell.WallDeviceId = null;
+        cell.WallDeviceKind = null;
+        cell.WallDeviceMountSide = null;
+        cell.WallDeviceRecessed = false;
+    }
+
+    // Direct user request ("на пустой стороне можно поставить терминал и он будет занимать весь
+    // полублок") - a device embedded directly in a half-thick wall tile's own free half, rather
+    // than on an adjacent floor tile mounted against a neighbor (PlaceWallDevice above). Both modes
+    // now fully block their own tile (IsWalkable's own WallDeviceId check). WallDeviceMountSide
+    // always means "which side of THIS tile the device's own half-block visual sits on" - for a
+    // recessed device that's the free half, the OPPOSITE of the wall's own solid WallOpenSide (not
+    // WallOpenSide itself), so rendering never needs to branch on WallDeviceRecessed at all.
+    public void PlaceRecessedWallDevice(TileCoord coord, CustomDeviceKind kind, string deviceId)
+    {
+        RequireWallMountable(kind);
+        if (!Cells.TryGetValue(coord, out var cell) || cell.Wall != TileWallKind.Solid || cell.WallOpenSide is not { } openSide)
+            throw new InvalidOperationException($"Cannot recess {kind} at {coord} - needs a non-corner Solid wall tile.");
+        if (cell.WallDeviceId != null)
+            throw new InvalidOperationException($"Cannot recess {kind} at {coord} - already occupied.");
+        cell.WallDeviceId = deviceId;
+        cell.WallDeviceKind = kind;
+        cell.WallDeviceMountSide = openSide.Opposite();
+        cell.WallDeviceRecessed = true;
     }
 
     private IEnumerable<TileCoord> Neighbors(TileCoord coord)
@@ -334,13 +658,26 @@ public sealed class TileGrid
             yield return side.Offset(coord);
     }
 
+    // Same as Neighbors, but skips any side that has an intact door-edge barrier on it - region
+    // topology (and, by the same token, movement/sight elsewhere) never crosses a closed-or-open-
+    // but-unbreached edge door, exactly like it never crosses an intact wall/door TILE
+    // (IsBlockingForRegion's own doc comment: "regardless of open/closed state, only breach
+    // matters"). This is the ONE place region connectivity needs to know edges exist at all - every
+    // other region-topology method below already goes through here via Neighbors' two call sites.
+    private IEnumerable<TileCoord> ConnectedNeighbors(TileCoord coord)
+    {
+        foreach (var side in TileSideExtensions.All)
+            if (!IsBlockingEdge(coord, side))
+                yield return side.Offset(coord);
+    }
+
     // A floor tile just became an open (non-walled) member of the region graph - either it's brand
     // new, or a wall/door on it was removed/breached. Union it with every neighboring region it
     // touches (there can be more than one, if it reconnects two previously-separate pockets).
     private void OnTileBecameRegionMember(TileCoord coord)
     {
         var neighborRegionIds = new HashSet<int>();
-        foreach (var neighbor in Neighbors(coord))
+        foreach (var neighbor in ConnectedNeighbors(coord))
             if (RegionIdOf.TryGetValue(neighbor, out var id))
                 neighborRegionIds.Add(id);
 
@@ -359,18 +696,7 @@ public sealed class TileGrid
             var survivor = Regions[survivorId];
             survivor.Tiles.Add(coord);
             RegionIdOf[coord] = survivorId;
-            foreach (var otherId in neighborRegionIds)
-            {
-                if (otherId == survivorId)
-                    continue;
-                var other = Regions[otherId];
-                foreach (var tile in other.Tiles)
-                {
-                    survivor.Tiles.Add(tile);
-                    RegionIdOf[tile] = survivorId;
-                }
-                Regions.Remove(otherId);
-            }
+            MergeRegionsInto(survivorId, neighborRegionIds.Where(id => id != survivorId));
         }
 
         RecomputeLeak(survivorId);
@@ -378,6 +704,24 @@ public sealed class TileGrid
         // dead end bordering vacuum might now be interior) - but only tiles adjacent to the changed
         // one could possibly be affected, so just refresh this one region; the moved-in tiles came
         // from regions that no longer exist, and their leak status is superseded by the survivor's.
+    }
+
+    // Extracted from OnTileBecameRegionMember's own merge step so RemoveDoorEdge (a door edge no
+    // longer separating what turn out to be two different regions) can reuse the exact same
+    // absorb-and-remove logic without a coord of its own to add first.
+    private void MergeRegionsInto(int survivorId, IEnumerable<int> otherIds)
+    {
+        var survivor = Regions[survivorId];
+        foreach (var otherId in otherIds)
+        {
+            var other = Regions[otherId];
+            foreach (var tile in other.Tiles)
+            {
+                survivor.Tiles.Add(tile);
+                RegionIdOf[tile] = survivorId;
+            }
+            Regions.Remove(otherId);
+        }
     }
 
     // A floor tile just stopped being an open region member - either its floor was removed, or a
@@ -398,7 +742,19 @@ public sealed class TileGrid
             return;
         }
 
-        var remaining = new HashSet<TileCoord>(oldRegion.Tiles);
+        SplitRegionIfDisconnected(oldRegionId);
+    }
+
+    // Re-partitions whatever tiles are CURRENTLY in Regions[regionId] by connectivity
+    // (ConnectedNeighbors, which already respects door edges) and, if that comes back as more than
+    // one piece, replaces the single region with one fresh region per piece. Shared by
+    // OnTileLeftRegionMembership (a tile was removed from the region first) and AddDoorEdge (no
+    // tile removed - the region's own membership is unchanged, but a NEW edge inside it may now cut
+    // it into two, exactly the same kind of split just triggered a different way).
+    private void SplitRegionIfDisconnected(int regionId)
+    {
+        var region = Regions[regionId];
+        var remaining = new HashSet<TileCoord>(region.Tiles);
         var pieces = new List<HashSet<TileCoord>>();
         while (remaining.Count > 0)
         {
@@ -410,7 +766,7 @@ public sealed class TileGrid
             while (queue.Count > 0)
             {
                 var current = queue.Dequeue();
-                foreach (var neighbor in Neighbors(current))
+                foreach (var neighbor in ConnectedNeighbors(current))
                 {
                     if (remaining.Remove(neighbor))
                     {
@@ -424,20 +780,21 @@ public sealed class TileGrid
 
         if (pieces.Count == 1)
         {
-            // Still one connected piece (removing this tile didn't actually disconnect anything) -
-            // keep the same region id, its Tiles set is already correct from the removal above.
-            RecomputeLeak(oldRegionId);
+            // Still one connected piece (whatever triggered this didn't actually disconnect
+            // anything - e.g. a loop/ring shape with another path around the new edge) - keep the
+            // same region id, its Tiles set is already correct.
+            RecomputeLeak(regionId);
             return;
         }
 
-        Regions.Remove(oldRegionId);
+        Regions.Remove(regionId);
         foreach (var piece in pieces)
         {
-            var region = new SealedRegion { Id = _nextRegionId++, Tiles = piece };
-            Regions[region.Id] = region;
+            var newRegion = new SealedRegion { Id = _nextRegionId++, Tiles = piece };
+            Regions[newRegion.Id] = newRegion;
             foreach (var tile in piece)
-                RegionIdOf[tile] = region.Id;
-            RecomputeLeak(region.Id);
+                RegionIdOf[tile] = newRegion.Id;
+            RecomputeLeak(newRegion.Id);
         }
     }
 

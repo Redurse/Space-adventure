@@ -11,10 +11,18 @@ namespace Anabiosis.Client;
 // The character's own sight-cone/room-lighting mask (BuildVisibilityMask) and the power-driven
 // "mood" that feeds it: how bright the ship's lamps read at the current power level, and one
 // PointLight per room for the ship/station/boarded-enemy-hull cases. Split out of Game1.cs itself -
-// BuildVisibilityMask is called once per frame from Draw, but owns no state beyond _roomLightingReady
-// (declared in Game1.cs, alongside _visibility/_roomLighting themselves).
+// BuildVisibilityMask is called once per frame from Draw. Besides _roomLightingReady (declared in
+// Game1.cs, alongside _visibility/_roomLighting themselves) it also owns the docked station's own
+// cached tile rasterization - see the fields' own doc comment where they're used, just below.
 public partial class Game1
 {
+    // See GetLiveShipTiles's own doc comment (ShipRenderer.Rooms.cs) for why this is cached at all -
+    // same reasoning, just for the station side, which has no equivalent persistent-instance home of
+    // its own to live on (StationRenderer never rasterizes tiles - only ShipRenderer/Game1's own
+    // BuildVisibilityMask/voice-muffling check ever need a station's TileGrid), so it lives here.
+    private TileGrid? _cachedStationTiles;
+    private int? _cachedStationTilesFingerprint;
+
     // Line of sight for whichever physical space the player is standing in. The occluders are that
     // space's own walls with its currently-open doorways cut out, so sight carries through an open
     // door into the next compartment and stops dead at everything else. A suit helmet keeps the
@@ -127,19 +135,30 @@ public partial class Game1
             // rasterization instead of before. Both grids are cut against the SAME gaps list - a gap
             // is just a world-space rectangle, it applies correctly to either structure's segments
             // regardless of which one it logically came from.
-            var shipTiles = ClientTileGrid.Build(snapshot);
+            var shipTiles = _shipRenderer.GetLiveShipTiles(snapshot);
             walls = TileOccluders.Build(shipTiles, gaps);
             if (docked)
             {
-                var stationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, snapshot.Station.Doors, new[] { snapshot.Station.ShipConnector });
+                // Cached the same way GetLiveShipTiles is (see that method's own doc comment) - a
+                // procedural station is generated once and never rebuilt for the rest of the session,
+                // so after the first dock this fingerprint check hits every single frame; it's
+                // usually the LARGER of the two structures (a station grows with the ship's own
+                // size), so this half used to be the bigger share of the ~89ms "Маска" cost.
+                var stationFingerprint = ClientTileGrid.ComputeStructuralFingerprint(
+                    snapshot.Station.Rooms, snapshot.Station.Doors, new[] { snapshot.Station.ShipConnector });
+                if (_cachedStationTiles is null || _cachedStationTilesFingerprint != stationFingerprint)
+                {
+                    _cachedStationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, snapshot.Station.Doors, new[] { snapshot.Station.ShipConnector });
+                    _cachedStationTilesFingerprint = stationFingerprint;
+                }
                 // Bug fix (humble-soaring-cat.md, "не вижу через открытые двери", follow-up) - the
                 // ship-side ClientTileGrid.Build already overlays live door-open state (see its own
                 // doc comment); the station side was missed the first time around, so a station door
                 // or the ship<->station connector was still permanently "closed" to TileOccluders no
                 // matter how it actually stood - the identical bug, just on the other structure.
-                ClientTileGrid.ApplyLiveDoorState(stationTiles, snapshot.Station.Rooms, snapshot.Station.Doors,
+                ClientTileGrid.ApplyLiveDoorState(_cachedStationTiles, snapshot.Station.Rooms, snapshot.Station.Doors,
                     new[] { snapshot.Station.ShipConnector }, snapshot.DoorStates);
-                walls = walls.Concat(TileOccluders.Build(stationTiles, gaps)).ToList();
+                walls = walls.Concat(TileOccluders.Build(_cachedStationTiles, gaps)).ToList();
             }
             // Outside the hull the camera folds the player's world position back into the ship's
             // own frame, and so must the eye - otherwise the mask would sit where the ship isn't.
@@ -155,6 +174,12 @@ public partial class Game1
             // below) - a totally unpowered sub still reads as a dim, recognisable space in
             // Barotrauma, never a hidden one.
             lights = snapshot.ReactorLevers.LightsOn ? BuildShipRoomLights(snapshot.Rooms, mood.PowerFraction) : new List<PointLight>();
+            // Direct user request ("настенную лампу... когда она установлена, она излучает свет") -
+            // one small extra pool per placed WallLamp, same LightsOn/power gating as the ambient
+            // room lamps above (a deliberate light-lever blackout kills these too, same as a real
+            // wall sconce would go dark) - purely additive, no per-lamp state to read at all.
+            if (snapshot.ReactorLevers.LightsOn)
+                lights.AddRange(BuildWallLampLights(snapshot.WallLamps, mood.PowerFraction));
             // A docked station has its own external power - always lit regardless of what shape the
             // player's own ship's grid is in, or whether its own light lever is on.
             if (docked)
@@ -263,6 +288,21 @@ public partial class Game1
             lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius, tint * lampIntensity));
         }
         return lights;
+    }
+
+    // Direct user request ("настенную лампу... когда она установлена, она излучает свет") - a
+    // small, warm-toned pool right at the fixture itself, distinct from the room's own ambient
+    // lamp (RoomDecor-tinted, centred on the room) - a real, localized light source you placed, not
+    // just flavor furniture. Deliberately modest radius (a wall sconce, not a second room lamp) so
+    // several of them along a corridor read as a lit row rather than one big flat wash.
+    private static IEnumerable<PointLight> BuildWallLampLights(IReadOnlyList<WallLamp>? wallLamps, float powerFraction)
+    {
+        if (wallLamps is null)
+            yield break;
+        var intensity = MathHelper.Lerp(0.1f, 0.7f, powerFraction);
+        var tint = new Color(255, 225, 160) * intensity;
+        foreach (var lamp in wallLamps)
+            yield return new PointLight(new Vector2((float)lamp.Position.X, (float)lamp.Position.Y), 3.5f, tint);
     }
 
     // A docked station runs on its own power, not the ship's - always lit, no flicker.

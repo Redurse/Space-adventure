@@ -9,6 +9,7 @@ public static class EquipSlotDefinitions
     {
         ItemType.BeltBag => EquipSlot.BeltBag,
         ItemType.IdCard => EquipSlot.IdCard,
+        ItemType.Radio => EquipSlot.Headset,
         _ => null,
     };
 }

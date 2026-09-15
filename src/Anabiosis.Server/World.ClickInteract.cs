@@ -32,6 +32,22 @@ public sealed partial class World
         character.SuitActionLockerId = locker.Id;
     }
 
+    // Direct user request ("их будет много") - each terminal toggles independently now, keyed by id
+    // the same way SuitLockerInteractId is, instead of the old single shared TerminalOn flipped by
+    // a dedicated toggle key.
+    private void TryTerminalInteractById(Character character, string terminalId)
+    {
+        if (character.IsOutside || character.OnStation)
+            return;
+
+        var terminal = Ship.Terminals.FirstOrDefault(t => t.Id == terminalId);
+        if (terminal is null || terminal.RoomId != character.RoomId ||
+            (terminal.Position - character.Position).Length() >= InteractionRadius)
+            return;
+
+        SetTerminalOn(terminal.Id, !TerminalOn(terminal.Id));
+    }
+
     private void TryTurretInteractById(Character character, string turretId)
     {
         if (character.IsOutside || character.OnStation || character.ManningTurretId is not null || character.IsAtHelm)

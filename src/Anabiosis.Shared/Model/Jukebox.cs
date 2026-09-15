@@ -13,5 +13,5 @@ public sealed record Jukebox(string Id, string RoomId, float X, float Y)
 // into a valid one without the server project depending on the client project.
 public static class JukeboxCatalog
 {
-    public const int TrackCount = 25;
+    public const int TrackCount = 29;
 }

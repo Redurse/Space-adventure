@@ -22,8 +22,13 @@ public static class TileOccluders
     // open door/airlock (Game1.Lighting.cs), so "no wall here" and "wall here, then a gap cut through
     // it" produce the identical surviving-span result - just by a simpler path for the tile case,
     // since a tile has no independent existence as a wall once its door is open.
+    // Direct user bug report ("не вижу ничего через стену являющейся иллюминатором") - a Window
+    // wall (WallMaterial.cs) is still a real, solid obstacle for MOVEMENT (TileMovement.cs's own
+    // IsWalkable never reads WallMaterial at all - a window still blocks walking through it), but
+    // it's meant to be seen through, same as a real ship's porthole - excluded here so neither the
+    // player's own sight cone nor room lighting treats it as a wall for shadow-casting purposes.
     private static bool IsOccluding(TileCell? cell) =>
-        cell is { Wall: TileWallKind.Solid } or { Wall: TileWallKind.Door, DoorOpen: false };
+        cell is { Wall: TileWallKind.Solid, WallMaterial: not WallMaterial.Window } or { Wall: TileWallKind.Door, DoorOpen: false };
 
     public static List<WallSegment> Build(TileGrid tiles, IReadOnlyList<SightGap> gaps)
     {
@@ -34,11 +39,25 @@ public static class TileOccluders
         // untidy.
         var horizontal = new Dictionary<int, List<(int From, int To)>>();
         var vertical = new Dictionary<int, List<(int From, int To)>>();
+        var segments = new List<WallSegment>();
 
         foreach (var (coord, cell) in tiles.Cells)
         {
             if (!IsOccluding(cell))
                 continue;
+
+            // Direct user request ("свободная половина полублочной стены не должна быть в тени") -
+            // a half-thick wall cell's real solid geometry is only half its tile (the same HalfRect
+            // ShipRenderer/the editor already draw it as), not the full 1x1 square every other wall
+            // tile occupies. Tracing its boundary as an ordinary full tile below would place the
+            // occluding edge a whole tile further out than the actual wall surface, swallowing this
+            // very cell's own free half into shadow - see AddHalfThickEdges' own doc comment for the
+            // actual fix.
+            if (cell.WallOpenSide is { } solidSide)
+            {
+                AddHalfThickEdges(tiles, coord, solidSide, horizontal, vertical, segments);
+                continue;
+            }
 
             foreach (var side in TileSideExtensions.All)
             {
@@ -63,14 +82,88 @@ public static class TileOccluders
             }
         }
 
-        var segments = new List<WallSegment>();
         foreach (var (y, spans) in horizontal)
             foreach (var (from, to) in MergeRuns(spans))
                 Occluders.AddHorizontal(segments, y, from, to, gaps);
         foreach (var (x, spans) in vertical)
             foreach (var (from, to) in MergeRuns(spans))
                 Occluders.AddVertical(segments, x, from, to, gaps);
+
+        // M-doors-as-edges (humble-soaring-cat.md) - a narrow door edge sits BETWEEN two ordinary
+        // floor tiles, neither of which is itself an occluding cell (unlike the tile-based Door
+        // above), so the loop over `tiles.Cells` never sees it at all. Closed+unbreached (Hp>0), it
+        // blocks sight exactly like a shut door tile - open or breached, no segment (same "no wall
+        // here at all" treatment the tile-based door gets from its own explicit SightGap upstream,
+        // see IsOccluding's own doc comment). One segment spans the FULL edge line (not the half-tile
+        // AddHalfThickEdges uses for a half-thick wall) since a door edge is never partial-width.
+        foreach (var (key, edge) in tiles.DoorEdges)
+        {
+            if (edge.Hp <= 0 || edge.Open)
+                continue; // breached or open - walkable and see-through, same as a breached/open door tile
+            var (coord, side) = key;
+            segments.Add(side switch
+            {
+                TileSide.East => new WallSegment(coord.X + 1, coord.Y, coord.X + 1, coord.Y + 1),
+                _ => new WallSegment(coord.X, coord.Y + 1, coord.X + 1, coord.Y + 1),
+            });
+        }
         return segments;
+    }
+
+    // A half-thick cell (TileCell.WallOpenSide set - only ever on a Solid, non-corner straight wall
+    // run tile) has three kinds of edge, unlike the four equal full-tile ones the loop above traces:
+    //  1. The solidSide edge itself - the tile's real, full-length exterior boundary, no different
+    //     from an ordinary full-thickness wall on that same side (same neighbor check, same integer
+    //     line) - still routed through the shared `horizontal`/`vertical` dictionaries, so a long
+    //     straight run of these still merges into as few raycast segments as an ordinary wall run
+    //     would (the whole reason Build buckets by line before raycasting at all).
+    //  2. The free-half edge - always occluding, full tile width, unconditional on any neighbor:
+    //     this is genuinely where the solid half's own material ends and the free/walkable half of
+    //     THIS SAME cell begins (TileCell.WallOpenSide's own doc comment), not a boundary with some
+    //     other cell. Sits on the half-integer line through the tile's centre - this is the actual
+    //     fix: before WallOpenSide was checked here at all, a half-thick cell fell straight into the
+    //     loop above and got its far edge traced a WHOLE TILE further out (at the next cell's own
+    //     boundary), which put this line - and with it, this cell's own free half - on the wrong,
+    //     "occluded" side of the nearest wall segment. Pushed straight into `segments` (not the merge
+    //     dictionaries) since it never lines up with any full-tile-integer edge to merge with anyway.
+    //  3. The two edges perpendicular to solidSide - half-length, spanning only the solid half's own
+    //     extent, same conditional-on-neighbor test an ordinary full-tile wall already uses on those
+    //     sides. Only actually occluding where a straight run ends against open space (mid-run they
+    //     border another occluding cell and are skipped, same as today); pushed straight into
+    //     `segments` too - a lone half-unit cap has nothing else on its own line to merge with.
+    private static void AddHalfThickEdges(TileGrid tiles, TileCoord coord, TileSide solidSide,
+        Dictionary<int, List<(int From, int To)>> horizontal, Dictionary<int, List<(int From, int To)>> vertical,
+        List<WallSegment> segments)
+    {
+        bool NeighborOccludes(TileSide side) => IsOccluding(tiles.CellAt(side.Offset(coord)));
+
+        switch (solidSide)
+        {
+            case TileSide.North: // solid half occupies the top of the tile, free half the bottom
+                if (!NeighborOccludes(TileSide.North)) AddUnitEdge(horizontal, coord.Y, coord.X);
+                segments.Add(new WallSegment(coord.X, coord.Y + 0.5f, coord.X + 1, coord.Y + 0.5f));
+                if (!NeighborOccludes(TileSide.West)) segments.Add(new WallSegment(coord.X, coord.Y, coord.X, coord.Y + 0.5f));
+                if (!NeighborOccludes(TileSide.East)) segments.Add(new WallSegment(coord.X + 1, coord.Y, coord.X + 1, coord.Y + 0.5f));
+                break;
+            case TileSide.South: // solid half occupies the bottom, free half the top
+                if (!NeighborOccludes(TileSide.South)) AddUnitEdge(horizontal, coord.Y + 1, coord.X);
+                segments.Add(new WallSegment(coord.X, coord.Y + 0.5f, coord.X + 1, coord.Y + 0.5f));
+                if (!NeighborOccludes(TileSide.West)) segments.Add(new WallSegment(coord.X, coord.Y + 0.5f, coord.X, coord.Y + 1));
+                if (!NeighborOccludes(TileSide.East)) segments.Add(new WallSegment(coord.X + 1, coord.Y + 0.5f, coord.X + 1, coord.Y + 1));
+                break;
+            case TileSide.West: // solid half occupies the left, free half the right
+                if (!NeighborOccludes(TileSide.West)) AddUnitEdge(vertical, coord.X, coord.Y);
+                segments.Add(new WallSegment(coord.X + 0.5f, coord.Y, coord.X + 0.5f, coord.Y + 1));
+                if (!NeighborOccludes(TileSide.North)) segments.Add(new WallSegment(coord.X, coord.Y, coord.X + 0.5f, coord.Y));
+                if (!NeighborOccludes(TileSide.South)) segments.Add(new WallSegment(coord.X, coord.Y + 1, coord.X + 0.5f, coord.Y + 1));
+                break;
+            case TileSide.East: // solid half occupies the right, free half the left
+                if (!NeighborOccludes(TileSide.East)) AddUnitEdge(vertical, coord.X + 1, coord.Y);
+                segments.Add(new WallSegment(coord.X + 0.5f, coord.Y, coord.X + 0.5f, coord.Y + 1));
+                if (!NeighborOccludes(TileSide.North)) segments.Add(new WallSegment(coord.X + 0.5f, coord.Y, coord.X + 1, coord.Y));
+                if (!NeighborOccludes(TileSide.South)) segments.Add(new WallSegment(coord.X + 0.5f, coord.Y + 1, coord.X + 1, coord.Y + 1));
+                break;
+        }
     }
 
     private static void AddUnitEdge(Dictionary<int, List<(int From, int To)>> into, int fixedCoord, int from)

@@ -14,7 +14,7 @@ public sealed partial class Ship
     public CustomShipDefinition ToDefinition()
     {
         var rooms = Rooms.Select(r => new CustomRoomDef(r.Id, r.Name, r.X, r.Y, r.Width, r.Height)).ToList();
-        var doors = Doors.Select(d => new CustomDoorDef(d.RoomAId, d.RoomBId)).ToList();
+        var doors = Doors.Select(d => ToDoorDef(rooms, d)).ToList();
         var airlocks = AirlockOuterDoors
             .Select(a => new CustomAirlockDef(a.RoomId, InferAirlockSide(GetRoom(a.RoomId), a.X, a.Y)))
             .ToList();
@@ -31,13 +31,14 @@ public sealed partial class Ship
         devices.Add(new CustomDeviceDef(CustomDeviceKind.Distribution, DistributionBlock.X, DistributionBlock.Y));
         devices.AddRange(ExtraDistributionPositions.Select(p => new CustomDeviceDef(CustomDeviceKind.Distribution, p.AsFloat().X, p.AsFloat().Y)));
         devices.Add(new CustomDeviceDef(CustomDeviceKind.Battery, BatteryBlock.X, BatteryBlock.Y));
+        devices.AddRange(ExtraBatteryPositions.Select(p => new CustomDeviceDef(CustomDeviceKind.Battery, p.AsFloat().X, p.AsFloat().Y)));
         // Helm/Navigation extras DO carry their own real position (ExtraHelmConsoles/
         // ExtraNavigationConsoles, Ship.cs's own doc comment) - a second bridge room is somewhere a
         // player can actually walk to and pilot from, unlike a bonus-only extra reactor.
-        devices.Add(new CustomDeviceDef(CustomDeviceKind.Helm, HelmConsole.X, HelmConsole.Y));
-        devices.AddRange(ExtraHelmConsoles.Select(c => new CustomDeviceDef(CustomDeviceKind.Helm, c.X, c.Y)));
-        devices.Add(new CustomDeviceDef(CustomDeviceKind.Navigation, NavigationConsole.X, NavigationConsole.Y));
-        devices.AddRange(ExtraNavigationConsoles.Select(c => new CustomDeviceDef(CustomDeviceKind.Navigation, c.X, c.Y)));
+        devices.Add(new CustomDeviceDef(CustomDeviceKind.Helm, HelmConsole.X, HelmConsole.Y, Rotated: HelmConsole.Rotated));
+        devices.AddRange(ExtraHelmConsoles.Select(c => new CustomDeviceDef(CustomDeviceKind.Helm, c.X, c.Y, Rotated: c.Rotated)));
+        devices.Add(new CustomDeviceDef(CustomDeviceKind.Navigation, NavigationConsole.X, NavigationConsole.Y, Rotated: NavigationConsole.Rotated));
+        devices.AddRange(ExtraNavigationConsoles.Select(c => new CustomDeviceDef(CustomDeviceKind.Navigation, c.X, c.Y, Rotated: c.Rotated)));
         devices.AddRange(SystemDevices.Select(d => new CustomDeviceDef(SystemDeviceKindFor(d.System), d.X, d.Y,
             ThrustBonus: d.ThrustBonus, TurnBonus: d.TurnBonus, CapacityBonus: d.CapacityBonus)));
         devices.AddRange(Turrets.Select(t => new CustomDeviceDef(TurretDeviceKindFor(t.WeaponType), t.PeriscopeX, t.PeriscopeY, MountSide: t.MountSide)));
@@ -48,8 +49,9 @@ public sealed partial class Ship
         devices.AddRange(ComponentMounts.Select(m => new CustomDeviceDef(CustomDeviceKind.ComponentMount, m.X, m.Y, TargetDoorId: m.TargetDoorId)));
         if (Jukebox is { } jukebox)
             devices.Add(new CustomDeviceDef(CustomDeviceKind.Jukebox, jukebox.X, jukebox.Y));
-        if (Terminal is { } terminal)
-            devices.Add(new CustomDeviceDef(CustomDeviceKind.Terminal, terminal.X, terminal.Y));
+        devices.AddRange(Terminals.Select(t => new CustomDeviceDef(CustomDeviceKind.Terminal, t.X, t.Y, WallDeviceFacingSide: t.FacingSide)));
+        devices.AddRange(WallLamps.Select(l => new CustomDeviceDef(CustomDeviceKind.WallLamp, l.X, l.Y, WallDeviceFacingSide: l.FacingSide)));
+        devices.AddRange(JunctionBoxes.Select(j => new CustomDeviceDef(CustomDeviceKind.Junction, j.X, j.Y)));
 
         // Cosmoteer-style marching engines (direct user request) - without this, ToDefinition would
         // silently drop every already-built ShipEngine the moment World.ShipBuilding.cs builds or
@@ -67,8 +69,13 @@ public sealed partial class Ship
             })
             .ToList();
 
+        // M-doors-as-edges (humble-soaring-cat.md) - same "would otherwise vanish the moment ANY
+        // room is built/demolished" round-trip gap as Engines/WallMaterials above: Ship.DoorEdges
+        // already carries everything CustomDoorEdgeDef needs (Coord/Side/Id), so this is a plain map.
+        var doorEdges = DoorEdges.Select(e => new CustomDoorEdgeDef(e.Coord.X, e.Coord.Y, e.Side, e.Id)).ToList();
+
         return new CustomShipDefinition("Мой корабль", rooms, doors, airlocks, devices, ForwardDegrees,
-            WallMaterialsRaw: wallMaterials, EnginesRaw: engines);
+            WallMaterialsRaw: wallMaterials, EnginesRaw: engines, DoorEdgesRaw: doorEdges);
     }
 
     private static readonly IReadOnlyDictionary<PowerSystemId, CustomDeviceKind> SystemDeviceKindsReverse =
@@ -98,12 +105,30 @@ public sealed partial class Ship
     // for exactly that off-centre case (Top's own midpoint measured closer than Right's, even though
     // the door is genuinely on the Right wall) - exact-boundary matching is what the placement
     // itself actually guarantees, so it's what has to be checked, not proximity.
-    private static EdgeSide InferAirlockSide(Room room, float x, float y)
+    // Public rather than private (M-follow-up: station-orientation fix) - World.cs (a different
+    // assembly, Anabiosis.Server) needs this same "which wall is this airlock actually on" answer to
+    // orient a docked station's procedural layout away from the ship's own hull (Station.Procedural.
+    // cs's CreateProcedural) instead of always assuming the door faces east.
+    public static EdgeSide InferAirlockSide(Room room, float x, float y)
     {
         const float Epsilon = 0.01f;
         if (MathF.Abs(x - room.Right) < Epsilon) return EdgeSide.Right;
         if (MathF.Abs(x - room.Left) < Epsilon) return EdgeSide.Left;
         if (MathF.Abs(y - room.Bottom) < Epsilon) return EdgeSide.Bottom;
         return EdgeSide.Top;
+    }
+
+    // Reverse of Ship.Custom.cs's BuildDoors - a live Door no longer carries Vertical explicitly
+    // (only Width/Height, which are ambiguous for a 1-unit-span door: both axes read 1 regardless of
+    // orientation), so it's recovered the same way BuildDoors resolves a door's OWN room pair:
+    // ShipLayoutGeometry.FindOverlapAt against a candidate orientation, kept only if it actually
+    // lands on the SAME room pair this live Door already connects. Wide is unambiguous either way -
+    // whichever axis carries the span, a value above 1 unit means it was authored wide.
+    private static CustomDoorDef ToDoorDef(IReadOnlyList<CustomRoomDef> rooms, Door d)
+    {
+        var vertical = ShipLayoutGeometry.FindOverlapAt(rooms, d.X, d.Y, vertical: true) is { } overlap
+            && new HashSet<string> { overlap.RoomAId, overlap.RoomBId }.SetEquals(new[] { d.RoomAId, d.RoomBId });
+        var wide = MathF.Max(d.Width, d.Height) > 1f;
+        return new CustomDoorDef(d.X, d.Y, vertical, wide);
     }
 }

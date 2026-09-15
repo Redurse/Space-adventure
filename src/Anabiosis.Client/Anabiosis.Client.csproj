@@ -15,9 +15,25 @@
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.*" />
     <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
+    <!-- Real output-device selection (direct user request, "как в Baротравме") - MonoGame's own
+         SoundEffect/MediaPlayer always play through whichever device was the OS default at engine
+         startup, with no API to redirect them, so all game audio now routes through NAudio/WASAPI
+         instead (Audio/AudioEngine.cs) so a chosen output device actually takes effect. -->
+    <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Anabiosis.Shared\Anabiosis.Shared.csproj" />
     <ProjectReference Include="..\Anabiosis.Server\Anabiosis.Server.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Sounds/Music no longer go through the MonoGame Content pipeline (Content.mgcb) - AudioEngine
+         reads these .wav/.mp3 files directly via NAudio, so they just need to exist next to the
+         built exe rather than being compiled to .xnb. -->
+    <None Include="Content\Sounds\**\*.wav">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Content\Music\**\*.mp3">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>

@@ -83,6 +83,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.ShieldGeneratorSmall => "Малый генератор щита",
         CustomDeviceKind.ShieldGeneratorLarge => "Большой генератор щита",
         CustomDeviceKind.WeaponPanel => "Оружейная панель",
+        CustomDeviceKind.TripleDoor => "Тройная дверь",
         _ => kind.ToString(),
     };
 
@@ -110,6 +111,14 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.ComponentMount => "P",
         CustomDeviceKind.Junction => "B",
         CustomDeviceKind.Battery => "Y",
+        CustomDeviceKind.WallLamp => "W",
+        // Direct user request - a distinct glyph per "производство" workbench (previously none,
+        // all 4 fell to the "?" default below).
+        CustomDeviceKind.ConstructionBench => "С",
+        CustomDeviceKind.Fabricator => "Ф",
+        CustomDeviceKind.Deconstructor => "Д",
+        CustomDeviceKind.WeaponWorkbench => "О",
+        CustomDeviceKind.TripleDoor => "Т",
         _ => "?",
     };
 
@@ -147,10 +156,14 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.LargeStorage => new Color(160, 140, 110),
         CustomDeviceKind.Morgue => new Color(150, 180, 170),
         CustomDeviceKind.FuelRodStorage => new Color(180, 210, 60),
-        CustomDeviceKind.ConstructionBench => new Color(100, 180, 180),
-        CustomDeviceKind.Fabricator => new Color(100, 180, 180),
-        CustomDeviceKind.Deconstructor => new Color(100, 180, 180),
-        CustomDeviceKind.WeaponWorkbench => new Color(100, 180, 180),
+        // Direct user request - each "производство" workbench gets its own tint (was one literal
+        // color shared by all 4, so a placed one read as an unlabeled teal square). Themed: warm
+        // ochre for the general-purpose bench, cool white-blue for the fabricator's "print" glow,
+        // an alarmed orange-red for the deconstructor ("ломает"), steel-with-red for the weapon bench.
+        CustomDeviceKind.ConstructionBench => new Color(200, 150, 70),
+        CustomDeviceKind.Fabricator => new Color(140, 210, 230),
+        CustomDeviceKind.Deconstructor => new Color(220, 100, 60),
+        CustomDeviceKind.WeaponWorkbench => new Color(170, 90, 80),
         CustomDeviceKind.PowerConduit => new Color(200, 140, 60),
         CustomDeviceKind.Table => new Color(180, 160, 130),
         CustomDeviceKind.Chair => new Color(180, 160, 130),
@@ -165,6 +178,9 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.ShieldGeneratorSmall => new Color(80, 200, 190),
         CustomDeviceKind.ShieldGeneratorLarge => new Color(80, 200, 190),
         CustomDeviceKind.WeaponPanel => new Color(210, 80, 200),
+        // Same bronze/orange the real in-game door art uses (ShipRenderer.Doors.cs) - reads as the
+        // same fixture at a glance in the palette.
+        CustomDeviceKind.TripleDoor => new Color(200, 98, 60),
         _ => Color.White,
     };
 }

@@ -15,7 +15,7 @@ internal static partial class TestRunner
             new CustomRoomDef("a", "Мостик", 0, 0, 4, 4),
             new CustomRoomDef("b", "Шлюз", 4, 0, 4, 4),
         },
-        new[] { new CustomDoorDef("a", "b") },
+        new[] { new CustomDoorDef(4, 2, true, true) }, // shared wall at X=4, centered on its Y=[0,4] span
         new[] { new CustomAirlockDef("b", EdgeSide.Right) },
         new[]
         {

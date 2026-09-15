@@ -77,7 +77,10 @@ public static partial class MenuLogo
 
         var c = new PixelCanvas(Width, Height);
         PaintPlate(c, mask);        // MenuLogo.Metal.cs
-        PaintPupa(c);               // MenuLogo.Pupa.cs
+        // PaintPupa(c) removed - direct user request. Tried twice (the original insect pupa, then
+        // a reptile redesign after a Barotrauma reference screenshot); the user rejected the
+        // reptile pass too ("ладно плохо, сделай как было"), so back to letters only. Left in
+        // place, unused, in case this gets revisited a third time with more specific direction.
         return c.ToTexture(graphics);
     }
 

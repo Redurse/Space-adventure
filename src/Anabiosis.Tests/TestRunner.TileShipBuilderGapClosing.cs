@@ -64,8 +64,9 @@ internal static partial class TestRunner
         if (definition.Doors.Count != 1)
             return false;
         var door = definition.Doors[0];
-        return (door.RoomAId == roomA.Id && door.RoomBId == roomB.Id) ||
-               (door.RoomAId == roomB.Id && door.RoomBId == roomA.Id);
+        var overlap = ShipLayoutGeometry.FindOverlapAt(definition.Rooms, door.X, door.Y, door.Vertical);
+        return overlap is { } o &&
+            ((o.RoomAId == roomA.Id && o.RoomBId == roomB.Id) || (o.RoomAId == roomB.Id && o.RoomBId == roomA.Id));
     }
 
     // ---- Negative case: two regions that genuinely don't touch at all (far apart, well beyond any
@@ -100,7 +101,11 @@ internal static partial class TestRunner
             return false;
 
         // Both regions kept their own original, un-merged rectangles, and no door was invented.
-        var roomA = FindRoom(definition.Rooms, x: 0, y: 0, w: 3, h: 3);
+        // Room A's own genuinely-exterior wall column at x=3 is now absorbed into its rect
+        // (3x3 -> 4x3) per the room-rect/wall-ring convention fix - it has nothing beyond it, so
+        // this is the same kind of hand-authored-hull wall ring every other room already gets.
+        // Room B has no painted wall of its own anywhere around it, so it is left untouched.
+        var roomA = FindRoom(definition.Rooms, x: 0, y: 0, w: 4, h: 3);
         var roomB = FindRoom(definition.Rooms, x: 20, y: 10, w: 2, h: 3);
         return roomA is not null && roomB is not null && definition.Doors.Count == 0;
     }
@@ -141,6 +146,74 @@ internal static partial class TestRunner
         if (definition.Doors.Count != 1)
             return false;
         var door = definition.Doors[0];
-        return door.RoomAId == lRoom.Id || door.RoomBId == lRoom.Id;
+        var overlap = ShipLayoutGeometry.FindOverlapAt(definition.Rooms, door.X, door.Y, door.Vertical);
+        return overlap is { } o && (o.RoomAId == lRoom.Id || o.RoomBId == lRoom.Id);
+    }
+
+    // Direct user request ("это в будущем будет одно из главных устройств, их будет много") -
+    // closes the gap this session found live: TileCell.TerminalId used to never reach a real Ship
+    // at all (editor-only, dropped silently on export). A 3x3 room whose own North row is wall
+    // (row 0), with a recessed terminal on its one non-corner tile (1,0) - BuildDefinition must
+    // export it as a real CustomDeviceDef(Terminal), positioned at the wall tile's own center (same
+    // "tile-center" convention every 1x1 device already uses), not silently dropped.
+    private static TileGrid BuildThreeByThreeRoomWithNorthWall()
+    {
+        var tiles = new TileGrid();
+        for (var x = 0; x < 3; x++)
+            for (var y = 0; y < 3; y++)
+                tiles.SetFloor(new TileCoord(x, y), true);
+        for (var x = 0; x < 3; x++)
+            tiles.SetWall(new TileCoord(x, 0), TileWallKind.Solid);
+        tiles.SetWallOpenSide(new TileCoord(1, 0), TileSide.North);
+        return tiles;
+    }
+
+    private static bool TileShipBuilder_RecessedTerminal_ExportsAsTerminalDeviceAtTileCenter()
+    {
+        var tiles = BuildThreeByThreeRoomWithNorthWall();
+        tiles.PlaceRecessedWallDevice(new TileCoord(1, 0), CustomDeviceKind.Terminal, "terminal-1");
+
+        var (definition, errors) = BuildTileDefinition(tiles);
+        if (definition is null || errors.Count > 0)
+            return false;
+        var terminal = definition.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.Terminal);
+        return terminal is not null && Math.Abs(terminal.X - 1.5f) < 0.01f && Math.Abs(terminal.Y - 0.5f) < 0.01f
+            && terminal.WallDeviceFacingSide == TileSide.South; // opposite of the wall's own North open side
+    }
+
+    // No per-ship limit any more (Ship.Custom.cs now builds a List<Terminal>, same shape
+    // AmmoStorage/SuitLocker already have) - two terminals (one recessed, one floor-adjacent) both
+    // export as their own independent CustomDeviceDef(Terminal).
+    private static bool TileShipBuilder_MultipleTerminals_EachExportsAsItsOwnDevice()
+    {
+        var tiles = BuildThreeByThreeRoomWithNorthWall();
+        tiles.PlaceRecessedWallDevice(new TileCoord(1, 0), CustomDeviceKind.Terminal, "terminal-1");
+        // (0,0) is a genuine corner (full-thickness, WallOpenSide null) - (1,0) is half-thick now and
+        // recess-only (direct user report, "стены в пол блока... это можно было сделать только в
+        // том же тайле что и стена"), so the floor-adjacent mode needs a DIFFERENT wall neighbor.
+        tiles.PlaceWallDevice(new TileCoord(0, 1), TileSide.North, CustomDeviceKind.Terminal, "terminal-2"); // floor-adjacent mode
+
+        var (definition, errors) = BuildTileDefinition(tiles);
+        if (definition is null || errors.Count > 0)
+            return false;
+        return definition.Devices.Count(d => d.Kind == CustomDeviceKind.Terminal) == 2;
+    }
+
+    // Direct user request ("на стену размером с полублок можно крепить только терминал и настенную
+    // лампу... сделай лампу тоже") - WallLamp exports through the exact same path as Terminal, just
+    // its own CustomDeviceKind, and a Terminal/WallLamp placed side by side don't interfere with
+    // each other's own count.
+    private static bool TileShipBuilder_WallLamp_ExportsAsWallLampDeviceAlongsideTerminal()
+    {
+        var tiles = BuildThreeByThreeRoomWithNorthWall();
+        tiles.PlaceRecessedWallDevice(new TileCoord(1, 0), CustomDeviceKind.WallLamp, "lamp-1");
+        tiles.PlaceWallDevice(new TileCoord(0, 1), TileSide.North, CustomDeviceKind.Terminal, "terminal-1"); // (0,0) is a full-thickness corner
+
+        var (definition, errors) = BuildTileDefinition(tiles);
+        if (definition is null || errors.Count > 0)
+            return false;
+        var lamp = definition.Devices.FirstOrDefault(d => d.Kind == CustomDeviceKind.WallLamp);
+        return lamp is not null && Math.Abs(lamp.X - 1.5f) < 0.01f && Math.Abs(lamp.Y - 0.5f) < 0.01f
+            && definition.Devices.Count(d => d.Kind == CustomDeviceKind.Terminal) == 1;
     }
 }

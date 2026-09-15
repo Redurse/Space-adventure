@@ -58,6 +58,32 @@ public static class ShipLayoutGeometry
         return results;
     }
 
+    // Which room-pair overlap (if any) a freely-placed door position actually lands on - the sole
+    // resolver a CustomDoorDef's (X, Y, Vertical) needs to recover RoomAId/RoomBId (humble-soaring-
+    // cat.md "Дверь как свободный объект": a door no longer authors its own room pair). `vertical`
+    // must match the candidate overlap's own Vertical (a position can only genuinely sit on ONE kind
+    // of shared wall - editor placement always clicks an existing wall tile, so this is never
+    // actually ambiguous in practice); `at` is the door's coordinate on the wall's own perpendicular
+    // axis (X for a vertical wall, Y otherwise), `span` its coordinate along the wall. Same epsilon
+    // FindRoomPairOverlaps' own touching-boundary comparisons rely on being exact, used here only
+    // because `span` needs a tolerant range check (near/far), not an equality one.
+    public static RoomPairOverlap? FindOverlapAt(IReadOnlyList<CustomRoomDef> rooms, float x, float y, bool vertical)
+    {
+        const float epsilon = 0.01f;
+        var at = vertical ? x : y;
+        var span = vertical ? y : x;
+        foreach (var overlap in FindRoomPairOverlaps(rooms))
+        {
+            if (overlap.Vertical != vertical || MathF.Abs(overlap.At - at) > epsilon)
+                continue;
+            var near = overlap.OverlapCenter - overlap.OverlapLength / 2f;
+            var far = overlap.OverlapCenter + overlap.OverlapLength / 2f;
+            if (span >= near - epsilon && span <= far + epsilon)
+                return overlap;
+        }
+        return null;
+    }
+
     // Whether ANY portion of `room`'s given side touches another room at all - a side with any
     // touch at all is not available as a whole-side airlock (see CustomAirlockDef's doc comment).
     // Checks against every one of the room's OWN subrects (not just its bbox) - identical to the old

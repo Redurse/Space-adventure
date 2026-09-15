@@ -37,5 +37,9 @@ public static class JukeboxTracks
         new("Music/Jukebox/jukebox_17_the_automaton_legion", "The Automaton Legion"),
         new("Music/Jukebox/jukebox_23_terran_one", "Terran One"),
         new("Music/Jukebox/jukebox_04_sweden", "Sweden"),
+        new("Music/Jukebox/jukebox_26_iron_nest_neutral_3", "Iron Nest — Neutral 3"),
+        new("Music/Jukebox/jukebox_27_iron_nest_victory", "Iron Nest — Victory"),
+        new("Music/Jukebox/jukebox_28_coh2_main_menu", "Company of Heroes 2 — Main Menu Theme"),
+        new("Music/Jukebox/jukebox_29_iron_nest_launch_trailer", "Iron Nest — Launch Trailer"),
     };
 }

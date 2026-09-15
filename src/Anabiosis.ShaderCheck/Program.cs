@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -361,7 +362,11 @@ internal sealed class Checks : Game
         // by design so a missing file never costs the game.
         Check("every music track loads and the player starts one", () =>
         {
-            var music = new Anabiosis.Client.Audio.GameMusic(Content);
+            // Routes through AudioEngine/NAudio now (direct user request, real output-device
+            // selection) instead of MonoGame's ContentManager/MediaPlayer - a throwaway engine here
+            // is fine, this check never needs to actually be heard.
+            using var audioEngine = new Anabiosis.Client.Audio.GameAudioEngine();
+            var music = new Anabiosis.Client.Audio.GameMusic(audioEngine);
             Console.WriteLine("     tracks loaded: " + music.TrackCount);
             if (music.TrackCount != 5)
                 return "expected 5 tracks, loaded " + music.TrackCount;
@@ -369,15 +374,61 @@ internal sealed class Checks : Game
             music.SetMasterVolume(0f);          // verify without making noise
             music.Update(0.0);                  // arms, schedules the first track
             music.Update(10_000.0);             // well past any gap - must start something
-            var started = Microsoft.Xna.Framework.Media.MediaPlayer.State;
-            Console.WriteLine("     media state after the first start: " + started);
+            var started = music.IsPlaying;
+            Console.WriteLine("     playing after the first start: " + started);
             music.Stop();
-            var stopped = Microsoft.Xna.Framework.Media.MediaPlayer.State;
-            Console.WriteLine("     media state after Stop: " + stopped);
-            if (started != Microsoft.Xna.Framework.Media.MediaState.Playing)
-                return "the player did not start a track: state was " + started;
-            if (stopped == Microsoft.Xna.Framework.Media.MediaState.Playing)
+            var stopped = music.IsPlaying;
+            Console.WriteLine("     playing after Stop: " + stopped);
+            if (!started)
+                return "the player did not start a track";
+            if (stopped)
                 return "Stop left a track playing";
+            return null;
+        });
+
+        // Direct user request ("сделай чтобы 2 вкладка настроек была почти точь в точь как в
+        // Baротравме") - the other half of GameAudioEngine that GameMusic's own check above doesn't
+        // exercise: real output-device enumeration, and a one-shot .wav SFX (pitch/pan/volume, swept
+        // off the mixer once finished) rather than a looping .mp3 track.
+        Check("GameAudioEngine enumerates output devices and plays a one-shot SFX", () =>
+        {
+            using var audioEngine = new Anabiosis.Client.Audio.GameAudioEngine { SoundVolume = 0f };
+            var devices = audioEngine.EnumerateOutputDevices();
+            Console.WriteLine("     output devices found: " + devices.Count);
+            foreach (var (id, name) in devices)
+                Console.WriteLine("       - " + name);
+
+            var sounds = new Anabiosis.Client.Audio.GameSounds(audioEngine);
+            sounds.Play(Anabiosis.Client.Audio.GameSounds.DoorOpen, 0.0);
+            // A ~1-second .wav one-shot should still be mid-flight immediately after Play, and
+            // should have swept itself off the mixer well before this.
+            System.Threading.Thread.Sleep(50);
+            audioEngine.SweepFinishedOneShots();
+            return null;
+        });
+
+        // Direct user report ("почему в устройствах ввода я не могу найти микрофон наушников?") -
+        // proves the fix on this actual machine rather than just trusting the diagnosis: input
+        // devices now come from the same WASAPI enumerator as output (GameAudioEngine.
+        // EnumerateInputDevices, VoiceCapture no longer touches MonoGame's own Microphone class at
+        // all), and a real WasapiCapture can actually open and record from whatever the default
+        // capture device is.
+        Check("GameAudioEngine/VoiceCapture enumerate input devices and can actually record", () =>
+        {
+            using var audioEngine = new Anabiosis.Client.Audio.GameAudioEngine { SoundVolume = 0f };
+            var devices = audioEngine.EnumerateInputDevices();
+            Console.WriteLine("     input devices found: " + devices.Count);
+            foreach (var (id, name) in devices)
+                Console.WriteLine("       - " + name);
+            if (devices.Count == 0)
+                return null; // headless/no-mic machine - nothing further to prove here
+
+            var capture = new Anabiosis.Client.Audio.VoiceCapture();
+            capture.BeginTalking(isRadio: false);
+            if (!capture.IsRecording)
+                return "BeginTalking did not start recording against the default input device";
+            System.Threading.Thread.Sleep(150);
+            capture.StopTalking();
             return null;
         });
 
@@ -411,6 +462,95 @@ internal sealed class Checks : Game
             }
             if (!string.IsNullOrEmpty(dump))
                 Console.WriteLine("     wrote " + AppIconArt.Sizes.Length + " sizes to " + dump);
+            return null;
+        });
+
+        // Direct user request ("текстуры мне скинь") - every DeviceSkin face is baked in code, so
+        // the only way to actually look at one outside the running game is to dump it - same
+        // ICON_DUMP/LOGO_DUMP/BACKDROP_DUMP convention above/below, just for DeviceSkin. Set
+        // DEVICE_DUMP to a directory to write one PNG per face (all of them, not just the new
+        // ones - direct user request to review the shared Housing detail pass across every
+        // existing face too) out of it.
+        Check("every device face bakes, non-square footprints at their own aspect ratio", () =>
+        {
+            var dump = Environment.GetEnvironmentVariable("DEVICE_DUMP");
+            if (!string.IsNullOrEmpty(dump))
+                Directory.CreateDirectory(dump);
+
+            using var deviceSkin = new DeviceSkin(GraphicsDevice);
+            var faces = Enum.GetValues<DeviceSkin.Face>();
+            const int unit = 32;
+            // Direct user request ("текстура была в соответствии с этой формой") - dump each face at
+            // the same tile aspect ratio its own CustomDeviceFootprint.Size actually uses, so the fix
+            // (Housing spans the full rect, hero art stays centered/square) is visible here rather
+            // than in a square PNG that hides the whole point. Anything not listed is 1x1 (square).
+            var footprintTiles = new Dictionary<DeviceSkin.Face, (int Width, int Height)>
+            {
+                [DeviceSkin.Face.Helm] = (3, 2),
+                [DeviceSkin.Face.Navigation] = (3, 2),
+                [DeviceSkin.Face.ConstructionBench] = (2, 3),
+                [DeviceSkin.Face.Fabricator] = (3, 3),
+                [DeviceSkin.Face.Deconstructor] = (3, 3),
+                [DeviceSkin.Face.WeaponWorkbench] = (2, 4),
+                [DeviceSkin.Face.Turret] = (3, 3),
+                [DeviceSkin.Face.Bed] = (1, 2),
+                [DeviceSkin.Face.ShuttleHangar] = (5, 6),
+            };
+            foreach (var face in faces)
+            {
+                var (tw, th) = footprintTiles.TryGetValue(face, out var wh) ? wh : (1, 1);
+                var width = tw * unit;
+                var height = th * unit;
+                var baked = deviceSkin.Get(face, width, height, lit: true);
+                if (baked.Width != width || baked.Height != height)
+                    return "asked for " + width + "x" + height + ", got " + baked.Width + "x" + baked.Height + " (" + face + ")";
+                if (!string.IsNullOrEmpty(dump))
+                {
+                    using var stream = File.Create(Path.Combine(dump, "device_" + face + ".png"));
+                    baked.SaveAsPng(stream, width, height);
+                }
+            }
+            if (!string.IsNullOrEmpty(dump))
+                Console.WriteLine("     wrote " + faces.Length + " faces to " + dump);
+            return null;
+        });
+
+        // Direct user request ("хочу чтобы в игре пол был как в редакторе") - DeckPlates.Create bakes
+        // 10 individual plate textures per Deck kind, but judging "does the panel grid actually read
+        // from a normal camera distance" needs to see several of them TILED together (DeckPlates.
+        // DrawTiled is exactly what ShipRenderer.Rooms.cs's DrawRoomFloor calls at runtime), not one
+        // plate in isolation - so this renders a small multi-tile room-sized patch per Deck kind into
+        // an offscreen target and dumps THAT, the same composite a player would actually see.
+        Check("the floor deck plates tile into a readable panel grid", () =>
+        {
+            var dump = Environment.GetEnvironmentVariable("FLOOR_DUMP");
+            if (!string.IsNullOrEmpty(dump))
+                Directory.CreateDirectory(dump);
+
+            const int tilesAcross = 6;
+            const int previewSize = DeckPlates.TileSize * tilesAcross;
+            using var target = new RenderTarget2D(GraphicsDevice, previewSize, previewSize);
+            foreach (var deck in Enum.GetValues<DeckPlates.Deck>())
+            {
+                var plates = DeckPlates.Create(GraphicsDevice, deck);
+                if (plates.Length == 0 || plates.Any(p => p.Width != DeckPlates.TileSize || p.Height != DeckPlates.TileSize))
+                    return "unexpected plate size for " + deck;
+
+                GraphicsDevice.SetRenderTarget(target);
+                GraphicsDevice.Clear(Color.Black);
+                batch.Begin();
+                DeckPlates.DrawTiled(batch, plates, new Rectangle(0, 0, previewSize, previewSize), Color.White, Point.Zero);
+                batch.End();
+                GraphicsDevice.SetRenderTarget(null);
+
+                if (!string.IsNullOrEmpty(dump))
+                {
+                    using var stream = File.Create(Path.Combine(dump, "floor_" + deck + ".png"));
+                    target.SaveAsPng(stream, previewSize, previewSize);
+                }
+            }
+            if (!string.IsNullOrEmpty(dump))
+                Console.WriteLine("     wrote " + Enum.GetValues<DeckPlates.Deck>().Length + " deck previews to " + dump);
             return null;
         });
 

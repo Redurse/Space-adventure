@@ -119,7 +119,6 @@ internal static partial class TestRunner
         EquipSuit(world, 1);
         WinBattleAt(world, "sector-alpha"); // shifts faction standing
         DockAtStation(world, "outpost-gamma");
-        world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout)); // trading down pays out
 
         var save = world.CreateSave();
 
@@ -213,13 +212,13 @@ internal static partial class TestRunner
         {
             // Constructing the world docks it at home immediately, so the very first tick should
             // already flush a save to disk.
-            var server = new GameServer(ShipKind.Frigate, loadFrom: null, savePath: path);
+            var server = new GameServer(ShipKind.Custom, loadFrom: null, savePath: path);
             var transport = new InProcessTransport();
             server.Connect(transport);
             server.Tick();
 
             var saved = SaveStore.Load(path);
-            return saved is not null && saved.ShipKind == ShipKind.Frigate && saved.DockedPointId == "home-station";
+            return saved is not null && saved.ShipKind == ShipKind.Custom && saved.DockedPointId == "home-station";
         }
         finally
         {

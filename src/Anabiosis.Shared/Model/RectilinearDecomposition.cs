@@ -13,13 +13,6 @@ public static class RectilinearDecomposition
         public int Height => MaxY - MinY + 1;
     }
 
-    // A sanity cap, not a theoretical limit - the scan below is a simple greedy "maximal rectangle
-    // from the top-left-most remaining tile" pass, not a minimal decomposition, so a genuinely
-    // gnarly hand-painted shape could in principle need more pieces than a smarter algorithm would.
-    // Rejecting past this keeps every downstream consumer (wall-ring tracing, HullSkin rendering)
-    // bounded rather than silently accepting an arbitrarily complex shape.
-    public const int MaxPieces = 8;
-
     public static (IReadOnlyList<Rect>? Rects, string? Error) Decompose(IReadOnlySet<TileCoord> tiles)
     {
         if (tiles.Count == 0)
@@ -51,9 +44,6 @@ public static class RectilinearDecomposition
                     remaining.Remove(new TileCoord(start.X + dx, start.Y + dy));
 
             rects.Add(new Rect(start.X, start.Y, start.X + width - 1, start.Y + height - 1));
-
-            if (rects.Count > MaxPieces)
-                return (null, $"Отсек слишком сложной формы (больше {MaxPieces} прямоугольников).");
         }
 
         return (rects, null);

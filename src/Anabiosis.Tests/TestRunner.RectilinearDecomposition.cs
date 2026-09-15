@@ -67,8 +67,7 @@ internal static partial class TestRunner
         return error is null && rects is { Count: > 0 } && CoversExactly(rects, tiles);
     }
 
-    // A U-shape (an engine-pylon-style hull cross-section) - more pieces than an L/plus, but still
-    // well within MaxPieces.
+    // A U-shape (an engine-pylon-style hull cross-section) - more pieces than an L/plus.
     private static bool RectilinearDecomposition_UShape_DecomposesCleanly()
     {
         var tiles = Rect(0, 0, 2, 5);
@@ -80,9 +79,11 @@ internal static partial class TestRunner
         return error is null && rects is { Count: > 0 } && CoversExactly(rects, tiles);
     }
 
-    // A checkerboard-like shape needs one rectangle per isolated cell - deliberately pathological,
-    // must be rejected cleanly rather than accepted with an absurd piece count.
-    private static bool RectilinearDecomposition_TooComplexShape_FailsCleanly()
+    // Direct user request ("убери полностью этот лимит") - the old MaxPieces=8 sanity cap is gone
+    // entirely; a genuinely pathological checkerboard shape (needing one rectangle per isolated
+    // cell, 32 of them here) must still decompose successfully rather than being rejected for
+    // being "too complex", the exact case this test used to prove was cleanly refused.
+    private static bool RectilinearDecomposition_ManyPiecesShape_StillDecomposesCleanly()
     {
         var tiles = new HashSet<TileCoord>();
         for (var x = 0; x < 8; x++)
@@ -90,7 +91,7 @@ internal static partial class TestRunner
                 if ((x + y) % 2 == 0)
                     tiles.Add(new TileCoord(x, y));
         var (rects, error) = RectilinearDecomposition.Decompose(tiles);
-        return rects is null && error is not null;
+        return error is null && rects is { Count: 32 } && CoversExactly(rects, tiles);
     }
 
     // Idempotency: re-decomposing the union of an already-produced rect set must reproduce a valid

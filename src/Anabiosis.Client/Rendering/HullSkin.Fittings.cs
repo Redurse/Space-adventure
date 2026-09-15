@@ -216,18 +216,12 @@ public static partial class HullSkin
         Band(spriteBatch, pixel, bow, side, front + 0.1f, back - 0.2f, spine + 0.46f, 0.07f, origin, livery * 0.8f);
     }
 
-    // Frigate keeps the red this whole overhaul started with (game_design.md's own starter class,
-    // and the colour most players will associate with "the ship" regardless of what they fly
-    // later). The other three each get a colour that fits their own role: Scout cool and minimal
-    // (cheapest, weakest), Cruiser gold (priciest, the flagship), Corvette green (the one hull that
-    // flies nose-first instead of broadside, worth reading as visually distinct on sight).
-    private static Color LiveryFor(ShipKind shipKind) => shipKind switch
-    {
-        ShipKind.Scout => new Color(70, 150, 170),
-        ShipKind.Cruiser => new Color(198, 160, 74),
-        ShipKind.Corvette => new Color(90, 168, 82),
-        _ => Livery,
-    };
+    // Direct user request ("удали все текущие корабли... полностью удалить из кода") - ShipKind is
+    // just Custom now, so every hull gets the same red livery this whole overhaul started with
+    // (game_design.md's own starter class, and the colour most players already associate with "the
+    // ship"). The per-class colours this used to pick between (Scout cool/minimal, Cruiser gold,
+    // Corvette green) went with the hull classes that wore them.
+    private static Color LiveryFor(ShipKind shipKind) => Livery;
 
     // A couple of small windows on the bridge/cockpit's own outward flank - a glimpse of the same
     // starfield ShipRenderer draws behind everything else. There's no way to actually sample that

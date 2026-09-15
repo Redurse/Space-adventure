@@ -59,7 +59,6 @@ public sealed record ClientCommand(
     bool PushOffPressed = false,
     float PushOffDirectionX = 0,
     float PushOffDirectionY = 0,
-    ShipKind? PurchaseShipKind = null,
     // Which job to take off the Administrator's board (game_design.md section 7). Only read when
     // AcceptCargoQuestPressed is set; null there means "any available kind".
     QuestKind? AcceptQuestKind = null,
@@ -247,8 +246,8 @@ public sealed record ClientCommand(
     // rather than a held/continuous input.
     bool FlipHeadingPressed = false,
     // M60 - "строить отсеки по ходу игры": which RoomCatalog entry to append, and where (world
-    // units, same frame as every other placed device). Edge-triggered like PurchaseShipKind, same
-    // docked-at-a-Shipwright gate (World.ShipBuilding.cs's TryBuildRoom). Appended at the very end
+    // units, same frame as every other placed device). Edge-triggered, same docked-at-a-Shipwright
+    // gate (World.ShipBuilding.cs's TryBuildRoom). Appended at the very end
     // for the same never-insert-in-the-middle reason every other field's own comment here explains.
     BuildRoomRequest? BuildRoom = null,
     // M61 - the symmetric "снести отсек" action (World.ShipBuilding.cs's TryDemolishRoom):
@@ -282,9 +281,6 @@ public sealed record ClientCommand(
     // "Фронты"'s "Провести бой" - resolves the turn using whatever both sides currently have
     // allocated. Edge-triggered like CardGameEndRoundPressed above.
     bool FrontsResolvePressed = false,
-    // A wall terminal's on/off toggle - one click on the physical block itself (no separate panel,
-    // unlike the jukebox), edge-triggered and proximity-checked server-side the same way.
-    bool TerminalTogglePressed = false,
     // humble-soaring-cat.md - "Полный переход на клик как в Baro": the E-key interactions below
     // each gain a click-driven twin, keyed by the specific object the client already
     // hovered/highlighted rather than "nearest in range". Edge-triggered like DoorToggleId/
@@ -294,4 +290,9 @@ public sealed record ClientCommand(
     string? TurretInteractId = null,
     string? AmmoStorageInteractId = null,
     string? StealCrateId = null,
-    string? RepairDeviceId = null);
+    string? RepairDeviceId = null,
+    // A wall terminal's on/off toggle - direct user request ("их будет много"): replaced the old
+    // single-toggle-key TerminalTogglePressed with a click-on-the-specific-terminal id, same
+    // "id says WHICH candidate" shape as SuitLockerInteractId above (World.ClickInteract.cs's
+    // TryTerminalInteractById re-checks room/distance itself).
+    string? TerminalInteractId = null);

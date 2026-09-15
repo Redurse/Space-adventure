@@ -89,22 +89,15 @@ public sealed class StationPanel
         return new Rectangle((int)origin.X, (int)origin.Y, RowWidth + 60, RowHeight - 2);
     }
 
-    // The Shipwright's hull list — one row per ShipKind, same geometry as the other lists.
-    public static readonly ShipKind[] PurchasableShipKinds = { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser };
-
-    public static Rectangle GetShipRect(int index, Vector2 panelOrigin)
-    {
-        var origin = panelOrigin + TradeListOrigin + new Vector2(0, index * RowHeight);
-        return new Rectangle((int)origin.X, (int)origin.Y, RowWidth + 120, RowHeight - 2);
-    }
-
     // M61 - "снести отсек": no per-room picker yet (same "later milestone" deferral M60's own build
     // placement made), just one button that demolishes whichever player-built room has the highest
     // "room-N" suffix - the single most-recently-built one, the only one there usually is to undo.
-    // Sits right below the hull-swap rows and a small gap - the old flat "Построить отсек" list that
-    // used to sit between them moved out to StationBuildPanel (content-каталог отсеков's own
-    // bottom-of-screen category/module UI).
-    private const int DemolishRowOffset = 5; // PurchasableShipKinds.Length(3) + a 2-row gap
+    // The old flat "Построить отсек" list that used to sit above it moved out to StationBuildPanel
+    // (content-каталог отсеков's own bottom-of-screen category/module UI); the hull-purchase rows
+    // that used to sit above THAT are gone entirely (direct user request, "удали все текущие
+    // корабли... полностью удалить из кода" - every ShipKind but Custom is deleted, and Custom was
+    // never sellable here to begin with, so nothing is left to list).
+    private const int DemolishRowOffset = 1; // just a small gap under the header/hull-plating line
     public static Rectangle GetDemolishLastRoomRect(Vector2 panelOrigin)
     {
         var origin = panelOrigin + TradeListOrigin + new Vector2(0, DemolishRowOffset * RowHeight);
@@ -185,38 +178,15 @@ public sealed class StationPanel
         }
     }
 
-    // Hull list at the Shipwright (game_design.md section 9). Prices are shown net of the trade-in
-    // on the current hull, which is what actually gets charged (World.ShipPurchase.cs) - trading
-    // down therefore reads as a negative number, i.e. the yard pays you.
+    // The Shipwright's own panel - direct user request ("удали все текущие корабли... полностью
+    // удалить из кода") removed the hull-purchase list this used to show above the demolish button
+    // (every ShipKind but Custom is gone, and Custom was never sellable here anyway) - now this NPC
+    // is purely the "build/demolish a compartment" role (StationBuildPanel handles building).
     private void DrawShipyard(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin)
     {
         var headerOrigin = panelOrigin + TradeListOrigin + new Vector2(0, -20);
         spriteBatch.DrawString(_font, $"Верфь (сейчас: {ShipCatalog.Name(snapshot.CurrentShipKind)})", headerOrigin,
             Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
-
-        for (var i = 0; i < PurchasableShipKinds.Length; i++)
-        {
-            var kind = PurchasableShipKinds[i];
-            var rect = GetShipRect(i, panelOrigin);
-
-            string label;
-            Color color;
-            if (kind == snapshot.CurrentShipKind)
-            {
-                label = $"{ShipCatalog.Name(kind)} — ваш текущий корабль";
-                color = Color.LightGreen;
-            }
-            else
-            {
-                var cost = ShipCatalog.Price(kind) - ShipCatalog.TradeInValue(snapshot.CurrentShipKind);
-                label = cost >= 0
-                    ? $"{ShipCatalog.Name(kind)} — доплата {cost}"
-                    : $"{ShipCatalog.Name(kind)} — возврат {-cost}";
-                color = snapshot.Credits >= cost ? Color.White : Color.Gray;
-            }
-
-            spriteBatch.DrawString(_font, label, new Vector2(rect.X, rect.Y), color, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-        }
 
         // Содержательный каталог отсеков's own build UI (StationBuildPanel, the bottom-of-screen
         // category tabs + module row) replaced this panel's old flat "Построить отсек" text list -

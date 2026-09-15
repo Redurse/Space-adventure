@@ -28,10 +28,19 @@ public sealed partial class World
     public const float DoorMaxHp = 100f;
     private readonly Dictionary<string, float> _doorHp = new();
 
-    public bool IsDoorOpen(string doorId) => _doorOpen.TryGetValue(doorId, out var open) && open;
+    // M-doors-as-edges (humble-soaring-cat.md) - a parallel id space (Ship.DoorEdges' own Ids never
+    // collide with Doors'/AirlockOuterDoors', so both dictionary pairs can be checked independently
+    // rather than merged into one). Populated in InitializeShipState, same as _doorOpen/_doorHp.
+    private readonly Dictionary<string, bool> _doorEdgeOpen = new();
+    private readonly Dictionary<string, float> _doorEdgeHp = new();
 
-    private float DoorHp(string doorId) => _doorHp.GetValueOrDefault(doorId, DoorMaxHp);
+    public bool IsDoorOpen(string doorId) =>
+        _doorOpen.TryGetValue(doorId, out var open) ? open : _doorEdgeOpen.GetValueOrDefault(doorId);
+
+    private float DoorHp(string doorId) =>
+        _doorHp.TryGetValue(doorId, out var hp) ? hp : _doorEdgeHp.GetValueOrDefault(doorId, DoorMaxHp);
     public bool IsDoorDestroyed(string doorId) => DoorHp(doorId) <= 0f;
+    private bool IsDoorEdgeId(string doorId) => _doorEdgeOpen.ContainsKey(doorId);
 
     // Every physical door on the PLAYER'S OWN ship, interior Doors and outer airlocks alike, paired
     // with a room-membership test suited to each: an interior Door connects two rooms (its own
@@ -102,7 +111,14 @@ public sealed partial class World
     {
         // The reactor's door-lock lever (World.cs) overrides every door/airlock at once - it's a
         // policy check only, so DamageDoor above still forces a door open regardless of it.
-        if (DoorsLocked || !_doorOpen.ContainsKey(doorId) || IsDoorDestroyed(doorId))
+        if (DoorsLocked || IsDoorDestroyed(doorId))
+            return;
+        if (_doorEdgeOpen.ContainsKey(doorId))
+        {
+            _doorEdgeOpen[doorId] = !_doorEdgeOpen[doorId];
+            return;
+        }
+        if (!_doorOpen.ContainsKey(doorId))
             return;
         _doorOpen[doorId] = !_doorOpen[doorId];
     }
@@ -110,6 +126,10 @@ public sealed partial class World
     private IReadOnlyList<DoorState> CreateDoorStates() =>
         _doorOpen.Select(kv =>
             new DoorState(kv.Key, kv.Value, DoorHp(kv.Key), DoorMaxHp, GetSystemRepairDisplay(kv.Key))).ToArray();
+
+    private IReadOnlyList<DoorEdgeState> CreateDoorEdgeStates() =>
+        _doorEdgeOpen.Select(kv =>
+            new DoorEdgeState(kv.Key, kv.Value, DoorHp(kv.Key), DoorMaxHp, GetSystemRepairDisplay(kv.Key))).ToArray();
 
     // What the client shows a health bar over while the cutter is lit and actually aimed at a
     // door - same "quiet number, shown only while it's being worked" shape as GetWallToolTargetId

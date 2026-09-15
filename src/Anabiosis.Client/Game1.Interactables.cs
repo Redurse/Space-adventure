@@ -26,6 +26,12 @@ public partial class Game1
     private static Rectangle? BlockRectIfNear(Vec2 devicePosition, Vec2 myPosition, int size, Vector2 origin) =>
         NearEnough(devicePosition, myPosition) ? ShipRenderer.GetBlockRect(devicePosition, size, origin) : null;
 
+    // Non-square hit-rect (Helm/Navigation and any other footprint from CustomDeviceFootprint.Size
+    // that isn't 1x1) - same "near enough, and here's its rect" gate as the size-only overload above,
+    // just forwarding into ShipRenderer's own width/height GetBlockRect instead of the square one.
+    private static Rectangle? BlockRectIfNear(Vec2 devicePosition, Vec2 myPosition, int width, int height, Vector2 origin) =>
+        NearEnough(devicePosition, myPosition) ? ShipRenderer.GetBlockRect(devicePosition, width, height, origin) : null;
+
     // The reactor's own console can be much bigger than the hand-authored default (Ship.Custom.cs
     // scales SizeScale to roughly fill half its room) - standing anywhere near that footprint has to
     // count as "near enough", not just the one exact point ReactorBlock.Position sits at.
@@ -37,12 +43,27 @@ public partial class Game1
         return ShipRenderer.GetBlockRect(reactor.Position, (int)(ShipRenderer.BigBlockSize * reactor.SizeScale), origin);
     }
 
+    // Direct user report ("не могу нажать на рычаги... хитбокс текстуры как с остальными
+    // устройствами") - the 3 reactor levers (light/emergency/doors-locked, HandleMouseClick's own
+    // click-test) had no entry here at all, so hovering one never got the gold highlight/hand
+    // cursor every other device already gives - the one visible cue for "you're actually over the
+    // clickable spot" that every other device relies on to be aimable. Same GetReactorLeverRect the
+    // click-test and the drawing itself already share, so this can never disagree with either.
+    private static Rectangle? ReactorLeverRectIfNear(ReactorBlock reactor, Vec2 myPosition, Vector2 origin, int index) =>
+        NearEnough(reactor.Position, myPosition) ? ShipRenderer.GetReactorLeverRect(index, reactor, origin) : null;
+
     private static Rectangle? SystemDeviceRectIfNear(ShipSystemDevice device, Vec2 myPosition, Vector2 origin) =>
         BlockRectIfNear(device.Position, myPosition,
             device.System == PowerSystemId.Engine ? ShipRenderer.BigBlockSize : ShipRenderer.NormalBlockSize, origin);
 
+    // Direct user bug report ("текстура двигателя съехала") - this used to hit-test a full 48px
+    // tile (PixelsPerUnit) while DrawShipEngine's own Control box actually renders at the smaller
+    // BigBlockSize (40px, "same size/style as any other system-device box" - that method's own doc
+    // comment), the same class of hover/click-vs-texture drift this session already found and fixed
+    // for the reactor's own levers. Never caught before now because a real, catalog-placed marching
+    // engine had never actually been built and looked at in a live session until "Двигатель 1".
     private static Rectangle? EngineControlRectIfNear(EngineState engine, Vec2 myPosition, Vector2 origin) =>
-        BlockRectIfNear(new Vec2(engine.X, engine.Y), myPosition, (int)ShipRenderer.PixelsPerUnit, origin);
+        BlockRectIfNear(new Vec2(engine.X, engine.Y), myPosition, ShipRenderer.BigBlockSize, origin);
 
     // World.Mining.cs's TryPickupDroppedItem actually allows PickupRadius (1.5), wider than the
     // ordinary DeviceInteractionRadius (1.0) every other device here uses - this used to be a real,
@@ -72,6 +93,20 @@ public partial class Game1
         var ownRoom = new[] { rooms.First(r => r.Id == door.RoomId) };
         var (left, top, width, height) = TileGridRasterizer.DoorTileRect(ownRoom, door.X, door.Y, door.Width, door.Height);
         return ShipRenderer.GetDoorRect(left, top, width, height, origin);
+    }
+
+    // M-doors-as-edges - proximity is measured from the seam's own midpoint (not either flanking
+    // tile's center) so standing in either tile reads as roughly the same distance; the actual
+    // hitbox returned is still the union of both full tiles (ShipRenderer.GetDoorEdgeHitRect),
+    // matching the direct user request ("клик по хитбоксу этих 2 клеток").
+    private static Rectangle? DoorEdgeRectIfNear(ShipDoorEdge edge, Vec2 fromPosition, Vector2 origin)
+    {
+        var seamCenter = edge.Side == TileSide.East
+            ? new Vec2(edge.Coord.X + 1, edge.Coord.Y + 0.5)
+            : new Vec2(edge.Coord.X + 0.5, edge.Coord.Y + 1);
+        if ((seamCenter - fromPosition).Length() >= InteractionConstants.DeviceInteractionRadius)
+            return null;
+        return ShipRenderer.GetDoorEdgeHitRect(edge.Coord, edge.Side, origin);
     }
 
     // Every device a click can currently do something to (humble-soaring-cat.md - "Полный переход
@@ -108,40 +143,61 @@ public partial class Game1
             return null; // nothing else on this list is reachable while standing on the station
         }
 
+        // Checked before the reactor's own big rect, same priority HandleMouseClick's click-test
+        // already gives them (a lever sits just outside that rect, but this keeps both agreeing).
+        for (var leverIndex = 0; leverIndex < 3; leverIndex++)
+            if (ReactorLeverRectIfNear(snapshot.ReactorBlock, myPosition, origin, leverIndex) is { } leverRect && leverRect.Contains(_designMouse))
+                return leverRect;
         if (ReactorRectIfNear(snapshot.ReactorBlock, myPosition, origin) is { } reactorRect && reactorRect.Contains(_designMouse))
             return reactorRect;
-        if (BlockRectIfNear(snapshot.DistributionBlock.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } distributionRect && distributionRect.Contains(_designMouse))
+        var (distWidth, distHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Distribution);
+        if (BlockRectIfNear(snapshot.DistributionBlock.Position, myPosition, distWidth, distHeight, origin) is { } distributionRect && distributionRect.Contains(_designMouse))
             return distributionRect;
-        if (BlockRectIfNear(snapshot.BatteryBlock.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } batteryRect && batteryRect.Contains(_designMouse))
+        var (batteryWidth, batteryHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Battery);
+        if (BlockRectIfNear(snapshot.BatteryBlock.Position, myPosition, batteryWidth, batteryHeight, origin) is { } batteryRect && batteryRect.Contains(_designMouse))
             return batteryRect;
-        if (BlockRectIfNear(snapshot.HelmConsole.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } helmRect && helmRect.Contains(_designMouse))
+        var (helmWidth, helmHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Helm, snapshot.HelmConsole.Rotated);
+        if (BlockRectIfNear(snapshot.HelmConsole.Position, myPosition, helmWidth, helmHeight, origin) is { } helmRect && helmRect.Contains(_designMouse))
             return helmRect;
-        if (BlockRectIfNear(snapshot.NavigationConsole.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } navRect && navRect.Contains(_designMouse))
+        var (navWidth, navHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Navigation, snapshot.NavigationConsole.Rotated);
+        if (BlockRectIfNear(snapshot.NavigationConsole.Position, myPosition, navWidth, navHeight, origin) is { } navRect && navRect.Contains(_designMouse))
             return navRect;
-        if (BlockRectIfNear(snapshot.CardTable.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } cardTableRect && cardTableRect.Contains(_designMouse))
+        var (cardTableWidth, cardTableHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.CardTable);
+        if (BlockRectIfNear(snapshot.CardTable.Position, myPosition, cardTableWidth, cardTableHeight, origin) is { } cardTableRect && cardTableRect.Contains(_designMouse))
             return cardTableRect;
-        if (snapshot.Jukebox is { } jukebox && BlockRectIfNear(jukebox.Block.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } jukeboxRect && jukeboxRect.Contains(_designMouse))
+        var (jukeboxWidth, jukeboxHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Jukebox);
+        if (snapshot.Jukebox is { } jukebox && BlockRectIfNear(jukebox.Block.Position, myPosition, jukeboxWidth, jukeboxHeight, origin) is { } jukeboxRect && jukeboxRect.Contains(_designMouse))
             return jukeboxRect;
-        if (snapshot.Terminal is { } terminal && BlockRectIfNear(terminal.Block.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } terminalRect && terminalRect.Contains(_designMouse))
-            return terminalRect;
+        foreach (var terminal in snapshot.Terminals ?? Array.Empty<TerminalState>())
+            if (BlockRectIfNear(terminal.Block.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
 
+        // Same 3x3-tile footprint as CustomDeviceFootprint.Size gives every turret kind in the Ship
+        // Editor (this session's earlier "все турели 3 на 3" fix, extended to the live game's own
+        // hit-rect - direct user request, "терминал для управления пушкой... не 3 на 3 тайла").
+        // TurretBallistic is just a stand-in kind here - every turret kind shares the same size.
+        var (turretWidth, turretHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.TurretBallistic);
         foreach (var turret in snapshot.Turrets)
-            if (BlockRectIfNear(turret.PeriscopePosition, myPosition, ShipRenderer.MediumBlockSize, origin) is { } rect && rect.Contains(_designMouse))
+            if (BlockRectIfNear(turret.PeriscopePosition, myPosition, turretWidth, turretHeight, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
+        var (ammoWidth, ammoHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.AmmoStorage);
         foreach (var storage in snapshot.AmmoStorages)
-            if (BlockRectIfNear(storage.Position, myPosition, ShipRenderer.NormalBlockSize, origin) is { } rect && rect.Contains(_designMouse))
+            if (BlockRectIfNear(storage.Position, myPosition, ammoWidth, ammoHeight, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
+        var (lockerWidth, lockerHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.SuitLocker);
         foreach (var locker in snapshot.SuitLockers)
-            if (BlockRectIfNear(locker.Position, myPosition, ShipRenderer.NormalBlockSize, origin) is { } rect && rect.Contains(_designMouse))
+            if (BlockRectIfNear(locker.Position, myPosition, lockerWidth, lockerHeight, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
+        var (rackWidth, rackHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.StorageRack);
         foreach (var rack in snapshot.StorageRacks)
-            if (BlockRectIfNear(rack.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } rect && rect.Contains(_designMouse))
+            if (BlockRectIfNear(rack.Position, myPosition, rackWidth, rackHeight, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
         foreach (var device in snapshot.SystemDevices)
             if (SystemDeviceRectIfNear(device, myPosition, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
+        var (camWidth, camHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Camera);
         foreach (var camera in snapshot.Cameras)
-            if (BlockRectIfNear(camera.InteriorPosition, myPosition, ShipRenderer.NormalBlockSize, origin) is { } rect && rect.Contains(_designMouse))
+            if (BlockRectIfNear(camera.InteriorPosition, myPosition, camWidth, camHeight, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
         foreach (var engine in snapshot.EngineStates ?? Array.Empty<EngineState>())
             if (EngineControlRectIfNear(engine, myPosition, origin) is { } rect && rect.Contains(_designMouse))
@@ -162,6 +218,9 @@ public partial class Game1
                 return rect;
         foreach (var outerDoor in snapshot.AirlockOuterDoors)
             if (OuterDoorRectIfNear(snapshot.Rooms, outerDoor, doorProximityPosition, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        foreach (var edge in snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>())
+            if (DoorEdgeRectIfNear(edge, doorProximityPosition, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
         foreach (var dropped in snapshot.DroppedItems.Where(d => d.RoomId is not null))
             if (DroppedItemRectIfNear(dropped, myPosition, origin) is { } rect && rect.Contains(_designMouse))

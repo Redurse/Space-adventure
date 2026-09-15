@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Anabiosis.Client.Audio;
 using Anabiosis.Client.Rendering;
@@ -69,4 +70,13 @@ public partial class Game1
         _sounds.Play(opened ? GameSounds.PanelOpen : GameSounds.PanelClose, nowSeconds, volume: 0.55f);
         _soundLastOpenBlock = _openBlock.Kind;
     }
+
+    // Direct user request ("звук как при нажатии на кнопки в баротравме") - main menu buttons,
+    // Settings tabs/buttons (reached from either the main menu or the in-session pause menu) and the
+    // pause menu's own 4 buttons all call this at the exact point a click lands on something real,
+    // rather than on every mouse-down. Environment.TickCount64 rather than gameTime - every one of
+    // these call sites runs from a context (pre-session menu input, the pause-menu click branch
+    // inside HandleMouseClick) that doesn't have a GameTime in scope, and GameSounds.PlayInternal's
+    // own repeat-throttle only needs a steadily-increasing clock, not the simulation's own one.
+    private void PlayUiClick() => _sounds?.PlayUi(GameSounds.UiClick, Environment.TickCount64 / 1000.0);
 }

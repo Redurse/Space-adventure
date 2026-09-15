@@ -679,24 +679,9 @@ internal static partial class TestRunner
         return !before && after;
     }
 
-    private static bool World_ShipPurchase_ResetsComponentMountsAndWiring()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        FundGenerously(world);
-        world.ApplyCommand(1, new ClientCommand(1, BuyItemType: ItemType.Relay));
-        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: 0));
-        world.ApplyCommand(1, new ClientCommand(1, ComponentMountInteractId: "mount-cockpit-1"));
-        var installedBefore = world.CreateSnapshot().Wiring.ComponentMountStates.First(s => s.MountId == "mount-cockpit-1").InstalledComponentId;
-
-        // Only a Shipyard-kind station sells hulls (game_design.md section 10) - outpost-gamma is
-        // one, same as home-station itself now is, just picked explicitly rather than assumed.
-        DockAtStation(world, "outpost-gamma");
-        world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
-
-        var afterMounts = world.CreateSnapshot().Wiring.ComponentMountStates;
-        return installedBefore is not null && world.CurrentShipKind == ShipKind.Scout && afterMounts.All(s => s.InstalledComponentId is null);
-    }
+    // World_ShipPurchase_ResetsComponentMountsAndWiring used to live here, testing the Shipwright
+    // hull-swap feature that reset every component mount - removed along with that whole feature
+    // (direct user request, "удали все текущие корабли... полностью удалить из кода").
 
     // ToolStation is gone entirely - every hand tool/tank/weapon/consumable that used to be a
     // scattered pickup now starts as 3 units in the ship's own storage racks (game_design.md
@@ -718,26 +703,7 @@ internal static partial class TestRunner
             expectedTypes.All(t => snapshot.RackSlots.Count(s => s == t) == 3);
     }
 
-    // Swapping hulls at the Shipyard resets every other piece of ship-keyed state (wiring, component
-    // mounts) back to factory-fresh - the new hull's shelves shouldn't inherit whatever the old
-    // one's held (emptied out here by handing an item from the rack straight overboard).
-    private static bool World_Storage_RackResetsOnShipPurchase()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        FundGenerously(world);
-
-        var wrenchSlot = Array.IndexOf(world.CreateSnapshot().RackSlots.ToArray(), ItemType.Wrench);
-        var rack = world.Ship.StorageRacks[wrenchSlot / StorageRack.Capacity];
-        WalkAcrossShipTo(world, rack.X, rack.Y);
-        world.ApplyCommand(1, new ClientCommand(1, DropItemFrom: new SlotRef(ItemSlotKind.Rack, wrenchSlot)));
-        var depletedCount = world.CreateSnapshot().RackSlots.Count(s => s == ItemType.Wrench);
-
-        DockAtStation(world, "outpost-gamma");
-        world.ApplyCommand(1, new ClientCommand(1, PurchaseShipKind: ShipKind.Scout));
-
-        var restockedCount = world.CreateSnapshot().RackSlots.Count(s => s == ItemType.Wrench);
-        return depletedCount == 2 && restockedCount == 3;
-    }
-
+    // World_Storage_RackResetsOnShipPurchase used to live here, testing that swapping hulls at the
+    // Shipyard restocked the new hull's shelves - removed along with that whole feature (direct user
+    // request, "удали все текущие корабли... полностью удалить из кода").
 }

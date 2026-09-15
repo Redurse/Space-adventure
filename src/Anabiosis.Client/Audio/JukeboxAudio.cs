@@ -1,34 +1,35 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Content;
-using Microsoft.Xna.Framework.Media;
+using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Client.Audio;
 
 // Plays whichever single track the ship's jukebox has selected (World.cs's JukeboxOn/TrackIndex/
-// Volume) - Song/MediaPlayer like GameMusic, not SoundEffect: full-length tracks decoded whole
-// into memory as SoundEffect would be tens of megabytes each, times 18 of them, for no benefit -
-// a jukebox only ever plays one track at a time anyway. MediaPlayer is a single global channel
-// though, so this and GameMusic's ambient bag take turns owning it rather than fighting over it:
-// Game1.Music.cs simply stops the ambient bag outright whenever the jukebox is on.
+// Volume) - routes through GameAudioEngine now (direct user request, real output-device selection)
+// instead of MonoGame's MediaPlayer/Song. GameMusic's ambient bag and this share GameAudioEngine's music
+// bus conceptually the same way they used to share MediaPlayer's one global channel: Game1.Music.cs
+// still simply stops the ambient bag outright whenever the jukebox is on, so the two never actually
+// need to mix with each other, just with SFX/voice on the master bus.
 //
-// Tracks load lazily, one at a time, the first time each is actually selected - not all 18 up
-// front in the constructor the way GameMusic preloads its own 5-track ambient bag. Eagerly reading
-// ~110MB of mp3 off disk during LoadContent stretched the startup window in which MonoGame's own
-// WinFormsGameWindow.OnDeactivate bug can null-ref if the window loses focus mid-load; loading only
-// what's actually playing keeps LoadContent back down near its old duration.
+// Tracks load lazily, one at a time, the first time each is actually selected - not all 29 up front
+// in the constructor the way GameMusic preloads its own 5-track ambient bag (same "don't stall
+// startup decoding ~110MB of mp3 nobody's picked yet" reasoning as before this rewrite).
 public sealed class JukeboxAudio
 {
-    private readonly ContentManager _content;
-    private readonly Dictionary<int, Song?> _loaded = new();
+    private readonly GameAudioEngine _engine;
+    private readonly Dictionary<int, (ISampleProvider Sample, WaveStream Reader)?> _loaded = new();
+    private LoopingSampleProvider? _playingLoop;
+    private VolumeSampleProvider? _playingVolume;
     private bool _active;
     private int _loadedIndex = -1;
 
-    public JukeboxAudio(ContentManager content)
+    public JukeboxAudio(GameAudioEngine engine)
     {
-        _content = content;
+        _engine = engine;
     }
 
     public bool IsActive => _active;
@@ -44,45 +45,43 @@ public sealed class JukeboxAudio
         }
 
         var index = Wrap(jukebox.TrackIndex, JukeboxTracks.All.Length);
-        if ((!_active || index != _loadedIndex) && LoadTrack(index) is { } song)
+        if ((!_active || index != _loadedIndex) && LoadTrack(index) is { } track)
         {
             try
             {
-                MediaPlayer.IsRepeating = true;
-                MediaPlayer.Play(song);
+                StopCurrent();
+                track.Reader.Position = 0;
+                _playingLoop = new LoopingSampleProvider(track.Sample, track.Reader);
+                _playingVolume = new VolumeSampleProvider(_playingLoop)
+                {
+                    Volume = MathHelper.Clamp(jukebox.Volume / 100f, 0f, 1f) * _engine.MusicVolume,
+                };
+                _engine.AddMixerInput(_playingVolume);
                 _active = true;
                 _loadedIndex = index;
             }
             catch (Exception)
             {
-                // Some machines have no media stack at all - fall back to silence.
+                // Some machines have no working audio device at all - fall back to silence.
                 _active = false;
                 _loadedIndex = -1;
             }
         }
 
-        if (_active)
-            MediaPlayer.Volume = MathHelper.Clamp(jukebox.Volume / 100f, 0f, 1f);
+        if (_active && _playingVolume is not null)
+            _playingVolume.Volume = MathHelper.Clamp(jukebox.Volume / 100f, 0f, 1f) * _engine.MusicVolume;
     }
 
-    private Song? LoadTrack(int index)
+    private (ISampleProvider Sample, WaveStream Reader)? LoadTrack(int index)
     {
         if (_loaded.TryGetValue(index, out var cached))
             return cached;
 
-        Song? song;
-        try
-        {
-            song = _content.Load<Song>(JukeboxTracks.All[index].AssetName);
-        }
-        catch (Exception)
-        {
-            // A missing track costs that track, never the game - same contract GameMusic's own
-            // load loop keeps.
-            song = null;
-        }
-        _loaded[index] = song;
-        return song;
+        var path = Path.Combine(GameAudioEngine.ContentRoot, JukeboxTracks.All[index].AssetName.Replace('/', Path.DirectorySeparatorChar) + ".mp3");
+        var opened = AudioFile.TryOpen(path);
+        var track = opened is { } o ? (AudioFile.ToMasterFormat(o.Sample), o.Reader) : ((ISampleProvider, WaveStream)?)null;
+        _loaded[index] = track;
+        return track;
     }
 
     public void Stop()
@@ -91,14 +90,15 @@ public sealed class JukeboxAudio
             return;
         _active = false;
         _loadedIndex = -1;
-        try
-        {
-            MediaPlayer.Stop();
-        }
-        catch (Exception)
-        {
-            // Nothing to do about it, and nothing that depends on it.
-        }
+        StopCurrent();
+    }
+
+    private void StopCurrent()
+    {
+        if (_playingVolume is not null)
+            _engine.RemoveMixerInput(_playingVolume);
+        _playingLoop = null;
+        _playingVolume = null;
     }
 
     private static int Wrap(int value, int count) => count <= 0 ? 0 : ((value % count) + count) % count;

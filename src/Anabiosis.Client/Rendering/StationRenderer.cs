@@ -47,13 +47,13 @@ public sealed partial class StationRenderer
             _shipRenderer.DrawRoomWalls(spriteBatch, room, oxygen: 100f, origin, StationAccent);
 
         foreach (var door in snapshot.Station.Doors)
-            _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, isOpen: true, origin);
+            _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, door.IsVertical, isOpen: true, origin);
 
         // Same physical door as the ship's own outer airlock - its open/closed state is whatever
         // that door's DoorState already says (World.StationDocking.cs gates both directions on it).
         var connector = snapshot.Station.ShipConnector;
         var shipDoorOpen = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == snapshot.AirlockOuterDoors.First().Id)?.IsOpen ?? false;
-        _shipRenderer.DrawDoor(spriteBatch, connector.Left, connector.Top, connector.Width, connector.Height, shipDoorOpen, origin, leadsToVacuum: true);
+        _shipRenderer.DrawDoor(spriteBatch, connector.Left, connector.Top, connector.Width, connector.Height, connector.Width <= connector.Height, shipDoorOpen, origin, leadsToVacuum: true);
 
         // Unlooted crates only - a taken one leaves nothing behind (World.StationCrime.cs).
         foreach (var crate in snapshot.Station.Crates)

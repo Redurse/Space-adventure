@@ -64,8 +64,16 @@ public sealed partial class World
         // fixed forever (seeded from pointId alone, Station.Procedural.cs) - only this anchor
         // translation gets redone.
         var kind = GalaxyMap.GetPoint(pointId).StationKind;
-        var anchor = Ship.AirlockOuterDoors.First().Position;
-        var station = Station.CreateProcedural(pointId, kind, anchor);
+        var airlock = Ship.AirlockOuterDoors.First();
+        var anchor = airlock.Position;
+        // Which wall of the ship's own room this airlock actually sits on - every hand-authored hull
+        // puts it on the Right (east) wall, but the free-tile Ship Editor allows any of the 4 sides
+        // (CustomShipDefinition.EdgeSide), and Station.Procedural.cs's layout would otherwise always
+        // grow east/south from this anchor regardless, landing station rooms on top of the ship's own
+        // hull whenever the door actually faces some other direction.
+        var airlockRoom = Ship.Rooms.First(r => r.Id == airlock.RoomId);
+        var airlockSide = Ship.InferAirlockSide(airlockRoom, airlock.X, airlock.Y);
+        var station = Station.CreateProcedural(pointId, kind, anchor, airlockSide);
         _stationsByPointId[pointId] = station;
         // Every station's doors, not just the one currently resolved - door state is one flat
         // dictionary across all structures in the game. TryAdd rather than a raw assignment so
@@ -147,26 +155,25 @@ public sealed partial class World
     public int JukeboxTrackIndex { get; private set; } = 0;
     public int JukeboxVolume { get; private set; } = 50;
 
-    // The wall terminal's on/off - meaningless while Ship.Terminal is null (no such device on this
-    // hull), same as JukeboxOn above but with nothing else to track.
-    public bool TerminalOn { get; private set; } = false;
 
     // Retained only so CreateSave() can round-trip a Custom hull - null whenever flying a fixed
     // class. Set here and in ApplySave, the only two places CurrentShipKind can become Custom.
     private CustomShipDefinition? _customShipDefinition;
 
-    // ShipKind defaults to the original M2 layout (Frigate) so every pre-existing `new World()`
-    // call (the entire test suite) keeps compiling and behaving exactly as before — ship
-    // selection (game_design.md section 9) is purely additive. customShip is required exactly
-    // when shipKind is Custom (Ship Editor - Ship.Custom.cs); ignored otherwise.
-    public World(ShipKind shipKind = ShipKind.Frigate, CustomShipDefinition? customShip = null)
+    // Direct user request ("удали все текущие корабли... полностью удалить из кода") - ShipKind is
+    // now just Custom, so every ship (including this parameterless default every pre-existing
+    // `new World()` call in the test suite still uses) goes through FromCustomDefinition. No
+    // customShip supplied falls back to ShipDefaultHull.Definition - the old Frigate/CreateStarter
+    // layout, frozen as data rather than code (that file's own doc comment explains why), so those
+    // hundreds of existing callers keep behaving identically without needing to change at all.
+    public World(ShipKind shipKind = ShipKind.Custom, CustomShipDefinition? customShip = null)
     {
         // Set before anything below touches AsteroidField (which resolves through it) - a fresh
         // crew always starts in whichever system the home station actually sits in.
         _currentSystemId = GalaxyMap.SystemOf(GalaxyMap.HomePointId).Id;
         CurrentShipKind = shipKind;
-        _customShipDefinition = shipKind == ShipKind.Custom ? customShip : null;
-        Ship = shipKind == ShipKind.Custom ? Ship.FromCustomDefinition(customShip!) : Ship.Create(shipKind);
+        _customShipDefinition = customShip ?? ShipDefaultHull.Definition;
+        Ship = Ship.FromCustomDefinition(_customShipDefinition);
         _turretRuntimes = Ship.Turrets.ToDictionary(t => t.Id, t => new TurretRuntime(t));
         InitializeShipState();
         // Every enemy hull class, not only the one currently in front of the guns - which ship of
@@ -334,14 +341,6 @@ public sealed partial class World
                 JukeboxVolume = Math.Max(0, JukeboxVolume - 5);
         }
 
-        // The wall terminal's single on/off toggle - one click on the physical block itself (no
-        // panel), same proximity-checked treatment as the jukebox above.
-        if (Ship.Terminal is { } terminalBlock && command.TerminalTogglePressed &&
-            (terminalBlock.Position - character.Position).Length() < InteractionRadius)
-        {
-            TerminalOn = !TerminalOn;
-        }
-
         if (command.BuyItemType is { } buyItemType)
             TryBuyItem(character, buyItemType);
 
@@ -362,9 +361,6 @@ public sealed partial class World
 
         if (command.PurchaseUpgradeTrack is { } upgradeTrack)
             TryPurchaseUpgrade(upgradeTrack);
-
-        if (command.PurchaseShipKind is { } shipKindToBuy)
-            TryPurchaseShip(shipKindToBuy);
 
         if (command.BuildRoom is { } buildRoomRequest)
             TryBuildRoom(buildRoomRequest);
@@ -410,6 +406,9 @@ public sealed partial class World
 
         if (command.SuitLockerInteractId is { } suitLockerId)
             TrySuitLockerInteractById(character, suitLockerId);
+
+        if (command.TerminalInteractId is { } terminalInteractId)
+            TryTerminalInteractById(character, terminalInteractId);
 
         if (command.TurretInteractId is { } turretInteractId)
             TryTurretInteractById(character, turretInteractId);
@@ -653,7 +652,8 @@ public sealed partial class World
                 c.ScannerSweepDegrees,
                 CreateScannerContacts(c.PlayerId),
                 c.ScannerCooldownRemaining,
-                c.ScannerMode);
+                c.ScannerMode,
+                IsRecentlySpeaking(c.PlayerId));
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(ShipMapPosition, _dockedPointId, IsInBattle, IsDocked || _nearestStationPointId is not null, _landedBodyId),
@@ -695,5 +695,13 @@ public sealed partial class World
         CreateFrontsGameState(),
         CreateCardTableChoiceSeatedIds(),
         CreateCardTableDurakVotes(),
-        Ship.Terminal is { } terminalStateBlock ? new TerminalState(terminalStateBlock, TerminalOn) : null);
+        CreateTerminalStates(),
+        Ship.WallLamps,
+        Ship.SupplementalWallTiles,
+        Ship.ForcedFloorTiles,
+        Ship.WallOpenSideOverrides,
+        Ship.WallMaterialOverrides,
+        Ship.JunctionBoxes,
+        Ship.DoorEdges,
+        CreateDoorEdgeStates());
 }

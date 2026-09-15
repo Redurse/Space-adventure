@@ -6,31 +6,30 @@ using Anabiosis.Shared.Protocol;
 internal static partial class TestRunner
 {
     // M48 - hull cameras became real devices bolted to the plating (Ship.Cameras/HullCameraMount)
-    // instead of a purely client-side 4-direction toggle. Every hand-authored hull needs at least
-    // one working mount, or ExternalCameraPanel would just show an empty grid on that class.
-    private static bool World_Cameras_EveryHandAuthoredHullHasWorkingCameraGeometry()
+    // instead of a purely client-side 4-direction toggle. Used to loop over every hand-authored hull
+    // (Scout/Frigate/Cruiser/Corvette, all removed - direct user request, "удали все текущие
+    // корабли... полностью удалить из кода") proving each had at least one working mount; the one
+    // hull left, ShipDefaultHull's own frozen default, still needs the exact same guarantee.
+    private static bool World_Cameras_DefaultHullHasWorkingCameraGeometry()
     {
-        foreach (var kind in new[] { ShipKind.Scout, ShipKind.Frigate, ShipKind.Cruiser, ShipKind.Corvette })
+        var ship = Ship.FromCustomDefinition(ShipDefaultHull.Definition);
+        if (ship.Cameras.Count == 0)
+            return false;
+
+        var seenIds = new HashSet<string>();
+        foreach (var camera in ship.Cameras)
         {
-            var ship = Ship.Create(kind);
-            if (ship.Cameras.Count == 0)
+            if (!seenIds.Add(camera.Id))
+                return false; // duplicate id on this hull
+
+            // Just needs to resolve to a real point on this hull's own room bounds without
+            // throwing - HullCameraMount.For looks up the camera's room by its interior
+            // position, the same way TurretMount.For already does for turrets.
+            var mount = HullCameraMount.For(ship.Rooms, ship.Cameras, camera);
+            var minX = ship.Rooms.Min(r => r.Left) - 1f;
+            var maxX = ship.Rooms.Max(r => r.Right) + 1f;
+            if (mount.Position.X < minX || mount.Position.X > maxX)
                 return false;
-
-            var seenIds = new HashSet<string>();
-            foreach (var camera in ship.Cameras)
-            {
-                if (!seenIds.Add(camera.Id))
-                    return false; // duplicate id on this hull
-
-                // Just needs to resolve to a real point on this hull's own room bounds without
-                // throwing - HullCameraMount.For looks up the camera's room by its interior
-                // position, the same way TurretMount.For already does for turrets.
-                var mount = HullCameraMount.For(ship.Rooms, ship.Cameras, camera);
-                var minX = ship.Rooms.Min(r => r.Left) - 1f;
-                var maxX = ship.Rooms.Max(r => r.Right) + 1f;
-                if (mount.Position.X < minX || mount.Position.X > maxX)
-                    return false;
-            }
         }
         return true;
     }

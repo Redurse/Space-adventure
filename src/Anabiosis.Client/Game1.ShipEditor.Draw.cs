@@ -24,6 +24,36 @@ public partial class Game1
             DrawEditorSaveAsPrompt();
         else if (_editorLoadListOpen)
             DrawEditorLoadList();
+
+        DrawEditorToast();
+    }
+
+    // Direct user request ("чтобы игра говорила что так делать нельзя") - a rejected compartment
+    // placement gets a real, visible message instead of the silent no-op every other tool's own
+    // precondition check still uses, since overlapping another compartment is easy to click into by
+    // accident. Centered over the canvas, on top of everything (same "last thing drawn wins" spot the
+    // pause menu/cheat panel already claim in the main session) so it's impossible to miss.
+    private void DrawEditorToast()
+    {
+        if (_editorToastMessage is not { } message || Environment.TickCount64 >= _editorToastUntilTicks)
+            return;
+
+        var size = _font.MeasureString(message) * 0.65f;
+        var boxWidth = size.X + 32;
+        var boxHeight = size.Y + 20;
+        var box = new Rectangle(
+            ShipEditorCanvas.X + (ShipEditorCanvas.Width - (int)boxWidth) / 2,
+            ShipEditorCanvas.Y + 16,
+            (int)boxWidth, (int)boxHeight);
+
+        // Fades out over its own last half-second rather than popping off abruptly.
+        var remainingMs = _editorToastUntilTicks - Environment.TickCount64;
+        var alpha = MathHelper.Clamp(remainingMs / 500f, 0f, 1f);
+
+        _spriteBatch.Draw(_pixel, box, new Color(40, 20, 20) * (0.92f * alpha));
+        DrawRectOutline(box, new Color(220, 80, 70) * alpha, 2f);
+        _spriteBatch.DrawString(_font, message, new Vector2(box.X + 16, box.Y + 10),
+            new Color(255, 210, 205) * alpha, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
     }
 
     // Редактор корабля в духе Cosmoteer + несколько сохранённых кораблей (humble-soaring-cat.md,
@@ -90,18 +120,38 @@ public partial class Game1
         if (names.Count == 0)
             _spriteBatch.DrawString(_font, "(пока ничего не сохранено)", new Vector2(box.X + 16, GetEditorLoadRowRect(0).Y), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
 
-        for (var i = 0; i < names.Count; i++)
+        // Direct user request ("сделай возможность листать сохраненные чертежи в редакторе") - one
+        // page of EditorLoadRowsPerPage names at a time instead of every saved design cramming into
+        // (and eventually overflowing past) a single fixed-height list.
+        var pageCount = Math.Max(1, (names.Count + EditorLoadRowsPerPage - 1) / EditorLoadRowsPerPage);
+        var page = Math.Clamp(_editorLoadListPage, 0, pageCount - 1);
+        var firstIndex = page * EditorLoadRowsPerPage;
+        var pageNames = names.Skip(firstIndex).Take(EditorLoadRowsPerPage).ToList();
+
+        for (var i = 0; i < pageNames.Count; i++)
         {
             var rowRect = GetEditorLoadRowRect(i);
-            var current = names[i] == _editorCurrentSlotName;
+            var current = pageNames[i] == _editorCurrentSlotName;
             _spriteBatch.Draw(_pixel, rowRect, current ? new Color(120, 92, 30) * 0.6f : Color.DimGray * 0.4f);
             DrawRectOutline(rowRect, current ? Color.White : Color.DimGray, 1f);
-            _spriteBatch.DrawString(_font, names[i], new Vector2(rowRect.X + 8, rowRect.Y + 4), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            _spriteBatch.DrawString(_font, pageNames[i], new Vector2(rowRect.X + 8, rowRect.Y + 4), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
 
             var deleteRect = GetEditorLoadRowDeleteRect(i);
             _spriteBatch.Draw(_pixel, deleteRect, new Color(120, 50, 50));
             DrawRectOutline(deleteRect, Color.OrangeRed, 1f);
             _spriteBatch.DrawString(_font, "X", new Vector2(deleteRect.X + 14, deleteRect.Y + 4), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        }
+
+        if (pageCount > 1)
+        {
+            DrawEditorModalButton(GetEditorLoadPrevPageRect(), "<", page > 0);
+            DrawEditorModalButton(GetEditorLoadNextPageRect(), ">", page < pageCount - 1);
+            var pageLabel = $"Стр. {page + 1}/{pageCount}";
+            var labelRect = GetEditorLoadPageLabelRect();
+            var labelSize = _font.MeasureString(pageLabel) * 0.5f;
+            _spriteBatch.DrawString(_font, pageLabel,
+                new Vector2(labelRect.Center.X - labelSize.X / 2, labelRect.Center.Y - labelSize.Y / 2),
+                Color.LightGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
         }
 
         DrawEditorModalButton(GetEditorLoadCloseRect(), "ЗАКРЫТЬ", true);
@@ -166,10 +216,8 @@ public partial class Game1
             DrawEditorFloorDragPreview();
         if (_editorTool == EditorTool.Wall)
             DrawEditorWallDragPreview();
-        if (_editorTool == EditorTool.Door && _editorDoorWide)
-            DrawEditorDoorDragPreview();
-        else if (_editorTool == EditorTool.Door)
-            DrawEditorDoorHoverPreview();
+        if (_editorTool == EditorTool.Door)
+            DrawEditorDoorPlacementPreview();
         if (_editorTool == EditorTool.Zone)
             DrawEditorZoneDragPreview();
         if (_editorTool == EditorTool.Terminal)
@@ -260,8 +308,8 @@ public partial class Game1
                 DrawEditorWallTile(coord);
             else if (cell.Wall == TileWallKind.Door)
                 DrawEditorDoorTile(coord);
-            if (cell.TerminalId is not null && cell.TerminalWallSide is { } side)
-                DrawEditorTerminalMark(coord, side);
+            if (cell.WallDeviceId is not null && cell.WallDeviceKind is { } wallDeviceKind && cell.WallDeviceMountSide is { } mountSide)
+                DrawEditorWallDeviceHalfBlock(coord, wallDeviceKind, mountSide);
             if (cell.DeviceId is not null && _editorDeviceKinds.TryGetValue(coord, out var kind))
                 DrawEditorDeviceAt(coord, kind);
         }
@@ -269,8 +317,41 @@ public partial class Game1
         foreach (var (control, facing) in _editorEngineFacing)
             DrawEditorEngineAt(control, facing);
 
+        // M-doors-as-edges (humble-soaring-cat.md) - drawn as its own pass rather than folded into
+        // the Wall/Door-tile loop above, since an edge has no Cells entry of its own to iterate.
+        foreach (var (key, edge) in _editorTiles.DoorEdges)
+            DrawEditorDoorEdgeAt(key.Coord, key.Side, edge.Open);
+
         foreach (var zone in _editorZones)
             DrawEditorZone(zone);
+    }
+
+    // Mirrors ShipRenderer.DrawDoorEdge's own "short bar centered on the seam" geometry exactly,
+    // just in the editor canvas's own pixel space (EditorTileRect/EditorCellSize/_editorPanOffset)
+    // instead of the live game's PixelsPerUnit/origin - editor canvases have no HP/destroyed state
+    // to show (walls never take damage in the editor), so this only ever needs the open/closed color.
+    private void DrawEditorDoorEdgeAt(TileCoord coord, TileSide side, bool open)
+    {
+        const float thicknessFraction = 0.22f;
+        var thickness = Math.Max(4, (int)(thicknessFraction * EditorCellSize));
+        var anchorRect = EditorTileRect(coord);
+
+        Rectangle bar, frame;
+        if (side == TileSide.East)
+        {
+            var seamX = anchorRect.Right;
+            frame = new Rectangle(seamX - thickness / 2 - 2, anchorRect.Y, thickness + 4, anchorRect.Height);
+            bar = new Rectangle(seamX - thickness / 2, anchorRect.Y, thickness, anchorRect.Height);
+        }
+        else
+        {
+            var seamY = anchorRect.Bottom;
+            frame = new Rectangle(anchorRect.X, seamY - thickness / 2 - 2, anchorRect.Width, thickness + 4);
+            bar = new Rectangle(anchorRect.X, seamY - thickness / 2, anchorRect.Width, thickness);
+        }
+
+        _spriteBatch.Draw(_pixel, frame, new Color(90, 68, 46));
+        _spriteBatch.Draw(_pixel, bar, open ? new Color(90, 230, 120) : new Color(255, 90, 90));
     }
 
     // Same neighbor-based orientation ShipRenderer.DrawWallTile uses in the real game (M75,
@@ -283,25 +364,26 @@ public partial class Game1
     // art exists for either variant yet, same convention Game1.ShipEditor.DeviceTabs.cs's palette
     // icons already use. Standard stays plain white (no tint at all).
     //
-    // Direct user request ("система отсеков по-другому") - a wall placed via the Compartment tool
-    // (TileCell.WallFromCompartment - editor-only bookkeeping, no gameplay meaning at all, see that
-    // field's own doc comment) gets one distinct, single colour regardless of its own WallMaterial
-    // (CompartmentPlacer.Stamp never assigns anything but Standard to its own walls today, so this
-    // never actually needs to combine with Reinforced/Window in practice) - checked first, so it
-    // takes priority over the plain material-based tint below.
-    private static readonly Color CompartmentWallTint = new(196, 154, 92);
-
-    private static Color WallMaterialTint(TileCell? cell)
+    // Direct user request ("убери эту смену цветов") - an ALREADY-PLACED wall used to get one
+    // distinct brownish tint the moment it came from the Compartment tool (TileCell.
+    // WallFromCompartment, still editor-only bookkeeping used elsewhere for removal/restoration -
+    // see that field's own doc comment - just no longer read here) regardless of its own
+    // WallMaterial. Now tinted purely by WallMaterial, same as any hand-painted wall - a
+    // compartment's own wall ring is indistinguishable from one drawn tile by tile with the Wall
+    // tool, which is what the user asked for. DrawEditorCompartmentPlacementPreview's own
+    // CompartmentPreviewWallTint below is unrelated - a live, temporary ghost highlighting where a
+    // compartment's walls WOULD land before the player commits, not a persistent per-tile colour.
+    private static Color WallMaterialTint(TileCell? cell) => (cell?.WallMaterial ?? WallMaterial.Standard) switch
     {
-        if (cell is { WallFromCompartment: true })
-            return CompartmentWallTint;
-        return (cell?.WallMaterial ?? WallMaterial.Standard) switch
-        {
-            WallMaterial.Reinforced => new Color(150, 155, 165),
-            WallMaterial.Window => new Color(150, 215, 235) * 0.75f,
-            _ => Color.White,
-        };
-    }
+        WallMaterial.Reinforced => new Color(150, 155, 165),
+        WallMaterial.Window => new Color(150, 215, 235) * 0.75f,
+        _ => Color.White,
+    };
+
+    // Only for the live Compartment-tool placement preview just below (DrawEditorCompartmentPlacement
+    // Preview) - distinguishes the ring-tiles-to-be from the interior-tiles-to-be in the ghost, a
+    // temporary UI affordance, not the persistent wall tint WallMaterialTint governs above.
+    private static readonly Color CompartmentPreviewWallTint = new(196, 154, 92);
 
     private void DrawEditorWallTile(TileCoord coord)
     {
@@ -312,6 +394,23 @@ public partial class Game1
         var west = HasWall(TileSide.West);
         var rect = EditorTileRect(coord);
         var tint = WallMaterialTint(_editorTiles.CellAt(coord));
+        var openSide = _editorTiles.CellAt(coord)?.WallOpenSide;
+
+        // Direct user bug report ("у него неправильная текстура и на нём не работает большинство
+        // правил связанных со стенами") - a wall tile CAN be "neighborCount==1"/"==3" below (an
+        // end-cap/T-junction by wall-CONNECTIVITY) while still genuinely having exactly one missing-
+        // FLOOR neighbor (WallOpenSide != null, a completely independent classification) - those
+        // sprites are rotated draws that don't crop cleanly by resizing their destination rect, so
+        // every one of them falls through to the same plain half-rect fallback the straight-run
+        // cases now use whenever WallOpenSide is actually set, rather than showing a full,
+        // un-thinned sprite that disagrees with the tile's own real collision.
+        if (openSide is { } forcedHalf)
+        {
+            var forcedRect = EditorHalfRect(rect, forcedHalf);
+            _spriteBatch.Draw(_pixel, forcedRect, tint == Color.White ? new Color(120, 130, 150) : tint);
+            DrawRectOutline(forcedRect, Color.Black, 1f);
+            return;
+        }
 
         // A T-junction (exactly 3 wall-kind neighbors - a straight tile-drawn wall can meet another
         // one at 3 sides in a way no rectangular hand-authored hull ever produced) has to be checked
@@ -366,9 +465,21 @@ public partial class Game1
             return;
         }
 
+        // openSide is always null here - the half-thick case already returned above.
         _spriteBatch.Draw(_pixel, rect, tint == Color.White ? new Color(120, 130, 150) : tint);
         DrawRectOutline(rect, Color.Black, 1f);
     }
+
+    // Editor-scale counterpart to ShipRenderer.HalfRect - same "half the tile, flush to `half`"
+    // rectangle, just against an already-built EditorTileRect instead of a center+unit pair.
+    private static Rectangle EditorHalfRect(Rectangle full, TileSide half) => half switch
+    {
+        TileSide.North => new Rectangle(full.X, full.Y, full.Width, full.Height / 2),
+        TileSide.South => new Rectangle(full.X, full.Y + full.Height / 2, full.Width, full.Height / 2),
+        TileSide.West => new Rectangle(full.X, full.Y, full.Width / 2, full.Height),
+        TileSide.East => new Rectangle(full.X + full.Width / 2, full.Y, full.Width / 2, full.Height),
+        _ => throw new ArgumentOutOfRangeException(nameof(half)),
+    };
 
     // A wide door (direct user request - "дверь занимающая 1 на 2 тайла", TileCell.DoorGroupId)
     // draws as ONE merged rectangle spanning both tiles, not two separate narrow ones - only the
@@ -388,14 +499,38 @@ public partial class Game1
                 if (partner.X < coord.X || (partner.X == coord.X && partner.Y < coord.Y))
                     return; // the partner tile owns this pair's draw
                 var merged = Rectangle.Union(EditorTileRect(coord), EditorTileRect(partner));
-                _shipRenderer.DrawDoor(_spriteBatch, merged, isOpen: false);
+                // Same X, differing Y - the pair is stacked in a column, i.e. sits on a VERTICAL
+                // shared wall (TileShipBuilder.cs's own direction==East/Vertical convention).
+                _shipRenderer.DrawDoor(_spriteBatch, merged, vertical: partner.X == coord.X, isOpen: false);
                 return;
             }
         }
 
         var rect = EditorTileRect(coord);
-        _shipRenderer.DrawDoor(_spriteBatch, rect, isOpen: false);
+        _shipRenderer.DrawDoor(_spriteBatch, rect, vertical: ResolveDoorTileVertical(coord), isOpen: false);
     }
+
+    // Direct user bug report ("после поворота двери при выставлении она всё равно ставится под
+    // одним и тем же углом") - a lone narrow-door barrier tile has no partner to derive orientation
+    // from the way a wide door's pair does (this file's own `partner.X == coord.X` check above), so
+    // this used to always fall back to guessing from floor-neighbors alone - silently ignoring
+    // whatever the player actually chose with R whenever a tile happened to have floor on every
+    // side (both orientations geometrically "valid" there). _editorDoorVertical (populated at
+    // placement time, Game1.ShipEditor.cs's own HandleDoorToolInput) is checked FIRST now; the
+    // geometric guess only remains as a fallback for a door tile placed before this session (e.g.
+    // loaded from an old save, where this transient dictionary was never populated).
+    private bool ResolveDoorTileVertical(TileCoord coord) =>
+        _editorDoorVertical.TryGetValue(coord, out var vertical) ? vertical : InferDoorTileVertical(coord);
+
+    // Export hasn't run yet, so there's no Door.IsVertical to read - inferred straight from which
+    // sides of this barrier tile already have floor (humble-soaring-cat.md "Дверь как устройство
+    // со своим footprint'ом"): floor to the West+East means the barrier sits in a column between
+    // two rooms side by side along X (a vertical wall); floor to the North+South means a row
+    // between rooms stacked along Y. No new stored state needed - purely geometric, same kind of
+    // neighbor-based check RecomputeWallOpenSide's own claim logic already uses elsewhere.
+    private bool InferDoorTileVertical(TileCoord coord) =>
+        _editorTiles.CellAt(TileSide.West.Offset(coord)) is { HasFloor: true } &&
+        _editorTiles.CellAt(TileSide.East.Offset(coord)) is { HasFloor: true };
 
     // Direct user request ("при размещении вообще всех блоков подсвечивалось область") - the one
     // tool that had no ghost preview at all before this (every other tool already had one: Floor/
@@ -410,37 +545,48 @@ public partial class Game1
             return;
         var coord = new TileCoord(cell.X, cell.Y);
         var rect = EditorTileRect(coord);
+        var targetCell = _editorTiles.CellAt(coord);
+        var kind = _editorSelectedWallDeviceKind;
 
-        TileSide? mountSide = null;
-        if (_editorTiles.CellAt(coord) is { HasFloor: true, TerminalId: null } && !IsAtConstructionJunction(coord))
+        // Direct user request (a device can mount into a half-thick wall's own free half) -
+        // hovering directly over a non-corner half-thick wall tile previews the recessed mode;
+        // otherwise falls back to the floor-adjacent mount-side search, unchanged.
+        if (targetCell is { Wall: TileWallKind.Solid, WallOpenSide: { } recessSide, WallDeviceId: null })
         {
-            foreach (var candidateSide in TileSideExtensions.All)
-            {
-                if (_editorTiles.CellAt(candidateSide.Offset(coord)) is not { Wall: not TileWallKind.None })
-                    continue;
-                mountSide = candidateSide;
-                break;
-            }
+            _spriteBatch.Draw(_pixel, rect, new Color(90, 160, 110) * 0.35f);
+            DrawRectOutline(rect, Color.LightGreen, 2f);
+            DrawEditorWallDeviceHalfBlock(coord, kind, recessSide.Opposite());
+            return;
         }
+
+        var mountSide = targetCell is { HasFloor: true, WallDeviceId: null } && !IsAtConstructionJunction(coord)
+            ? FindWallDeviceMountSide(coord)
+            : null;
 
         var valid = mountSide is not null;
         _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
         DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
         if (mountSide is { } side)
-            DrawEditorTerminalMark(coord, side);
+            DrawEditorWallDeviceHalfBlock(coord, kind, side);
     }
 
-    private void DrawEditorTerminalMark(TileCoord coord, TileSide side)
+    // Direct user request ("занимал половину блока и визуально выглядел в соответствии с
+    // полублоком") - a real filled half-block in the device's own catalog tint (distinct per kind -
+    // Terminal's cyan vs WallLamp's warm yellow, CustomDeviceCatalog.Tint), not just a placeholder
+    // line. `mountSide` already means "which side of THIS tile the half-block sits on" uniformly for
+    // both the recessed and floor-adjacent modes (TileCell.WallDeviceMountSide's own doc comment) -
+    // no branching needed here at all.
+    private void DrawEditorWallDeviceHalfBlock(TileCoord coord, CustomDeviceKind kind, TileSide mountSide)
     {
-        var rect = EditorTileRect(coord);
-        var (from, to) = side switch
-        {
-            TileSide.North => (new Vector2(rect.Left, rect.Top), new Vector2(rect.Right, rect.Top)),
-            TileSide.South => (new Vector2(rect.Left, rect.Bottom), new Vector2(rect.Right, rect.Bottom)),
-            TileSide.East => (new Vector2(rect.Right, rect.Top), new Vector2(rect.Right, rect.Bottom)),
-            _ => (new Vector2(rect.Left, rect.Top), new Vector2(rect.Left, rect.Bottom)),
-        };
-        HudIcons.DrawLine(_spriteBatch, _pixel, from, to, Color.Gold, 3f);
+        var rect = EditorHalfRect(EditorTileRect(coord), mountSide);
+        var tint = CustomDeviceCatalog.Tint(kind);
+        _spriteBatch.Draw(_pixel, rect, tint * 0.85f);
+        DrawRectOutline(rect, Color.Gold, 2f);
+        var glyph = CustomDeviceCatalog.ShortGlyph(kind);
+        var scale = MathF.Min(1f, (rect.Width - 4) / _font.MeasureString(glyph).X);
+        var textSize = _font.MeasureString(glyph) * scale;
+        _spriteBatch.DrawString(_font, glyph, new Vector2(rect.Center.X - textSize.X / 2f, rect.Center.Y - textSize.Y / 2f),
+            Color.Black, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
     }
 
     // Direct user request ("подсвечивалась его площадь как в rimworld") - a live ghost outline over
@@ -559,36 +705,56 @@ public partial class Game1
                     if (speculative.CellAt(coord) is not { Wall: TileWallKind.Solid or TileWallKind.Door })
                         continue;
                     var tileRect = EditorTileRect(coord);
-                    _spriteBatch.Draw(_pixel, tileRect, CompartmentWallTint * 0.9f);
+                    _spriteBatch.Draw(_pixel, tileRect, CompartmentPreviewWallTint * 0.9f);
                     DrawRectOutline(tileRect, Color.White, 1.5f);
                 }
     }
 
-    // A multi-tile device (today, only Reactor - CustomDeviceFootprint.Size) draws its own real texture
-    // stretched across its WHOLE footprint instead of the plain small icon every other device still
-    // gets - direct user request ("сама текстура должна занимать все 4 на 4 тайла").
+    // A device with its own real texture draws that texture stretched across its WHOLE footprint
+    // instead of the plain tinted-box+glyph icon every other device still gets - direct user request
+    // ("сама текстура должна занимать все 4 на 4 тайла", then generalized: "сделай чтобы текстуры
+    // устройств у которых они есть выводились в редакторе как это сделано с реактором"). Three
+    // tiers, checked in order: (1) Reactor's own bespoke big texture (_editorReactorTexture,
+    // ReactorTexture.cs - a different system entirely from DeviceSkin, unique art baked once at load);
+    // (2) any OTHER kind FaceForKind maps to a real DeviceSkin face (the same palette-icon lookup
+    // DrawItemArt uses, just baked at THIS footprint's own pixel size instead of a fixed palette-
+    // button size, and stretched non-uniformly if the footprint isn't square - an accepted minor
+    // trade-off, same as Reactor never needing it since its footprint is always 4x4); (3) still
+    // Generic (no real face exists yet) - the original flat tinted-panel+glyph fallback, unchanged.
     private void DrawEditorDeviceAt(TileCoord anchor, CustomDeviceKind kind)
     {
         var rotated = _editorDeviceRotation.TryGetValue(anchor, out var rotatedFlag) && rotatedFlag;
         var (width, height) = DeviceFootprintSize(kind, rotated);
-        if ((width > 1 || height > 1) && kind == CustomDeviceKind.Reactor && _editorReactorTexture is { } reactorTex)
+        Rectangle FullFootprintRect()
         {
             var topLeft = EditorTileRect(anchor);
             var bottomRight = EditorTileRect(new TileCoord(anchor.X + width - 1, anchor.Y + height - 1));
-            var fullRect = new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
-            _spriteBatch.Draw(reactorTex, fullRect, Color.White);
+            return new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
+        }
+
+        if ((width > 1 || height > 1) && kind == CustomDeviceKind.Reactor && _editorReactorTexture is { } reactorTex)
+        {
+            _spriteBatch.Draw(reactorTex, FullFootprintRect(), Color.White);
+            return;
+        }
+
+        var face = FaceForKind(kind);
+        if (face != DeviceSkin.Face.Generic)
+        {
+            var fullRect = FullFootprintRect();
+            // Direct user request ("текстура была в соответствии с этой формой") - baked at the
+            // footprint's OWN width/height now, not a square stretched to fit it.
+            var baked = DeviceIconSkin.Get(face, fullRect.Width, fullRect.Height, lit: true);
+            _spriteBatch.Draw(baked, fullRect, Color.White);
             return;
         }
 
         if (width > 1 || height > 1)
         {
-            // A multi-tile device with no bespoke big texture (Helm/Navigation's 3x2 footprint,
-            // StorageRack/LargeStorage's 1x2/1x3) - a tinted panel spanning the WHOLE footprint plus
-            // a centered glyph, rather than a tiny icon sitting on just its own anchor tile leaving
-            // the rest of its own footprint looking like bare, unexplained floor.
-            var topLeft = EditorTileRect(anchor);
-            var bottomRight = EditorTileRect(new TileCoord(anchor.X + width - 1, anchor.Y + height - 1));
-            var fullRect = new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
+            // A multi-tile device with no real face yet - a tinted panel spanning the WHOLE
+            // footprint plus a centered glyph, rather than a tiny icon sitting on just its own
+            // anchor tile leaving the rest of its own footprint looking like bare, unexplained floor.
+            var fullRect = FullFootprintRect();
             _spriteBatch.Draw(_pixel, fullRect, CustomDeviceCatalog.Tint(kind) * 0.55f);
             DrawRectOutline(fullRect, Color.Black, 1f);
             var bigGlyph = CustomDeviceCatalog.ShortGlyph(kind);
@@ -663,6 +829,27 @@ public partial class Game1
     // it, direct user request - "на месте которое занимает устройство уже ничего нельзя было
     // построить") and would actually take a wall, red where it wouldn't, same colour convention the
     // old Room-rectangle preview used for "would this placement be valid."
+    private void DrawWallPlacementHighlight(Rectangle rect, bool valid)
+    {
+        var color = valid ? Color.LightGreen : Color.OrangeRed;
+        if (!_editorWallHalfBlock)
+        {
+            _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.4f);
+            DrawRectOutline(rect, color, 2f);
+            return;
+        }
+        var solidHalf = EditorHalfRect(rect, _editorWallHalfBlockSide);
+        DrawRectOutline(rect, color * 0.35f, 1f);
+        _spriteBatch.Draw(_pixel, solidHalf, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.55f);
+        DrawRectOutline(solidHalf, color, 2f);
+    }
+
+    // Direct user request ("сделай чтобы при её выставлении было видно как она повернута") - both
+    // branches below now special-case _editorWallHalfBlock: instead of highlighting the WHOLE tile
+    // (which never told the player which half was actually about to become solid until AFTER
+    // clicking), only the solid half (per _editorWallHalfBlockSide) gets the strong valid/invalid
+    // fill+outline, with a faint full-tile outline underneath so the free half still reads as part
+    // of the same placement rather than looking untouched.
     private void DrawEditorWallDragPreview()
     {
         if (_editorWallDragStart is not { } start)
@@ -673,8 +860,7 @@ public partial class Game1
                 var hoverCoord = new TileCoord(hover.X, hover.Y);
                 var hoverRect = EditorTileRect(hoverCoord);
                 var hoverValid = _editorTiles.CellAt(hoverCoord) is { HasFloor: true, DeviceId: null };
-                _spriteBatch.Draw(_pixel, hoverRect, (hoverValid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.4f);
-                DrawRectOutline(hoverRect, hoverValid ? Color.LightGreen : Color.OrangeRed, 2f);
+                DrawWallPlacementHighlight(hoverRect, hoverValid);
             }
             return;
         }
@@ -683,48 +869,87 @@ public partial class Game1
         {
             var rect = EditorTileRect(coord);
             var valid = _editorTiles.CellAt(coord) is { HasFloor: true, DeviceId: null };
-            _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.4f);
-            DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
+            DrawWallPlacementHighlight(rect, valid);
         }
     }
 
     // Wide-door mode's own drag preview (direct user request) - same shape as the Wall tool's line
     // preview, but capped to the first 2 tiles only (HandleDoorToolInput never links more than that).
-    private void DrawEditorDoorDragPreview()
-    {
-        if (_editorDoorDragStart is not { } start)
-            return;
-        var endCell = GridCellAt(_designMouse) is { } ec ? new TileCoord(ec.X, ec.Y) : start;
-        foreach (var coord in LineBetween(start, endCell).Take(2))
-        {
-            var rect = EditorTileRect(coord);
-            var valid = _editorTiles.CellAt(coord) is { HasFloor: true, DeviceId: null };
-            _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.4f);
-            DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
-        }
-    }
-
-    // Door tool has no drag, just a single hovered tile - shown even before a click (unlike Wall's
-    // drag-only preview above) so hovering an occupied device tile reads as blocked right away, same
-    // guard HandleDoorToolInput itself checks.
-    private void DrawEditorDoorHoverPreview()
+    // Direct user request ("расставлял их как устройства со своим размером") - same live per-tile
+    // green/red preview Engine's own DrawEditorEnginePlacementPreview uses, shown before any click
+    // (no drag any more) so hovering alone already previews exactly what DoorSpanTiles/
+    // HandleDoorToolInput would place - or, over an existing door, what a right-click would remove.
+    private void DrawEditorDoorPlacementPreview()
     {
         if (GridCellAt(_designMouse) is not { } cell)
             return;
-        var coord = new TileCoord(cell.X, cell.Y);
-        var rect = EditorTileRect(coord);
-        var current = _editorTiles.CellAt(coord);
-        var valid = current is { HasFloor: true, DeviceId: null };
-        var removable = current is { Wall: TileWallKind.Door };
-        if (!valid && !removable)
+        var anchor = new TileCoord(cell.X, cell.Y);
+
+        // Span==2 alone still tries the OLD tile-based compartment-boundary hover-removal preview
+        // first (direct user request - "расставлял их как устройства со своим размером", same
+        // convenience _editorDoorFootprint gives the right-click itself) - every other span never
+        // creates one of these tiles at all, so this can never fire for them.
+        if (_editorDoorSpanTiles == 2
+            && (_editorDoorFootprint.TryGetValue(anchor, out var doorAnchor) || _editorTiles.CellAt(anchor) is { Wall: TileWallKind.Door }))
         {
-            _spriteBatch.Draw(_pixel, rect, new Color(160, 90, 90) * 0.4f);
-            DrawRectOutline(rect, Color.OrangeRed, 2f);
+            var removeAnchor = _editorDoorFootprint.TryGetValue(anchor, out var resolved) ? resolved : anchor;
+            var removeSpan = _editorTiles.CellAt(removeAnchor)?.DoorGroupId is { } groupId
+                ? _editorTiles.Cells.Where(kv => kv.Value.DoorGroupId == groupId).Select(kv => kv.Key)
+                : new[] { removeAnchor };
+            foreach (var barrier in removeSpan)
+                foreach (var coord in DoorFlankingTiles(barrier, ResolveDoorTileVertical(barrier)).Append(barrier))
+                {
+                    var removeRect = EditorTileRect(coord);
+                    _spriteBatch.Draw(_pixel, removeRect, new Color(90, 160, 110) * 0.35f);
+                    DrawRectOutline(removeRect, Color.LightGreen, 2f);
+                }
+            return;
         }
-        else
+
+        // M-doors-as-edges - hovering an already-placed edge door (narrow/wide/triple, N segments
+        // sharing one Id - DoorEdgeGroupAt's own doc comment) previews removing every segment at
+        // once, same priority the OLD-tile hover-removal check just above already gives its own kind
+        // of door.
+        var existingGroup = DoorEdgeGroupAt(anchor);
+        if (existingGroup.Count > 0)
         {
-            _spriteBatch.Draw(_pixel, rect, new Color(90, 160, 110) * 0.35f);
-            DrawRectOutline(rect, Color.LightGreen, 2f);
+            foreach (var (coord, side) in existingGroup)
+            {
+                DrawRectOutline(EditorTileRect(coord), Color.LightGreen, 2f);
+                DrawRectOutline(EditorTileRect(side.Offset(coord)), Color.LightGreen, 2f);
+            }
+            return;
+        }
+
+        // Ordinary placement preview - mirrors PlaceEdgeDoor's own geometry exactly (a genuine
+        // spanTiles-by-2 free-floor footprint, never a tile of its own - the OLD "click on floor or
+        // wall" tile-conversion preview is gone along with the placement it used to describe).
+        var side2 = _editorDoorPendingVertical ? TileSide.South : TileSide.East;
+        var spanOffset = side2 is TileSide.East or TileSide.West ? new TileCoord(0, 1) : new TileCoord(1, 0);
+        var anchors = Enumerable.Range(0, _editorDoorSpanTiles)
+            .Select(i => new TileCoord(anchor.X + spanOffset.X * i, anchor.Y + spanOffset.Y * i))
+            .ToList();
+        var valid = anchors.All(a => _editorTiles.CanPlaceDoorEdge(a, side2));
+        var color = valid ? Color.LightGreen : Color.OrangeRed;
+        var fill = (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f;
+        foreach (var a in anchors)
+            foreach (var t in new[] { a, side2.Offset(a) })
+            {
+                var rect = EditorTileRect(t);
+                _spriteBatch.Draw(_pixel, rect, fill);
+                DrawRectOutline(rect, color, 2f);
+            }
+
+        const float thicknessFraction = 0.22f;
+        var thickness = Math.Max(4, (int)(thicknessFraction * EditorCellSize));
+        var barColor = (valid ? new Color(90, 230, 120) : new Color(255, 90, 90)) * 0.8f;
+        foreach (var a in anchors)
+        {
+            var anchorRect = EditorTileRect(a);
+            var bar = side2 == TileSide.East
+                ? new Rectangle(anchorRect.Right - thickness / 2, anchorRect.Y, thickness, anchorRect.Height)
+                : new Rectangle(anchorRect.X, anchorRect.Bottom - thickness / 2, anchorRect.Width, thickness);
+            _spriteBatch.Draw(_pixel, bar, barColor);
         }
     }
 
@@ -775,9 +1000,10 @@ public partial class Game1
         {
             EditorTool.Floor => "Клик - поставить пол. ПКМ - убрать.",
             EditorTool.Wall => "Клик - стена (нужен пол под ней). Зажать и протянуть - линия стен. ПКМ - убрать.",
-            EditorTool.Door when _editorDoorWide => "Зажмите и протяните ровно 2 клетки - широкая дверь. ПКМ по двери - убрать.",
-            EditorTool.Door => "Клик по полу или стене - дверь. ПКМ по двери - убрать.",
-            EditorTool.Terminal => "Клик по полу рядом со стеной - терминал. ПКМ - убрать.",
+            EditorTool.Door when _editorDoorSpanTiles == 2 => "R - выбрать ориентацию. Клик на стыке 2х2 свободных клеток пола - широкая дверь; клик на стыке 2 отсеков - тоже дверь. ПКМ по двери - убрать.",
+            EditorTool.Door when _editorDoorSpanTiles == 3 => "R - выбрать ориентацию. Клик на стыке 3х2 свободных клеток пола - тройная дверь. ПКМ по двери - убрать.",
+            EditorTool.Door => "R - выбрать ориентацию. Клик на стыке 2 свободных клеток пола - дверь. ПКМ по двери - убрать.",
+            EditorTool.Terminal => "R - выбрать сторону крепления. Клик на полутолщинной стене - врезать в неё. Клик по полу рядом со стеной - поставить снаружи. ПКМ - убрать.",
             EditorTool.Device => "Клик внутри отсека - поставить устройство. ПКМ рядом - убрать.",
             EditorTool.Zone => "Зажмите и протяните по клеткам с полом, затем впишите название отсека.",
             EditorTool.Engine => $"R - повернуть (сейчас: {EngineFacingLabel(_editorEnginePendingFacing)}). " +

@@ -53,15 +53,15 @@ public sealed class EnemyHullSkin : IDisposable
 
     public (Texture2D Texture, Vector2 Origin) Get(EnemyShipClass kind) => _cache[kind];
 
-    // Which way each hull's own room layout flies nose-first. Frigate reuses the Corvette's own
-    // convention because it is, room for room, the same footprint (EnemyShipLayout.Classes.cs's
-    // CreateFrigate comment); the other three are all plain rows of compartments, the same "nose to
-    // the right" layout every other player ShipKind already defaults to (ShipCatalog.ForwardDegrees).
-    // Public: FieldRenderer needs the same bow direction to place the engine glow and scorch marks
-    // consistently with whatever this baked the hull as.
+    // Which way each hull's own room layout flies nose-first. Frigate flies bow-up rather than
+    // bow-right - it's, room for room, the same footprint the player's own (now-deleted) Corvette
+    // hull used (EnemyShipLayout.Classes.cs's CreateFrigate comment), laid out along its own axis
+    // instead of as a row of compartments; the other three are all plain rows of compartments, nose
+    // to the right. Public: FieldRenderer needs the same bow direction to place the engine glow and
+    // scorch marks consistently with whatever this baked the hull as.
     public static float ForwardDegreesFor(EnemyShipClass kind) => kind switch
     {
-        EnemyShipClass.Frigate => ShipCatalog.ForwardDegrees(ShipKind.Corvette),
+        EnemyShipClass.Frigate => -90f,
         _ => 0f,
     };
 
