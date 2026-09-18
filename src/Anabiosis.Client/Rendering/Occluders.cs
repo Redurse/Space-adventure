@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Anabiosis.Shared.Model;
 
@@ -37,6 +38,17 @@ public static class Occluders
 
     public static SightGap ToGap(AirlockOuterDoor door) => new(door.Left, door.Top, door.Right, door.Bottom);
 
+    // Direct user follow-up ("да давай" - digging into Маска's own remaining allocation pressure
+    // after the wall-bleed fringe was confirmed cheap) - AddHorizontal/AddVertical run once per
+    // merged wall run, i.e. dozens of times per TileOccluders.Build call, and each used to allocate
+    // its own fresh `spans` list. Reused per thread instead ([ThreadStatic], not a plain static
+    // field - TestRunner.TileOccluders.cs/TestRunner.RectilinearDecomposition.cs's own tests call
+    // this from Parallel.For across multiple threads, so a shared mutable list there would be a
+    // real data race, not just wasted reuse). Safe to share the ONE field between AddHorizontal and
+    // AddVertical - neither is ever re-entered before the other returns, both being simple leaf
+    // calls from TileOccluders/Occluders.Build's own sequential loop.
+    [ThreadStatic] private static List<(float From, float To)>? _spansScratch;
+
     // Shared with TileOccluders.cs (M78, humble-soaring-cat.md) - both the old room-rectangle wall
     // builder above and the new tile-boundary one feed their raw spans through these same two
     // methods, so a room-based run and a tile-based run get cut against a SightGap by the exact same
@@ -44,7 +56,9 @@ public static class Occluders
     // reuse; still not meant to be called from outside Rendering.
     internal static void AddHorizontal(List<WallSegment> into, float y, float from, float to, IReadOnlyList<SightGap> gaps)
     {
-        var spans = new List<(float From, float To)> { (from, to) };
+        var spans = _spansScratch ??= new List<(float From, float To)>();
+        spans.Clear();
+        spans.Add((from, to));
         foreach (var gap in gaps)
         {
             if (y < gap.Top - Epsilon || y > gap.Bottom + Epsilon)
@@ -59,7 +73,9 @@ public static class Occluders
 
     internal static void AddVertical(List<WallSegment> into, float x, float from, float to, IReadOnlyList<SightGap> gaps)
     {
-        var spans = new List<(float From, float To)> { (from, to) };
+        var spans = _spansScratch ??= new List<(float From, float To)>();
+        spans.Clear();
+        spans.Add((from, to));
         foreach (var gap in gaps)
         {
             if (x < gap.Left - Epsilon || x > gap.Right + Epsilon)

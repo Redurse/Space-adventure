@@ -71,7 +71,7 @@ internal static partial class TestRunner
         if (idle.IsThrusting)
             return false;
 
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
+        world.DebugSetHelmInput(1f, 0f, 0f);
         world.Step(RealtimeStep);
         return world.CreateSnapshot().EngineStates!.Single().IsThrusting;
     }
@@ -86,14 +86,14 @@ internal static partial class TestRunner
         SitAtEngineTestHelm(world, 1);
         var engineId = world.Ship.Engines.Single().Id;
 
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
+        world.DebugSetHelmInput(1f, 0f, 0f);
         world.Step(RealtimeStep);
         world.DebugBreakEngineControl(engineId);
         if (!world.IsEngineControlBroken(engineId))
             return false;
 
         // Live throttle drops to zero, but the frozen engine should keep thrusting at what it held.
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 0f));
+        world.DebugSetHelmInput(0f, 0f, 0f);
         world.Step(RealtimeStep);
         if (!world.CreateSnapshot().EngineStates!.Single().IsThrusting)
             return false;
@@ -113,7 +113,7 @@ internal static partial class TestRunner
         SitAtEngineTestHelm(world, 1);
         var engineId = world.Ship.Engines.Single().Id;
 
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
+        world.DebugSetHelmInput(1f, 0f, 0f);
         world.Step(RealtimeStep);
         if (!world.CreateSnapshot().EngineStates!.Single().IsThrusting)
             return false;
@@ -259,7 +259,7 @@ internal static partial class TestRunner
         SitAtEngineTestHelm(world, 1);
         var engineId = world.Ship.Engines.Single().Id;
 
-        world.ApplyCommand(1, new ClientCommand(1, HelmTurn: 1f));
+        world.DebugSetHelmInput(0f, 0f, 1f);
         world.Step(RealtimeStep);
         world.DebugBreakEngineControl(engineId);
         if (!world.IsEngineControlBroken(engineId))
@@ -267,7 +267,7 @@ internal static partial class TestRunner
 
         // Live turn input drops to zero, but the frozen engine should keep "thrusting" (puffing) at
         // whatever it held.
-        world.ApplyCommand(1, new ClientCommand(1, HelmTurn: 0f));
+        world.DebugSetHelmInput(0f, 0f, 0f);
         world.Step(RealtimeStep);
         if (!world.CreateSnapshot().EngineStates!.Single().IsThrusting)
             return false;

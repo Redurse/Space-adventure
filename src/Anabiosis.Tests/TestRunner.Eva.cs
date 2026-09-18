@@ -169,9 +169,11 @@ internal static partial class TestRunner
         var helmConsole = world.Ship.HelmConsole.Position;
         MoveCharacterTo(world, 2, (float)helmConsole.X, (float)helmConsole.Y); // helm console
         world.ApplyCommand(2, new ClientCommand(2, InteractPressed: true)); // man it
-        world.ApplyCommand(2, new ClientCommand(2, HelmThrottle: 1f)); // straight +X - no rotation involved
-        for (var i = 0; i < 30; i++)
+        for (var i = 0; i < 30; i++) // straight +X - no rotation involved
+        {
+            world.DebugSetHelmInput(1f, 0f, 0f);
             world.Step(RealtimeStep);
+        }
 
         var afterSnapshot = world.CreateSnapshot();
         var shipAfter = afterSnapshot.ShipField;

@@ -107,23 +107,6 @@ internal static partial class TestRunner
             world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
     }
 
-    // Same turn-to-bearing logic as SteerToward, but throttle is scaled to the fraction of
-    // `maxSpeedAddedPerTick` actually needed to close `desiredDeltaV` this tick, instead of a flat
-    // 1/0 - see ApproachBerth's own comment on why cruise's 20x thrust multiplier makes plain
-    // bang-bang throttle unable to settle inside DockMaxSpeed's narrow window.
-    private static ClientCommand SteerTowardProportional(World world, int playerId, Vec2 desiredDeltaV, float maxSpeedAddedPerTick)
-    {
-        var shipField = world.CreateSnapshot().ShipField;
-        var bearingDegrees = MathF.Atan2((float)desiredDeltaV.Y, (float)desiredDeltaV.X) * (180f / MathF.PI) - world.Ship.ForwardDegrees;
-        var error = ((bearingDegrees - shipField.RotationDegrees) % 360f + 540f) % 360f - 180f;
-        var throttle = MathF.Abs(error) < 25f && maxSpeedAddedPerTick > 0f
-            ? MathF.Min(1f, (float)(desiredDeltaV.Length() / maxSpeedAddedPerTick))
-            : 0f;
-        return new ClientCommand(playerId,
-            HelmThrottle: throttle,
-            HelmTurn: MathF.Abs(error) < 2f ? 0f : MathF.Sign(error));
-    }
-
     // Flies one fixed leg to a clearance waypoint if the current straight line to `target` clips
     // some other station's row, then stops - a no-op if the line is already clear. Computed and
     // flown ONCE per call, not recomputed every tick like AvoidIncidentalHazards: recomputing a
@@ -145,7 +128,7 @@ internal static partial class TestRunner
             var sf = world.CreateSnapshot().ShipField;
             var spd = new Vec2(sf.VelocityX, sf.VelocityY).Length();
             if (spd > 1.5f)
-                world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+                world.CancelAutopilot(); // no destination this tick - StepAutopilot's own idle branch brakes it
             else
                 world.ApplyCommand(1, SteerToward(world, 1, clearWaypoint));
             world.Step(RealtimeStep);
@@ -197,7 +180,6 @@ internal static partial class TestRunner
         if (!world.CanDockNow)
             return false; // never reached the berth - setup problem, not the behavior under test
 
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 0f));
         // "Sit at the berth doing nothing at all" for 10 whole seconds is longer than
         // TryFlyShipOnRails's own analytic orbit (seeded once, from a necessarily-approximate
         // finite-difference velocity match) reliably tracks the station's own live, independently-
@@ -443,10 +425,14 @@ internal static partial class TestRunner
         if (!world.CanDockNow)
             return false;
 
-        // Keep pushing past the berth, straight at the station's centre.
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
+        // Keep pushing past the berth, straight at the station's centre - World.Autopilot.cs has no
+        // awareness of stations (only asteroids), so the test-only DebugSetHelmInput bypass isn't
+        // strictly required here, but keeps this deliberate-collision intent explicit.
         for (var i = 0; i < 20 * 30 && !world.IsDocked; i++)
+        {
+            world.DebugSetHelmInput(1f, 0f, 0f);
             world.Step(RealtimeStep);
+        }
 
         var final = world.CreateSnapshot().ShipField;
         var distanceToCentre = (world.Station.Position - new Vec2(final.X, final.Y)).Length();

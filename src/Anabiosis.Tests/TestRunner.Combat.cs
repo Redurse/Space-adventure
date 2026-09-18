@@ -37,10 +37,13 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 21.5f, 3f); // helm console
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
 
-        // Full ahead into the raider parked off the stern, for long enough to bury the hull in it.
+        // Full ahead into the raider parked off the stern, for long enough to bury the hull in it -
+        // World.Autopilot.cs has no awareness of enemy ships (only asteroids), so a direct stick
+        // bypass isn't even strictly necessary here, but keeps this test's intent explicit rather
+        // than routing through a destination click.
         for (var i = 0; i < 30 * 30; i++)
         {
-            world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
+            world.DebugSetHelmInput(1f, 0f, 0f);
             world.Step(RealtimeStep);
         }
 
@@ -601,8 +604,7 @@ internal static partial class TestRunner
         // for exactly this). Landing in that asteroid's shadow means the squadron never gets a
         // clear shot for as long as this waits, no matter how long the budget is - the marker
         // itself is the one position every EnterBattle-based test already relies on being clear.
-        world.DebugPlaceShip(target);
-        world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+        world.DebugPlaceShip(target); // already at rest, rotation 0
 
         // The real baseline for "did a hit land" is whatever the shield sits at right now, not
         // back when it was first charged: it keeps recharging off its own held allocation for the

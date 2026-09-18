@@ -354,16 +354,16 @@ public partial class Game1
     private static Rectangle GetMicGainSliderRect(Vector2 panelOrigin) { var p = AudioRightRow(SettingsContentOrigin(panelOrigin), 3); return new Rectangle((int)p.X, (int)p.Y + 18, 300, 10); }
     private static Rectangle GetDisconnectPreventionSliderRect(Vector2 panelOrigin) { var p = AudioRightRow(SettingsContentOrigin(panelOrigin), 4); return new Rectangle((int)p.X, (int)p.Y + 18, 300, 10); }
 
-    // ---- Controls tab rect helpers - two 7-row columns (14 rebindable actions total) ----
+    // ---- Controls tab rect helpers - two 6-row columns (12 rebindable actions total) ----
     private const int ControlsRowHeight = 34;
     private static readonly PlayerAction[] ControlsLeftColumn =
     {
         PlayerAction.MoveUp, PlayerAction.MoveDown, PlayerAction.MoveLeft, PlayerAction.MoveRight,
-        PlayerAction.Interact, PlayerAction.Fire, PlayerAction.HelmStabilize,
+        PlayerAction.Interact, PlayerAction.Fire,
     };
     private static readonly PlayerAction[] ControlsRightColumn =
     {
-        PlayerAction.HelmReverseThrottle, PlayerAction.ToggleHelmMode, PlayerAction.ToggleLanding,
+        PlayerAction.AutopilotStop, PlayerAction.ToggleLanding,
         PlayerAction.VoicePushToTalk, PlayerAction.RadioPushToTalk, PlayerAction.ToggleGalacticMap, PlayerAction.OpenChat,
     };
 

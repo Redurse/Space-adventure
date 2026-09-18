@@ -796,12 +796,6 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, null);
         }
 
-        if (me.IsAtHelm && HelmButtonsWidget.GetControlModeButtonRect(_helmWidgetPosition).Contains(_designMouse))
-        {
-            _pendingToggleControlMode = true;
-            return (-1, -1, null, -1, false, false, null, null);
-        }
-
         // M57 - the 3 tab buttons switch _helmTab (purely client-local, HelmTab.cs's own doc
         // comment) - available on every tab, not gated to Captain, so anyone can switch away.
         if (me.IsAtHelm)
@@ -825,12 +819,6 @@ public partial class Game1
                 if (!TimeAccelerationWidget.GetLevelButtonRect(levelIndex, accelOrigin).Contains(_designMouse))
                     continue;
                 _pendingTimeAccelerationLevel = TimeAccelerationWidget.LevelAt(levelIndex);
-                return (-1, -1, null, -1, false, false, null, null);
-            }
-
-            if (TimeAccelerationWidget.GetFlipButtonRect(accelOrigin).Contains(_designMouse))
-            {
-                _pendingFlipHeading = true;
                 return (-1, -1, null, -1, false, false, null, null);
             }
         }
@@ -1619,6 +1607,25 @@ public partial class Game1
         if (CurrentPanelHousing() is { } openPanel && openPanel.Contains(_designMouse))
             return (-1, -1, null, -1, false, false, null, null);
 
+        // Direct user request ("игрок сможет указать на карте точку куда корабль должен долететь") -
+        // a click that reached all the way here (missed every panel/widget/device/door above, and
+        // nothing else is open right now) sets a new autopilot destination instead of just closing
+        // whatever's open - only on the Captain tab specifically (the same tab the Dock/Landing/time-
+        // acceleration buttons are already scoped to), since that's the only one showing the pilot's
+        // own free-pan copy of the map this click has to be read against (GalaxyMapPanel's own
+        // pilotView, Game1.cs's scroll-zoom handling already computes this exact
+        // helmScreenCenter/helmStarPosition/ComputeMapOrigin chain for the same map).
+        if (snapshot is not null && me is not null && me.IsAtHelm && _helmTab == HelmTab.Captain && _openBlock.Kind == BlockKind.None)
+        {
+            var helmSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
+            var helmStarPosition = new Vec2(helmSystem.Width / 2f, helmSystem.Height / 2f);
+            var helmScreenCenter = new Vector2(DesignWidth / 2f, DesignHeight / 2f);
+            var mapOrigin = GalaxyMapPanel.ComputeMapOrigin(helmScreenCenter, helmStarPosition, _mapZoom, _mapPanOffset);
+            var worldPoint = GalaxyMapPanel.ScreenToField(new Vector2(_designMouse.X, _designMouse.Y), mapOrigin, _mapZoom);
+            _pendingAutopilotTarget = worldPoint;
+            return (-1, -1, null, -1, false, false, null, null);
+        }
+
         _openBlock = ClickTarget.None;
         _talkingToNpcId = null;
         return (-1, -1, null, -1, false, false, null, null);
@@ -1661,23 +1668,6 @@ public partial class Game1
         }
         if (!char.IsControl(e.Character) && _chatInput.Length < 120)
             _chatInput += e.Character;
-    }
-
-    // Flying the ship: W ahead, X astern, A/D swing the bow, S brakes. The mouse used to drag a
-    // joystick that set a world-space thrust vector, which meant the pilot could aim the ship's
-    // course but never its heading - and on a hull whose guns and airlock face particular
-    // directions, heading is the thing you actually steer.
-    private static (float Throttle, float Turn) ReadHelmInput(KeyboardState keyboard, PlayerActionBindings bindings)
-    {
-        var throttle = 0f;
-        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveUp))) throttle += 1f;
-        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.HelmReverseThrottle))) throttle -= 1f;
-
-        var turn = 0f;
-        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveLeft))) turn -= 1f;
-        if (keyboard.IsKeyDown(bindings.Get(PlayerAction.MoveRight))) turn += 1f;
-
-        return (throttle, turn);
     }
 
     // Walking out of interaction range auto-closes whatever's open вЂ” matches the same radius
@@ -1775,7 +1765,7 @@ public partial class Game1
             if (hovered is { } h && h == start)
                 return $"[ЛКМ]/[ПКМ] отменить провод от {ComponentRenderer.PinLabel(snapshot, start)}";
             if (hovered is { } target)
-                return $"[ЛКМ] закончить провод: {ComponentRenderer.PinLabel(snapshot, start)} → {ComponentRenderer.PinLabel(snapshot, target)}";
+                return $"[ЛКМ] закончить провод: {ComponentRenderer.PinLabel(snapshot, start)} -> {ComponentRenderer.PinLabel(snapshot, target)}";
             var undoHint = (me.LayingWireBends?.Count ?? 0) > 0 ? "[ПКМ] убрать последний изгиб" : "[ПКМ] отменить";
             return $"Ведём провод от {ComponentRenderer.PinLabel(snapshot, start)} — [ЛКМ] зафиксировать изгиб, навести на контакт — закончить  {undoHint}";
         }
@@ -1836,10 +1826,10 @@ public partial class Game1
             return wiringHint;
 
         if (snapshot.TurretStates.FirstOrDefault(t => t.MannedByPlayerId == playerId) is { } manned)
-            return $"Наводка мышью ({manned.AimDegrees:0}°)  [Space] огонь  [E] встать";
+            return $"Наводка мышью ({manned.AimDegrees:0}°)  [Space] огонь  [F] встать";
 
         if (me.IsAtHelm)
-            return "[W] ход  [X] назад  [A/D] поворот  [S] стабилизация  [E] встать";
+            return "[ЛКМ] курс на карте  [ПКМ] навести нос  [X] стоп (отменить курс)  [F] встать";
 
         if (me.OnEnemyShip)
         {
@@ -1870,7 +1860,7 @@ public partial class Game1
                 !(snapshot.Station.CrateStates.FirstOrDefault(s => s.CrateId == c.Id)?.Looted ?? false) &&
                 NearEnough(c.Position, stationPosition));
             if (nearCrate is not null)
-                return $"[E] украсть: {ItemDefinitions.DisplayName(nearCrate.Item)} (охрана не должна увидеть)";
+                return $"[F] украсть: {ItemDefinitions.DisplayName(nearCrate.Item)} (охрана не должна увидеть)";
 
             var nearNpc = snapshot.Station.Npcs.FirstOrDefault(n =>
                 n.Kind is not (NpcKind.Security or NpcKind.Scientist) && NearEnough(n.Position, stationPosition));
@@ -1889,7 +1879,7 @@ public partial class Game1
 
             var nearbyDropped = snapshot.DroppedItems.FirstOrDefault(d => d.RoomId is null && (d.Position - evaPosition).Length() < PickupHintRadius);
             if (nearbyDropped is not null)
-                return $"[E]/[ЛКМ] подобрать: {ItemDefinitions.DisplayName(nearbyDropped.Item)}";
+                return $"[F]/[ЛКМ] подобрать: {ItemDefinitions.DisplayName(nearbyDropped.Item)}";
 
             var nearbyDeposit = snapshot.Field.OreDeposits.Any(d =>
                 (snapshot.Field.OreDepositStates.FirstOrDefault(s => s.DepositId == d.Id)?.Hp ?? 0f) > 0f &&
@@ -1912,7 +1902,7 @@ public partial class Game1
         }
 
         if (HeldItemTypes(me.Inventory).Contains(ItemType.MedKit) && me.Health < 100f)
-            return "[E] использовать аптечку";
+            return "[F] использовать аптечку";
 
         var myPosition = new Vec2(me.X, me.Y);
         var nearTurret = snapshot.Turrets.Any(t => NearEnough(t.PeriscopePosition, myPosition));
@@ -1920,7 +1910,7 @@ public partial class Game1
             t.WeaponType != TurretWeaponType.Laser && NearEnough(t.PeriscopePosition, myPosition));
 
         if (me.CarryingAmmoCrate)
-            return nearAmmoTurret ? "[E] зарядить орудие" : "Несёте ящик патронов к орудию";
+            return nearAmmoTurret ? "[F] зарядить орудие" : "Несёте ящик патронов к орудию";
 
         var nearStorage = snapshot.AmmoStorages.FirstOrDefault(s => NearEnough(s.Position, myPosition));
         if (nearStorage is not null)
@@ -1928,7 +1918,7 @@ public partial class Game1
             var stock = snapshot.AmmoStorageStates.FirstOrDefault(s => s.StorageId == nearStorage.Id);
             return stock is { Remaining: 0 }
                 ? "Склад патронов пуст — пополняется на станции"
-                : $"[E] взять ящик патронов ({stock?.Remaining ?? 0}/{stock?.Capacity ?? 0})";
+                : $"[F] взять ящик патронов ({stock?.Remaining ?? 0}/{stock?.Capacity ?? 0})";
         }
 
         // Ship/station floor drops only (World.Storage.cs's drag-to-floor) - EVA's own dropped items
@@ -1945,16 +1935,16 @@ public partial class Game1
         if (nearDamagedTurret)
         {
             return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                ? "[E] почини турель"
+                ? "[F] почини турель"
                 : "Нужен гаечный ключ или отвёртка в руке";
         }
 
         if (nearTurret)
-            return "[E] сесть за орудие";
+            return "[F] сесть за орудие";
 
         var nearHelm = NearEnough(snapshot.HelmConsole.Position, myPosition);
         if (nearHelm)
-            return "[E] встать за навигационную панель";
+            return "[F] встать за навигационную панель";
 
         var nearDamagedSystem = snapshot.SystemDevices.FirstOrDefault(d =>
             NearEnough(d.Position, myPosition) &&
@@ -1962,7 +1952,7 @@ public partial class Game1
         if (nearDamagedSystem is not null)
         {
             return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                ? "[E] почини систему"
+                ? "[F] почини систему"
                 : "Нужен гаечный ключ или отвёртка в руке";
         }
 
@@ -1973,7 +1963,7 @@ public partial class Game1
             var junctionDamaged = snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == nearJunction.Id)?.Damaged ?? false;
             if (junctionDamaged)
                 return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                    ? "[E] почини щиток"
+                    ? "[F] почини щиток"
                     : "Нужен гаечный ключ или отвёртка в руке";
         }
 
@@ -1984,8 +1974,8 @@ public partial class Game1
             // whether F will actually do anything here, not just whether a locker is nearby.
             var hasSuit = snapshot.SuitLockerStates.FirstOrDefault(s => s.LockerId == nearLocker.Id)?.HasSuit ?? false;
             if (me.WearingSuit)
-                return hasSuit ? "Шкаф занят" : "[E] снять скафандр";
-            return hasSuit ? "[E] надеть скафандр" : "Шкаф пуст";
+                return hasSuit ? "Шкаф занят" : "[F] снять скафандр";
+            return hasSuit ? "[F] надеть скафандр" : "Шкаф пуст";
         }
 
         var myRoom = snapshot.Rooms.FirstOrDefault(r => r.Contains(myPosition));
@@ -2019,7 +2009,7 @@ public partial class Game1
         if (nearbyDestroyedDoorId is not null)
         {
             return holding.Contains(ItemType.Wrench) || holding.Contains(ItemType.Screwdriver)
-                ? "[E] почини дверь"
+                ? "[F] почини дверь"
                 : "Дверь разрушена — нужен гаечный ключ или отвёртка";
         }
 

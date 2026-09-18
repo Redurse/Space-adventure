@@ -16,7 +16,7 @@ namespace Anabiosis.Client.Rendering;
 // is converted into the ship's local frame via ShipLocalFrame.ToLocal before being placed on
 // screen, exactly like ShipRenderer already places Room/Door/etc. - the ship's own rotation shows
 // up as these objects swinging around the (always upright) ship, not as the interior spinning.
-public sealed class FieldRenderer
+public sealed partial class FieldRenderer
 {
     private const float EngineGlowMarginUnits = 0.3f;
     // Beyond EnemyWeaponRangeUnits(31)/NpcAggroRadius(60) with real headroom, so a raider's hull
@@ -78,6 +78,28 @@ public sealed class FieldRenderer
         _font = font;
     }
 
+    // Direct user request ("сделай визуально чтобы было видно что планета на заднем плане") - the
+    // body's own disc (or, once landed, its surface ground fill) drawn on its own, meant to be
+    // called by Game1.cs BEFORE ShipRenderer.Draw/DrawCharacters rather than as part of this class's
+    // own Draw below - a body is background scenery now (World.ShipField.cs's own top-of-file doc
+    // comment: no longer a physical obstacle at all), so the ship/its crew have to visibly paint
+    // OVER it instead of the other way round. Everything else a body's own presence used to imply
+    // here (surface rocks once landed, asteroids/ore in the system field) stays real foreground
+    // content and is still drawn by Draw below, in its normal place after the ship.
+    public void DrawCelestialBackground(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, Vec2 hullCenter)
+    {
+        Vector2 WorldToScreen(Vec2 world)
+        {
+            var local = ShipLocalFrame.ToLocal(world, snapshot.ShipField, hullCenter);
+            return origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
+        }
+
+        if (snapshot.Voyage.LandedBodyId is { } landedBodyId)
+            DrawPlanetSurfaceGround(spriteBatch, landedBodyId, snapshot, WorldToScreen);
+        else
+            DrawCelestialBodies(spriteBatch, snapshot, WorldToScreen);
+    }
+
     // seenFromOutside: the caller has drawn the ship (and the station it's docked to) closed up
     // rather than as interiors - a turret periscope. The station then needs its exterior drawn even
     // while docked, or the gunner is looking at a black gap where the station they're moored to is.
@@ -91,25 +113,18 @@ public sealed class FieldRenderer
             return origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
         }
 
-        // M55 - landed on a planet's own surface: none of the system-field's own bodies/asteroids/
-        // ore exist in this small, unrelated-scale local space (PlanetSurface's own coordinates
-        // just happen to reuse the same "exterior world position" convention everything below
-        // already draws through). Ground drawn first, same reason DrawCelestialBodies goes first
-        // in the other branch - everything else should read as sitting on top of it.
+        // The body's own disc/ground itself is drawn separately and earlier now - see
+        // DrawCelestialBackground's own doc comment. Only the real, physical foreground content a
+        // body's presence implies is still drawn here: landed-surface rocks, or (flying free) the
+        // system field's own asteroids/ore.
         var landedBodyId = snapshot.Voyage.LandedBodyId;
         if (landedBodyId is not null)
         {
-            DrawPlanetSurfaceGround(spriteBatch, landedBodyId, snapshot, WorldToScreen);
             foreach (var rock in PlanetSurface.Generate(landedBodyId))
                 DrawAsteroid(spriteBatch, rock, WorldToScreen(rock.Position), WorldToScreen);
         }
         else
         {
-            // The star, its planets, and any moons (M50) - real, huge, gravity-having bodies, drawn
-            // first so everything else (asteroids, ships, characters) reads as being in front of
-            // them rather than the other way round.
-            DrawCelestialBodies(spriteBatch, snapshot, WorldToScreen);
-
             // At most one rock is baked per frame: five at once is a visible hitch on the frame the
             // field opens, five spread over five frames is nothing, and the ones still waiting are
             // drawn flat in their correct outline meanwhile.
@@ -154,6 +169,12 @@ public sealed class FieldRenderer
         }
 
         DrawEngines(spriteBatch, snapshot, origin, hullCenter, totalSeconds);
+
+        // Direct user request ("то, как корабль должен повернуться и прийти к концу пути") - a
+        // translucent preview of the ship's own hull at the autopilot's destination, split into its
+        // own partial file (FieldRenderer.Autopilot.cs) same as GalaxyMapPanel's own topic split.
+        if (snapshot.Autopilot is { IsActive: true, DestinationX: { } destX, DestinationY: { } destY })
+            DrawAutopilotGhost(spriteBatch, snapshot, hullCenter, new Vec2(destX, destY), WorldToScreen);
 
         // Only where a station actually exists in this system - many procedural systems have none
         // at all (GalaxyMap.cs), and the layout the World keeps around for docking is not a thing
@@ -307,39 +328,6 @@ public sealed class FieldRenderer
         _cachedBodiesById = _cachedBodies.ToDictionary(b => b.Id);
         var currentSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
         _cachedFieldCenter = new Vec2(currentSystem.Width / 2f, currentSystem.Height / 2f);
-    }
-
-    // M55 - "камера поварачивалась вертикально относительно положения планеты чтобы было проще
-    // садиться": how far the ship still is above the nearest LANDABLE body's own surface, and the
-    // bearing away from that body's centre (the direction that should read as screen-up once
-    // close) - Game1.Camera.cs's own scene-rotation blend uses this to ease the view from "flying
-    // past a huge circle" into "ground below, sky above" purely as a landing approach aid, no
-    // physics involved. Piggybacks on the same cached body list DrawCelestialBodies/
-    // DrawPlanetSurfaceGround already keep warm, rather than re-generating the system's bodies in
-    // a method called every single frame regardless of turret/landing state.
-    public (float SurfaceDistance, Vec2 AwayFromBody, float BodyRadius)? NearestLandableBodyApproach(WorldSnapshot snapshot, Vec2 shipFieldPosition)
-    {
-        EnsureBodiesCached(snapshot);
-        CelestialBody? nearestBody = null;
-        var nearestSurfaceDistance = float.MaxValue;
-        var nearestAway = Vec2.Zero;
-
-        foreach (var body in _cachedBodies)
-        {
-            if (!CelestialBodyGenerator.IsLandable(body))
-                continue;
-            var bodyPosition = CelestialBodyGenerator.PositionAt(body, _cachedBodiesById) + _cachedFieldCenter;
-            var offset = shipFieldPosition - bodyPosition;
-            var distance = offset.Length();
-            var surfaceDistance = distance - body.Radius;
-            if (surfaceDistance >= nearestSurfaceDistance)
-                continue;
-            nearestSurfaceDistance = (float)surfaceDistance;
-            nearestBody = body;
-            nearestAway = distance > 0.0001f ? offset * (1f / distance) : new Vec2(0f, -1f);
-        }
-
-        return nearestBody is null ? null : (nearestSurfaceDistance, nearestAway, nearestBody.Radius);
     }
 
     // M55 - a flat, MassTier-tinted ground fill under a landed ship, drawn as a single rotated

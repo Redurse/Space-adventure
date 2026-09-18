@@ -215,6 +215,41 @@ internal static partial class TestRunner
         return AnyHorizontalCovers(segments, 0f, 2.5f);
     }
 
+    // Direct user bug report (screenshot: a sliver of wall texture visible right where a half-thick
+    // wall run meets an ordinary full-thickness wall, inside what should be solid shadow) - reuses
+    // the exact grid TileOccluders_HalfThickWall_OccludesOnlyItsOwnSolidHalf already builds: tile
+    // (0,0) is a full-thickness corner, its East neighbor (1,0) is half-thick with its solid half on
+    // the North side (free half South). The shared vertical face between them (x=1, y in [0,1]) is
+    // genuinely solid only for y in [0,0.5] (where (1,0)'s own solid half touches it) - for y in
+    // [0.5,1], (1,0)'s FREE half touches that same face, so (0,0)'s own East side is exposed there
+    // and still needs an occluding segment, even though (1,0) "occludes" overall. Before the fix,
+    // the corner tile's East-face loop saw IsOccluding(neighbor)==true (WallOpenSide is invisible to
+    // that check) and skipped the whole face, leaving a real gap a shadow-cast ray could pass through
+    // right at the seam - exactly what the screenshot showed as an unshadowed triangle of wall art.
+    private static bool TileOccluders_HalfThickWallNextToFullCorner_StillOccludesTheExposedHalf()
+    {
+        var grid = new TileGrid();
+        for (var x = 0; x < 5; x++)
+            for (var y = 0; y < 5; y++)
+                grid.SetFloor(new TileCoord(x, y), true);
+        for (var x = 0; x < 5; x++)
+        {
+            grid.SetWall(new TileCoord(x, 0), TileWallKind.Solid);
+            if (x is not (0 or 4))
+                grid.SetWallOpenSide(new TileCoord(x, 0), TileSide.North);
+        }
+
+        var segments = TileOccluders.Build(grid, new List<SightGap>());
+
+        // The fix itself: the corner tile's East face, but only over the sub-range the half-thick
+        // neighbor's free half actually exposes (y in [0.5,1] at x=1).
+        if (!Contains(segments, new WallSegment(1, 0.5f, 1, 1)))
+            return false;
+        // The solid-to-solid sub-range (y in [0,0.5], where both tiles are genuinely solid) must NOT
+        // also get a segment - that stretch is still real interior, unaffected by the fix.
+        return !Contains(segments, new WallSegment(1, 0, 1, 0.5f)) && !Contains(segments, new WallSegment(1, 0, 1, 1));
+    }
+
     // Direct user bug report ("не вижу ничего через стену являющейся иллюминатором") - a Window
     // wall tile must produce NO occluding segment at all (same treatment as an open door), while an
     // ordinary Standard wall tile right next to it on the same run still fully occludes - proving

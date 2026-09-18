@@ -40,9 +40,13 @@ internal static partial class TestRunner
         // thrust tops out at the same ShipMaxSpeed(5) forward flight does, just slower to ramp up
         // (ShipReverseThrustFraction), so clearing it takes noticeably longer than the old
         // 280-unit version did; 200s is comfortably more than the ~112s minimum at full reverse speed.
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: -1f)); // straight astern, away from the marker
+        // Straight astern, away from the marker - the test-only DebugSetHelmInput bypass, called
+        // every tick, since fleeing here is deliberately about the raw stick, not a destination.
         for (var i = 0; i < 200 * 30 && world.IsInBattle; i++)
+        {
+            world.DebugSetHelmInput(-1f, 0f, 0f);
             world.Step(RealtimeStep);
+        }
 
         return !world.IsInBattle && world.CreateSnapshot().Enemy.RemainingShips > 0;
     }

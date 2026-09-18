@@ -281,7 +281,17 @@ public sealed record CustomShipDefinition(
     // M-doors-as-edges (humble-soaring-cat.md) - the new narrow-door-as-edge-between-2-tiles
     // primitive (TileGrid.DoorEdges). Defaults to empty for every call site that predates this
     // (hand-authored hulls, older saves) - exactly today's "no edge doors" behavior.
-    IReadOnlyList<CustomDoorEdgeDef>? DoorEdgesRaw = null)
+    IReadOnlyList<CustomDoorEdgeDef>? DoorEdgesRaw = null,
+    // Direct user request ("на месте взорванного отсека будут обломки") - the footprint (hull-local,
+    // same frame every Room/device already lives in) of every compartment that has ever exploded
+    // (World.RoomHp.cs's ExplodeRoom) on this hull, purely a rendering decoration (ShipRenderer draws
+    // a static wreck patch for each one) with no gameplay effect of its own - the room itself is
+    // already gone from Rooms/Doors/Devices/etc. by the time one of these is added. Explicitly
+    // round-tripped by Ship.ToDefinition() (unlike the older SupplementalWallTiles/ForcedFloorTiles/
+    // WallOpenSides above, which are one-shot tile-editor corrections nothing needs to preserve
+    // across a later build/demolish) so a wreck patch survives every subsequent hull change, not just
+    // the one that created it. Defaults to empty for every call site that predates this feature.
+    IReadOnlyList<RectF>? WreckPatchesRaw = null)
 {
     public IReadOnlyList<CustomWallMaterialDef> WallMaterials { get; init; } = WallMaterialsRaw ?? Array.Empty<CustomWallMaterialDef>();
     public IReadOnlyList<CustomEngineDef> Engines { get; init; } = EnginesRaw ?? Array.Empty<CustomEngineDef>();
@@ -289,6 +299,7 @@ public sealed record CustomShipDefinition(
     public IReadOnlyList<TileCoord> ForcedFloorTiles { get; init; } = ForcedFloorTilesRaw ?? Array.Empty<TileCoord>();
     public IReadOnlyList<CustomWallOpenSideDef> WallOpenSides { get; init; } = WallOpenSidesRaw ?? Array.Empty<CustomWallOpenSideDef>();
     public IReadOnlyList<CustomDoorEdgeDef> DoorEdges { get; init; } = DoorEdgesRaw ?? Array.Empty<CustomDoorEdgeDef>();
+    public IReadOnlyList<RectF> WreckPatches { get; init; } = WreckPatchesRaw ?? Array.Empty<RectF>();
 
     public static CustomShipDefinition Empty { get; } = new(
         "Мой корабль", Array.Empty<CustomRoomDef>(), Array.Empty<CustomDoorDef>(),

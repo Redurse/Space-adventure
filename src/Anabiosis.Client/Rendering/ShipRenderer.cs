@@ -229,6 +229,7 @@ public sealed partial class ShipRenderer
         foreach (var room in snapshot.Rooms)
             DrawRoomWallLamps(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
         DrawShipWalls(spriteBatch, snapshot, origin);
+        DrawWreckPatches(spriteBatch, snapshot, origin);
 
         // A frame over the metal plus a plain unpainted pane, only for the crew station that
         // actually faces open space - deliberately left blank rather than filled with any painted

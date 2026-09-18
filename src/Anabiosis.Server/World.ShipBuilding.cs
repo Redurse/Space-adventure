@@ -360,9 +360,21 @@ public sealed partial class World
             {
                 character.ManningTurretId = null;
                 character.IsAtHelm = false;
-                character.IsOutside = false;
                 character.OnEnemyShip = false;
                 character.OnStation = false;
+                // World.RoomHp.cs's ExplodeRoom (and World.ShipDebris.cs's own DestroyRoomAndDetach)
+                // both call EjectCrewFromDetachingRooms - which sets a real EVA position/velocity for
+                // anyone standing in the room that's about to disappear - BEFORE calling this method.
+                // Without this check, a big enough structural change (any room with a device/engine
+                // in it takes this full-reset branch rather than the incremental one below, since
+                // DeviceIds(oldShip) != DeviceIds(newShip)) would silently teleport that same
+                // character straight back to the new hull's spawn point instead, undoing the very
+                // ejection that just happened - found via a real test regression exploding a room
+                // with an engine in it (the M64 test that first added EjectCrewFromDetachingRooms
+                // only ever exercised a device-free room, which happens to keep the device graph
+                // equal and take the OTHER branch below, so it never caught this).
+                if (character.IsOutside)
+                    continue;
                 character.EvaAttachedTo = EvaAttachment.None;
                 character.EvaAttachedAsteroidId = null;
                 character.EvaVelocity = Vec2.Zero;
@@ -409,6 +421,16 @@ public sealed partial class World
         foreach (var room in newShip.Rooms)
             if (!_roomOxygen.ContainsKey(room.Id))
                 _roomOxygen[room.Id] = 0f; // vacuum - diffuses in naturally once a door opens
+
+        // World.RoomHp.cs's own shadow HP pool - same incremental reconcile as _roomOxygen just
+        // above: a room that no longer exists (built, demolished, or exploded) drops its entry, a
+        // genuinely new one starts at full health, an untouched one keeps whatever damage it already
+        // had (a build/demolish elsewhere on the hull must never heal a room it didn't touch).
+        foreach (var key in _roomHp.Keys.Where(k => !newRoomIds.Contains(k)).ToList())
+            _roomHp.Remove(key);
+        foreach (var room in newShip.Rooms)
+            if (!_roomHp.ContainsKey(room.Id))
+                _roomHp[room.Id] = RoomMaxHp;
 
         RebuildStationLayouts(); // the airlock's own local position can shift even without a device changing
 

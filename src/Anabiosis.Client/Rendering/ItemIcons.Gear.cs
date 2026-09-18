@@ -19,6 +19,7 @@ public static partial class ItemIcons
         var dark = new Color(70, 46, 24);
         var metal = new Color(150, 150, 155);
 
+        GroundShadow(spriteBatch, pixel, origin, scale, 0.46f, 0.40f);
         Bar(spriteBatch, pixel, origin, a, scale, 0f, 0f, 0.86f, 0.86f, wood); // crate body
         Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.30f, 0.80f, 0.09f, dark); // top plank seam
         Bar(spriteBatch, pixel, origin, a, scale, 0f, 0.30f, 0.80f, 0.09f, dark); // bottom plank seam
@@ -120,6 +121,7 @@ public static partial class ItemIcons
         var shade = new Color(190, 190, 194);
         var red = new Color(210, 40, 40);
 
+        GroundShadow(spriteBatch, pixel, origin, scale, 0.36f, 0.36f);
         Bar(spriteBatch, pixel, origin, a, scale, 0f, 0.02f, 0.80f, 0.62f, box); // case body
         Bar(spriteBatch, pixel, origin, a, scale, 0f, 0.30f, 0.80f, 0.06f, shade); // bottom shade lip
         RingArc(spriteBatch, pixel, origin, a, scale, 0f, -0.34f, 0.16f, 200f, 340f, new Color(90, 90, 94), 0.05f, 10); // carry handle
@@ -141,6 +143,75 @@ public static partial class ItemIcons
         Circle(spriteBatch, pixel, origin, a, scale, 0f, 0f, 0.13f, core); // hub
         Circle(spriteBatch, pixel, origin, a, scale, 0f, 0f, 0.05f, Color.Black * 0.4f); // axle hole
         RingArc(spriteBatch, pixel, origin, a, scale, 0f, 0f, 0.40f, -150f, -60f, Color.White * 0.3f, 0.03f, 8); // sheen
+    }
+
+    // Worn, not held (EquipSlotDefinitions) - a canvas pouch with a flap and a shoulder strap either
+    // side, the same "small satchel" silhouette its own BeltBagSlots sub-inventory implies.
+    private static void DrawBeltBag(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
+    {
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        const float a = 0f;
+        var canvas = new Color(94, 100, 78);
+        var canvasDark = new Color(64, 70, 52);
+        var strap = new Color(60, 46, 30);
+        var buckle = new Color(180, 170, 130);
+
+        GroundShadow(spriteBatch, pixel, origin, scale, 0.36f, 0.32f);
+        Bar(spriteBatch, pixel, origin, a, scale, -0.30f, 0.05f, 0.55f, 0.10f, strap); // strap, left
+        Bar(spriteBatch, pixel, origin, a, scale, 0.30f, 0.05f, 0.55f, 0.10f, strap); // strap, right
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, 0.08f, 0.62f, 0.50f, canvas); // pouch body
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, 0.30f, 0.62f, 0.10f, canvasDark); // bottom shade
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.10f, 0.54f, 0.20f, canvasDark); // flap
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.10f, 0.54f, 0.04f, Color.White * 0.15f); // flap seam highlight
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.02f, 0.16f, 0.11f, buckle); // buckle
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.02f, 0.16f, 0.03f, Color.Black * 0.3f); // buckle slot
+    }
+
+    // Worn, not held - a plain badge/card silhouette (photo square, header stripe, printed lines, a
+    // security-chip glint) rather than an access-control device, matching its own doc comment ("no
+    // access-control mechanic behind it yet" - it's purely a worn slot filler for now).
+    private static void DrawIdCard(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
+    {
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        const float a = 0f;
+        var card = new Color(232, 232, 226);
+        var stripe = new Color(60, 110, 180);
+        var photo = new Color(70, 74, 80);
+        var chip = new Color(200, 175, 90);
+        var text = new Color(150, 150, 148);
+
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, 0f, 0.66f, 0.44f, card); // card body
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.14f, 0.66f, 0.09f, stripe); // header stripe
+        Bar(spriteBatch, pixel, origin, a, scale, -0.19f, 0.08f, 0.18f, 0.20f, photo); // photo square
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.19f, 0.03f, 0.045f, 180f, 360f, Color.White * 0.3f, 0.012f, 8); // photo head silhouette
+        Bar(spriteBatch, pixel, origin, a, scale, 0.14f, 0.02f, 0.24f, 0.03f, text); // printed line
+        Bar(spriteBatch, pixel, origin, a, scale, 0.14f, 0.10f, 0.18f, 0.025f, text); // printed line, shorter
+        Bar(spriteBatch, pixel, origin, a, scale, 0.20f, -0.12f, 0.10f, 0.07f, chip); // security chip glint
+    }
+
+    // Worn into EquipSlot.Headset - a chunky handheld body, a stubby antenna, a speaker grille and a
+    // push-to-talk button, the classic walkie-talkie read rather than a modern earpiece.
+    private static void DrawRadio(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
+    {
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        const float a = 0f;
+        var body = new Color(56, 60, 66);
+        var dark = new Color(30, 32, 36);
+        var grille = new Color(20, 22, 24);
+        var indicator = new Color(90, 220, 120);
+
+        GroundShadow(spriteBatch, pixel, origin, scale, 0.34f, 0.22f);
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.34f, 0.28f, 0.03f, dark, MathF.PI / 2f + 0.1f); // antenna
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, 0.06f, 0.62f, 0.40f, body, MathF.PI / 2f); // body
+        Bar(spriteBatch, pixel, origin, a, scale, -0.09f, 0.05f, 0.50f, 0.06f, Color.White * 0.12f, MathF.PI / 2f); // side highlight
+        Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.10f, 0.26f, 0.16f, grille); // speaker grille panel
+        for (var row = -1; row <= 1; row++)
+            Bar(spriteBatch, pixel, origin, a, scale, 0f, -0.10f + row * 0.045f, 0.20f, 0.015f, Color.Black * 0.6f); // grille slats
+        Circle(spriteBatch, pixel, origin, a, scale, -0.10f, 0.16f, 0.03f, indicator); // power light
+        Bar(spriteBatch, pixel, origin, a, scale, 0.10f, 0.16f, 0.12f, 0.05f, dark); // push-to-talk button
     }
 
     // An irregular chunk rather than a rounded blob, so it reads as raw ore and not a gemstone -

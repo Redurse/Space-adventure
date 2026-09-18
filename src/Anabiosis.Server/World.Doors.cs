@@ -58,6 +58,10 @@ public sealed partial class World
     // own random-attack roll (World.EnemyAi.cs) and tests both call this directly.
     public void DamageDoor(string doorId)
     {
+        // Direct user request ("скрытое число хп" отсека) - one shot, DoorMaxHp worth, same as the
+        // door's own combat damage above; DamageRoomsForDoor no-ops quietly for a station/enemy-hull
+        // door (never entered into _roomHp) or one this Ship doesn't have (a test's own bespoke id).
+        DamageRoomsForDoor(doorId, DoorMaxHp);
         _doorHp[doorId] = 0f;
         _doorOpen[doorId] = true;
     }
@@ -73,6 +77,7 @@ public sealed partial class World
 
     public void ChopDoor(string doorId, float damage)
     {
+        DamageRoomsForDoor(doorId, damage);
         var next = Math.Max(0f, DoorHp(doorId) - damage);
         _doorHp[doorId] = next;
         if (next <= 0f)

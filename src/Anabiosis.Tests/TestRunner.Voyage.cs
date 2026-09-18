@@ -60,9 +60,11 @@ internal static partial class TestRunner
 
         // Straight astern - ApproachBerth leaves the ship lined up bow-first on the berth, so
         // backing off the throttle moves directly away from it without needing to turn around.
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: -1f));
         for (var i = 0; i < 60 * 30 && world.CanDockNow; i++)
+        {
+            world.DebugSetHelmInput(-1f, 0f, 0f);
             world.Step(RealtimeStep);
+        }
 
         return !world.CanDockNow && !world.IsDocked;
     }

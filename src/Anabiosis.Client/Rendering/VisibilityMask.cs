@@ -51,8 +51,18 @@ public sealed class VisibilityMask : IDisposable
     // Build (cone, then the ambient halo) rather than a fresh List each time.
     private readonly List<WallSegment> _nearbyWalls = new();
     private RenderTarget2D? _target;
+    // Indexed rather than a flat triangle list: one center vertex plus one Inner vertex per ray
+    // (see WallBleedDepth's own doc comment for the separate, capped fringe/bleed layer), each
+    // shared by every triangle that touches it via _indices instead of being duplicated per
+    // triangle.
     private VertexPositionColor[] _vertices = new VertexPositionColor[3 * 256];
     private int _vertexCount;
+    private short[] _indices = new short[9 * 256];
+    private int _indexCount;
+    // The base fan's own rim samples, one per ray in `_offsets` - kept around after the fan is built
+    // so BuildFringe can interpolate exactly ALONG that same boundary at its own fixed angles instead
+    // of re-casting (own doc comment there for why that matters).
+    private RaySample[] _raySamples = new RaySample[256];
 
     public VisibilityMask(GraphicsDevice device)
     {
@@ -96,6 +106,7 @@ public sealed class VisibilityMask : IDisposable
 
         var baseAngle = facing.LengthSquared() > 1e-6f ? MathF.Atan2(facing.Y, facing.X) : 0f;
         _vertexCount = 0;
+        _indexCount = 0;
         AddLightPolygon(walls, eye, baseAngle, coneHalfAngleDegrees, radius, origin, flatBrightness: null);
         if (ambientRadius > 0f && coneHalfAngleDegrees < 179.9f)
         {
@@ -128,7 +139,7 @@ public sealed class VisibilityMask : IDisposable
         // own sight cone/ambient halo instead of a room's lamp).
         ShadowCast.FilterNearby(_nearbyWalls, walls, eye, radius);
         ShadowCast.CollectRayOffsets(_offsets, _nearbyWalls, eye, start, span, full);
-        BuildTriangles(_nearbyWalls, eye, start, radius, origin, full, flatBrightness);
+        BuildTriangles(_nearbyWalls, eye, start, span, radius, origin, full, flatBrightness);
     }
 
     // The finished mask itself, for passes that need to know how lit a pixel is rather than just
@@ -155,29 +166,184 @@ public sealed class VisibilityMask : IDisposable
             spriteBatch.Draw(_target, Vector2.Zero, Color.White);
     }
 
-    private void BuildTriangles(IReadOnlyList<WallSegment> walls, Vector2 eye, float start, float radius,
+    // Direct user request ("видимость не заканчивалась тут же на блоке стены, а немного проходила
+    // внутрь... затухание за четверть блока") - a ray that actually stopped at a wall (as opposed to
+    // one that simply ran out of radius in open space) no longer ends the polygon dead on the wall's
+    // own surface. It gets one extra, fading sliver past that point instead, so a wall a hair's width
+    // away no longer reads as a razor-sharp black edge.
+    private const float WallBleedDepth = 0.25f;
+    // A first version gave every ray of the BASE polygon its own fringe quad - direct user report
+    // ("все еще та же проблема"): that made the fringe's own cost scale with ShadowCast.
+    // CollectRayOffsets' corner-nudge count, i.e. with nearby wall/corner COUNT, exactly the kind of
+    // scaling this renderer already had to fight once before (ShadowCast.FilterNearby's own doc
+    // comment) - measured directly (ShaderCheck's own "[diagnostic]" check) as roughly DOUBLING
+    // Маска's frame cost in a dense, corner-heavy room. The fringe is a soft cosmetic touch, not a
+    // gameplay-critical boundary (that's the base polygon below, untouched), so it doesn't need
+    // corner-exact precision - it's capped to at most this many segments around the full sweep,
+    // regardless of scene complexity, bounding its own added cost to a small constant instead of
+    // letting it inherit the base polygon's own (already scene-dependent) ray count. Occasionally
+    // means the fringe cuts a straight chord across an unusually dense cluster of corners instead of
+    // hugging every one - invisible in an ordinary room, and never affects what's actually visible
+    // (that's still decided by the base polygon/ShadowCast.Cast, same as always).
+    private const int FringeArcCap = 96;
+
+    private void BuildTriangles(IReadOnlyList<WallSegment> walls, Vector2 eye, float start, float span, float radius,
         Vector2 origin, bool full, float? flatBrightness)
     {
         var rayCount = _offsets.Count;
         var edgeCount = full ? rayCount : rayCount - 1;
-        Grow(_vertexCount + edgeCount * 3);
+        // One center vertex plus one Inner vertex per ray - the exact same shape/cost the base
+        // polygon had before the wall-bleed feature existed; each is written once here and then
+        // referenced by every triangle that touches it via _indices.
+        Grow(_vertexCount + 1 + rayCount);
+        GrowIndices(_indexCount + edgeCount * 3);
+        GrowSamples(rayCount);
 
+        var baseVertex = _vertexCount;
         var centerShade = flatBrightness ?? 1f;
-        var center = new VertexPositionColor(
+        _vertices[_vertexCount++] = new VertexPositionColor(
             new Vector3(origin + eye * ShipRenderer.PixelsPerUnit, 0f), Shade(centerShade));
 
-        var previous = RimVertex(_offsets[0], walls, eye, start, radius, origin, flatBrightness);
+        for (var i = 0; i < rayCount; i++)
+        {
+            var sample = SampleRay(_offsets[i], walls, eye, start, radius, origin, flatBrightness);
+            _raySamples[i] = sample;
+            _vertices[_vertexCount++] = new VertexPositionColor(
+                new Vector3(origin + sample.WorldPoint * ShipRenderer.PixelsPerUnit, 0f), sample.Color);
+        }
+
         for (var i = 1; i <= edgeCount; i++)
         {
-            var current = RimVertex(_offsets[i % rayCount], walls, eye, start, radius, origin, flatBrightness);
-            _vertices[_vertexCount++] = center;
-            _vertices[_vertexCount++] = previous;
-            _vertices[_vertexCount++] = current;
-            previous = current;
+            _indices[_indexCount++] = (short)baseVertex;
+            _indices[_indexCount++] = (short)(baseVertex + 1 + (i - 1) % rayCount);
+            _indices[_indexCount++] = (short)(baseVertex + 1 + i % rayCount);
+        }
+
+        BuildFringe(eye, span, radius, origin, full);
+    }
+
+    // The fading sliver just past the wall (WallBleedDepth's own doc comment) - a ring of quads at
+    // FringeArcCap FIXED, evenly-spaced target angles around the sweep. Direct user reports, in
+    // order: (1) "все еще та же проблема" - giving every ray of the base fan its own fringe quad
+    // scaled the fringe's own cost with corner/wall COUNT, so it got capped to a small constant
+    // instead; (2) "края зон видимости искажаются при ходьбе" - stepping through the base fan's own
+    // ray INDICES at that cap still swam frame to frame, because CollectRayOffsets' corner-nudged
+    // list shifts by a ray or two as the player moves and different corners drift in/out of
+    // FilterNearby's own radius, so "every Nth ray" kept landing on different actual angles; (3)
+    // "какие-то треугольнички чёрные" - switching to fixed angles independently RE-CAST against the
+    // walls fixed that, but a fresh cast at a fixed angle doesn't necessarily land exactly on the
+    // fan's own boundary (which is corner-nudged, i.e. deliberately NOT a plain even-angle sampling) -
+    // near a corner the two could disagree enough to leave a sliver the fan's own fill doesn't reach
+    // and the fringe's own quad doesn't cover either, a real gap reading as a stray dark wedge.
+    // The actual fix: never re-cast. For each fixed target angle, interpolate ALONG the base fan's
+    // own already-built boundary (GetBoundaryPoint, between whichever two ACTUAL rays bracket that
+    // angle this frame) - the fringe's own inner edge is then a literal point on the fan's boundary,
+    // so it can never gap or overlap it, while still asking for the same fixed set of angles every
+    // frame (only the bracketing PAIR and the interpolation fraction drift smoothly as the player
+    // moves, never a discontinuous jump). Zero extra Cast calls - the interpolation is real cheap.
+    private void BuildFringe(Vector2 eye, float span, float radius, Vector2 origin, bool full)
+    {
+        var sampleCount = full ? FringeArcCap : FringeArcCap + 1;
+        var edgeCount = full ? sampleCount : sampleCount - 1;
+        Grow(_vertexCount + sampleCount * 2);
+        GrowIndices(_indexCount + edgeCount * 6);
+
+        var baseVertex = _vertexCount;
+        var denom = full ? sampleCount : sampleCount - 1;
+        for (var i = 0; i < sampleCount; i++)
+        {
+            var targetOffset = span * i / denom;
+            var (worldPoint, color) = GetBoundaryPoint(targetOffset, span, full);
+
+            var toPoint = worldPoint - eye;
+            var distance = toPoint.Length();
+            var hitWall = distance < radius - 1e-3f;
+            var bleed = hitWall && distance > 1e-4f ? MathF.Min(WallBleedDepth, radius - distance) : 0f;
+            var outerPoint = distance > 1e-4f ? worldPoint + toPoint / distance * bleed : worldPoint;
+
+            _vertices[_vertexCount++] = new VertexPositionColor(new Vector3(origin + worldPoint * ShipRenderer.PixelsPerUnit, 0f), color);
+            _vertices[_vertexCount++] = new VertexPositionColor(new Vector3(origin + outerPoint * ShipRenderer.PixelsPerUnit, 0f), Shade(0f));
+        }
+
+        for (var i = 1; i <= edgeCount; i++)
+        {
+            var prev = baseVertex + (i - 1) % sampleCount * 2;
+            var cur = baseVertex + i % sampleCount * 2;
+            var prevInner = (short)prev;
+            var prevOuter = (short)(prev + 1);
+            var curInner = (short)cur;
+            var curOuter = (short)(cur + 1);
+
+            _indices[_indexCount++] = prevInner;
+            _indices[_indexCount++] = prevOuter;
+            _indices[_indexCount++] = curOuter;
+            _indices[_indexCount++] = prevInner;
+            _indices[_indexCount++] = curOuter;
+            _indices[_indexCount++] = curInner;
         }
     }
 
-    private VertexPositionColor RimVertex(float offset, IReadOnlyList<WallSegment> walls, Vector2 eye,
+    // Finds the point ON the base fan's own already-built boundary at `targetOffset` (an angle
+    // offset from `start`, same convention _offsets uses) - the two ACTUAL samples in `_offsets`
+    // that bracket it, linearly interpolated. `_offsets` is sorted ascending (ShadowCast.
+    // CollectRayOffsets' own contract), so a binary search finds the bracket in O(log rayCount).
+    private (Vector2 WorldPoint, Color Color) GetBoundaryPoint(float targetOffset, float span, bool full)
+    {
+        var rayCount = _offsets.Count;
+        var idx = _offsets.BinarySearch(targetOffset);
+        int lower, upper;
+        float t;
+        if (idx >= 0)
+        {
+            lower = idx; upper = idx; t = 0f;
+        }
+        else
+        {
+            var insertAt = ~idx; // first index with _offsets[insertAt] > targetOffset
+            if (insertAt <= 0)
+            {
+                lower = 0; upper = 0; t = 0f;
+            }
+            else if (insertAt >= rayCount)
+            {
+                if (full)
+                {
+                    // Past the last sample, before wrapping back to the first - the same seam the
+                    // base fan's own `i % rayCount` closes for its last edge.
+                    lower = rayCount - 1; upper = 0;
+                    var wrapSpan = span - _offsets[lower] + _offsets[upper];
+                    t = wrapSpan > 1e-6f ? (targetOffset - _offsets[lower]) / wrapSpan : 0f;
+                }
+                else
+                {
+                    lower = upper = rayCount - 1; t = 0f;
+                }
+            }
+            else
+            {
+                lower = insertAt - 1; upper = insertAt;
+                var d = _offsets[upper] - _offsets[lower];
+                t = d > 1e-6f ? (targetOffset - _offsets[lower]) / d : 0f;
+            }
+        }
+
+        var a = _raySamples[lower];
+        var b = _raySamples[upper];
+        return (Vector2.Lerp(a.WorldPoint, b.WorldPoint, t), Color.Lerp(a.Color, b.Color, t));
+    }
+
+    private readonly struct RaySample
+    {
+        public readonly Vector2 WorldPoint;
+        public readonly Color Color;
+        public RaySample(Vector2 worldPoint, Color color)
+        {
+            WorldPoint = worldPoint;
+            Color = color;
+        }
+    }
+
+    private RaySample SampleRay(float offset, IReadOnlyList<WallSegment> walls, Vector2 eye,
         float start, float radius, Vector2 origin, float? flatBrightness)
     {
         var angle = start + offset;
@@ -195,8 +361,7 @@ public sealed class VisibilityMask : IDisposable
         var shade = flatBrightness is { } flat
             ? flat * EdgeFalloff(distance, radius)
             : Falloff(distance / radius) * EdgeFade(offset);
-        return new VertexPositionColor(
-            new Vector3(origin + point * ShipRenderer.PixelsPerUnit, 0f), Shade(shade));
+        return new RaySample(point, Shade(shade));
     }
 
     // Guarantees a smooth fade over (at least) the last quarter world-unit before `radius`, instead
@@ -244,7 +409,7 @@ public sealed class VisibilityMask : IDisposable
         _device.SetRenderTarget(_target);
         _device.Clear(_floor);
 
-        if (_vertexCount >= 3)
+        if (_indexCount >= 3)
         {
             _effect.World = renderScale;
             _effect.Projection = Matrix.CreateOrthographicOffCenter(0, _target!.Width, _target.Height, 0, 0f, 1f);
@@ -257,7 +422,7 @@ public sealed class VisibilityMask : IDisposable
             foreach (var pass in _effect.CurrentTechnique.Passes)
             {
                 pass.Apply();
-                _device.DrawUserPrimitives(PrimitiveType.TriangleList, _vertices, 0, _vertexCount / 3);
+                _device.DrawUserIndexedPrimitives(PrimitiveType.TriangleList, _vertices, 0, _vertexCount, _indices, 0, _indexCount / 3);
             }
         }
 
@@ -283,6 +448,18 @@ public sealed class VisibilityMask : IDisposable
     {
         if (_vertices.Length < needed)
             Array.Resize(ref _vertices, needed * 2);
+    }
+
+    private void GrowIndices(int needed)
+    {
+        if (_indices.Length < needed)
+            Array.Resize(ref _indices, needed * 2);
+    }
+
+    private void GrowSamples(int needed)
+    {
+        if (_raySamples.Length < needed)
+            Array.Resize(ref _raySamples, needed * 2);
     }
 
     public void Dispose()

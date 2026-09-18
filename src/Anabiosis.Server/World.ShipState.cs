@@ -21,6 +21,7 @@ public sealed partial class World
         InitializeTerminals();
         InitializeWallBlocks();
         InitializeEngines();
+        InitializeRoomHp();
         RestockAmmoStorages();
         RestockHullPlating();
         RecomputeDeviceBonuses(); // content-каталог отсеков - a bought/starting hull's own bonus is 0, but this is the shared recompute point every caller (constructor/save/detach) goes through

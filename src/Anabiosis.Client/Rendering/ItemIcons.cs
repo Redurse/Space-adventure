@@ -44,7 +44,10 @@ public static partial class ItemIcons
         or ItemType.GateAnd or ItemType.GateOr or ItemType.GateNot or ItemType.GateXor
         or ItemType.Timer or ItemType.Memory or ItemType.Relay
         or ItemType.OxygenSensor or ItemType.BreachSensor or ItemType.PowerLossSensor or ItemType.MotionSensor
-        or ItemType.AutoDoorController or ItemType.AlarmKlaxon or ItemType.LightToggle;
+        or ItemType.AutoDoorController or ItemType.AlarmKlaxon or ItemType.LightToggle
+        // Direct user request ("сделай картинки предметов интереснее и качественнее") - the five
+        // types that used to fall through to InventoryPanel's plain coloured square + label.
+        or ItemType.Axe or ItemType.GoshaScrewdriver or ItemType.BeltBag or ItemType.IdCard or ItemType.Radio;
 
     // rotation: the angle to actually draw the tool at, in the same frame ShipRenderer's
     // HeldToolOffset/facing already uses - null keeps the fixed "as if held" tilt every inventory
@@ -69,7 +72,9 @@ public static partial class ItemIcons
                 else
                     DrawScrewdriver(spriteBatch, pixel, rect, screwdriverAngle);
                 break;
+            case ItemType.GoshaScrewdriver: DrawGoshaScrewdriver(spriteBatch, pixel, rect, rotation ?? ScrewdriverSlotTilt); break;
             case ItemType.Wrench: DrawWrench(spriteBatch, pixel, rect, angle); break;
+            case ItemType.Axe: DrawAxe(spriteBatch, pixel, rect, angle); break;
             // Tank/nozzle tinted the same colour each tool's own flame already is
             // (FieldRenderer.DrawWeldingFlame/DrawCuttingFlame) - the icon and the beam it fires
             // read as the same tool.
@@ -86,6 +91,9 @@ public static partial class ItemIcons
             case ItemType.MedKit: DrawMedKit(spriteBatch, pixel, rect); break;
             case ItemType.WireSpool: DrawWireSpool(spriteBatch, pixel, rect); break;
             case ItemType.Mineral: DrawMineral(spriteBatch, pixel, rect); break;
+            case ItemType.BeltBag: DrawBeltBag(spriteBatch, pixel, rect); break;
+            case ItemType.IdCard: DrawIdCard(spriteBatch, pixel, rect); break;
+            case ItemType.Radio: DrawRadio(spriteBatch, pixel, rect); break;
         }
     }
 
@@ -173,6 +181,13 @@ public static partial class ItemIcons
             new Vector2(MathF.Max(length * scale, thicknessPixels), thicknessPixels), SpriteEffects.None, 0f);
     }
 
+    // Direct user request ("сделай картинки предметов интереснее и качественнее") - a soft contact
+    // shadow drawn first, under an upright (a=0) icon's own footprint, so it reads as sitting on a
+    // surface instead of floating flat against the slot background. `acrossAxis` is where the
+    // item's own base sits (its lowest drawn shape), `halfWidth` roughly its footprint's half-width.
+    private static void GroundShadow(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float scale, float acrossAxis, float halfWidth) =>
+        Bar(spriteBatch, pixel, origin, 0f, scale, 0f, acrossAxis, halfWidth * 2f, halfWidth * 0.55f, Color.Black * 0.28f);
+
     private static void Circle(SpriteBatch spriteBatch, Texture2D pixel, Vector2 origin, float baseAngle, float scale,
         float alongAxis, float acrossAxis, float radius, Color color) =>
         HudIcons.FillCircle(spriteBatch, pixel, Point(origin, baseAngle, scale, alongAxis, acrossAxis),
@@ -214,6 +229,34 @@ public static partial class ItemIcons
         Circle(spriteBatch, pixel, origin, a, scale, 0.48f, 0f, 0.045f, Color.White * 0.9f); // tip
     }
 
+    // The "отвёртка поломки" (ItemType.cs's own doc comment - breaks devices instead of repairing
+    // them) - same silhouette as the real screwdriver above so it still reads as "a screwdriver" at
+    // a glance, but everything about the finish says "wrong tool": a grimy black handle wrapped in
+    // hazard tape instead of moulded grip rings, and a corroded rust-red tip instead of a clean
+    // bright one.
+    private static void DrawGoshaScrewdriver(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, float a)
+    {
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        var handle = new Color(40, 40, 44);
+        var handleDark = new Color(20, 20, 22);
+        var hazard = new Color(214, 160, 30);
+
+        Bar(spriteBatch, pixel, origin, a, scale, -0.29f, 0f, 0.38f, 0.22f, handle);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.48f, 0f, 0.11f, handleDark); // back cap
+        Circle(spriteBatch, pixel, origin, a, scale, -0.10f, 0f, 0.10f, handle); // front cap
+        Bar(spriteBatch, pixel, origin, a, scale, -0.32f, -0.065f, 0.28f, 0.045f, Color.White * 0.12f); // dull, grimy sheen
+
+        // Hazard-taped grip instead of moulded rings - this thing was never meant to fix anything.
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.34f, 0f, 0.105f, 0f, 360f, hazard, 0.03f, 16);
+        RingArc(spriteBatch, pixel, origin, a, scale, -0.20f, 0f, 0.095f, 0f, 360f, Color.Black * 0.5f, 0.02f, 16);
+
+        Bar(spriteBatch, pixel, origin, a, scale, -0.02f, 0f, 0.09f, 0.15f, new Color(30, 30, 32)); // ferrule
+        Bar(spriteBatch, pixel, origin, a, scale, 0.24f, 0f, 0.48f, 0.078f, new Color(90, 70, 60)); // corroded shaft
+        Bar(spriteBatch, pixel, origin, a, scale, 0.20f, -0.018f, 0.36f, 0.02f, Color.Black * 0.35f); // pitted shadow line
+        Circle(spriteBatch, pixel, origin, a, scale, 0.48f, 0f, 0.045f, new Color(150, 60, 40)); // rust-red tip
+    }
+
     // An adjustable spanner, not a ring-and-open-end combination wrench: a plain rounded handle,
     // a shaft, and a wide head with a jaw notch cut into the front plus the little knurled wheel
     // that winds the jaw open and shut - the shape Barotrauma's own wrench tool reads as.
@@ -248,6 +291,36 @@ public static partial class ItemIcons
         // The knurled adjustment wheel, clear of the jaw entirely so it doesn't merge into it.
         Circle(spriteBatch, pixel, origin, a, scale, 0.20f, 0.19f, 0.065f, dark);
         RingArc(spriteBatch, pixel, origin, a, scale, 0.20f, 0.19f, 0.065f, 0f, 360f, shade, 0.016f, 10);
+    }
+
+    // "ТОПОР ГОШИ ДЛЯ ЛОМАНИЯ ДВЕРЕЙ" (World.Doors.cs's own doc comment) - a wooden haft plus a
+    // wedge head built from two triangles (a flat poll behind the neck, a curved cutting edge in
+    // front) rather than a symmetric diamond, so it reads as a real chopping tool and not an arrow.
+    private static void DrawAxe(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect, float a)
+    {
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        var handle = new Color(120, 82, 46);
+        var handleDark = new Color(80, 54, 28);
+        var head = new Color(90, 92, 98);
+        var edge = new Color(220, 224, 230);
+
+        Bar(spriteBatch, pixel, origin, a, scale, -0.14f, 0f, 0.62f, 0.11f, handle); // haft
+        Bar(spriteBatch, pixel, origin, a, scale, -0.16f, -0.028f, 0.50f, 0.03f, Color.White * 0.25f); // haft highlight
+        Circle(spriteBatch, pixel, origin, a, scale, -0.44f, 0f, 0.075f, handleDark); // butt cap
+        Circle(spriteBatch, pixel, origin, a, scale, -0.44f, 0f, 0.03f, Color.Black * 0.4f); // lanyard hole
+
+        var neck = Point(origin, a, scale, 0.18f, 0f);
+        var pollTop = Point(origin, a, scale, 0.10f, -0.20f);
+        var pollBottom = Point(origin, a, scale, 0.10f, 0.20f);
+        var edgeTip = Point(origin, a, scale, 0.44f, 0f);
+        var edgeTop = Point(origin, a, scale, 0.20f, -0.26f);
+        var edgeBottom = Point(origin, a, scale, 0.20f, 0.26f);
+        Primitives.FillTriangle(spriteBatch, pixel, neck, pollTop, pollBottom, head); // poll, flat back
+        Primitives.FillTriangle(spriteBatch, pixel, neck, edgeTop, edgeTip, head); // blade, upper half
+        Primitives.FillTriangle(spriteBatch, pixel, neck, edgeTip, edgeBottom, head); // blade, lower half
+        Bar(spriteBatch, pixel, origin, a, scale, 0.22f, -0.10f, 0.20f, 0.03f, Color.White * 0.3f); // head sheen
+        Circle(spriteBatch, pixel, origin, a, scale, 0.42f, 0f, 0.035f, edge); // tip glint
     }
 
     // Shared silhouette for the welder and the cutter - a gripped tool, barrel out front, a tank

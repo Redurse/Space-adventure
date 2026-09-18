@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
 
@@ -15,8 +15,13 @@ namespace Anabiosis.Server;
 //
 // M59 - "убрать орбитальную механику, вернуть статичную карту в духе Cosmoteer": no gravity, no
 // on-rails Kepler coasting, no cruise mode - pure inertia and thrust, the same shape this project's
-// own pre-M50 flight already had. Every celestial body is a fixed, physical obstacle (still worth
-// flying around, still solid to collide with) but exerts no pull of its own any more.
+// own pre-M50 flight already had.
+//
+// Direct user request ("сделай чтобы сквозь планеты можно был прлетать без последствий") - a
+// celestial body is no longer a physical obstacle at all: the ship flies straight through one with
+// zero effect on its motion, same as it always could through empty space. HullOverlapsCelestialBody
+// (World.PlanetLanding.cs) still detects "sitting on a landable body's surface" purely to arm the
+// landing button - that's the only thing a body's position still affects server-side.
 public sealed partial class World
 {
     // Calibrated so a straight run across a small system field takes on the order of seconds to a
@@ -27,26 +32,36 @@ public sealed partial class World
     // F=ma. Frigate's own mass is exactly 1.0 (ShipCatalog.cs), so this number is unchanged from
     // before mass existed - Frigate's feel is preserved exactly, every other hull now accelerates
     // faster/slower by 1/mass.
+    // Direct user request ("хочу чтобы режим рсу был всегда включен... полностью удали кнопку") -
+    // this used to be the "Rcs" mode's own thrust constant, offered alongside a faster "Arc" mode
+    // (banked turning tied to speed, no pivoting in place) toggled by a button/Z key. That toggle
+    // and ShipControlMode are gone entirely now - this flat rate is the only one, always on.
     private const float ShipThrustForcePerSecond = 16f;
-    private const float ShipRotationDegreesPerSecond = 90f;
-    // Arc mode (M41, the default) - turning banks the nose at a rate tied to current speed instead
-    // (IntegrateShipFieldMotion), the way a real vessel carrying real momentum comes about: standing
-    // still, the bow doesn't swing at all. Faster acceleration than RCS to make it the more capable
-    // mode for actually getting somewhere, trading away the ability to pivot in place - that's what
-    // Z (Rcs) is for.
-    private const float ArcThrustForcePerSecond = 26f;
-    // Yaw rate scales linearly with current speed (below), which makes the turn radius at full
-    // throttle a fixed ArcYawReferenceSpeed/(rate in rad/s) regardless of how fast that actually is -
-    // widened at M47 (from an original 50deg/s that made a U-turn tighter than the hull itself) to
-    // read as a real banked arc rather than "spinning the whole hull" (game_design.md/M47 -
-    // "нужно чтобы это было реалистичнее").
-    private const float ArcMaxYawRateDegreesPerSecond = 15f;
-    // Normalizes the Arc-mode yaw rate against "how much of the ship's own physical capability is
-    // currently being used" - full bank rate at or above this speed, scaling down toward zero at a
-    // standstill. Set relative to ShipMaxSpeed above (M59 follow-up - used to be calibrated against
-    // the old dynamic near-body speed cap before gravity was removed).
-    private const float ArcYawReferenceSpeed = 30f;
+    // Direct user request ("хочу сделать чтобы гасила" - Q/E should actively fight an unwanted spin,
+    // not just add an independent rate on top of it) - the helm's own turn input now feeds
+    // _shipAngularVelocity, the SAME accumulator Ship.Engines' own torque already does
+    // (EngineTorqueToAngularAcceleration below), instead of setting _shipRotationDegrees directly.
+    // Holding the opposite turn direction from an existing spin now genuinely cancels it, the same
+    // way a real RCS thruster fighting an unwanted rotation would - previously (ShipRotationDegreesPerSecond,
+    // a flat degrees-PER-SECOND rate set directly on release) it just stacked a second, independent
+    // rotation on top and left whatever spin the engines had induced completely untouched once
+    // released. This is now a genuine degrees-per-second-SQUARED acceleration, same unit family as
+    // EngineTorqueToAngularAcceleration's own contribution, not a rate - a real, if hand-tuned
+    // (ShipCatalog.Mass's own doc comment's "no real moment-of-inertia model" reasoning), momentum.
+    private const float HelmTurnAngularAccelerationPerSecond = 220f;
     private const float ShipAutoStabilizeDecelerationPerSecond = 6f;
+    // Direct user request ("тяга зависимая от расположения движков") - converts World.Engines.cs's
+    // own ComputeEngineForces NetTorque into an angular ACCELERATION (added to _shipAngularVelocity,
+    // not directly to rotation - real inertia, same reasoning ShipCatalog.Mass's own doc comment
+    // gives for why the ship's mass is a flat tunable constant rather than a computed one: there's
+    // no real per-hull moment-of-inertia model to derive this from, so it's one hand-picked number
+    // instead, exactly like mass already is).
+    private const float EngineTorqueToAngularAcceleration = 0.6f;
+    // The rotational mirror of ShipAutoStabilizeDecelerationPerSecond above - only ever has anything
+    // to damp on a hull with Ship.Engines fixtures (a hull with none never accumulates angular
+    // velocity in the first place, see ComputeEngineForces' own doc comment), so this is silently a
+    // no-op for every hand-authored/pre-existing custom ship.
+    private const float ShipAutoStabilizeAngularDecelerationPerSecond = 45f;
     private const float ShipEngineReferencePower = 10f; // same order of magnitude as the "10 power ~= 1 breach" oxygen constant
     // Backing up runs the manoeuvring thrusters, not the main engines - astern is for easing off a
     // berth or out of a rock, not for flying anywhere.
@@ -57,6 +72,11 @@ public sealed partial class World
     // model) - a flat top speed again, the same shape this project's own pre-M50 flight used, since
     // there's no gravity well left to reason a dynamic cap around.
     private const float ShipMaxSpeed = 60f;
+    // Safety cap on the NEW torque-driven angular velocity (World.Engines.cs's ComputeEngineForces) -
+    // the linear-velocity mirror already has ShipMaxSpeed above; a badly-balanced hull whose engines
+    // never get corrected (stabilize never pressed) should still top out somewhere sane rather than
+    // spin up without bound.
+    private const float ShipMaxAngularVelocityDegreesPerSecond = 360f;
 
     // M55 - landed on a planet's own small (PlanetSurface.Width/Height) local field, a much tighter
     // scale than the system field's own ShipMaxSpeed above. A flat, walking-speed-adjacent cap -
@@ -83,18 +103,21 @@ public sealed partial class World
     private Vec2 _shipVelocity = Vec2.Zero;
     private Vec2 _shipThrust = Vec2.Zero; // world-space, derived from throttle along the nose - what the exhaust is drawn from
     private float _shipRotationDegrees;
+    // Direct user request ("тяга зависимая от расположения движков") - real rotational inertia from
+    // Ship.Engines' own net torque (World.Engines.cs's ComputeEngineForces), on top of the existing
+    // flat _helmTurn-driven rate below. Stays exactly 0 forever for any hull with no Ship.Engines
+    // fixtures (nothing ever adds to it), so this is a pure addition, never a behavior change, for
+    // every hand-authored/pre-existing custom ship.
+    private float _shipAngularVelocity;
     private bool _shipAutoStabilize = true;
     private float _helmThrottle;
+    // Direct user request ("как в Cosmoteer... включались двигатели которые смотрят в
+    // противоположную сторону от того куда я хочу") - sideways along the hull's own beam,
+    // read by World.Engines.cs's MarchingRawControl the same way _helmThrottle already is.
+    // Only the new per-engine model reacts to this; the older flat/legacy thrust bonus
+    // (ShipSystemDevice.ThrustBonus) stays exactly what it was, nose-direction-only.
+    private float _helmStrafe;
     private float _helmTurn;
-    public ShipControlMode ControlMode { get; private set; } = ShipControlMode.Arc;
-
-    private void ToggleControlMode() =>
-        ControlMode = ControlMode == ShipControlMode.Arc ? ShipControlMode.Rcs : ShipControlMode.Arc;
-
-    // M57 - the captain tab's "Флип" button: a single instant 180° turn for a flip-and-burn
-    // maneuver (accelerate nose-first, flip, decelerate tail-first) - a deliberate one-press pilot
-    // action, not an autopilot that reorients gradually over several seconds.
-    private void FlipHeading() => _shipRotationDegrees = (_shipRotationDegrees + 180f) % 360f;
 
     // The one place any code should assign _shipFieldPosition (a genuine reposition:
     // docking/undocking, warp arrival, DebugPlaceShip, edge nudges).
@@ -107,6 +130,17 @@ public sealed partial class World
     // current heading (Ship.ForwardDegrees).
     private Vec2 ShipNoseDirection => TurretMount.FromDegrees(_shipRotationDegrees + Ship.ForwardDegrees);
 
+    // Same axis, but in the hull's own LOCAL frame (no current heading added) - what
+    // World.Engines.cs's MarchingRawControl compares each engine's own Facing against, since
+    // Ship.Engines positions/facings are authored in that same local frame, not world space.
+    // Whichever way THIS hull's own nose was authored to face (Ship.ForwardDegrees), not a
+    // hardcoded cardinal direction - a custom hull's nose can point any of the 4 ways.
+    private Vec2 ShipLocalForward => TurretMount.FromDegrees(Ship.ForwardDegrees);
+    // The hull's own starboard (right) side, 90 degrees clockwise from the nose in this project's
+    // own screen/world convention (TurretMount.FromDegrees: 0 degrees = local +X, 90 = local +Y,
+    // i.e. clockwise in the Y-down frame every Room/WallBlock already lives in).
+    private Vec2 ShipLocalRight => TurretMount.FromDegrees(Ship.ForwardDegrees + 90f);
+
     // Combat damage (World.EnemyAi.cs's ApplyEnemyAttack, enemy/weapon overhaul - "штурвал... можно
     // было сломать") - a wrecked helm answers to nobody until repaired (World.SystemRepair.cs):
     // World.cs's own IsAtHelm block skips SetHelmInput/EngageAutoStabilize entirely while this is
@@ -114,13 +148,18 @@ public sealed partial class World
     // World.Interact.cs refuses to seat anyone new at it.
     public bool HelmConsoleBroken { get; set; }
 
-    private void SetHelmInput(float throttle, float turn)
+    private void SetHelmInput(float throttle, float strafe, float turn)
     {
         _helmThrottle = Math.Clamp(throttle, -1f, 1f);
+        _helmStrafe = Math.Clamp(strafe, -1f, 1f);
         _helmTurn = Math.Clamp(turn, -1f, 1f);
-        // Only the engines cancel a stabilise: swinging the bow while the ship brakes itself is a
-        // perfectly reasonable thing to want, and killing the brake for it would be a surprise.
-        if (_helmThrottle != 0f)
+        // Direct user request ("хочу сделать чтобы гасила") - turn now feeds real angular inertia
+        // (HelmTurnAngularAccelerationPerSecond's own doc comment) exactly like throttle/strafe feed
+        // linear inertia, so it has to cancel the brake the same way they already do - while auto-
+        // stabilize stays engaged, IntegrateShipFieldMotion's own decay branch runs instead of the
+        // one that actually applies _helmTurn, and turning would silently do nothing at all from a
+        // standing start (the most common case) if this didn't also take the stick back for it.
+        if (_helmThrottle != 0f || _helmStrafe != 0f || _helmTurn != 0f)
             _shipAutoStabilize = false;
     }
 
@@ -143,62 +182,85 @@ public sealed partial class World
 
         // Heading is steered, not inferred - the pilot always points the bow on purpose, never has
         // it swing round to face wherever the ship happens to be drifting (with the guns and the
-        // airlock bolted to particular sides of the hull, pointing it is the whole job). RCS turns
-        // it at a flat rate regardless of speed - can pivot standing still. Arc (the default, M41)
-        // ties the rate to current speed instead, zero at a standstill - a real vessel's own
-        // momentum resisting a spin in place - which is what actually reads as "banking a turn"
-        // rather than "spinning the whole hull".
-        // Content-каталог отсеков - a built RCS room's own TurnBonus (World.ShipBuilding.cs's
-        // DevicesForCatalogEntry) flat-adds to whichever base yaw rate the current control mode uses,
-        // same "usable in either mode" reasoning the plan settled on rather than real lateral thrust.
-        // Zero for every hand-authored hull's own Engine devices, so an unmodified hull turns exactly
-        // as before.
-        // Cosmoteer-style RCS thrusters (direct user request, World.Engines.cs) add their own
-        // per-engine, damage/turn-input-aware contribution on top of the existing flat SystemDevices
-        // sum, mirroring the marching-engine thrustBonus below - zero for any hull with none.
-        var turnBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.TurnBonus) + TotalEngineTurn();
-        if (ControlMode == ShipControlMode.Arc)
-        {
-            // Normalized against a fixed reference speed (ArcYawReferenceSpeed), not the flat max
-            // speed cap below - the yaw rate should read as "how much of the ship's own physical
-            // capability is currently being used". Floors at 1.0 past the reference speed rather
-            // than growing further - there's still SOME maximum bank rate even at extreme velocity,
-            // just not zero.
-            var speedFraction = (float)Math.Min(1f, _shipVelocity.Length() / ArcYawReferenceSpeed);
-            _shipRotationDegrees += _helmTurn * (ArcMaxYawRateDegreesPerSecond + turnBonus) * speedFraction * dt;
-        }
-        else
-        {
-            _shipRotationDegrees += _helmTurn * (ShipRotationDegreesPerSecond + turnBonus) * dt;
-        }
+        // airlock bolted to particular sides of the hull, pointing it is the whole job). Direct user
+        // request ("хочу чтобы режим рсу был всегда включен... полностью удали кнопку") - can pivot
+        // standing still; this used to also offer an "Arc" mode that banked the turn rate to current
+        // speed instead (zero at a standstill), toggled with a button/Z key, removed entirely along
+        // with ShipControlMode. Content-каталог отсеков - a built RCS room's own TurnBonus (World.
+        // ShipBuilding.cs's DevicesForCatalogEntry) flat-adds to the turn's own angular acceleration
+        // below (HelmTurnAngularAccelerationPerSecond's own doc comment), same "a stronger thruster"
+        // reasoning ThrustBonus already has for straight-line thrust. Zero for every hand-authored
+        // hull's own Engine devices, so an unmodified hull's own turn strength is unchanged.
+        var turnBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.TurnBonus);
 
         var throttle = _helmThrottle < 0f ? _helmThrottle * ShipReverseThrustFraction : _helmThrottle;
         _shipThrust = ShipNoseDirection * throttle;
 
         // Content-каталог отсеков - a built marching-engine room's own ThrustBonus flat-adds to the
         // base force before the mass division below, same zero-change-for-hand-authored-hulls shape.
-        // Cosmoteer-style marching engines (direct user request, World.Engines.cs) add their own
-        // per-engine, damage/throttle-aware contribution on top of the existing flat SystemDevices
-        // sum - zero for every hull with no Ship.Engines fixtures, so this changes nothing for any
-        // hand-authored hull or any custom ship built before the feature existed.
-        var thrustBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.ThrustBonus) + TotalEngineThrust();
-        var thrustForcePerSecond = (ControlMode == ShipControlMode.Arc ? ArcThrustForcePerSecond : ShipThrustForcePerSecond) + thrustBonus;
-        var thrustAccelerationPerSecond = thrustForcePerSecond / ShipCatalog.Mass(CurrentShipKind);
+        var thrustBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.ThrustBonus);
+        var thrustForcePerSecond = ShipThrustForcePerSecond + thrustBonus;
+        var mass = ShipCatalog.Mass(CurrentShipKind);
+        var thrustAccelerationPerSecond = thrustForcePerSecond / mass;
         var decelerationPerSecond = ShipAutoStabilizeDecelerationPerSecond * enginePowerScale;
+
+        // Direct user request ("тяга зависимая от расположения движков") - real per-engine force/
+        // torque (World.Engines.cs's ComputeEngineForces' own doc comment on why it replaced the old
+        // flat TotalEngineThrust()/TotalEngineTurn() bonuses above). Pivot is the same stand-in "hull
+        // centre" turret/camera code already uses (GetHullLocalBounds) - no real centre-of-mass model
+        // exists to compute a better one from. Zero for any hull with no Ship.Engines fixtures.
+        var (hullCenter, _) = GetHullLocalBounds();
+        var (engineForce, engineTorque) = ComputeEngineForces(hullCenter);
 
         if (_shipAutoStabilize)
         {
             var decel = decelerationPerSecond * dt;
             var speed = _shipVelocity.Length();
             _shipVelocity = speed <= decel ? Vec2.Zero : _shipVelocity - _shipVelocity.Normalized() * decel;
+
+            // The rotational mirror of the linear decay just above - kills off whatever spin is left
+            // (from the helm's own turn input or from Ship.Engines' own torque, now the same
+            // accumulator - HelmTurnAngularAccelerationPerSecond's own doc comment) while nobody is
+            // actively fighting it. Not scaled by enginePowerScale, same reasoning as engineForce
+            // above - the angular velocity this damps was never gated by the legacy Engine
+            // subsystem's power in the first place, so damping it with that same gate would leave a
+            // hull with no legacy Engine device spinning forever even with stabilize held down.
+            var angularDecel = ShipAutoStabilizeAngularDecelerationPerSecond * dt;
+            _shipAngularVelocity = Math.Abs(_shipAngularVelocity) <= angularDecel
+                ? 0f
+                : _shipAngularVelocity - Math.Sign(_shipAngularVelocity) * angularDecel;
         }
         else
         {
             var maxSpeed = _landedBodyId is not null ? SurfaceMaxSpeed : ShipMaxSpeed;
             _shipVelocity += _shipThrust * thrustAccelerationPerSecond * enginePowerScale * dt;
+            // Not scaled by enginePowerScale, unlike the flat bonus above - that scale comes from
+            // GetEffectivePower(PowerSystemId.Engine), which only counts the OLD flat-bonus
+            // CustomDeviceKind.Engine system-devices (WireGraphFactory never gives Ship.Engines'
+            // own fixtures a power pin at all - World.Engines.cs's own top-of-file doc comment: "no
+            // weapon/collision damages these tiles yet", a deliberately self-contained first pass).
+            // Gating the new per-engine force on that would make it silently dead on any hull built
+            // purely from the new fixtures (no legacy Engine device at all) - MaxThrust/EffectiveControl
+            // and each engine's own intact/broken parts (ComputeEngineForces skips a broken Nozzle)
+            // are already this model's own equivalent of "is this engine actually able to push".
+            _shipVelocity += RotateLocalToWorld(engineForce, _shipRotationDegrees) * (1f / mass) * dt;
             if (_shipVelocity.Length() > maxSpeed)
                 _shipVelocity = _shipVelocity.Normalized() * maxSpeed;
+
+            // Direct user request ("хочу сделать чтобы гасила") - the helm's own turn input and
+            // Ship.Engines' own torque both feed the SAME angular-velocity accumulator now
+            // (HelmTurnAngularAccelerationPerSecond's own doc comment) - holding the opposite turn
+            // direction from an existing spin actively cancels it instead of just adding an
+            // independent rate on top that leaves the underlying spin untouched once released.
+            _shipAngularVelocity += (_helmTurn * (HelmTurnAngularAccelerationPerSecond + turnBonus) + engineTorque * EngineTorqueToAngularAcceleration) * dt;
+            _shipAngularVelocity = Math.Clamp(_shipAngularVelocity,
+                -ShipMaxAngularVelocityDegreesPerSecond, ShipMaxAngularVelocityDegreesPerSecond);
         }
+
+        // The one place _shipAngularVelocity (from the helm's own turn input and/or Ship.Engines'
+        // own torque, both above) actually turns the hull - always integrated regardless of
+        // auto-stabilize, same as the linear _shipVelocity -> _shipFieldPosition integration below.
+        _shipRotationDegrees += _shipAngularVelocity * dt;
 
         // Position accumulates directly in double now that Vec2 itself is double - deltaSeconds
         // (not the already-narrowed dt above), so a real, long flight never compounds float
@@ -250,32 +312,12 @@ public sealed partial class World
                 return;
             }
 
-            // A planet/moon/star is solid too (M53 follow-up - "почему я смог войти в планету"):
-            // nothing here ever checked it as a physical obstacle the way asteroids/stations/enemies
-            // already are. Same stop-dead response as ramming an enemy - no wall-block-breach
-            // mechanic to reuse here (a body has no interior). Swept across the whole tick's travel,
-            // not just tested at the final candidate position: a fast-moving ship could otherwise
-            // cross a small body entirely between one tick's position and the next and never
-            // register as touched by a point-only test.
-            if (SweptOverlapsCelestialBody(_shipFieldPosition, candidatePosition) is { } touchedBody)
-            {
-                // Snapped to sit exactly at the contact threshold (HullOverlapsCelestialBody's own
-                // radius+hullRadius circle) along the ship's CURRENT bearing from the body, rather
-                // than left at the tick's unchanged starting position: with velocity always reset
-                // to zero on a blocked step, a deterministic physics tick would otherwise recompute
-                // and reject the exact same tiny candidate forever, never actually converging into
-                // "touching" - which M55's CanLandNow (the same threshold) needs to ever go true.
-                var system = GalaxyMap.GetSystem(_currentSystemId);
-                var bodyPosition = CelestialBodyGenerator.PositionAt(touchedBody, system.BodiesById) + system.Field.Center;
-                var (_, contactHalfExtents) = GetHullLocalBounds();
-                var contactRadius = touchedBody.Radius + contactHalfExtents.Length();
-                var awayFromBody = (_shipFieldPosition - bodyPosition).Normalized();
-                if (awayFromBody == Vec2.Zero)
-                    awayFromBody = new Vec2(1f, 0f);
-                SetShipFieldPosition(bodyPosition + awayFromBody * (contactRadius - 0.01f));
-                _shipVelocity = Vec2.Zero;
-                return;
-            }
+            // Direct user request ("сделай чтобы сквозь планеты можно был прлетать без
+            // последствий") - a planet/moon/star used to be solid (M53 follow-up) and stopped the
+            // ship dead on contact; that's gone entirely now. HullOverlapsCelestialBody (still
+            // used below by World.PlanetLanding.cs's CanLandNow) still detects "the ship happens
+            // to be sitting on a landable body's surface right now" to arm the landing button -
+            // it just no longer has any say in whether the ship can keep moving through/past one.
 
             // The station's own compartments are solid too, whichever one happens to be nearest
             // right now (World.Voyage.cs's UpdateNearestStation) - shoulder into them and the ship
@@ -309,14 +351,12 @@ public sealed partial class World
         _shipFieldPosition = candidatePosition;
     }
 
-    // M55 follow-up - a plain hull-bounding-circle test (the hull's own half-extents diagonal, same
-    // as SweptOverlapsCelestialBody below) rather than the exact rotated hull box M53 originally
-    // used. Deliberately the SAME threshold the swept movement check and its own resting-position
-    // snap use: two different thresholds for "touching" here could leave the ship able to satisfy
-    // one but not the other, stuck forever just outside whichever is stricter. Returns the body
-    // actually touched rather than a bare bool (M55 - World.PlanetLanding.cs's CanLandNow needs to
-    // know WHICH one, to tell a landable rocky world/moon apart from a gas giant/star that should
-    // still just stop the ship dead without ever arming a landing button).
+    // A plain hull-bounding-circle test (the hull's own half-extents diagonal) - still used by
+    // World.PlanetLanding.cs's CanLandNow/TryLandOnPlanet to detect "sitting on a landable body's
+    // surface right now" and arm the landing button. No longer used to block movement at all
+    // (direct user request, "сквозь планеты можно был прлетать без последствий" - World.ShipField.cs's
+    // own top-of-file doc comment) - a body is purely a landing target now, never a physical
+    // obstacle, so there's no swept/tunnelling concern left to guard against here either.
     private CelestialBody? HullOverlapsCelestialBody(Vec2 candidateCenter)
     {
         var (_, halfExtents) = GetHullLocalBounds();
@@ -326,42 +366,6 @@ public sealed partial class World
         {
             var bodyPosition = CelestialBodyGenerator.PositionAt(body, system.BodiesById) + system.Field.Center;
             if ((bodyPosition - candidateCenter).Length() < body.Radius + hullRadius)
-                return body;
-        }
-        return null;
-    }
-
-    // M55 follow-up - the swept pre-check StepShipFieldPhysics actually calls now: HullOverlaps
-    // CelestialBody above only ever asks "is the hull touching a body AT this one exact point",
-    // which tunnels clean through a small body whenever a single tick's travel carries the
-    // candidate position past the whole body in one step. Checked against the closest point on the
-    // SEGMENT actually travelled this tick instead, with the hull approximated as a circle (its own
-    // half-extents' diagonal) rather than the exact rotated box the resting-position test above
-    // still uses - a conservative stand-in that's cheap to sweep and only ever needs to answer "did
-    // this straight line cross the body at all".
-    private CelestialBody? SweptOverlapsCelestialBody(Vec2 from, Vec2 to)
-    {
-        var (_, halfExtents) = GetHullLocalBounds();
-        var hullRadius = halfExtents.Length();
-        var system = GalaxyMap.GetSystem(_currentSystemId);
-        var segment = to - from;
-        var segmentLengthSq = segment.X * segment.X + segment.Y * segment.Y;
-
-        foreach (var body in system.Bodies)
-        {
-            var bodyPosition = CelestialBodyGenerator.PositionAt(body, system.BodiesById) + system.Field.Center;
-            Vec2 closest;
-            if (segmentLengthSq < 0.0001f)
-            {
-                closest = from;
-            }
-            else
-            {
-                var toBody = bodyPosition - from;
-                var t = Math.Clamp((toBody.X * segment.X + toBody.Y * segment.Y) / segmentLengthSq, 0f, 1f);
-                closest = from + segment * t;
-            }
-            if ((bodyPosition - closest).Length() < body.Radius + hullRadius)
                 return body;
         }
         return null;
@@ -488,5 +492,19 @@ public sealed partial class World
     {
         _shipVelocity = velocity;
         _shipAutoStabilize = false;
+    }
+
+    // Direct user request ("уберём возможность управлять кораблём игроку... автопилот") - the helm
+    // stick (_helmThrottle/_helmStrafe/_helmTurn) is now driven exclusively by World.Autopilot.cs's
+    // own StepAutopilot rather than directly from a ClientCommand, so tests that only care about
+    // engine activation (which engine fires for a given stick position, TestRunner.Engines.cs/
+    // TestRunner.EngineThrustVectors.cs) need a way to set the stick directly, the same test-only
+    // "skip the real path, set the state directly" convention DebugPlaceShip/DebugSetShipVelocity
+    // already use. Also arms _debugSkipAutopilotThisTick (World.Autopilot.cs) for the very next
+    // Step - otherwise StepAutopilot would overwrite this same value before physics ever saw it.
+    public void DebugSetHelmInput(float throttle, float strafe, float turn)
+    {
+        SetHelmInput(throttle, strafe, turn);
+        _debugSkipAutopilotThisTick = true;
     }
 }

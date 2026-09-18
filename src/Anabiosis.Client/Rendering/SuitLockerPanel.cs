@@ -66,9 +66,9 @@ public sealed class SuitLockerPanel
 
         var hint = (wearingSuit, hasSuit) switch
         {
-            (false, true) => ("[E] надеть скафандр", Color.Gold),
+            (false, true) => ("[F] надеть скафандр", Color.Gold),
             (false, false) => ("Шкаф пуст", Color.Gray),
-            (true, false) => ("[E] снять скафандр сюда", Color.LightGreen),
+            (true, false) => ("[F] снять скафандр сюда", Color.LightGreen),
             (true, true) => ("Скафандр уже надет", Color.Gray),
         };
         var hintSize = _font.MeasureString(hint.Item1) * 0.5f;

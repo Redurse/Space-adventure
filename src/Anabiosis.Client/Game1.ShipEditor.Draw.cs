@@ -1016,7 +1016,13 @@ public partial class Game1
         DrawDeviceTabs();
     }
 
-    private static readonly string[] EditorForwardArrowLabels = { "→", "↓", "←", "↑" };
+    // Direct user bug report (screenshot showing all four buttons as "?") - the Unicode arrow
+    // glyphs (U+2190-2193) aren't in DebugFont.spritefont's own CharacterRegions (that file's own
+    // doc comment: anything outside them silently draws as DefaultCharacter, '?', rather than
+    // crashing), so every arrow rendered as a question mark. ASCII stand-ins instead of extending
+    // the font's character regions, matching that file's own established "avoid this class of bug
+    // entirely, don't chase it region by region" reasoning.
+    private static readonly string[] EditorForwardArrowLabels = { ">", "v", "<", "^" };
 
     private static string EngineFacingLabel(TileSide side) => side switch
     {

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Anabiosis.Shared.Model;
 
@@ -30,6 +31,33 @@ public static class TileOccluders
     private static bool IsOccluding(TileCell? cell) =>
         cell is { Wall: TileWallKind.Solid, WallMaterial: not WallMaterial.Window } or { Wall: TileWallKind.Door, DoorOpen: false };
 
+    // Direct user follow-up ("да давай" - dig into the remaining, unexplained Маска cost after the
+    // wall-bleed fringe was confirmed cheap) - CPU time for TileOccluders.Build/RoomLighting.Build/
+    // VisibilityMask.Build all measured in the low single-digit milliseconds even at a station-
+    // plausible size (ShaderCheck's own "[diagnostic]" checks), nowhere near the report's 48-65ms -
+    // so the next suspect was allocation pressure, not raw compute: the same checks found this
+    // method alone allocating ~47KB/call (called TWICE every frame, ship then station, neither
+    // result cached - only the underlying TileGrid rasterization is), and the screenshot's own F3
+    // overlay already showed a suspiciously high "Выд 54МБ/с" (54MB/s allocated) and 4 Gen0
+    // collections/sec. A Gen0 pause landing inside the Stopwatch window Game1.cs's own diagPhaseMs
+    // measures around BuildVisibilityMask reads as "Маска is slow" regardless of how cheap the
+    // actual math underneath is. [ThreadStatic] (not a plain static field) because
+    // TestRunner.TileOccluders.cs's own tests call this from Parallel.For across multiple threads -
+    // a shared mutable Dictionary there would be a real data race, not just wasted reuse; the real
+    // game's own Draw always runs on one thread, so this still gets full reuse there.
+    [ThreadStatic] private static Dictionary<int, List<(int From, int To)>>? _horizontalScratch;
+    [ThreadStatic] private static Dictionary<int, List<(int From, int To)>>? _verticalScratch;
+
+    private static void ClearScratch(Dictionary<int, List<(int From, int To)>> scratch)
+    {
+        // Clears each bucket's own List in place (keeping its backing array's capacity) instead of
+        // removing dictionary entries - the set of distinct wall lines is near-identical frame to
+        // frame for a static hull/station, so after the first call every AddUnitEdge below finds an
+        // already-there, already-sized List waiting for it rather than allocating a fresh one.
+        foreach (var list in scratch.Values)
+            list.Clear();
+    }
+
     public static List<WallSegment> Build(TileGrid tiles, IReadOnlyList<SightGap> gaps)
     {
         // Raw 1-unit boundary edges, bucketed by their fixed axis coordinate (Y for a horizontal
@@ -37,8 +65,10 @@ public static class TileOccluders
         // before they ever reach the gap-cutting/raycast stage - ShadowCast tests every segment every
         // frame, so leaving hundreds of unmerged unit-length segments would be a real cost, not just
         // untidy.
-        var horizontal = new Dictionary<int, List<(int From, int To)>>();
-        var vertical = new Dictionary<int, List<(int From, int To)>>();
+        var horizontal = _horizontalScratch ??= new Dictionary<int, List<(int From, int To)>>();
+        var vertical = _verticalScratch ??= new Dictionary<int, List<(int From, int To)>>();
+        ClearScratch(horizontal);
+        ClearScratch(vertical);
         var segments = new List<WallSegment>();
 
         foreach (var (coord, cell) in tiles.Cells)
@@ -61,33 +91,65 @@ public static class TileOccluders
 
             foreach (var side in TileSideExtensions.All)
             {
-                if (IsOccluding(tiles.CellAt(side.Offset(coord))))
-                    continue; // shared face between two occluding tiles - not a boundary
-
-                switch (side)
+                var neighbor = tiles.CellAt(side.Offset(coord));
+                if (!IsOccluding(neighbor))
                 {
-                    case TileSide.North: // this tile's own top edge: (x, y) to (x+1, y)
-                        AddUnitEdge(horizontal, coord.Y, coord.X);
-                        break;
-                    case TileSide.South: // bottom edge: (x, y+1) to (x+1, y+1)
-                        AddUnitEdge(horizontal, coord.Y + 1, coord.X);
-                        break;
-                    case TileSide.West: // left edge: (x, y) to (x, y+1)
-                        AddUnitEdge(vertical, coord.X, coord.Y);
-                        break;
-                    case TileSide.East: // right edge: (x+1, y) to (x+1, y+1)
-                        AddUnitEdge(vertical, coord.X + 1, coord.Y);
-                        break;
+                    switch (side)
+                    {
+                        case TileSide.North: // this tile's own top edge: (x, y) to (x+1, y)
+                            AddUnitEdge(horizontal, coord.Y, coord.X);
+                            break;
+                        case TileSide.South: // bottom edge: (x, y+1) to (x+1, y+1)
+                            AddUnitEdge(horizontal, coord.Y + 1, coord.X);
+                            break;
+                        case TileSide.West: // left edge: (x, y) to (x, y+1)
+                            AddUnitEdge(vertical, coord.X, coord.Y);
+                            break;
+                        case TileSide.East: // right edge: (x+1, y) to (x+1, y+1)
+                            AddUnitEdge(vertical, coord.X + 1, coord.Y);
+                            break;
+                    }
+                    continue;
                 }
+
+                // Direct user bug report (wall texture visible through what should be shadow, right
+                // at a half-thick/full-wall seam) - an ordinary full-thickness neighbor genuinely
+                // covers this whole face, correctly leaving no gap below. But a HALF-THICK neighbor
+                // (WallOpenSide set) only actually has material over HALF of this shared face -
+                // IsOccluding alone can't tell the difference, since it only asks "is this cell solid
+                // at all", not "does its solid half actually reach this exact face". Whatever portion
+                // of the face the neighbor's FREE half leaves exposed is a genuine solid(this tile)-
+                // to-open(neighbor's free half) boundary and still needs its own segment - dropping it
+                // (the pre-fix behaviour) let the shadow-cast rays for a viewer standing in that free
+                // half sail straight past this tile's corner into whatever lay beyond it.
+                if (neighbor is { WallOpenSide: not null })
+                {
+                    var (from, to) = SolidRangeOnFace(neighbor!, side.Opposite());
+                    if (from > 0f) segments.Add(FaceSegment(side, coord, 0f, from));
+                    if (to < 1f) segments.Add(FaceSegment(side, coord, to, 1f));
+                }
+                // else: an ordinary full wall - genuinely interior, no edge (unchanged from before).
             }
         }
 
+        // ClearScratch (above) empties each bucket's own List in place but deliberately leaves the
+        // dictionary ENTRY itself behind for reuse - a line that had a wall run in some earlier call
+        // on this thread but has none in THIS one (the tile grid changed, or - on the test suite's
+        // thread pool - this is simply a different, smaller scene) leaves a stale, empty-but-present
+        // bucket. MergeRuns indexes spans[0] unconditionally, so skip anything with nothing in it
+        // this time; a real bucket always has at least one span, added by AddUnitEdge above.
         foreach (var (y, spans) in horizontal)
+        {
+            if (spans.Count == 0) continue;
             foreach (var (from, to) in MergeRuns(spans))
                 Occluders.AddHorizontal(segments, y, from, to, gaps);
+        }
         foreach (var (x, spans) in vertical)
+        {
+            if (spans.Count == 0) continue;
             foreach (var (from, to) in MergeRuns(spans))
                 Occluders.AddVertical(segments, x, from, to, gaps);
+        }
 
         // M-doors-as-edges (humble-soaring-cat.md) - a narrow door edge sits BETWEEN two ordinary
         // floor tiles, neither of which is itself an occluding cell (unlike the tile-based Door
@@ -136,35 +198,76 @@ public static class TileOccluders
         List<WallSegment> segments)
     {
         bool NeighborOccludes(TileSide side) => IsOccluding(tiles.CellAt(side.Offset(coord)));
+        // A perpendicular cap's own sub-range (capFrom,capTo) is only genuinely interior when the
+        // neighbor on that side has SOLID material over that entire sub-range too - a neighbor that
+        // merely "occludes" (IsOccluding true) isn't enough on its own, since a half-thick neighbor
+        // (WallOpenSide set) may only cover the OTHER half of this same face (its own free half
+        // landing right where this cap needs to be). Same fix as Build's main loop, just phrased as
+        // "does the neighbor cover my required range" instead of "what's left once I subtract theirs"
+        // - a cap only ever needs one all-or-nothing answer, never a partial segment of its own.
+        bool NeighborCoversCap(TileSide side, float capFrom, float capTo)
+        {
+            var neighbor = tiles.CellAt(side.Offset(coord));
+            if (!IsOccluding(neighbor)) return false;
+            var (from, to) = SolidRangeOnFace(neighbor!, side.Opposite());
+            return from <= capFrom && to >= capTo;
+        }
 
         switch (solidSide)
         {
             case TileSide.North: // solid half occupies the top of the tile, free half the bottom
                 if (!NeighborOccludes(TileSide.North)) AddUnitEdge(horizontal, coord.Y, coord.X);
                 segments.Add(new WallSegment(coord.X, coord.Y + 0.5f, coord.X + 1, coord.Y + 0.5f));
-                if (!NeighborOccludes(TileSide.West)) segments.Add(new WallSegment(coord.X, coord.Y, coord.X, coord.Y + 0.5f));
-                if (!NeighborOccludes(TileSide.East)) segments.Add(new WallSegment(coord.X + 1, coord.Y, coord.X + 1, coord.Y + 0.5f));
+                if (!NeighborCoversCap(TileSide.West, 0f, 0.5f)) segments.Add(new WallSegment(coord.X, coord.Y, coord.X, coord.Y + 0.5f));
+                if (!NeighborCoversCap(TileSide.East, 0f, 0.5f)) segments.Add(new WallSegment(coord.X + 1, coord.Y, coord.X + 1, coord.Y + 0.5f));
                 break;
             case TileSide.South: // solid half occupies the bottom, free half the top
                 if (!NeighborOccludes(TileSide.South)) AddUnitEdge(horizontal, coord.Y + 1, coord.X);
                 segments.Add(new WallSegment(coord.X, coord.Y + 0.5f, coord.X + 1, coord.Y + 0.5f));
-                if (!NeighborOccludes(TileSide.West)) segments.Add(new WallSegment(coord.X, coord.Y + 0.5f, coord.X, coord.Y + 1));
-                if (!NeighborOccludes(TileSide.East)) segments.Add(new WallSegment(coord.X + 1, coord.Y + 0.5f, coord.X + 1, coord.Y + 1));
+                if (!NeighborCoversCap(TileSide.West, 0.5f, 1f)) segments.Add(new WallSegment(coord.X, coord.Y + 0.5f, coord.X, coord.Y + 1));
+                if (!NeighborCoversCap(TileSide.East, 0.5f, 1f)) segments.Add(new WallSegment(coord.X + 1, coord.Y + 0.5f, coord.X + 1, coord.Y + 1));
                 break;
             case TileSide.West: // solid half occupies the left, free half the right
                 if (!NeighborOccludes(TileSide.West)) AddUnitEdge(vertical, coord.X, coord.Y);
                 segments.Add(new WallSegment(coord.X + 0.5f, coord.Y, coord.X + 0.5f, coord.Y + 1));
-                if (!NeighborOccludes(TileSide.North)) segments.Add(new WallSegment(coord.X, coord.Y, coord.X + 0.5f, coord.Y));
-                if (!NeighborOccludes(TileSide.South)) segments.Add(new WallSegment(coord.X, coord.Y + 1, coord.X + 0.5f, coord.Y + 1));
+                if (!NeighborCoversCap(TileSide.North, 0f, 0.5f)) segments.Add(new WallSegment(coord.X, coord.Y, coord.X + 0.5f, coord.Y));
+                if (!NeighborCoversCap(TileSide.South, 0f, 0.5f)) segments.Add(new WallSegment(coord.X, coord.Y + 1, coord.X + 0.5f, coord.Y + 1));
                 break;
             case TileSide.East: // solid half occupies the right, free half the left
                 if (!NeighborOccludes(TileSide.East)) AddUnitEdge(vertical, coord.X + 1, coord.Y);
                 segments.Add(new WallSegment(coord.X + 0.5f, coord.Y, coord.X + 0.5f, coord.Y + 1));
-                if (!NeighborOccludes(TileSide.North)) segments.Add(new WallSegment(coord.X + 0.5f, coord.Y, coord.X + 1, coord.Y));
-                if (!NeighborOccludes(TileSide.South)) segments.Add(new WallSegment(coord.X + 0.5f, coord.Y + 1, coord.X + 1, coord.Y + 1));
+                if (!NeighborCoversCap(TileSide.North, 0.5f, 1f)) segments.Add(new WallSegment(coord.X + 0.5f, coord.Y, coord.X + 1, coord.Y));
+                if (!NeighborCoversCap(TileSide.South, 0.5f, 1f)) segments.Add(new WallSegment(coord.X + 0.5f, coord.Y + 1, coord.X + 1, coord.Y + 1));
                 break;
         }
     }
+
+    // Where a cell's own solid material actually touches one of its four faces, as a (From,To) pair
+    // of fractions along that face - 0 at the face's "near" endpoint (Y=the cell's own Y for an
+    // East/West face, X=the cell's own X for a North/South face), 1 at the far endpoint. An ordinary
+    // full-thickness occluding cell is solid along the entirety of every face: (0,1). A half-thick
+    // cell (WallOpenSide - despite the name, the SOLID half's own side, see its own doc comment on
+    // TileCell) is solid along the whole of its own solidSide face, not at all along the opposite
+    // (free-half) face, and along exactly the near or far HALF of each of the two perpendicular
+    // faces - whichever half sits nearer the solid side.
+    private static (float From, float To) SolidRangeOnFace(TileCell cell, TileSide side)
+    {
+        if (cell.WallOpenSide is not { } solid)
+            return (0f, 1f);
+        if (side == solid) return (0f, 1f);
+        if (side == solid.Opposite()) return (0f, 0f);
+        return solid is TileSide.North or TileSide.West ? (0f, 0.5f) : (0.5f, 1f);
+    }
+
+    // Turns a (From,To) fraction pair along one of `coord`'s own faces (see SolidRangeOnFace) back
+    // into world-space endpoints, in the same near-to-far direction those fractions are measured in.
+    private static WallSegment FaceSegment(TileSide side, TileCoord coord, float from, float to) => side switch
+    {
+        TileSide.East => new WallSegment(coord.X + 1, coord.Y + from, coord.X + 1, coord.Y + to),
+        TileSide.West => new WallSegment(coord.X, coord.Y + from, coord.X, coord.Y + to),
+        TileSide.North => new WallSegment(coord.X + from, coord.Y, coord.X + to, coord.Y),
+        _ => new WallSegment(coord.X + from, coord.Y + 1, coord.X + to, coord.Y + 1), // South
+    };
 
     private static void AddUnitEdge(Dictionary<int, List<(int From, int To)>> into, int fixedCoord, int from)
     {
@@ -173,6 +276,12 @@ public static class TileOccluders
         spans.Add((from, from + 1));
     }
 
+    // Called once per distinct wall line - dozens of times per Build - and its result is only ever
+    // walked immediately by the caller's own foreach, never stored past that, so (like the scratch
+    // fields just above) it can safely write into one reused-per-thread buffer instead of a fresh
+    // List every call. [ThreadStatic] for the same reason as those - TestRunner's own Parallel.For.
+    [ThreadStatic] private static List<(int From, int To)>? _mergedRunsScratch;
+
     // Coalesces touching/overlapping unit spans on the same line into the fewest possible runs -
     // e.g. tile edges [1,2) and [2,3) merge into [1,3). Spans never actually overlap by more than a
     // shared endpoint (each comes from exactly one tile's own unit-wide edge), but sorting first
@@ -180,7 +289,8 @@ public static class TileOccluders
     private static List<(int From, int To)> MergeRuns(List<(int From, int To)> spans)
     {
         spans.Sort((a, b) => a.From.CompareTo(b.From));
-        var merged = new List<(int From, int To)>();
+        var merged = _mergedRunsScratch ??= new List<(int From, int To)>();
+        merged.Clear();
         var currentFrom = spans[0].From;
         var currentTo = spans[0].To;
         for (var i = 1; i < spans.Count; i++)

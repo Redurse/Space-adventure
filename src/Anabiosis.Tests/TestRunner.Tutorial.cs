@@ -33,7 +33,8 @@ internal static partial class TestRunner
         var helmConsole = world.Ship.HelmConsole.Position;
         MoveCharacterTo(world, 1, (float)helmConsole.X, (float)helmConsole.Y); // helm console
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
+        var shipField = world.CreateSnapshot().ShipField;
+        world.ApplyCommand(1, new ClientCommand(1, AutopilotTargetX: (float)shipField.X + 50f, AutopilotTargetY: (float)shipField.Y)); // a destination click
         world.Step(RealtimeStep);
         if (world.Tutorial != TutorialStage.ToggleDoor)
             return false;

@@ -231,8 +231,7 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
 
         SitAtHelm(world, 1);
-        world.DebugPlaceShip(world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position);
-        world.ApplyCommand(1, new ClientCommand(1, HelmStabilizePressed: true));
+        world.DebugPlaceShip(world.GalaxyMap.GetPoint("asteroid-field-epsilon").Position); // already at rest, rotation 0
         world.Step(RealtimeStep);
 
         if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsAtHelm)

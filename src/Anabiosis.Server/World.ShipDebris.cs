@@ -61,30 +61,57 @@ public sealed partial class World
     // Removes roomId AND every other room that becomes unreachable from the reactor once it's gone -
     // the whole detached group spins off together as one fragment, not one fragment per orphaned
     // room, since they're still structurally one piece.
+    private void DestroyRoomAndDetach(string roomId)
+    {
+        if (!TryComputeRoomDetachment(roomId, out var shrunk, out var detachedRooms))
+            return;
+
+        // M64 - both use the OLD Ship/OLD room set, so this has to happen before ApplyShipDefinition
+        // below replaces Ship with the shrunk hull.
+        var detachedRoomIds = detachedRooms.Select(r => r.Id).ToHashSet();
+        EjectCrewFromDetachingRooms(detachedRoomIds);
+        _droppedItems.RemoveAll(item => item.RoomId is not null && detachedRoomIds.Contains(item.RoomId));
+
+        SpawnDebrisFragment(detachedRooms);
+        ApplyShipDefinition(shrunk);
+    }
+
+    // Shared by DestroyRoomAndDetach above and World.RoomHp.cs's own ExplodeRoom - both need "remove
+    // roomId, and detach anything ELSE that becomes unreachable from the reactor as a result",
+    // differing only in what happens to roomId's own footprint once it's gone (flies off with the
+    // rest of the detached group here vs sits in place as a permanent wreck decoration for
+    // ExplodeRoom - see that method's own doc comment). Stops short of actually applying anything -
+    // callers still need to eject crew/drop items/spawn debris (or a wreck patch) using the OLD Ship
+    // before calling ApplyShipDefinition themselves, since the exact "what happens to the detached
+    // group" step differs between the two callers.
     //
-    // M77 (humble-soaring-cat.md) - reachability and device membership are now both answered from
-    // the ALREADY-SYNCED live Ship.Tiles (real tile/region data), not from Ship.ToDefinition()'s DTO
+    // M77 (humble-soaring-cat.md) - reachability and device membership are answered from the
+    // ALREADY-SYNCED live Ship.Tiles (real tile/region data), not from Ship.ToDefinition()'s DTO
     // round-trip (RoomGraphConnectivity) plus bounding-box math. Ship.Tiles still has the doomed
-    // room's own tiles in it at this point (only ApplyShipDefinition, below, actually rebuilds the
+    // room's own tiles in it at this point (only ApplyShipDefinition, later, actually rebuilds the
     // grid) - simulate its removal on a throwaway TileGrid.Clone() (never mutate the live grid other
     // systems read this same tick) by clearing its floor tiles the exact same way
     // TileRegionConnectivity's own unit tests do, then run the region BFS on that.
-    private void DestroyRoomAndDetach(string roomId)
+    private bool TryComputeRoomDetachment(string roomId, out CustomShipDefinition shrunk, out IReadOnlyList<CustomRoomDef> detachedRooms)
     {
+        shrunk = CustomShipDefinition.Empty;
+        detachedRooms = Array.Empty<CustomRoomDef>();
+
         var def = Ship.ToDefinition();
         if (def.Rooms.Count <= 1)
-            return; // the ship's own last room dying is a bigger event than this milestone handles
+            return false; // the ship's own last room dying is a bigger event than this milestone handles
         if (def.Rooms.All(r => r.Id != roomId))
-            return;
+            return false;
 
         // M74 - generic Devices query instead of the ReactorBlock field directly; still just the
         // first/primary reactor (multiple reactors' anchor-choice is an open question for a later
         // milestone, not this one - humble-soaring-cat.md's own "Риски" section).
         var anchorRoomId = Ship.Devices.First(d => d.Kind == DeviceKind.Reactor).RoomId;
         if (anchorRoomId == roomId)
-            return; // the reactor's own compartment was the one destroyed - not something a room-
-                     // by-room detachment can sensibly resolve; leave it breached-but-attached
-                     // (the existing wall-breach behavior) rather than guessing at a bigger outcome
+            return false; // the reactor's own compartment was the one destroyed - not something a
+                           // room-by-room detachment can sensibly resolve; leave it breached-but-
+                           // attached (the existing wall-breach behavior) rather than guessing at a
+                           // bigger outcome
 
         var remainingRooms = def.Rooms.Where(r => r.Id != roomId).ToList();
         var remainingRoomIds = remainingRooms.Select(r => r.Id).ToHashSet();
@@ -124,26 +151,26 @@ public sealed partial class World
         }).ToList();
         var keptAirlocks = def.Airlocks.Where(a => keptRoomIds.Contains(a.RoomId)).ToList();
 
-        var detachedRooms = def.Rooms.Where(r => !keptRoomIds.Contains(r.Id)).ToList(); // the destroyed room + anything cut off from the reactor with it
-        var keptDevices = def.Devices.Where(d => IsDeviceReachable(d, scratchTiles, reachableRegionIds, detachedRooms)).ToList();
+        var detachedRoomsList = def.Rooms.Where(r => !keptRoomIds.Contains(r.Id)).ToList(); // the destroyed room + anything cut off from the reactor with it
+        var keptDevices = def.Devices.Where(d => IsDeviceReachable(d, scratchTiles, reachableRegionIds, detachedRoomsList)).ToList();
+        // Same reachability filter as Devices just above (IsPointReachable's own doc comment) -
+        // Ship.Engines' own fixtures are a separate list CustomShipDefinition never folded into
+        // Devices, so without this an engine sitting in a detached room would silently survive into
+        // shrunkDef and crash Ship.FromCustomDefinition's own RoomIdAt lookup for it.
+        var keptEngines = def.Engines.Where(e => IsPointReachable(e.X, e.Y, scratchTiles, reachableRegionIds, detachedRoomsList)).ToList();
 
-        var shrunk = def with { Rooms = keptRooms, Doors = keptDoors, Airlocks = keptAirlocks, Devices = keptDevices };
+        var shrunkDef = def with { Rooms = keptRooms, Doors = keptDoors, Airlocks = keptAirlocks, Devices = keptDevices, Engines = keptEngines };
 
         // Same "refuse rather than corrupt" instinct TryBuildRoom/TryDemolishRoom both already have -
         // if what's left no longer validates (lost the sole helm/nav/last airlock/etc.), detachment
         // is skipped entirely for THIS destruction and the room simply stays fully breached in place,
         // rather than forcing a shrink that would leave the remaining ship unplayable.
-        if (CustomShipValidator.Validate(shrunk).Count > 0)
-            return;
+        if (CustomShipValidator.Validate(shrunkDef).Count > 0)
+            return false;
 
-        // M64 - both use the OLD Ship/OLD room set, so this has to happen before ApplyShipDefinition
-        // below replaces Ship with the shrunk hull.
-        var detachedRoomIds = detachedRooms.Select(r => r.Id).ToHashSet();
-        EjectCrewFromDetachingRooms(detachedRoomIds);
-        _droppedItems.RemoveAll(item => item.RoomId is not null && detachedRoomIds.Contains(item.RoomId));
-
-        SpawnDebrisFragment(detachedRooms);
-        ApplyShipDefinition(shrunk);
+        shrunk = shrunkDef;
+        detachedRooms = detachedRoomsList;
+        return true;
     }
 
     // M77 - every tile a Room's own rectangle covers, using the exact same rounding convention
@@ -189,12 +216,22 @@ public sealed partial class World
     // now - a wall-mounted device (camera/turret periscope/terminal-adjacent console) sitting exactly
     // on a wall tile, or a device whose room was just cleared above - so a device is never silently
     // dropped just because its exact point landed off the walkable interior.
-    private static bool IsDeviceReachable(CustomDeviceDef device, TileGrid tiles, HashSet<int> reachableRegionIds, IReadOnlyList<CustomRoomDef> detachedRooms)
+    private static bool IsDeviceReachable(CustomDeviceDef device, TileGrid tiles, HashSet<int> reachableRegionIds, IReadOnlyList<CustomRoomDef> detachedRooms) =>
+        IsPointReachable(device.X, device.Y, tiles, reachableRegionIds, detachedRooms);
+
+    // Direct user request ("тяга зависимая от расположения движков") follow-up bug fix: a
+    // CustomEngineDef (Ship.Engines' own fixture - X/Y is its Control tile, ShipEngine.cs) is a
+    // SEPARATE list from CustomShipDefinition.Devices, so TryComputeRoomDetachment used to leave it
+    // entirely unfiltered - an engine sitting in a room that just got detached/exploded stayed in the
+    // shrunk definition anyway, and Ship.FromCustomDefinition's own RoomIdAt(engine position) then
+    // throws (no room left to assign it to). Same point-reachability test IsDeviceReachable already
+    // uses, just renamed off "device" since it now serves both.
+    private static bool IsPointReachable(float x, float y, TileGrid tiles, HashSet<int> reachableRegionIds, IReadOnlyList<CustomRoomDef> detachedRooms)
     {
-        var coord = DeviceTileCoord(device.X, device.Y);
+        var coord = DeviceTileCoord(x, y);
         if (tiles.RegionIdAt(coord) is { } regionId)
             return reachableRegionIds.Contains(regionId);
-        return !detachedRooms.Any(r => device.X >= r.X && device.X <= r.X + r.Width && device.Y >= r.Y && device.Y <= r.Y + r.Height);
+        return !detachedRooms.Any(r => x >= r.X && x <= r.X + r.Width && y >= r.Y && y <= r.Y + r.Height);
     }
 
     // M64 - everyone actually aboard a room that's about to detach becomes a free EVA body at their

@@ -1,5 +1,3 @@
-using Anabiosis.Shared.Model;
-
 namespace Anabiosis.Shared.Protocol;
 
 // The ship's physical state in the current system's field (game_design.md section 5, M15;
@@ -22,6 +20,4 @@ public sealed record ShipFieldState(
     float VelocityY,
     float ThrustX,
     float ThrustY,
-    bool AutoStabilize,
-    // Arc (banked turning, tied to speed) or Rcs (free rotation) - World.ShipField.cs, M41.
-    ShipControlMode ControlMode = ShipControlMode.Arc);
+    bool AutoStabilize);

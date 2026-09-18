@@ -56,6 +56,19 @@ public sealed partial class World
         // M63 - the single choke point every source of player-hull wall damage already funnels
         // through (World.ShipDebris.cs's own doc comment), so this is the one place that needs to
         // ask "did that just fully breach every wall this room has left".
+        //
+        // Deliberately does NOT also feed World.RoomHp.cs's own shadow pool (unlike engine/door
+        // damage, which do) - found via a real test regression: a room's own wall-block HP total
+        // scales with its size (perimeter), so for any room whose own walls add up to more than
+        // RoomMaxHp (an ordinary-sized built room already clears that, and a player-built custom room
+        // has no upper bound at all), fully destroying every wall one at a time would always exhaust
+        // the shadow pool a few blocks BEFORE the last one breaks - silently replacing the older,
+        // already-tested "every wall gone -> the whole room flies off as one real debris fragment"
+        // outcome with ExplodeRoom's static-wreck one, for a reason that has nothing to do with the
+        // room's own hidden health and everything to do with how big it happens to be. Wall damage
+        // already has its own dedicated, correct "the room is now gone" ending right here - routing
+        // it into the second, competing one as well can only make that ending less predictable, never
+        // more correct. Excluded for the same reason the plan already excludes CutWire/SetBlockBroken.
         CheckRoomStructuralFailure(blockId);
     }
 

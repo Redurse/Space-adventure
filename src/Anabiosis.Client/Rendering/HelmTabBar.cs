@@ -15,7 +15,7 @@ public sealed class HelmTabBar
     private const int ButtonWidth = 44;
     private const int ButtonHeight = 44;
     private const int Gap = 6;
-    private const int TabCount = 3;
+    private const int TabCount = 4;
 
     public static readonly Point Size = new(ButtonWidth * TabCount + Gap * (TabCount - 1), ButtonHeight);
 
@@ -39,6 +39,7 @@ public sealed class HelmTabBar
         HelmTab.Captain => "КАП",
         HelmTab.Scientist => "УЧ",
         HelmTab.Engineer => "ИНЖ",
+        HelmTab.Compartments => "ОТС",
         _ => "?",
     };
 
@@ -47,12 +48,13 @@ public sealed class HelmTabBar
         HelmTab.Captain => "Капитан",
         HelmTab.Scientist => "Учёный",
         HelmTab.Engineer => "Инженер",
+        HelmTab.Compartments => "Отсеки",
         _ => tab.ToString(),
     };
 
     public void Draw(SpriteBatch spriteBatch, HelmTab current, Vector2 origin, Point mouse)
     {
-        foreach (var tab in new[] { HelmTab.Captain, HelmTab.Scientist, HelmTab.Engineer })
+        foreach (var tab in new[] { HelmTab.Captain, HelmTab.Scientist, HelmTab.Engineer, HelmTab.Compartments })
         {
             var rect = GetTabRect(tab, origin);
             var active = tab == current;

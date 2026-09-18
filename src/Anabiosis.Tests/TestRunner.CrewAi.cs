@@ -266,9 +266,11 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, HireCandidateId: captainCandidate.Id));
 
         EnterAsteroidFieldAndManHelm(world);
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 1f));
         for (var i = 0; i < 30; i++)
+        {
+            world.DebugSetHelmInput(1f, 0f, 0f);
             world.Step(RealtimeStep);
+        }
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // stand up - hands off the helm entirely
         // A handful of ticks, not the full brake - at ShipMaxSpeed(5)/ShipAutoStabilizeDecelerationPerSecond(6)
         // the captain-bot's own brake (engaged the instant nobody's left at helm) fully zeroes the

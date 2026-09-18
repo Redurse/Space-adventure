@@ -31,7 +31,9 @@ public sealed partial class World
         if (_tutorialStage is TutorialStage.NotStarted or TutorialStage.Complete)
             return;
 
-        if (character.IsAtHelm && (command.HelmThrottle != 0f || command.HelmTurn != 0f))
+        // Direct user request ("уберём возможность управлять кораблём игроку... автопилот") -
+        // "took the helm" now means setting an autopilot destination, the only flight action left.
+        if (character.IsAtHelm && command.AutopilotTargetX is not null)
             _tutorialHelmThrusted = true;
         if (command.DoorToggleId is not null)
             _tutorialDoorToggled = true;

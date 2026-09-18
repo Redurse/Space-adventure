@@ -87,8 +87,11 @@ public sealed partial class GalaxyMapPanel
     // beam/dropping a marker isn't available (that stays the scanner operator's own job at the
     // console) and window 3 sits in the same top-right corner the faction-standings box used to
     // have to itself - both get dropped/shortened here rather than fought over with an offset.
+    // captainHelmView: true only for the Captain tab's own copy of pilotView (Game1.cs) - RMB there
+    // now aims the ship's nose instead of panning the map (autopilot rework), so this copy's own hint
+    // text needs to say something different from the Scientist tab's still-panning copy.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin, float zoom, Vector2 panOffset,
-        int myPlayerId, float totalSeconds = 0f, bool pilotView = false)
+        int myPlayerId, float totalSeconds = 0f, bool pilotView = false, bool captainHelmView = false)
     {
         // M48 follow-up - "задний план это сам корабль, а не карта": the console is a HUD overlay
         // widget now (Game1.cs's own BlockKind.Navigation case), drawn on top of the real ship
@@ -112,7 +115,9 @@ public sealed partial class GalaxyMapPanel
         // than out at panelOrigin+700 in what used to be open real-scene space with nothing telling
         // the eye it belonged to this instrument at all.
         var hintOrigin = panelOrigin + new Vector2(pilotView ? 700 : 480, pilotView ? 12 : 20);
-        var hint = pilotView
+        var hint = captainHelmView
+            ? $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}»\nЛКМ - курс, ПКМ (держать) - навести нос, колесо - масштаб"
+            : pilotView
             ? $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}»\nПКМ тащить (сдвиг), колесо (масштаб)"
             : $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}»\nтащить ручку по ободу (луч сканера)\nклик по своей метке (поставить на карту)\nза кольцом — прыжок (M), колесо (масштаб)\nE/Esc - войти/выйти";
         // Drawn immediately for the pilot's own plain rectangular copy (no bezel there to cover it),
@@ -340,6 +345,19 @@ public sealed partial class GalaxyMapPanel
         DrawLargestAsteroidMarkers(spriteBatch, snapshot, mapOrigin, zoom, panelOrigin, pilotView);
 
         DrawShipMarker(spriteBatch, snapshot, shipCenter, zoom);
+
+        // Автопилот ("игрок сможет указать на карте точку куда корабль должен долететь") - a plain
+        // marker + line from the ship to its current destination, shown whenever World.Autopilot.cs
+        // still has one active. Drawn on both pilotView (helm) and the console's own screen, same as
+        // the ship marker itself, so anyone watching the map can see where the ship is actually headed.
+        if (snapshot.Autopilot is { IsActive: true, DestinationX: { } destX, DestinationY: { } destY })
+        {
+            var destScreen = FieldToScreen(mapOrigin, new Vec2(destX, destY), zoom);
+            HudIcons.DrawLine(spriteBatch, _pixel, shipCenter, destScreen, Color.LimeGreen * 0.6f, 1.5f);
+            HudIcons.DrawRingArc(spriteBatch, _pixel, destScreen, 9f, 0f, 360f, Color.LimeGreen, 16, 2f);
+            spriteBatch.Draw(_pixel, new Vector2(destScreen.X - 1, destScreen.Y - 9), null, Color.LimeGreen, 0f, Vector2.Zero, new Vector2(2f, 18f), SpriteEffects.None, 0f);
+            spriteBatch.Draw(_pixel, new Vector2(destScreen.X - 9, destScreen.Y - 1), null, Color.LimeGreen, 0f, Vector2.Zero, new Vector2(18f, 2f), SpriteEffects.None, 0f);
+        }
 
         // Masked down to a round porthole last (M48 follow-up - "круговой обзор был только на
         // сканере а в штурвале его не было"): the console operator's own screen only - the pilot's

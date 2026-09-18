@@ -526,6 +526,28 @@ public sealed partial class ShipRenderer
         (int)(room.Width * PixelsPerUnit),
         (int)(room.Height * PixelsPerUnit));
 
+    // Direct user request ("на месте взорванного отсека будет всякие обломки") - Ship.WreckPatches
+    // (World.RoomHp.cs's ExplodeRoom), one static, non-flying decal per exploded room footprint.
+    // Same dark-debris palette as FieldRenderer.DrawShipDebris's own flying fragment, but drawn with
+    // the plain, unrotated GetRoomRect-style conversion every other ship-local decoration here uses -
+    // a wreck patch rides along with the ship's own frame (rotates/moves with it via origin, like a
+    // room), it does not tumble independently the way a detached ShipDebrisFragment does.
+    private void DrawWreckPatches(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
+    {
+        if (snapshot.WreckPatches is not { Count: > 0 } patches)
+            return;
+        foreach (var patch in patches)
+        {
+            var rect = new Rectangle(
+                (int)origin.X + (int)(patch.X * PixelsPerUnit),
+                (int)origin.Y + (int)(patch.Y * PixelsPerUnit),
+                (int)(patch.Width * PixelsPerUnit),
+                (int)(patch.Height * PixelsPerUnit));
+            spriteBatch.Draw(_pixel, rect, new Color(70, 62, 58));
+            DrawRectOutline(spriteBatch, rect, new Color(120, 108, 100), 2);
+        }
+    }
+
     // M62 - the "ghost" for a room still under construction: a translucent cyan fill (deliberately
     // not the hazard-red DrawBreachedWallBlock's pulse uses, since an in-progress build isn't a
     // problem to fix) plus a dashed-looking border (drawn as short segments rather than one solid

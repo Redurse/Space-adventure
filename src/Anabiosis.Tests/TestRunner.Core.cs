@@ -370,15 +370,6 @@ internal static partial class TestRunner
             MoveCharacterTo(world, playerId, (float)console.X, (float)console.Y);
             world.ApplyCommand(playerId, new ClientCommand(playerId, InteractPressed: true));
         }
-
-        // Every test helper that flies the ship by hand (SteerToward and everything built on it)
-        // was written against RCS's free rotation - it can turn in place at any speed. Arc (M41's
-        // default) can't turn at all from a dead stop, which breaks the whole "aim, then thrust"
-        // pattern those helpers depend on. Switching to RCS here, once, covers every caller
-        // uniformly - the same choice a real pilot would make for precision work (docking, lining
-        // up on a target) rather than something special-cased just for tests.
-        if (world.CreateSnapshot().ShipField.ControlMode == ShipControlMode.Arc)
-            world.ApplyCommand(playerId, new ClientCommand(playerId, ToggleControlModePressed: true));
     }
 
     // True once the ship's current field position is within `radius` of `point`.
@@ -388,24 +379,18 @@ internal static partial class TestRunner
         return (point - new Vec2(shipField.X, shipField.Y)).Length() < radius;
     }
 
-    // Flies to within a stone's throw of a world-space point and brakes to a dead stop there - the
-    // manual-flight replacement for the old autopilot's own guaranteed-stationary arrival, which
-    // several tests below rely on (starting at rest, to measure a single control input in
-    // isolation) and which real asteroid/EVA-target positions are calibrated relative to (they sit
+    // Flies to within a stone's throw of a world-space point and brakes to a dead stop there -
+    // several tests below rely on this (starting at rest, to measure a single control input in
+    // isolation) and real asteroid/EVA-target positions are calibrated relative to it (they sit
     // near the field's own asteroid-dense marker, not near wherever the ship happens to undock).
     private static void FlyNearAndStop(World world, Vec2 target, int playerId = 1)
     {
         FlyToward(world, target, () => NearPosition(world, target, 10f), playerId);
-        world.ApplyCommand(playerId, new ClientCommand(playerId, HelmStabilizePressed: true));
-        // How long this actually takes now depends on how fast the ship got going on the way here
-        // (World.Gravity.cs's dynamic speed cap, M50, can sit far above the old flat ArcMaxSpeed) -
-        // and EXACT zero is no longer reachable even in principle anywhere in the field: real
-        // gravity (M50) acts unconditionally, so auto-stabilize's own decel and that tick's tiny
-        // gravity nudge settle into a small nonzero steady state rather than ever cancelling to
-        // the bit-for-bit 0f the old, gravity-free physics could actually reach. A tight tolerance
-        // instead - negligible next to any real thrust, easily reached at a spot placed far from
-        // every body (AsteroidField.ClusterCenter) - and callers compare their own "before" reading
-        // against this same tolerance rather than exact equality now.
+
+        // World.Autopilot.cs's own arrival radius (6) is tighter than this helper's `until` (10), so
+        // the ship can still be mid-brake when the loop above exits - wait for it to actually settle
+        // near rest. EXACT zero is never reachable even in principle (real gravity, M50, acts
+        // unconditionally) - a tight tolerance instead, negligible next to any real thrust.
         for (var i = 0; i < 200 * 30; i++)
         {
             var field = world.CreateSnapshot().ShipField;
@@ -414,26 +399,21 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
         }
 
-        // The old autopilot's "guaranteed-stationary arrival" was rotation-locked at 0 too, not
+        // The old autopilot's own guaranteed-stationary arrival was rotation-locked at 0 too, not
         // just velocity-zeroed - several EVA/hull tests calibrated against this helper assume the
-        // ship's local frame lines up with world axes afterwards. Manual flight leaves the ship
-        // pointed wherever it was last steered, so square it back up explicitly.
-        for (var i = 0; i < 10 * 30 && MathF.Abs(NormalizeDegrees(world.CreateSnapshot().ShipField.RotationDegrees)) > 0.5f; i++)
-        {
-            var error = -NormalizeDegrees(world.CreateSnapshot().ShipField.RotationDegrees);
-            world.ApplyCommand(playerId, new ClientCommand(playerId, HelmTurn: MathF.Sign(error)));
-            world.Step(RealtimeStep);
-        }
-        world.ApplyCommand(playerId, new ClientCommand(playerId, HelmTurn: 0f));
-        world.Step(RealtimeStep);
+        // ship's local frame lines up with world axes afterwards, but a real destination click never
+        // promises any particular final heading (World.Autopilot.cs's own doc comment). Finish with
+        // the same test-only "skip to the end state" shortcut DebugPlaceShip already exists for,
+        // rather than fighting the autopilot for control of the stick to square it up for real.
+        world.CancelAutopilot();
+        var settled = world.CreateSnapshot().ShipField;
+        world.DebugPlaceShip(new Vec2(settled.X, settled.Y));
     }
 
-    private static float NormalizeDegrees(float degrees) => ((degrees % 360f) + 540f) % 360f - 180f;
-
-    // Undocks (if needed), ramps the Engine and mans the helm, then steers straight at a
-    // world-space point until `until` is satisfied or the tick budget runs out - the manual-flight
-    // replacement for every "TravelToPointId/TravelToX,Y then wait for arrival" pattern the old
-    // server-side autopilot used to cover (M39 removed it entirely - see World.Voyage.cs).
+    // Undocks (if needed), ramps the Engine and mans the helm, then sets an autopilot destination and
+    // waits for `until` to be satisfied or the tick budget to run out - World.Autopilot.cs (the "как
+    // в Cosmoteer" rework) does the actual flying/braking/asteroid-avoidance now; this is just the
+    // test-side wait loop that used to also have to steer by hand.
     // targetPointId, when the target IS a hostile sector's own marker (EnterBattle's case),
     // excludes it from AvoidIncidentalHazards below - the whole point there is to actually reach it.
     private static void FlyToward(World world, Vec2 target, Func<bool> until, int playerId = 1, int maxTicks = 120 * 30, string? targetPointId = null)
@@ -455,19 +435,17 @@ internal static partial class TestRunner
         // A real pilot backs off the berth before setting a course, rather than pointing straight
         // at wherever they're ultimately headed - the station's own structure is solid now
         // (World.ShipField.cs), and it sits right where the ship was just mated to it, so a
-        // beeline toward an arbitrary target can point straight back through it. SteerToward has
-        // no obstacle-avoidance of its own (it's a straight-line dumb pilot), so this peels the
-        // ship a short, safe distance clear of the berth first - same shape as backing a real ship
-        // out before turning onto a heading.
+        // beeline toward an arbitrary target can point straight back through it. The autopilot's
+        // own avoidance only knows about asteroids, not stations, so this still peels the ship a
+        // short, safe distance clear of the berth first - same shape as backing a real ship out
+        // before setting a course.
         if (wasDocked)
             PeelAwayFromBerth(world, berth, target, playerId);
 
-        // AvoidIncidentalHazards below steers clear of hostile sectors and asteroids - a station's
-        // own row (Station.Default.cs) sitting on the straight line to `target` is a different,
-        // solid obstacle it never accounts for, and the collision it causes has no ambush/retry
-        // mechanism to ever dislodge the ship from (TestRunner.StationDocking.cs's own doc comment
-        // on this). One fixed leg to a clearance waypoint first, the same fix ApproachBerth already
-        // needed.
+        // AvoidIncidentalHazards below steers clear of hostile sectors - World.Autopilot.cs's own
+        // avoidance only knows about asteroids (its own doc comment: "known limitations"), not
+        // marked points or a station's own row sitting on the straight line to `target`. One fixed
+        // leg to a clearance waypoint first, the same fix ApproachBerth already needed for stations.
         FlyClearOfOtherStations(world, target, targetPointId);
 
         for (var i = 0; i < maxTicks && !until(); i++)
@@ -475,8 +453,7 @@ internal static partial class TestRunner
             var shipField = world.CreateSnapshot().ShipField;
             var shipPos = new Vec2(shipField.X, shipField.Y);
             var steerTarget = AvoidIncidentalHazards(world, shipPos, target, targetPointId);
-            var command = SteerToward(world, playerId, steerTarget);
-            world.ApplyCommand(playerId, command);
+            world.ApplyCommand(playerId, SteerToward(world, playerId, steerTarget));
             world.Step(RealtimeStep);
         }
     }
@@ -566,11 +543,9 @@ internal static partial class TestRunner
     {
         var side = target.Y >= berth.Y ? 1f : -1f;
         var awayTarget = berth + new Vec2(0f, side * 40f);
+        world.ApplyCommand(playerId, SteerToward(world, playerId, awayTarget));
         for (var i = 0; i < 15 * 30 && !NearPosition(world, awayTarget, 15f); i++)
-        {
-            world.ApplyCommand(playerId, SteerToward(world, playerId, awayTarget));
             world.Step(RealtimeStep);
-        }
     }
 
     // Shells travel now (World.Projectiles.cs), so there has to be something out there to hit and
@@ -616,16 +591,11 @@ internal static partial class TestRunner
             world.Step(RealtimeStep);
     }
 
-    // Turns the helm toward a world position the way a player would: full throttle once roughly
-    // lined up, turning input scaled off, both dropping to zero once the heading error is tiny.
-    private static ClientCommand SteerToward(World world, int playerId, Vec2 target)
-    {
-        var shipField = world.CreateSnapshot().ShipField;
-        var toTarget = target - new Vec2(shipField.X, shipField.Y);
-        var bearingDegrees = MathF.Atan2((float)toTarget.Y, (float)toTarget.X) * (180f / MathF.PI) - world.Ship.ForwardDegrees;
-        var error = ((bearingDegrees - shipField.RotationDegrees) % 360f + 540f) % 360f - 180f;
-        return new ClientCommand(playerId,
-            HelmThrottle: MathF.Abs(error) < 25f ? 1f : 0f,
-            HelmTurn: MathF.Abs(error) < 2f ? 0f : MathF.Sign(error));
-    }
+    // Sets (or re-affirms) an autopilot destination the way a player's own click would - World.
+    // Autopilot.cs's StepAutopilot does the actual flying/braking/asteroid-avoidance from here.
+    // Called every tick by most of this helper's own callers, same as the old per-tick steering
+    // command it replaces; SetAutopilotDestination is idempotent against the same point, so
+    // resending it doesn't reset any progress.
+    private static ClientCommand SteerToward(World world, int playerId, Vec2 target) =>
+        new(playerId, AutopilotTargetX: (float)target.X, AutopilotTargetY: (float)target.Y);
 }

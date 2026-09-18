@@ -35,9 +35,6 @@ public sealed class GameClient
         bool acceptCargoQuestPressed = false,
         bool turnInCargoQuestPressed = false,
         ShipUpgradeTrack? purchaseUpgradeTrack = null,
-        float helmThrustX = 0,
-        float helmThrustY = 0,
-        bool helmStabilizePressed = false,
         string? doorToggleId = null,
         bool pushOffPressed = false,
         float pushOffDirectionX = 0,
@@ -76,7 +73,6 @@ public sealed class GameClient
         bool toggleDoorsLockedPressed = false,
         bool axeSwingHeld = false,
         string? sabotageDeviceId = null,
-        bool toggleControlModePressed = false,
         float scannerSweepDegrees = 0f,
         float? placeScannerMarkerAtX = null,
         float? placeScannerMarkerAtY = null,
@@ -92,7 +88,6 @@ public sealed class GameClient
         bool toggleLandingPressed = false,
         int? requestedTimeAccelerationLevel = null,
         string? engineerFocusDeviceId = null,
-        bool flipHeadingPressed = false,
         BuildRoomRequest? buildRoom = null,
         string? demolishRoomId = null,
         bool debugAddCreditsPressed = false,
@@ -107,8 +102,15 @@ public sealed class GameClient
         string? ammoStorageInteractId = null,
         string? stealCrateId = null,
         string? repairDeviceId = null,
-        string? terminalInteractId = null) =>
-        Send(new ClientCommand(PlayerId, (float)move.X, (float)move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrustX, helmThrustY, helmStabilizePressed, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed, scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode, jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed, fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, engineerFocusDeviceId, flipHeadingPressed, buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk, chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed, suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId));
+        string? terminalInteractId = null,
+        // Direct user request ("игрок сможет указать на карте точку... автопилот") - appended last,
+        // same reasoning as ClientCommand.AutopilotTargetX's own doc comment (avoids renumbering
+        // every argument in this method's own giant positional Send(new ClientCommand(...)) call).
+        float? autopilotTargetX = null,
+        float? autopilotTargetY = null,
+        bool autopilotStopPressed = false,
+        float? desiredFacingDegrees = null) =>
+        Send(new ClientCommand(PlayerId, (float)move.X, (float)move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode, jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed, fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, engineerFocusDeviceId, buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk, chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed, suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId, autopilotTargetX, autopilotTargetY, autopilotStopPressed, desiredFacingDegrees));
 
     public void PollSnapshots()
     {

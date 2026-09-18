@@ -11,4 +11,9 @@ public enum HelmTab
     Captain,
     Scientist,
     Engineer,
+    // Direct user request ("панелька была около рубки капитана" со скрытым хп отсеков) - a 4th tab,
+    // same "physically only reachable while actually sitting at Helm" gating every other tab already
+    // has for free (Helm-status is by proximity to the HelmConsole device, not a room name/tag - any
+    // custom-built bridge counts).
+    Compartments,
 }

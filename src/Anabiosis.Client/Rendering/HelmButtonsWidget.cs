@@ -8,22 +8,25 @@ namespace Anabiosis.Client.Rendering;
 
 // Window 2 of the helm redesign (M47 follow-up - "окно 2 - кнопки. стыковка, рсу, камеру"): a
 // small floating widget the player can drag anywhere out of the way of window 1's own near-
-// fullscreen schematic, carrying exactly the three buttons asked for. Replaces the button stack
-// HelmPanel used to draw fixed in its own corner - Stabilize stays a keyboard-only control (S),
-// since it wasn't one of the three named here.
+// fullscreen schematic. Replaces the button stack HelmPanel used to draw fixed in its own corner -
+// Stabilize stays a keyboard-only control (X), since it wasn't one of the buttons here. The РСУ/
+// Arc mode-toggle button this once carried is gone entirely (direct user request - "хочу чтобы
+// режим рсу был всегда включен... полностью удали кнопку", World.ShipField.cs's own doc comment)
+// - flight is always the flat, speed-independent turn rate now, nothing left to toggle.
 public sealed class HelmButtonsWidget
 {
     // Grown by 20px to fit the speed readout (M52 - "скорость корабля в виде мини панельки") as
     // its own row rather than fighting the title bar for space - every button rect below shifts
     // down by the same 20px so nothing overlaps it. Grown by another 16px (M55 follow-up) for the
-    // star-size readout.
-    public static readonly Point Size = new(170, 236);
+    // star-size readout. Shrunk back by 36px (direct user request - "хочу чтобы режим рсу был
+    // всегда включен... полностью удали кнопку") once the Arc/Rcs mode button below it was removed
+    // entirely - Cameras/Landing shifted up to fill the gap rather than leaving one.
+    public static readonly Point Size = new(170, 200);
     public const int TitleBarHeight = 16;
 
     private static readonly Rectangle DockButtonRectLocal = new(10, 84, 150, 30);
-    private static readonly Rectangle ControlModeButtonRectLocal = new(10, 120, 150, 30);
-    private static readonly Rectangle CamerasButtonRectLocal = new(10, 156, 150, 30);
-    private static readonly Rectangle LandingButtonRectLocal = new(10, 192, 150, 30);
+    private static readonly Rectangle CamerasButtonRectLocal = new(10, 120, 150, 30);
+    private static readonly Rectangle LandingButtonRectLocal = new(10, 156, 150, 30);
 
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
@@ -40,7 +43,6 @@ public sealed class HelmButtonsWidget
     public static Rectangle GetTitleBarRect(Vector2 origin) => new((int)origin.X, (int)origin.Y, Size.X, TitleBarHeight);
 
     public static Rectangle GetDockButtonRect(Vector2 origin) => Offset(DockButtonRectLocal, origin);
-    public static Rectangle GetControlModeButtonRect(Vector2 origin) => Offset(ControlModeButtonRectLocal, origin);
     public static Rectangle GetCamerasButtonRect(Vector2 origin) => Offset(CamerasButtonRectLocal, origin);
     public static Rectangle GetLandingButtonRect(Vector2 origin) => Offset(LandingButtonRectLocal, origin);
 
@@ -57,7 +59,6 @@ public sealed class HelmButtonsWidget
         DrawSpeedReadout(spriteBatch, snapshot.ShipField, origin);
         DrawStarSizeReadout(spriteBatch, snapshot.CurrentSystemId, origin);
         DrawDockButton(spriteBatch, snapshot, origin);
-        DrawControlModeButton(spriteBatch, snapshot.ShipField, origin);
         DrawCamerasButton(spriteBatch, origin, camerasPowered, camerasActive);
         DrawLandingButton(spriteBatch, snapshot, origin);
     }
@@ -145,16 +146,6 @@ public sealed class HelmButtonsWidget
             _cachedStarRadius = CelestialBodyGenerator.Generate(currentSystemId).Single(b => b.ParentId is null).Radius;
         }
         spriteBatch.DrawString(_font, $"Радиус звезды: {_cachedStarRadius:0} ед", origin + new Vector2(10, 34), Color.Orange, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
-    }
-
-    // Click toggles the same Arc/Rcs mode the Z key does (World.ShipField.cs, M41) - a mouse-only
-    // way to reach the button the widget was specifically asked to carry.
-    private void DrawControlModeButton(SpriteBatch spriteBatch, ShipFieldState shipField, Vector2 origin)
-    {
-        var rect = GetControlModeButtonRect(origin);
-        var arc = shipField.ControlMode == ShipControlMode.Arc;
-        spriteBatch.Draw(_pixel, rect, arc ? new Color(50, 90, 120) : new Color(120, 80, 30));
-        spriteBatch.DrawString(_font, arc ? "РСУ: ВИРАЖ" : "РСУ: СВОБОДНОЕ", new Vector2(rect.X + 6, rect.Y + 9), Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 
     private void DrawCamerasButton(SpriteBatch spriteBatch, Vector2 origin, bool powered, bool active)

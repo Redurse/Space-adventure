@@ -91,63 +91,6 @@ public partial class Game1
         return -90f - mount.FireDegrees(manned.State.AimDegrees);
     }
 
-    // M55 - "чтобы при близости к поверхности планеты камера поворачивалась вертикально...
-    // чтобы было проще садиться": the same whole-scene rotation trick TurretViewRotationDegrees
-    // uses, blended in as the ship nears a landable body's surface so "away from that body" reads
-    // as screen-up - a landing approach aid, not physics (FieldRenderer already regenerates body
-    // positions from the same pure functions World.Gravity.cs computes gravity from, so this needs
-    // no protocol field of its own). Only while still actually flying - once landed the surface's
-    // own fixed camera (ComputeStationCamera-style) takes over and this never runs.
-    private const float LandingApproachBlendRadii = 4f;
-
-    private float LandingApproachRotationDegrees(WorldSnapshot snapshot)
-    {
-        // M59 follow-up - "корабль относительно персонажа не расположен прямо" while docked: bodies
-        // got rescaled back down to Cosmoteer size (small planets/moons, M59), so a station riding
-        // close to its own host planet can now sit well within this blend's own radius - a docked,
-        // perfectly stationary ship has no business tilting the whole scene as if it were on final
-        // approach to landing. LandedBodyId already guards the "already landed" case; docked needs
-        // the exact same early-out.
-        if (snapshot.Voyage.LandedBodyId is not null || snapshot.Voyage.DockedPointId is not null)
-            return 0f;
-        var shipPosition = new Vec2(snapshot.ShipField.X, snapshot.ShipField.Y);
-        if (_fieldRenderer.NearestLandableBodyApproach(snapshot, shipPosition) is not { } approach)
-            return 0f;
-
-        // M59 follow-up - "после отстыковки камера странно повернулась": the DockedPointId guard
-        // above only covers the instant still sitting AT the berth - a station can now sit as close
-        // as ~1.4 body-radii above its own host planet's surface (GalaxyMap.cs's own
-        // StationHostOffsetClearanceFraction(0.8) against CelestialBodyGenerator.ClearanceRadius,
-        // Radius*3), comfortably inside this blend's own multi-radius start distance at the new
-        // Cosmoteer scale - so the ship kept tilting the instant it left the berth, still sitting
-        // right next to that same station. This is a landing-approach aid, not a "near any planet"
-        // one: it should only ever engage while the body's own surface is genuinely the closer thing
-        // to head for than the station just left behind (or any other station in range) - never while
-        // still effectively in a station's own docking neighbourhood.
-        var nearestStationDistance = snapshot.GalaxyPoints
-            .Where(p => p.Kind == GalaxyPointKind.Station)
-            .Select(p => (p.Position - shipPosition).Length())
-            .DefaultIfEmpty(double.MaxValue)
-            .Min();
-        if (approach.SurfaceDistance >= nearestStationDistance)
-            return 0f;
-
-        // Starts blending in a few body-radii out, fully aligned by the time the surface is
-        // actually reached. M59 follow-up: bodies are Cosmoteer-scale now (small radii), not the
-        // huge KSP-scale ones this comment used to assume - "a few body-radii out" is correspondingly
-        // much closer in absolute terms, so this only ever engages on a real, close approach to a
-        // SMALL body, same intent as before just at the new scale.
-        var blendDistance = approach.BodyRadius * LandingApproachBlendRadii;
-        var blend = MathHelper.Clamp(1f - approach.SurfaceDistance / blendDistance, 0f, 1f);
-        if (blend <= 0f)
-            return 0f;
-
-        var localAway = ShipLocalFrame.ToLocalDirection(approach.AwayFromBody, snapshot.ShipField.RotationDegrees);
-        var localAngleDegrees = MathF.Atan2((float)localAway.Y, (float)localAway.X) * (180f / MathF.PI);
-        var targetRotation = -90f - localAngleDegrees;
-        return targetRotation * blend;
-    }
-
     private (Vector2 Origin, Vec2 HullCenter, Vec2 Anchor) ComputeCamera(WorldSnapshot snapshot, CharacterState me)
     {
         var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);

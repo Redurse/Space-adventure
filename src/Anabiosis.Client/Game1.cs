@@ -108,6 +108,10 @@ public partial class Game1 : Game
     // here entirely - fixed to the panel that's actually drawn at this origin now, closing a 40px
     // gap that had crept in between its right edge and the intended margin.
     private static readonly Vector2 EngineerDevicePanelOrigin = new(DesignWidth - EngineerDevicePanel.Width - 12, 12);
+    // Direct user request ("панелька была около рубки капитана") - same fixed top-right corner
+    // EngineerDevicePanelOrigin already uses, since only one of the two ever shows at once (they're
+    // different helm tabs).
+    private static readonly Vector2 RoomHpPanelOrigin = new(DesignWidth - RoomHpPanel.Width - 12, 12);
     // M57 - the tab switcher sits at a fixed spot regardless of tab (same "mode switch, not an
     // instrument" reasoning EngineerDevicePanelOrigin's own comment gives for staying fixed rather
     // than draggable) - bottom-left, clear of both the always-on TEMP-DIAG FPS/Sim overlay (fixed
@@ -208,6 +212,7 @@ public partial class Game1 : Game
     // etc.) - resent every tick as-is (ClientCommand.EngineerFocusDeviceId's own doc comment) so
     // standing on a different tab or clicking a different row actually changes/clears it.
     private EngineerDevicePanel _engineerDevicePanel = null!;
+    private RoomHpPanel _roomHpPanel = null!;
     private string? _engineerFocusDeviceId;
     // Window 2's own dragged position (Game1.PanelDrag.cs's UpdateHelmWidgetDrag) - not keyed
     // through _panelPositions like the block-console panels, since this widget is visible whenever
@@ -325,7 +330,6 @@ public partial class Game1 : Game
     private double _invalidDropFlashUntil = double.NegativeInfinity;
     private const double InvalidDropFlashSeconds = 0.35;
     private ButtonState _prevDragButton = ButtonState.Released;
-    private bool _helmStabilizeLatched;
     private SlotRef? _lastClickedSlot;
     private double _lastSlotClickSeconds = double.NegativeInfinity;
     private int _selectedPowerSystem = -1;
@@ -399,10 +403,12 @@ public partial class Game1 : Game
     private string? _pendingDemolishRoomId;
     private QuestKind? _pendingQuestKind; // same pattern, for the Administrator's job board
     private bool _pendingDock; // and for the helm's "Стыковка" button
-    private bool _pendingToggleControlMode; // window 2's own РСУ/ВИРАЖ button, same edge as the Z key
     private bool _pendingToggleLanding; // window 2's own "Посадка"/"Взлёт" button, same edge as the L key (M55)
+    // Direct user request ("игрок сможет указать на карте точку куда корабль должен долететь") -
+    // a click on the Captain tab's own map (HandleMouseClick's own new branch), same
+    // capture-send-clear lifecycle as every other pending field here.
+    private Vector2? _pendingAutopilotTarget;
     private int? _pendingTimeAccelerationLevel; // captain tab's own ×1/×10/×100/×1000 buttons (M57)
-    private bool _pendingFlipHeading; // captain tab's own "Флип" button (M57)
     private bool _pendingScannerPing; // the scanner console's own "Скан" button (M47 follow-up)
     private string? _pendingHireCandidateId; // and for the Recruiter's board
     private PinRef? _pendingPinInteract; // wire-laying (World.Wiring.cs), M19-M23
@@ -671,6 +677,7 @@ public partial class Game1 : Game
         _helmTabBar = new HelmTabBar(GraphicsDevice, _font);
         _timeAccelerationWidget = new TimeAccelerationWidget(GraphicsDevice, _font);
         _engineerDevicePanel = new EngineerDevicePanel(GraphicsDevice, _font);
+        _roomHpPanel = new RoomHpPanel(GraphicsDevice, _font);
         _scannerModeWidget = new ScannerModeWidget(GraphicsDevice, _font);
         DrawLoadingFrame("ЗАГРУЗКА...", 25);
 
@@ -1101,13 +1108,7 @@ public partial class Game1 : Game
         if (cheatPanelToggleDown && !_prevGameplayKeyboard.IsKeyDown(Keys.OemTilde) && !_pauseMenuOpen)
             _cheatPanelOpen = !_cheatPanelOpen;
 
-        // Z swaps between Arc (banked turning, tied to speed) and Rcs (free rotation) at the helm
-        // (World.ShipField.cs, M41) - edge-triggered like M above, or holding it down would flip
-        // the mode every frame.
-        var toggleHelmModeKey = _keyBindings.Get(PlayerAction.ToggleHelmMode);
-        var toggleControlModeKeyPressed = isAtHelm && !_chatFocused && keyboard.IsKeyDown(toggleHelmModeKey) && !_prevGameplayKeyboard.IsKeyDown(toggleHelmModeKey);
-
-        // L lands/takes off (M55) - same edge-triggered shape as Z above. World.PlanetLanding.cs's
+        // L lands/takes off (M55) - same edge-triggered shape as M above. World.PlanetLanding.cs's
         // own CanLandNow is what actually refuses to arm it away from a landable body's surface, so
         // this is sent unconditionally too.
         var toggleLandingKey = _keyBindings.Get(PlayerAction.ToggleLanding);
@@ -1256,13 +1257,16 @@ public partial class Game1 : Game
         // when the map isn't open (they just accumulate into fields nothing else looks at then).
         var mapOpen = _openBlock.Kind == BlockKind.Navigation;
         // Window 1 of the helm redesign (M47 follow-up) reuses this exact same schematic panel -
-        // the pilot can still pan/zoom its own free camera, just never drives the sweep beam or
-        // drops a marker from up there (those stay gated on mapOpen alone, below).
+        // the Scientist tab can still pan/zoom its own free camera, just never drives the sweep
+        // beam or drops a marker from up there (those stay gated on mapOpen alone, below). Excluded
+        // for the Captain tab specifically (direct user request - "при зажатом ПКМ... наведён") -
+        // RMB there is now the ship's own facing-aim override (Game1.cs's own new desiredFacingDegrees
+        // above), and one button can't drive both at once.
         // The console's own screen is ship-locked now (M48 follow-up - "привяжи сканер ровно к
         // кораблю, чтобы в менюшке сканера в центре всегда был корабль") - right-drag has nothing
         // left to move there (GalaxyMapPanel.Draw's own !pilotView branch ignores panOffset
         // entirely), so only the helm's still-free camera reads it here.
-        if (isAtHelm && mouse.RightButton == ButtonState.Pressed)
+        if (isAtHelm && _helmTab != HelmTab.Captain && mouse.RightButton == ButtonState.Pressed)
         {
             if (_mapPanLastMouse is { } lastMouse)
                 _mapPanOffset += new Vector2(mouse.Position.X - lastMouse.X, mouse.Position.Y - lastMouse.Y);
@@ -1461,19 +1465,43 @@ public partial class Game1 : Game
         // sends - only when nothing else already claimed this tick's toggle.
         if (toggleHoldSlotIndex < 0 && !distributionOpen && ReadInventoryHotkeySlot(keyboard) is { } hotkeySlot)
             toggleHoldSlotIndex = hotkeySlot;
-        // Stabilization is a mode the pilot leaves on, not a one-frame pulse: the server takes it
-        // as an instruction for this tick only, so the client latches it and keeps sending it until
-        // the controls are touched again.
-        // Window 3's search box eats W/A/D/S/X/Z as typed characters while focused (M47 follow-up) -
-        // the ship just coasts on whatever heading it already had, same as while any other console
-        // is open, rather than the pilot's own typing also steering it.
-        var flightControlsLive = isAtHelm && !_chatFocused;
-        if (flightControlsLive && keyboard.IsKeyDown(_keyBindings.Get(PlayerAction.HelmStabilize)))
-            _helmStabilizeLatched = true;
-        var (helmThrottle, helmTurn) = flightControlsLive ? ReadHelmInput(keyboard, _keyBindings) : (0f, 0f);
-        if (helmThrottle != 0f || helmTurn != 0f)
-            _helmStabilizeLatched = false; // taking the controls back cancels the brake
-        var stabilizeEngaged = isAtHelm && _helmStabilizeLatched;
+        // Direct user request ("уберём возможность управлять кораблём игроку... автопилот") -
+        // replaces the old manual stick reading entirely. AutopilotStop ("Стоп") is edge-triggered
+        // like every other button press; the destination click itself already landed in
+        // _pendingAutopilotTarget via HandleMouseClick's own new branch. Both, and the RMB facing
+        // override below, are Captain-tab-only (the same scope every other pilot control - Dock/
+        // Landing/time-accel - already has), and (like the old manual controls) suppressed while
+        // typing in chat.
+        var pilotControlsLive = isAtHelm && !_chatFocused && _helmTab == HelmTab.Captain;
+        var autopilotStopKey = _keyBindings.Get(PlayerAction.AutopilotStop);
+        var autopilotStopPressed = pilotControlsLive && keyboard.IsKeyDown(autopilotStopKey) && !_prevGameplayKeyboard.IsKeyDown(autopilotStopKey);
+        var autopilotTarget = _pendingAutopilotTarget;
+        _pendingAutopilotTarget = null;
+
+        // Direct user request ("при зажатом ПКМ возможность выбрать в какую сторону корабль должен
+        // быть наведён") - holding RMB on the Captain's own map aims the nose at the cursor's
+        // bearing FROM the ship's own screen position, the same "compute a world bearing from
+        // screen position" idea ReadTurretAimTowardCursor already uses for a turret, just against
+        // this map's own camera instead of the exterior scene's. Sent as null the instant RMB is
+        // released (World.Autopilot.cs's own _autopilotFacingOverrideDegrees is written fresh from
+        // this every tick, never latched) - this is also why RMB no longer pans the Captain's own
+        // copy of the map below (GalaxyMapPanel's free-pan drag): the same button can't do both at
+        // once, and aiming is the more central ask. Scientist keeps the drag-pan behavior, since it
+        // has no facing control of its own to fight it for the button.
+        float? desiredFacingDegrees = null;
+        if (pilotControlsLive && mouse.RightButton == ButtonState.Pressed && _client.LatestSnapshot is { } facingSnapshot)
+        {
+            var facingSystem = facingSnapshot.StarSystems.First(s => s.Id == facingSnapshot.CurrentSystemId);
+            var facingStarPosition = new Vec2(facingSystem.Width / 2f, facingSystem.Height / 2f);
+            var facingScreenCenter = new Vector2(DesignWidth / 2f, DesignHeight / 2f);
+            var facingMapOrigin = GalaxyMapPanel.ComputeMapOrigin(facingScreenCenter, facingStarPosition, _mapZoom, _mapPanOffset);
+            var shipMapPosition = facingSnapshot.Voyage.ShipMapPosition;
+            var shipScreen = facingMapOrigin + new Vector2((float)shipMapPosition.X, (float)shipMapPosition.Y) * GalaxyMapPanel.PixelsPerUnit * _mapZoom;
+            var toCursor = new Vector2(_designMouse.X, _designMouse.Y) - shipScreen;
+            if (toCursor.LengthSquared() > 1f)
+                desiredFacingDegrees = MathF.Atan2(toCursor.Y, toCursor.X) * (180f / MathF.PI);
+        }
+
         var pushOffDirection = isOutside ? ReadPushOffDirection() : Vec2.Zero;
         // The head follows the cursor whenever the player is a person standing somewhere - not at
         // a console, where the mouse belongs to that console's own controls.
@@ -1503,7 +1531,6 @@ public partial class Game1 : Game
         var questKind = _pendingQuestKind;
         var dockPressed = _pendingDock;
         var hireCandidateId = _pendingHireCandidateId;
-        var toggleControlModePressed = toggleControlModeKeyPressed || _pendingToggleControlMode;
         var toggleLandingPressed = toggleLandingKeyPressed || _pendingToggleLanding;
         // M57 - leaving the Engineer tab drops the remote-repair focus too, the same way standing
         // up from the helm already does server-side (World.Interact.cs) - otherwise switching to
@@ -1511,16 +1538,13 @@ public partial class Game1 : Game
         if (_helmTab != HelmTab.Engineer)
             _engineerFocusDeviceId = null;
         var requestedTimeAccelerationLevel = _pendingTimeAccelerationLevel;
-        var flipHeadingPressed = _pendingFlipHeading;
         var scannerPingPressed = _pendingScannerPing;
         var requestedScannerMode = _requestedScannerMode;
         _pendingQuestKind = null;
         _pendingDock = false;
         _pendingHireCandidateId = null;
-        _pendingToggleControlMode = false;
         _pendingToggleLanding = false;
         _pendingTimeAccelerationLevel = null;
-        _pendingFlipHeading = false;
         _pendingScannerPing = false;
 
         var tankAttach = _pendingTankAttach;
@@ -1670,17 +1694,19 @@ public partial class Game1 : Game
         // capture-send-clear lifecycle as chatMessage above, so a mic buffer is never resent.
         var voiceChunk = _voiceCapture.TakePendingChunk();
 
-        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, helmThrottle, helmTurn, stabilizeEngaged, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
+        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
             _client.LatestSnapshot?.ServerTimestampMs ?? 0, (float?)wireBendAt?.X, (float?)wireBendAt?.Y,
-            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, toggleControlModePressed,
+            toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId,
             scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode,
             jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed,
-            fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, _engineerFocusDeviceId, flipHeadingPressed,
+            fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, _engineerFocusDeviceId,
             buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk,
             chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed,
-            suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId);
+            suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId,
+            autopilotTargetX: autopilotTarget?.X, autopilotTargetY: autopilotTarget?.Y,
+            autopilotStopPressed: autopilotStopPressed, desiredFacingDegrees: desiredFacingDegrees);
         _client.PollSnapshots();
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
@@ -1993,11 +2019,13 @@ public partial class Game1 : Game
         var sceneZoom = _client.LatestSnapshot is { } zoomSnapshot ? SceneZoom(zoomSnapshot) : 1f;
         // Also spun around the screen's own center (TurretViewRotationDegrees) while manning a
         // turret, so the gun's facing direction reads as screen-up - identity (0°) everywhere
-        // else. The pivot is the same point ComputeCamera anchors the manned turret's view on, so
-        // rotating around it leaves the turret itself fixed at screen-center instead of swinging
-        // it off to one side.
-        var sceneRotationDegrees = _client.LatestSnapshot is { } rotSnapshot
-            ? MannedTurret(rotSnapshot) is not null ? TurretViewRotationDegrees(rotSnapshot) : LandingApproachRotationDegrees(rotSnapshot)
+        // else (direct user request - the scene used to also tilt on approach to a planet, removed
+        // entirely: TurretViewRotationDegrees is the only thing left that rotates the scene). The
+        // pivot is the same point ComputeCamera anchors the manned turret's view on, so rotating
+        // around it leaves the turret itself fixed at screen-center instead of swinging it off to
+        // one side.
+        var sceneRotationDegrees = _client.LatestSnapshot is { } rotSnapshot && MannedTurret(rotSnapshot) is not null
+            ? TurretViewRotationDegrees(rotSnapshot)
             : 0f;
         var screenPivot = (WorldViewportOrigin + WorldViewportSize / 2f) / sceneZoom;
         var sceneTransform =
@@ -2060,7 +2088,7 @@ public partial class Game1 : Game
                         // headed to fly it - same near-fullscreen map window 1 always showed,
                         // just now specifically the captain's own tab rather than shared with
                         // everyone at helm regardless of what they were doing.
-                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true);
+                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true, captainHelmView: true);
                         _helmButtonsWidget.Draw(_spriteBatch, snapshot, _helmWidgetPosition,
                             snapshot.Cameras.Count > 0 && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f, _externalCameraMode);
                         _timeAccelerationWidget.Draw(_spriteBatch, snapshot.TimeAccelerationLevel, _helmWidgetPosition + new Vector2(0, -46));
@@ -2070,6 +2098,9 @@ public partial class Game1 : Game
                         break;
                     case HelmTab.Engineer:
                         _engineerDevicePanel.Draw(_spriteBatch, snapshot, EngineerDevicePanelOrigin, _engineerFocusDeviceId);
+                        break;
+                    case HelmTab.Compartments:
+                        _roomHpPanel.Draw(_spriteBatch, snapshot, RoomHpPanelOrigin);
                         break;
                 }
                 _helmTabBar.Draw(_spriteBatch, _helmTab, HelmTabBarOrigin, _designMouse);
@@ -2096,6 +2127,11 @@ public partial class Game1 : Game
                 // TEMP-DIAG-BEGIN (M51 - Scene phase was 183-514ms; narrowing to which renderer)
                 var diagSubStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 // TEMP-DIAG-END
+                // Direct user request ("сделай визуально чтобы было видно что планета на заднем
+                // плане") - the body's own disc/ground drawn BEFORE the ship interior/characters, so
+                // the ship visibly paints over a body it's flying above or landed on instead of the
+                // other way round (FieldRenderer.DrawCelestialBackground's own doc comment).
+                _fieldRenderer.DrawCelestialBackground(_spriteBatch, snapshot, origin, hullCenter);
                 _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles);
                 // TEMP-DIAG-BEGIN
                 _diagShipMs = diagSubStopwatch.Elapsed.TotalMilliseconds;

@@ -92,19 +92,22 @@ internal static partial class TestRunner
         for (var i = 0; i < 60; i++)
             world.Step(RealtimeStep);
 
-        // Steer straight at the nearest rock and hold it - SteerToward (TestRunner.Core.cs) is the
-        // same throttle/turn feedback every interplanetary flight test already uses, just aimed at
-        // a local target instead of a system-scale one.
+        // Steer straight at the nearest rock and hold it - World.Autopilot.cs's own avoidance would
+        // actively steer AROUND a surface rock (ActiveObstacles includes PlanetSurface's own rocks
+        // while landed), which would defeat a test that deliberately wants a collision, so this uses
+        // the same test-only DebugSetHelmInput bypass TestRunner.HelmAndHull.cs's own deliberate
+        // asteroid-collision test uses instead of a destination click.
         for (var i = 0; i < 60 * 30; i++)
         {
-            world.ApplyCommand(1, SteerToward(world, 1, target.Position));
-            world.Step(RealtimeStep);
             var shipField = world.CreateSnapshot().ShipField;
+            var toRock = target.Position - new Vec2(shipField.X, shipField.Y);
+            var bearingDegrees = MathF.Atan2((float)toRock.Y, (float)toRock.X) * (180f / MathF.PI) - world.Ship.ForwardDegrees;
+            var error = ((bearingDegrees - shipField.RotationDegrees) % 360f + 540f) % 360f - 180f;
+            world.DebugSetHelmInput(MathF.Abs(error) < 25f ? 1f : 0f, 0f, MathF.Abs(error) < 2f ? 0f : MathF.Sign(error));
+            world.Step(RealtimeStep);
             if ((new Vec2(shipField.X, shipField.Y) - target.Position).Length() < target.Radius + 10f)
                 break; // close enough that a real collision would already have stopped it
         }
-        world.ApplyCommand(1, new ClientCommand(1, HelmThrottle: 0f, HelmTurn: 0f));
-        world.Step(RealtimeStep);
 
         var final = world.CreateSnapshot().ShipField;
         var distanceToRockCentre = (new Vec2(final.X, final.Y) - target.Position).Length();

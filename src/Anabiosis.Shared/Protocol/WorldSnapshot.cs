@@ -217,4 +217,18 @@ public sealed record WorldSnapshot(
     // Doors/DoorStates already uses - resent every tick like every other list here (no delta/diff
     // protocol in this codebase). Null/empty for every hand-authored hull.
     IReadOnlyList<ShipDoorEdge>? DoorEdges = null,
-    IReadOnlyList<DoorEdgeState>? DoorEdgeStates = null);
+    IReadOnlyList<DoorEdgeState>? DoorEdgeStates = null,
+    // Direct user request ("скрытое число хп" отсека, "к примеру тестовые 1000") - one entry per
+    // still-existing Room (World.RoomHp.cs), for the new "Отсеки" helm tab to show. Appended at the
+    // end like every other field above, for the same reason (doesn't shift positional args at
+    // World.cs's CreateSnapshot call site).
+    IReadOnlyList<RoomHpState>? RoomHp = null,
+    // Direct user request ("на месте взорванного отсека будет всякие обломки") - Ship.WreckPatches
+    // itself (World.RoomHp.cs's ExplodeRoom), resent verbatim so the client can draw a static
+    // wreckage decal over a room footprint that no longer exists. Appended last, same reasoning as
+    // RoomHp above.
+    IReadOnlyList<RectF>? WreckPatches = null,
+    // Direct user request ("уберём возможность управлять кораблём игроку... автопилот") -
+    // World.Autopilot.cs's own current course, so the client can draw a destination marker/line.
+    // Appended last, same reasoning as every other field above.
+    AutopilotState? Autopilot = null);

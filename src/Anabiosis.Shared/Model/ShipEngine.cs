@@ -25,6 +25,13 @@ public sealed record ShipEngine(string Id, string RoomId, float X, float Y, Tile
     public Vec2 BulkheadPosition => ControlPosition + Step(Facing);
     public Vec2 NozzlePosition => ControlPosition + Step(Facing) * 2;
 
+    // Direct user request ("сделай тягу зависимой от расположения движков") - the unit direction
+    // this engine's own exhaust physically points (same convention Bulkhead/NozzlePosition already
+    // use), public so World.Engines.cs's real per-engine force model can read it: reaction thrust
+    // pushes the ship in the OPPOSITE direction from this (a nozzle facing South pushes the ship
+    // North), same as any real rocket nozzle.
+    public Vec2 FacingUnitVector => Step(Facing);
+
     private static Vec2 Step(TileSide side) => side switch
     {
         TileSide.North => new Vec2(0, -1),

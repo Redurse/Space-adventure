@@ -19,12 +19,12 @@ namespace Anabiosis.Shared.Protocol;
 // PurchaseUpgradeTrack is edge-triggered like BuyItemType (null = no click that frame) — buying
 // the next level of a ship upgrade from the station's Mechanic (game_design.md section 9, M13
 // scope), same docked-only gate.
-// HelmThrottle/HelmTurn are the helm's flight controls ([-1,1] each, held rather than edge-triggered —
-// game_design.md Phase 3, M15), sent continuously like PowerDirection; only applied server-side
-// while the sender is actually manning the helm (World.ShipField.cs), and otherwise ignored rather
-// than zeroing anything, so the last commanded thrust keeps being applied after standing up.
-// HelmStabilizePressed is edge-triggered like InteractPressed — engages auto-stabilize, which
-// kills the ship's drift and holds position until a new thrust vector is given.
+// Direct user request ("уберём возможность управлять кораблём игроку... автопилот") - manual
+// flight (the old HelmThrottle/HelmStrafe/HelmTurn/HelmStabilizePressed joystick, game_design.md
+// Phase 3, M15) is gone; the helm's own flight-related fields now live at the very end of this
+// record (AutopilotTargetX/Y, AutopilotStopPressed, DesiredFacingDegrees - see their own doc
+// comments there) since World.Autopilot.cs's StepAutopilot is the only thing that still needs to
+// know about them, and this record's own established convention is to append rather than insert.
 // DoorToggleId is edge-triggered like BuyItemType (null = no click that frame) — clicking
 // a door (interior Door or an AirlockOuterDoor to vacuum) flips it open/closed (game_design.md
 // Phase 3, M16). No proximity check server-side, same trusted-client reasoning as the other
@@ -48,13 +48,6 @@ public sealed record ClientCommand(
     bool AcceptCargoQuestPressed = false,
     bool TurnInCargoQuestPressed = false,
     ShipUpgradeTrack? PurchaseUpgradeTrack = null,
-    // The helm flies the ship the way you'd expect to fly one: HelmThrottle is the engines along
-    // the nose (positive ahead, negative astern), HelmTurn swings the bow (-1 left, +1 right).
-    // Heading is something the pilot holds, not something derived from where the ship happens to be
-    // drifting - which is what a joystick that set a world-space vector made it.
-    float HelmThrottle = 0,
-    float HelmTurn = 0,
-    bool HelmStabilizePressed = false,
     string? DoorToggleId = null,
     bool PushOffPressed = false,
     float PushOffDirectionX = 0,
@@ -179,12 +172,8 @@ public sealed record ClientCommand(
     // frame. Same trusted-client, no-proximity-check convention as those two: the client already
     // gated the click on NearEnough before ever setting this.
     string? SabotageDeviceId = null,
-    // Edge-triggered like HelmStabilizePressed - flips the helm between ShipControlMode.Arc and
-    // .Rcs (World.ShipField.cs, M41), the Z key at the client. Only meaningful while actually
-    // manning the helm, same as HelmThrottle/HelmTurn/HelmStabilizePressed.
-    bool ToggleControlModePressed = false,
     // The navigation console's scanner (World.Scanner.cs, M44): a world-space bearing in degrees,
-    // sent continuously like HelmThrottle - only actually applied server-side while this player is
+    // sent continuously like PowerDirection - only actually applied server-side while this player is
     // standing at NavigationConsole (same InteractionRadius gate the reactor's own levers use), so
     // it's simply ignored the rest of the time rather than needing its own separate "am I at the
     // console" flag.
@@ -229,7 +218,7 @@ public sealed record ClientCommand(
     // last, never inserted in the middle.
     bool ToggleLandingPressed = false,
     // M57 - "режим ускорения времени": null means "no change requested this tick" (the level is
-    // sticky server-side, not something re-sent every frame the way HelmThrottle is), a value means
+    // sticky server-side, not something re-sent every frame the way ScannerSweepDegrees is), a value means
     // "set the level to exactly this" - only 1/10/100/1000 are meaningful, World.cs's handler
     // ignores anything else. Only takes effect while manning the helm - this is a captain-tab
     // button, not a free-standing menu. Appended at the very end for the same
@@ -239,12 +228,8 @@ public sealed record ClientCommand(
     // remotely focused on repairing. Unlike every edge-triggered "...Pressed" field above, this is
     // resent every tick with the client's own current selection (Game1.cs's _engineerFocusDeviceId,
     // never reset to null after sending) - null is a real "not focused on anything" state, the same
-    // "zero/null overwrites, it's not 'no input'" convention HelmThrottle already established.
+    // "zero/null overwrites, it's not 'no input'" convention PowerDirection/ScannerSweepDegrees already establish.
     string? EngineerFocusDeviceId = null,
-    // M57 - the captain tab's "Флип" button: a one-press 180° turn for a flip-and-burn maneuver
-    // (World.ShipField.cs's FlipHeading), edge-triggered same shape as ToggleControlModePressed
-    // rather than a held/continuous input.
-    bool FlipHeadingPressed = false,
     // M60 - "строить отсеки по ходу игры": which RoomCatalog entry to append, and where (world
     // units, same frame as every other placed device). Edge-triggered, same docked-at-a-Shipwright
     // gate (World.ShipBuilding.cs's TryBuildRoom). Appended at the very end
@@ -295,4 +280,22 @@ public sealed record ClientCommand(
     // single-toggle-key TerminalTogglePressed with a click-on-the-specific-terminal id, same
     // "id says WHICH candidate" shape as SuitLockerInteractId above (World.ClickInteract.cs's
     // TryTerminalInteractById re-checks room/distance itself).
-    string? TerminalInteractId = null);
+    string? TerminalInteractId = null,
+    // Direct user request ("игрок сможет указать на карте точку куда корабль должен долететь") -
+    // a click on the field while at the helm, world-space units. Edge-triggered like DoorToggleId -
+    // null means no click this tick; World.Autopilot.cs's SetAutopilotDestination is the only thing
+    // that reads this. Appended at the very end, same never-insert-in-the-middle reason every other
+    // field's own comment here already explains.
+    float? AutopilotTargetX = null,
+    float? AutopilotTargetY = null,
+    // The helm's own "Стоп" - edge-triggered like DockPressed, cancels whatever destination is
+    // currently active (World.Autopilot.cs's CancelAutopilot) and lets the ship coast to a stop.
+    bool AutopilotStopPressed = false,
+    // Direct user request ("при зажатом ПКМ возможность выбрать в какую сторону корабль должен
+    // быть наведён") - a world-space bearing in degrees, sent continuously ONLY while the player
+    // actually holds RMB; null the instant they let go. Unlike this record's usual "zero/null
+    // overwrites, it's not 'no input'" convention (PowerDirection/ScannerSweepDegrees above), null
+    // HERE deliberately means "no override" - releasing RMB is meant to hand facing straight back
+    // to World.Autopilot.cs's own default (nose points along the direction of travel), not freeze
+    // the last aimed bearing forever the way a held throttle would.
+    float? DesiredFacingDegrees = null);

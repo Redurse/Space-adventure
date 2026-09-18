@@ -15,18 +15,17 @@ namespace Anabiosis.Client.Rendering;
 // (GalaxyMapPanel.FieldContent.cs).
 public sealed partial class GalaxyMapPanel
 {
-    // Own-ship marker (M47 follow-up - "видно схематично корабль и куда смотрит нос... в виде
-    // стрелочки в навигаторе"): a compact heading arrow at ordinary zoom, replaced by the real
-    // room-by-room hull (the same rotated schematic HelmPanel's own radar used to draw before it
-    // moved onto this map) once zoomed in far enough to actually read it - the arrow alone reads
-    // as a blob at that scale, but the real hull is legible. Either way, a separate vector for the
-    // ship's actual velocity is drawn from its centre - heading and course are different things
-    // once the ship is drifting off its own nose (RCS strafing, momentum through a turn).
-    // Lowered from 1.4 (M48 follow-up - "чтобы при приближении раньше проявлялись реальные модельки
-    // кораблей и станций") - the real hull/room schematic now takes over well before the old
-    // near-max-zoom threshold, instead of staying a blob icon for most of the zoom range.
+    // Own-ship marker: the real room-by-room hull, always - direct user request ("силуэт корабля
+    // как он в реальности, как в cosmoteer"), where a ship is never an abstract icon, just its own
+    // true shape at true scale, shrinking into the distance like anything else on the map rather
+    // than snapping to a fixed-size glyph. Stations keep their own separate zoom-gated schematic
+    // (ShipSchematicZoomThreshold, GalaxyMapPanel.cs's own DrawPointGlyph/DrawStationSchematic
+    // branch) - a station only needs to read as "a dot with a name" most of the time, but the
+    // player's own ship is what they're flying and should always look like itself. A separate
+    // vector for the ship's actual velocity is drawn from its centre - heading and course are
+    // different things once the ship is drifting off its own nose (RCS strafing, momentum through
+    // a turn).
     private const float ShipSchematicZoomThreshold = 0.6f;
-    private const float ShipHeadingArrowSize = 12f;
     private const float VelocityVectorScale = 6f; // pixels per unit/s of speed, before clamping
     private const float VelocityVectorMinLength = 12f;
     private const float VelocityVectorMaxLength = 80f;
@@ -42,34 +41,10 @@ public sealed partial class GalaxyMapPanel
         // station's own drawn position aside instead (M48 follow-up - "теперь корабль и не
         // рисуется" - hiding the ship's own hull was the wrong fix; moving the other marker keeps
         // both visible without overlapping).
-        if (zoom >= ShipSchematicZoomThreshold && snapshot.Rooms.Count > 0)
+        if (snapshot.Rooms.Count > 0)
             DrawShipHullSchematic(spriteBatch, snapshot, shipCenter, zoom, noseDegrees);
-        else
-            DrawShipHeadingArrow(spriteBatch, shipCenter, noseDegrees);
 
         DrawShipVelocityVector(spriteBatch, snapshot.ShipField, shipCenter);
-    }
-
-    // The "navigator" glyph - a small triangle pointing along the hull's real heading (RotationDegrees
-    // + the hull's own ForwardDegrees offset, same convention World.ShipField.cs itself steers by),
-    // constant screen size regardless of zoom like every other marker on this map (PointMarkerSize's
-    // own doc comment).
-    private void DrawShipHeadingArrow(SpriteBatch spriteBatch, Vector2 shipCenter, float noseDegrees)
-    {
-        var radians = noseDegrees * (MathF.PI / 180f);
-        var forward = new Vector2(MathF.Cos(radians), MathF.Sin(radians));
-        var side = new Vector2(-forward.Y, forward.X);
-
-        var tip = shipCenter + forward * ShipHeadingArrowSize;
-        var baseCenter = shipCenter - forward * ShipHeadingArrowSize * 0.6f;
-        var points = new[]
-        {
-            tip,
-            baseCenter + side * ShipHeadingArrowSize * 0.6f,
-            baseCenter - side * ShipHeadingArrowSize * 0.6f,
-        };
-        Primitives.FillPolygon(spriteBatch, _pixel, shipCenter, points, Color.White * 0.9f);
-        Primitives.StrokePolygon(spriteBatch, _pixel, points, Color.Black * 0.6f, 1.5f);
     }
 
     // "При приближении выдавали свою настоящую отсековую структуру станции" (M48 follow-up) - every
@@ -148,9 +123,29 @@ public sealed partial class GalaxyMapPanel
                 new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);
         }
 
+        // Direct user request ("не вижу силуэта корабля как он должен повернуться, как в
+        // cosmoteer") - the nose marker used to sit a flat 0.6 world units from the hull's centre,
+        // regardless of how big the actual hull is: for anything larger than a tiny starter ship
+        // that lands buried inside the mass of room rectangles above, invisible against them rather
+        // than sticking out as a "which way is forward" cue. GetHullHalfExtents's own diagonal
+        // (same hull-radius stand-in World.Autopilot.cs's own AutopilotClearanceUnits uses
+        // server-side) guarantees this always clears the hull regardless of its size, and a small
+        // filled triangle (same shape/construction the old heading-arrow glyph used) reads as a
+        // "beak" pointing the way the ship is actually facing far more clearly than a single dot.
+        var hullRadius = (float)ShipLocalFrame.GetHullHalfExtents(snapshot.Rooms).Length() * scale;
         var noseRadians = noseDegrees * (MathF.PI / 180f);
-        var nose = shipCenter + new Vector2(MathF.Cos(noseRadians), MathF.Sin(noseRadians)) * scale * 0.6f;
-        spriteBatch.Draw(_pixel, new Rectangle((int)nose.X - 3, (int)nose.Y - 3, 6, 6), Color.White);
+        var forward = new Vector2(MathF.Cos(noseRadians), MathF.Sin(noseRadians));
+        var side = new Vector2(-forward.Y, forward.X);
+        var noseBase = shipCenter + forward * hullRadius;
+        var noseTip = noseBase + forward * 14f;
+        var noseTrianglePoints = new[]
+        {
+            noseTip,
+            noseBase + side * 8f,
+            noseBase - side * 8f,
+        };
+        Primitives.FillPolygon(spriteBatch, _pixel, noseBase, noseTrianglePoints, Color.White * 0.95f);
+        Primitives.StrokePolygon(spriteBatch, _pixel, noseTrianglePoints, Color.Black * 0.6f, 1.5f);
     }
 
     // The ship's own course, not its heading - the two only agree while flying straight ahead in

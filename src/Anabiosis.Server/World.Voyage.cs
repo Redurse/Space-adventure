@@ -107,10 +107,12 @@ public sealed partial class World
         // back into any of this, same shape as Undock ending IsDocked's own early return above.
         if (IsLandedOnPlanet)
         {
+            StepAutopilot(deltaSeconds);
             StepShipFieldPhysics(deltaSeconds);
             return;
         }
 
+        StepAutopilot(deltaSeconds);
         StepShipFieldPhysics(deltaSeconds);
         UpdateNearestStation();
 

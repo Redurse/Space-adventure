@@ -74,8 +74,14 @@ public sealed partial class Ship
         // already carries everything CustomDoorEdgeDef needs (Coord/Side/Id), so this is a plain map.
         var doorEdges = DoorEdges.Select(e => new CustomDoorEdgeDef(e.Coord.X, e.Coord.Y, e.Side, e.Id)).ToList();
 
+        // Direct user request ("на месте взорванного отсека будут обломки") - same round-trip
+        // reasoning as Engines/WallMaterials/DoorEdges above, explicitly called out since it's the
+        // one field CustomShipDefinition's own doc comment says MUST survive every later build/
+        // demolish, not just the tile-editor corrections that don't need to.
+        var wreckPatches = WreckPatches.ToList();
+
         return new CustomShipDefinition("Мой корабль", rooms, doors, airlocks, devices, ForwardDegrees,
-            WallMaterialsRaw: wallMaterials, EnginesRaw: engines, DoorEdgesRaw: doorEdges);
+            WallMaterialsRaw: wallMaterials, EnginesRaw: engines, DoorEdgesRaw: doorEdges, WreckPatchesRaw: wreckPatches);
     }
 
     private static readonly IReadOnlyDictionary<PowerSystemId, CustomDeviceKind> SystemDeviceKindsReverse =

@@ -5,9 +5,10 @@ namespace Anabiosis.Server;
 // Landing on a planet/moon's own surface (M55 - "сесть на планету... собственный ландшафт"):
 // mirrors World.StationDocking.cs's own "approach → arm → press → transition" shape, just onto
 // PlanetSurface's small, unrelated-scale local field instead of a station's berth. Only bodies
-// CelestialBodyGenerator.IsLandable accepts (Rocky/Moon) ever arm the button - touching a gas
-// giant/star still just stops the ship dead (World.ShipField.cs's own HullOverlapsCelestialBody
-// check), exactly as before this file existed.
+// CelestialBodyGenerator.IsLandable accepts (Rocky/Moon) ever arm the button - flying through a gas
+// giant/star (or any non-landable body) has no effect at all now (World.ShipField.cs's own
+// top-of-file doc comment, direct user request); HullOverlapsCelestialBody below is purely a
+// "sitting on a landable surface right now" detector for CanLandNow, nothing more.
 public sealed partial class World
 {
     private const float LandMaxSpeed = 2f;

@@ -427,21 +427,29 @@ public sealed partial class World
 
         HandleScannerInput(character, command);
 
+        // Direct user request ("уберём возможность управлять кораблём игроку... автопилот") -
+        // replaces the old direct SetHelmInput/EngageAutoStabilize pass-through: the player now only
+        // ever sets a destination or cancels one (World.Autopilot.cs's own SetAutopilotDestination/
+        // CancelAutopilot actually fly the ship, every tick, regardless of whether anyone's still
+        // seated here - a real autopilot keeps its course after you walk away, the same way manual
+        // thrust used to keep being applied after standing up).
         if (character.IsAtHelm && !HelmConsoleBroken)
         {
-            if (command.HelmStabilizePressed)
-                EngageAutoStabilize();
-            else
-                SetHelmInput(command.HelmThrottle, command.HelmTurn); // zero is a real "hands off the controls" state, not "no input" - it still overwrites what was commanded
+            if (command.AutopilotStopPressed)
+                CancelAutopilot();
+            else if (command.AutopilotTargetX is { } targetX && command.AutopilotTargetY is { } targetY)
+                SetAutopilotDestination(new Vec2(targetX, targetY));
 
-            if (command.ToggleControlModePressed)
-                ToggleControlMode();
+            _autopilotFacingOverrideDegrees = command.DesiredFacingDegrees;
 
             if (command.RequestedTimeAccelerationLevel is { } requestedLevel)
                 SetTimeAccelerationLevel(requestedLevel);
-
-            if (command.FlipHeadingPressed)
-                FlipHeading();
+        }
+        else
+        {
+            // Standing up (or a broken console) mid-hold must not leave the facing override stuck
+            // on forever - nothing else would ever clear it back to null otherwise.
+            _autopilotFacingOverrideDegrees = null;
         }
 
         // M57 - the Engineer tab's own device list: independent of !HelmConsoleBroken above, since
@@ -665,7 +673,7 @@ public sealed partial class World
         _droppedItems.ToArray(),
         new ShipFieldState(
             _shipFieldPosition.X, _shipFieldPosition.Y, _shipRotationDegrees,
-            (float)_shipVelocity.X, (float)_shipVelocity.Y, (float)_shipThrust.X, (float)_shipThrust.Y, _shipAutoStabilize, ControlMode),
+            (float)_shipVelocity.X, (float)_shipVelocity.Y, (float)_shipThrust.X, (float)_shipThrust.Y, _shipAutoStabilize),
         _recruitRoster,
         CreateStarSystemSummaries(),
         _currentSystemId,
@@ -703,5 +711,8 @@ public sealed partial class World
         Ship.WallMaterialOverrides,
         Ship.JunctionBoxes,
         Ship.DoorEdges,
-        CreateDoorEdgeStates());
+        CreateDoorEdgeStates(),
+        CreateRoomHpStates(),
+        Ship.WreckPatches,
+        CreateAutopilotState());
 }

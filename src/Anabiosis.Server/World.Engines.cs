@@ -64,7 +64,16 @@ public sealed partial class World
         var wasBroken = IsEngineControlBroken(id);
         _engineControlHp[id] = Math.Max(0f, EngineControlHp(id) - amount);
         if (!wasBroken && IsEngineControlBroken(id) && Ship.Engines.FirstOrDefault(e => e.Id == id) is { } engine)
-            _engineFrozenThrottle[id] = engine.Role == EngineRole.Rcs ? _helmTurn : _helmThrottle;
+        {
+            // Direct user request ("как в Cosmoteer") follow-up: freezes THIS engine's own current
+            // activation (RawControl below), not a shared ship-wide throttle/turn number any more -
+            // that raw value already accounts for whether this specific engine was actually doing
+            // anything useful for the live command, which a bare _helmThrottle/_helmTurn copy no
+            // longer means on its own now that engines only fire when their own Facing/position
+            // makes them useful for it.
+            var (pivot, _) = GetHullLocalBounds();
+            _engineFrozenThrottle[id] = RawControl(engine, pivot);
+        }
     }
 
     private void RepairEngineControl(string id, float amount)
@@ -76,16 +85,27 @@ public sealed partial class World
 
     // Holds pressure exactly like a WallBlock while intact ("держит воздух") - World.Atmosphere.cs's
     // own leak sum reads this the same way it reads Ship.WallBlocks.
-    private void DamageEngineBulkhead(string id, float amount) =>
+    private void DamageEngineBulkhead(string id, float amount)
+    {
         _engineBulkheadHp[id] = Math.Max(0f, EngineBulkheadHp(id) - amount);
+        // Direct user request ("скрытое число хп" отсека) - same "aggregate of what already breaks
+        // today" shape World.WallBlocks.cs's own DamageWallBlock already uses.
+        if (Ship.Engines.FirstOrDefault(e => e.Id == id) is { } engine)
+            DamageRoom(engine.RoomId, amount);
+    }
 
     private void RepairEngineBulkhead(string id, float amount) =>
         _engineBulkheadHp[id] = Math.Min(EnginePartMaxHp, EngineBulkheadHp(id) + amount);
 
     // Kills this engine's own thrust outright ("больше не генерирует тягу"), independent of
-    // Control/throttle - checked directly by TotalEngineThrust below.
-    private void DamageEngineNozzle(string id, float amount) =>
+    // Control/throttle - checked directly by ComputeEngineForces above (IsEngineNozzleBroken skips
+    // it entirely) and by TotalEngineLeakInRoom below.
+    private void DamageEngineNozzle(string id, float amount)
+    {
         _engineNozzleHp[id] = Math.Max(0f, EngineNozzleHp(id) - amount);
+        if (Ship.Engines.FirstOrDefault(e => e.Id == id) is { } engine)
+            DamageRoom(engine.RoomId, amount);
+    }
 
     private void RepairEngineNozzle(string id, float amount) =>
         _engineNozzleHp[id] = Math.Min(EnginePartMaxHp, EngineNozzleHp(id) + amount);
@@ -99,30 +119,79 @@ public sealed partial class World
     public void DebugBreakEngineNozzle(string engineId) => DamageEngineNozzle(engineId, EnginePartMaxHp);
 
     // This engine's own effective control input right now - frozen at whatever it was the instant
-    // Control broke, or the live input otherwise (helm throttle for a Marching engine, helm turn for
-    // an Rcs one - direct user request "по его образу сделаем все остальные"). Signed (-1..1, same
-    // convention _helmThrottle/_helmTurn themselves already use) so a frozen-while-reversing/turning
-    // engine keeps doing that rather than snapping to some default the moment it seizes.
-    private float EffectiveControl(ShipEngine engine) =>
-        _engineFrozenThrottle.TryGetValue(engine.Id, out var frozen) ? frozen
-        : engine.Role == EngineRole.Rcs ? _helmTurn : _helmThrottle;
+    // Control broke, or the live RawControl otherwise. Signed 0..1 (RawControl's own doc comment -
+    // unlike the old shared _helmThrottle/_helmTurn this replaced, a single engine never has a
+    // reason to run "in reverse" of its own one-way nozzle) so a frozen engine keeps pushing exactly
+    // as hard as it was the moment it seized, rather than snapping to some default.
+    private float EffectiveControl(ShipEngine engine, Vec2 pivot) =>
+        _engineFrozenThrottle.TryGetValue(engine.Id, out var frozen) ? frozen : RawControl(engine, pivot);
 
-    // World.ShipField.cs's own thrustBonus - purely additive to the existing flat SystemDevices sum,
-    // so a hull with no Marching Ship.Engines fixtures behaves exactly as before. Magnitude only
-    // (Math.Abs) - the ship's overall thrust DIRECTION still comes from the single shared
-    // ShipNoseDirection*throttle vector (World.ShipField.cs), not modeled per-engine yet; only how
-    // HARD each engine is currently allowed to push is individual.
-    private float TotalEngineThrust() =>
-        Ship.Engines.Where(e => e.Role == EngineRole.Marching && !IsEngineNozzleBroken(e.Id))
-            .Sum(e => e.MaxThrust * Math.Abs(EffectiveControl(e)));
+    // Direct user request ("как в Cosmoteer... каждый двигатель включается только когда его
+    // направление реально полезно для текущего запрошенного движения, а не всегда от одного общего
+    // газа") - replaces the old "every Marching engine fires at the same _helmThrottle, every Rcs one
+    // at the same _helmTurn, regardless of which way it actually points" model. A Marching engine
+    // only fires when its own push direction (opposite Facing) actually has something in common with
+    // the requested ship-local translation (throttle along the nose + strafe along the beam) - a
+    // perfectly aligned engine fires at full strength, a diagonal request only partially engages a
+    // perpendicular one, and one facing entirely the wrong way doesn't fire at all. An Rcs engine
+    // fires only when ITS OWN torque (from its real position and facing, not a shared assumption)
+    // would actually spin the hull the requested way - the same "real geometry decides who fires"
+    // idea, just for rotation instead of translation.
+    private float RawControl(ShipEngine engine, Vec2 pivot) =>
+        engine.Role == EngineRole.Rcs ? RcsRawControl(engine, pivot) : MarchingRawControl(engine);
 
-    // World.ShipField.cs's own turnBonus - the Rcs mirror of TotalEngineThrust above. Magnitude only,
-    // same reasoning: it flat-adds to the yaw-rate constant that _helmTurn's own sign already
-    // multiplies, exactly like the old flat TurnBonus device field always did - only WHICH rooms
-    // currently contribute is now damage/freeze-aware instead of a constant per hull.
-    private float TotalEngineTurn() =>
-        Ship.Engines.Where(e => e.Role == EngineRole.Rcs && !IsEngineNozzleBroken(e.Id))
-            .Sum(e => e.MaxThrust * Math.Abs(EffectiveControl(e)));
+    private float MarchingRawControl(ShipEngine engine)
+    {
+        var desired = ShipLocalForward * _helmThrottle + ShipLocalRight * _helmStrafe;
+        var desiredLength = desired.Length();
+        if (desiredLength < 0.0001)
+            return 0f;
+        var pushDirection = -engine.FacingUnitVector;
+        var alignment = (pushDirection.X * desired.X + pushDirection.Y * desired.Y) / desiredLength;
+        return alignment > 0f ? (float)(alignment * Math.Min(1.0, desiredLength)) : 0f;
+    }
+
+    private float RcsRawControl(ShipEngine engine, Vec2 pivot)
+    {
+        if (_helmTurn == 0f)
+            return 0f;
+        var pushDirection = -engine.FacingUnitVector;
+        var arm = engine.ControlPosition - pivot;
+        var torqueAtFullThrust = arm.X * pushDirection.Y - arm.Y * pushDirection.X;
+        return Math.Sign(torqueAtFullThrust) == Math.Sign(_helmTurn) ? Math.Abs(_helmTurn) : 0f;
+    }
+
+    // Direct user request ("сделай тягу зависимой от расположения движков") - replaces the old
+    // TotalEngineThrust()/TotalEngineTurn() flat-magnitude bonuses, which folded every engine's own
+    // push into one shared, nose-aligned scalar regardless of where it actually sat on the hull or
+    // which way it actually pointed (World.ShipField.cs's own old doc comment admitted as much: "the
+    // ship's overall thrust DIRECTION still comes from the single shared ShipNoseDirection*throttle
+    // vector, not modeled per-engine"). Each intact engine (which ones actually fire and how hard is
+    // EffectiveControl/RawControl's own call, direction-aware and frozen-throttle-aware) now
+    // contributes a real force vector opposite its own Facing (ShipEngine.FacingUnitVector's own doc
+    // comment - a real nozzle convention: exhaust goes out Facing, the ship gets pushed the other
+    // way), in the same ship-local frame Ship.Rooms/devices already live in. Summed into a net force
+    // (added straight onto the ship's existing thrust in World.ShipField.cs) and a net torque around
+    // `pivot` (GetHullLocalBounds().Center, the same stand-in "hull centre" turret/camera code
+    // already uses - there's no real mass distribution to compute an actual centre of mass from, same
+    // honesty ShipCatalog.Mass's own doc comment already admits for the ship's overall mass).
+    // A hull with no Ship.Engines fixtures (every hand-authored/pre-existing custom ship) sums an
+    // empty sequence - exactly zero force and zero torque, so nothing about its flight changes.
+    private (Vec2 NetForce, float NetTorque) ComputeEngineForces(Vec2 pivot)
+    {
+        var netForce = Vec2.Zero;
+        var netTorque = 0.0;
+        foreach (var engine in Ship.Engines)
+        {
+            if (IsEngineNozzleBroken(engine.Id))
+                continue;
+            var force = -engine.FacingUnitVector * (engine.MaxThrust * EffectiveControl(engine, pivot));
+            netForce += force;
+            var arm = engine.ControlPosition - pivot;
+            netTorque += arm.X * force.Y - arm.Y * force.X;
+        }
+        return (netForce, (float)netTorque);
+    }
 
     // A breached Bulkhead leaks exactly like a breached WallBlock - same OxygenLeakPerBreachPerSecond
     // rate, scaled by how damaged it is rather than a flat on/off, read by World.Atmosphere.cs's own
@@ -156,8 +225,11 @@ public sealed partial class World
         return null;
     }
 
-    private IReadOnlyList<EngineState> CreateEngineStates() =>
-        Ship.Engines.Select(e => new EngineState(e.Id, e.X, e.Y, e.Facing,
+    private IReadOnlyList<EngineState> CreateEngineStates()
+    {
+        var (pivot, _) = GetHullLocalBounds();
+        return Ship.Engines.Select(e => new EngineState(e.Id, e.X, e.Y, e.Facing,
             EngineControlHp(e.Id), EngineBulkheadHp(e.Id), EngineNozzleHp(e.Id), EnginePartMaxHp,
-            IsThrusting: !IsEngineNozzleBroken(e.Id) && Math.Abs(EffectiveControl(e)) > 0.01f)).ToArray();
+            IsThrusting: !IsEngineNozzleBroken(e.Id) && Math.Abs(EffectiveControl(e, pivot)) > 0.01f)).ToArray();
+    }
 }

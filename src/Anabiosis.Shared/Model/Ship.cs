@@ -53,6 +53,12 @@ public sealed partial class Ship
     // WallBlock) would otherwise be invisible to the client the exact same way a half-block notch's
     // WallOpenSide used to be.
     public IReadOnlyList<CustomWallMaterialDef> WallMaterialOverrides { get; }
+    // Direct user request ("на месте взорванного отсека будут обломки") - hull-local footprints of
+    // every compartment that has exploded (World.RoomHp.cs's ExplodeRoom), for ShipRenderer to draw a
+    // static wreck decoration over - see CustomShipDefinition.WreckPatches' own doc comment for why
+    // this (unlike SupplementalWallTiles/ForcedFloorTiles/WallOpenSideOverrides above) is explicitly
+    // round-tripped through Ship.ToDefinition().
+    public IReadOnlyList<RectF> WreckPatches { get; }
     // M74 (humble-soaring-cat.md) - flattened ECS-style view over every physical device fixture
     // below (ReactorBlock/DistributionBlock/BatteryBlock/HelmConsole/NavigationConsole/CardTable/
     // Jukebox/SystemDevices/Turrets/AmmoStorages/SuitLockers/StorageRacks/Cameras/ComponentMounts,
@@ -186,7 +192,8 @@ public sealed partial class Ship
         // отсек" - never derived from this feature's zone picker), so checking those names against
         // the canonical zone label would misfire and penalize ships that were never built with zones
         // at all. Only a custom hull's room name is actually driven by the zone-type picker.
-        bool isCustomBuilt = false)
+        bool isCustomBuilt = false,
+        IReadOnlyList<RectF>? wreckPatches = null)
     {
         IsCustomBuilt = isCustomBuilt;
         ForwardDegrees = forwardDegrees;
@@ -225,6 +232,7 @@ public sealed partial class Ship
         ForcedFloorTiles = forcedFloorTiles ?? Array.Empty<TileCoord>();
         WallOpenSideOverrides = wallOpenSideOverrides ?? Array.Empty<CustomWallOpenSideDef>();
         WallMaterialOverrides = wallMaterialOverrides ?? Array.Empty<CustomWallMaterialDef>();
+        WreckPatches = wreckPatches ?? Array.Empty<RectF>();
         // A marching engine's own Bulkhead tile IS the hull plating at that spot (ShipEngine.cs's
         // own doc comment) - drops the ordinary WallBlock the room's own outer-wall generation would
         // otherwise ALSO place there, the same way a door's footprint already excludes one, so the
