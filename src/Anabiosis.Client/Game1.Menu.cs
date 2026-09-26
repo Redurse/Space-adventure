@@ -498,6 +498,7 @@ public partial class Game1
         "Призрак автопилота (вид снаружи) больше не вращается вместе с кораблём",
         "Автопилот (корабли с боковыми двигателями): курс прибытия фиксируется один раз, а не плывёт по пути",
         "Система достижений: 20 достижений, всплывающее окно при получении, вкладка «Достижения» в настройках",
+        "2 корабля (cosmoteer1, рабочий корабль) теперь вшиты в игру - доступны даже после удаления в редакторе",
     };
 
     // The main menu's own click targets - mouse-driven (unlike the keyboard-shortcut screens either
@@ -659,7 +660,7 @@ public partial class Game1
             // Re-loaded rather than trusting the filter's own moment-ago result - the file could in
             // principle have been deleted/broken out from under this list between the two (hand-
             // editing the JSON, or another process touching the same save folder).
-            if (CustomShipStore.LoadShip(names[i]) is not { } definition || CustomShipValidator.Validate(definition).Count > 0)
+            if (LoadPlayableCustomShip(names[i]) is not { } definition || CustomShipValidator.Validate(definition).Count > 0)
                 return;
             SaveStore.Delete();
             StartHostedSession(ShipKind.Custom, loadFrom: null, customShip: definition);
@@ -673,10 +674,24 @@ public partial class Game1
     // the SAME filtered list DrawShipSelectCustomShipList/HandleShipSelectCustomShipClick both read,
     // so a click can never land on a row the drawing doesn't actually show as playable (or vice
     // versa), the same "one true list" shape MainMenuButtons already established.
+    //
+    // Direct user request ("сделай чтобы 2 текущих корабля... были вшиты в игру и были всегда
+    // доступны даже если их удалить из редактора") - ShipBuiltInFleet.Names always leads the list,
+    // regardless of what's actually in CustomShipStore right now; a local save reusing one of
+    // those 2 names is filtered out of the local half below so it never appears twice.
     private static IReadOnlyList<string> PlayableCustomShipNames() =>
-        CustomShipStore.ListShips()
-            .Where(name => CustomShipStore.LoadShip(name) is { } definition && CustomShipValidator.Validate(definition).Count == 0)
+        ShipBuiltInFleet.Names
+            .Concat(CustomShipStore.ListShips()
+                .Where(name => !ShipBuiltInFleet.Names.Contains(name))
+                .Where(name => CustomShipStore.LoadShip(name) is { } definition && CustomShipValidator.Validate(definition).Count == 0))
             .ToList();
+
+    // The one place that resolves a name from PlayableCustomShipNames() back into a definition -
+    // a built-in name (ShipBuiltInFleet.Names) always resolves to the frozen copy, never to
+    // CustomShipStore, so these 2 ships are provably immune to the local file being deleted,
+    // renamed, or hand-edited into something broken.
+    private static CustomShipDefinition? LoadPlayableCustomShip(string name) =>
+        ShipBuiltInFleet.TryGet(name) ?? CustomShipStore.LoadShip(name);
 
     private static Rectangle GetShipSelectCustomRowRect(int index) => new(650, 110 + index * 30, 300, 26);
 
@@ -1076,7 +1091,7 @@ public partial class Game1
                 // Re-loaded rather than trusting the filter's own moment-ago result, same defensive
                 // re-check HandleShipSelectCustomShipClick already does - the file could in
                 // principle have been deleted/broken out from under this list in the meantime.
-                if (CustomShipStore.LoadShip(names[i]) is not { } definition || CustomShipValidator.Validate(definition).Count > 0)
+                if (LoadPlayableCustomShip(names[i]) is not { } definition || CustomShipValidator.Validate(definition).Count > 0)
                     return;
                 _lobbySelectedShipName = names[i];
                 _client.Send(new ClientCommand(_client.PlayerId, LobbySelectCustomShip: definition, LobbySelectCustomShipName: names[i]));
