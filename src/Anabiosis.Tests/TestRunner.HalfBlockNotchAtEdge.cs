@@ -56,7 +56,7 @@ internal static partial class TestRunner
         // stays a half-block wall, and the floor immediately above/below it (rows 5, 8) is not
         // consumed by the bug's own "whole column walled" failure mode.
         var rooms = definition.Rooms.Select(r => new Room(r.Id, r.Name, r.Rects)).ToList();
-        var finalTiles = TileGridRasterizer.FromRooms(rooms, new List<Door>(), new List<AirlockOuterDoor>());
+        var finalTiles = TileGridRasterizer.FromRooms(rooms, new List<Door>());
         foreach (var coord in definition.SupplementalWallTiles)
         {
             finalTiles.SetFloor(coord, true);

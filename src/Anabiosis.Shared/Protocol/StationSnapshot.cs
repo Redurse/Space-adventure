@@ -16,7 +16,7 @@ public sealed record StationSnapshot(
     IReadOnlyList<StationGuardState> Guards,
     IReadOnlyList<Room> Rooms,
     IReadOnlyList<Door> Doors,
-    AirlockOuterDoor ShipConnector,
+    Door ShipConnector,
     Vec2 Position,
     Vec2 WorldOffset,
     Vec2 DockingPortPosition,

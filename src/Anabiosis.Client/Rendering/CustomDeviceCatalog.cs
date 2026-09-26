@@ -16,7 +16,7 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.Shields, CustomDeviceKind.WeaponCharger, CustomDeviceKind.Oxygen, CustomDeviceKind.Secondary,
         CustomDeviceKind.TurretBallistic, CustomDeviceKind.TurretLaser, CustomDeviceKind.AmmoStorage,
         CustomDeviceKind.StorageRack, CustomDeviceKind.CardTable, CustomDeviceKind.Jukebox, CustomDeviceKind.Terminal, CustomDeviceKind.Junction,
-        CustomDeviceKind.Battery,
+        CustomDeviceKind.Battery, CustomDeviceKind.ShipStatusMonitor, CustomDeviceKind.CommsConsole,
     };
 
     // At most one of these may exist in a definition - placing a new one silently replaces the old
@@ -55,6 +55,8 @@ public static class CustomDeviceCatalog
         // Renamed by direct user request - same "короб" fixture, new label.
         CustomDeviceKind.Junction => "Щиток",
         CustomDeviceKind.Battery => "Батарея",
+        CustomDeviceKind.ShipStatusMonitor => "Монитор состояния корабля",
+        CustomDeviceKind.CommsConsole => "Консоль связи",
         CustomDeviceKind.EngineSmall => "Двигатель малый",
         CustomDeviceKind.EngineMedium => "Двигатель средний",
         CustomDeviceKind.EngineLarge => "Двигатель большой",
@@ -111,6 +113,8 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.ComponentMount => "P",
         CustomDeviceKind.Junction => "B",
         CustomDeviceKind.Battery => "Y",
+        CustomDeviceKind.ShipStatusMonitor => "Z",
+        CustomDeviceKind.CommsConsole => "I",
         CustomDeviceKind.WallLamp => "W",
         // Direct user request - a distinct glyph per "производство" workbench (previously none,
         // all 4 fell to the "?" default below).
@@ -146,6 +150,8 @@ public static class CustomDeviceCatalog
         CustomDeviceKind.ComponentMount => new Color(170, 170, 170),
         CustomDeviceKind.Junction => new Color(210, 200, 80),
         CustomDeviceKind.Battery => new Color(90, 200, 255),
+        CustomDeviceKind.ShipStatusMonitor => new Color(120, 220, 150),
+        CustomDeviceKind.CommsConsole => new Color(220, 170, 90),
         CustomDeviceKind.EngineSmall => new Color(230, 140, 40),
         CustomDeviceKind.EngineMedium => new Color(230, 140, 40),
         CustomDeviceKind.EngineLarge => new Color(230, 140, 40),

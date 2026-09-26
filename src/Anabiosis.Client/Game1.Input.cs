@@ -526,6 +526,23 @@ public partial class Game1
         return null;
     }
 
+    // The death screen's own "НАБЛЮДАТЬ" button (HandleMouseClick above) - seeds _spectatorAnchor
+    // from the corpse's own last real position so Game1.Camera.cs's ComputeCamera doesn't jump the
+    // instant it switches over to reading _spectatorAnchor instead of the (now-frozen) character.
+    private void EnterSpectatorMode()
+    {
+        if (_client.LatestSnapshot is { } snapshot &&
+            snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { } me)
+        {
+            _spectatorAnchor = ShipLocalFrame.CharacterToLocal(me, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms));
+        }
+        _spectatorMode = true;
+        // Direct user request ("отдалять... приближать в 3 раза относительно текущего") - always
+        // starts back at 1x, the same "current" the 1/3x..3x clamp is measured from every time
+        // spectating begins, not wherever a previous spectating session happened to leave it.
+        _spectatorZoom = 1f;
+    }
+
     private static float ReadPowerDirection(KeyboardState keyboard)
     {
         float direction = 0;
@@ -550,6 +567,21 @@ public partial class Game1
         if (!clicked)
             return (-1, -1, null, -1, false, false, null, null);
 
+        // The death screen sits over literally everything, even the pause menu and cheat panel
+        // below (Game1.cs's own Draw dispatch gives it the same top priority) - direct user
+        // request, "экран смерти... почти точь в точь как в баротравме". Its one button just flips
+        // the one-way spectator switch, no server command involved, so like the cheat panel it's
+        // handled here directly rather than riding this method's own action tuple.
+        if (_client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { Health: <= 0f } && !_spectatorMode)
+        {
+            if (DeathScreenPanel.GetButtonRect(DeathScreenPanelOrigin).Contains(_designMouse))
+            {
+                PlayUiClick();
+                EnterSpectatorMode();
+            }
+            return (-1, -1, null, -1, false, false, null, null);
+        }
+
         // The dev cheat panel (Ё key) sits over everything else too, same reasoning as the pause
         // menu right below - its one button is read via a side-effect field (Game1.cs's Update)
         // rather than this tuple, since it's not part of the game's own action set.
@@ -559,6 +591,11 @@ public partial class Game1
                 _debugSpawnEnemyClickedThisFrame = true;
             else if (CheatPanel.GetAddCreditsButtonRect(CheatPanelOrigin).Contains(_designMouse))
                 _debugAddCreditsClickedThisFrame = true;
+            else if (CheatPanel.GetSpectatorModeButtonRect(CheatPanelOrigin).Contains(_designMouse) && !_spectatorMode)
+            {
+                PlayUiClick();
+                EnterSpectatorMode();
+            }
             return (-1, -1, null, -1, false, false, null, null);
         }
 
@@ -666,6 +703,18 @@ public partial class Game1
                 return (-1, -1, null, -1, false, false, null, null);
             }
         }
+        // Direct user request ("монитор состояния корабля... консоль связи") - same full-screen-
+        // overlay swallow as InfoPanel/ExternalCamera above: nothing behind either panel should
+        // ever see this click (the ship-interior scene isn't even drawn while either is open,
+        // Game1.cs's own scene-dispatch chain). ShipStatusMonitor has nothing clickable at all
+        // (hover-only); CommsConsole's one button is a stub - it swallows the click but does
+        // nothing yet (direct user request, "добавим потом").
+        if (_shipStatusMonitorOpen)
+            return (-1, -1, null, -1, false, false, null, null);
+        if (_commsConsoleOpen)
+            return (-1, -1, null, -1, false, false, null, null);
+        if (_junctionComingSoonOpen)
+            return (-1, -1, null, -1, false, false, null, null);
         if (_shipEditorOpen && snapshot is not null)
         {
             for (var i = 0; i < snapshot.Wiring.Components.Count; i++)
@@ -920,6 +969,94 @@ public partial class Game1
             {
                 _pendingJukeboxVolumeUp = true;
                 return (-1, -1, null, -1, false, false, null, null);
+            }
+        }
+
+        // Direct user request ("сделай меню фабрикатора как в баротравме") - every click inside the
+        // open panel is purely local UI state (which recipe is highlighted, filter toggles) EXCEPT
+        // the Create button, which is the one thing that actually reaches the server
+        // (_pendingFabricatorCraftRecipeId). FabricatorPanel.VisibleRecipes/CanAfford are the exact
+        // same calls Draw itself makes, so a row's rect here always means the same recipe it drew.
+        if (_openBlock.Kind == BlockKind.Fabricator)
+        {
+            if (FabricatorPanel.GetOnlyAvailableCheckboxRect(FabricatorPanelOrigin).Contains(_designMouse))
+            {
+                _fabricatorOnlyAvailable = !_fabricatorOnlyAvailable;
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+            if (FabricatorPanel.GetSortToggleRect(FabricatorPanelOrigin).Contains(_designMouse))
+            {
+                _fabricatorSortByName = !_fabricatorSortByName;
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+
+            var fabricatorInventory = me?.Inventory;
+            var fabricatorVisible = FabricatorPanel.VisibleRecipes(_fabricatorOnlyAvailable, fabricatorInventory);
+            if (_fabricatorSortByName)
+                fabricatorVisible = fabricatorVisible.OrderBy(r => ItemDefinitions.DisplayName(r.Output)).ToList();
+            for (var i = 0; i < fabricatorVisible.Count; i++)
+            {
+                if (!FabricatorPanel.GetRecipeRowRect(i, FabricatorPanelOrigin).Contains(_designMouse))
+                    continue;
+                _fabricatorSelectedRecipeId = fabricatorVisible[i].Id;
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+
+            var fabricatorSelected = fabricatorVisible.FirstOrDefault(r => r.Id == _fabricatorSelectedRecipeId) ?? fabricatorVisible.FirstOrDefault();
+            // Direct user request ("процесс сборки... занимал 2 секунды") - the button IS the
+            // "Отмена" while a job (of either kind) is running for this character, same button rect
+            // either way (FabricatorPanel.Draw itself relabels it the same way).
+            if (FabricatorPanel.GetCreateButtonRect(FabricatorPanelOrigin).Contains(_designMouse))
+            {
+                if (me?.ProductionActionRemaining > 0)
+                {
+                    _pendingProductionCancel = true;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+                if (fabricatorSelected is not null && FabricatorPanel.CanAfford(fabricatorSelected, fabricatorInventory))
+                {
+                    _pendingFabricatorCraftRecipeId = fabricatorSelected.Id;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+            }
+        }
+
+        // Direct user request ("сделай чтобы при нажатии на деконструктор открывалась менюшка...")
+        // - same shape as the Fabricator block above: row selection is local UI state, the button is
+        // the one thing that reaches the server (_pendingDeconstructItemType/_pendingProductionCancel).
+        if (_openBlock.Kind == BlockKind.Deconstructor)
+        {
+            var deconstructorInventory = me?.Inventory;
+            var deconstructorBusy = me?.ProductionActionRemaining > 0 && me.ProductionIsDeconstruct;
+            var deconstructorBusyItem = deconstructorBusy && me!.ProductionRecipeId is { } busyRecipeId
+                ? FabricatorCatalog.Find(busyRecipeId)?.Output : (ItemType?)null;
+            var deconstructorCandidates = deconstructorBusy && deconstructorBusyItem is { } lockedItem
+                ? new[] { lockedItem }
+                : DeconstructorPanel.DeconstructableCandidates(deconstructorInventory).ToArray();
+
+            for (var i = 0; i < deconstructorCandidates.Length; i++)
+            {
+                if (!DeconstructorPanel.GetInputSlotRect(i, DeconstructorPanelOrigin).Contains(_designMouse))
+                    continue;
+                _deconstructorSelectedItem = deconstructorCandidates[i];
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+
+            if (DeconstructorPanel.GetCreateButtonRect(DeconstructorPanelOrigin).Contains(_designMouse))
+            {
+                if (deconstructorBusy)
+                {
+                    _pendingProductionCancel = true;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+                ItemType? deconstructorSelected = _deconstructorSelectedItem is { } sel && deconstructorCandidates.Contains(sel)
+                    ? sel
+                    : deconstructorCandidates.Length > 0 ? deconstructorCandidates[0] : null;
+                if (deconstructorSelected is { } toDeconstruct)
+                {
+                    _pendingDeconstructItemType = toDeconstruct;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
             }
         }
 
@@ -1204,6 +1341,92 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, null);
         }
 
+        // Direct user bug report ("не могу нажать на приборы... не отображается их коллизия при
+        // наведении") - clicking opens these two directly now (same "click, not just E" convention
+        // most devices here follow - Game1.Interactables.cs's own doc comment, "Полный переход на
+        // клик как в Baro"), on top of the walk-up-and-E path (Game1.cs's own Update handling)
+        // rather than instead of it - either now works. Now genuinely many instances
+        // (ShipStatusMonitors/CommsConsoles) - clicking ANY one of them opens the same shared panel.
+        foreach (var shipStatusMonitorDevice in snapshot.ShipStatusMonitors ?? Array.Empty<ShipStatusMonitor>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.ShipStatusMonitor, shipStatusMonitorDevice.Rotated);
+            if (BlockRectIfNear(shipStatusMonitorDevice.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+            {
+                _shipStatusMonitorOpen = !_shipStatusMonitorOpen;
+                if (_shipStatusMonitorOpen)
+                {
+                    _commsConsoleOpen = false;
+                    _openBlock = ClickTarget.None;
+                    _infoPanelOpen = false;
+                    _shipEditorOpen = false;
+                    _galacticMapOpen = false;
+                }
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+        }
+        foreach (var commsConsoleDevice in snapshot.CommsConsoles ?? Array.Empty<CommsConsole>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.CommsConsole, commsConsoleDevice.Rotated);
+            if (BlockRectIfNear(commsConsoleDevice.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+            {
+                _commsConsoleOpen = !_commsConsoleOpen;
+                if (_commsConsoleOpen)
+                {
+                    _shipStatusMonitorOpen = false;
+                    _openBlock = ClickTarget.None;
+                    _infoPanelOpen = false;
+                    _shipEditorOpen = false;
+                    _galacticMapOpen = false;
+                }
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+        }
+        // Direct user request ("серый экран с надписью скоро") - same click-to-open convention as
+        // the two loops just above; every JunctionBox shares this one placeholder screen.
+        foreach (var junctionDevice in snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Junction, junctionDevice.Rotated);
+            if (BlockRectIfNear(junctionDevice.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+            {
+                _junctionComingSoonOpen = !_junctionComingSoonOpen;
+                if (_junctionComingSoonOpen)
+                {
+                    _shipStatusMonitorOpen = false;
+                    _commsConsoleOpen = false;
+                    _openBlock = ClickTarget.None;
+                    _infoPanelOpen = false;
+                    _shipEditorOpen = false;
+                    _galacticMapOpen = false;
+                }
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+        }
+
+        // Direct user request ("сделай меню фабрикатора как в баротравме") - the one DecorativeDevice
+        // kind that gets promoted out of "no function, click does nothing" (Game1.Interactables.cs's
+        // own doc comment on that fallthrough) into a real panel toggle, same "click opens/closes
+        // _openBlock" shape as Jukebox above. Every other DecorativeDevice kind is deliberately left
+        // unchecked here, so clicking one still falls straight through to empty-floor behavior.
+        foreach (var fabricator in (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>()).Where(d => d.Kind == CustomDeviceKind.Fabricator))
+        {
+            var (fabricatorWidth, fabricatorHeight) = ShipRenderer.FootprintPixelSize(fabricator.Kind, fabricator.Rotated);
+            if (BlockRectIfNear(fabricator.Position, myPosition, fabricatorWidth, fabricatorHeight, origin) is not { } fabricatorRect || !fabricatorRect.Contains(_designMouse))
+                continue;
+            _openBlock = _openBlock.Kind == BlockKind.Fabricator ? ClickTarget.None : ClickTarget.Fabricator;
+            return (-1, -1, null, -1, false, false, null, null);
+        }
+
+        // Direct user request ("сделай чтобы при нажатии на деконструктор открывалась менюшка") -
+        // the Deconstructor's own promotion, same shape as Fabricator just above.
+        foreach (var deconstructor in (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>()).Where(d => d.Kind == CustomDeviceKind.Deconstructor))
+        {
+            var (deconstructorWidth, deconstructorHeight) = ShipRenderer.FootprintPixelSize(deconstructor.Kind, deconstructor.Rotated);
+            if (BlockRectIfNear(deconstructor.Position, myPosition, deconstructorWidth, deconstructorHeight, origin) is not { } deconstructorRect || !deconstructorRect.Contains(_designMouse))
+                continue;
+            _openBlock = _openBlock.Kind == BlockKind.Deconstructor ? ClickTarget.None : ClickTarget.Deconstructor;
+            return (-1, -1, null, -1, false, false, null, null);
+        }
+
         // No panel of its own - one click is the whole "gesture" (direct user request), so this
         // just fires that ONE terminal's own toggle straight away instead of opening _openBlock.
         // Many independent terminals now ("их будет много") - same per-instance hit-test loop
@@ -1263,9 +1486,11 @@ public partial class Game1
 
         // Turret (World.Interact.cs branches 6+8 - reload/repair/man), one click covers all three
         // the same way [E] already does, resolved server-side by state (World.ClickInteract.cs).
-        var (turretWidth, turretHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.TurretBallistic);
+        // Turret.Rotated (direct user request, screenshot of a turret mount built out of wall tiles)
+        // - per-instance, unlike the kind's own footprint shape.
         foreach (var turret in snapshot.Turrets)
         {
+            var (turretWidth, turretHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.TurretBallistic, turret.Rotated);
             if (BlockRectIfNear(turret.PeriscopePosition, myPosition, turretWidth, turretHeight, origin) is not { } rect || !rect.Contains(_designMouse))
                 continue;
             _pendingTurretInteractId = turret.Id;
@@ -1492,8 +1717,7 @@ public partial class Game1
             var hullCenter = ComputeCamera(snapshot, me).HullCenter;
             foreach (var dropped in snapshot.DroppedItems.Where(d => d.RoomId is null))
             {
-                var local = ShipLocalFrame.ToLocal(dropped.Position, snapshot.ShipField, hullCenter);
-                var screenPos = origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
+                var screenPos = ShipRenderer.WorldToScreen(dropped.Position, snapshot.ShipField, hullCenter, origin);
                 var rect = new Rectangle(
                     (int)screenPos.X - ShipRenderer.DroppedItemHitSize / 2, (int)screenPos.Y - ShipRenderer.DroppedItemHitSize / 2,
                     ShipRenderer.DroppedItemHitSize, ShipRenderer.DroppedItemHitSize);
@@ -1511,16 +1735,14 @@ public partial class Game1
         if (!HoldingAxe())
         {
             // Outside, CharacterState's own X/Y switch to AsteroidField world-space the instant
-            // IsOutside flips (World.cs's CreateSnapshot), but a Door/AirlockOuterDoor's own
+            // IsOutside flips (World.cs's CreateSnapshot), but a door's own
             // Position never does - it's always the ship's local, unrotated interior frame. Plain
             // NearEnough (which just diffs raw X/Y) compared those two different frames and always
             // came up short, so a suited character standing right next to an open airlock could
             // never actually click it closed. Converting the proximity point into that same local
             // frame - the same conversion World.WallBlocks.cs's FindAimedWallBlock does server-side
             // for a cutter aimed from outside - is what makes the click land where it's drawn.
-            var doorClickPosition = me.IsOutside
-                ? ShipLocalFrame.ToLocal(myPosition, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms))
-                : myPosition;
+            var doorClickPosition = ShipLocalFrame.CharacterToLocal(me, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms));
 
             // Rect comes from TileGridRasterizer.DoorTileRect, not the door's own raw
             // Left/Top/Width/Height - ShipRenderer.Draw's own door loop stopped using the raw rect
@@ -1543,18 +1765,6 @@ public partial class Game1
                     return (-1, -1, null, -1, false, false, null, null);
                 }
                 return (-1, -1, null, -1, false, false, null, door.Id);
-            }
-
-            foreach (var outerDoor in snapshot.AirlockOuterDoors)
-            {
-                if (OuterDoorRectIfNear(snapshot.Rooms, outerDoor, doorClickPosition, origin) is not { } rect || !rect.Contains(_designMouse))
-                    continue;
-                if (HoldingRepairTool() && DoorDestroyed(outerDoor.Id))
-                {
-                    _pendingRepairDeviceId = outerDoor.Id;
-                    return (-1, -1, null, -1, false, false, null, null);
-                }
-                return (-1, -1, null, -1, false, false, null, outerDoor.Id);
             }
 
             // M-doors-as-edges - reuses ClientCommand.DoorToggleId's own existing id space (no
@@ -1728,6 +1938,22 @@ public partial class Game1
                 .Where(d => d.System == _openBlock.System)
                 .OrderBy(d => (d.Position - myPosition).Length())
                 .First().Position,
+            // Direct user request ("сделай меню фабрикатора") - no dedicated id (ClickTarget.
+            // Fabricator's own doc comment - crafting is proximity-only, any Fabricator will do),
+            // so this tracks whichever one is actually nearest, same "closest of several identical
+            // devices" idea BlockKind.System already uses above.
+            BlockKind.Fabricator => (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>())
+                .Where(d => d.Kind == CustomDeviceKind.Fabricator)
+                .Select(d => d.Position)
+                .OrderBy(p => (p - myPosition).Length())
+                .DefaultIfEmpty(myPosition)
+                .First(),
+            BlockKind.Deconstructor => (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>())
+                .Where(d => d.Kind == CustomDeviceKind.Deconstructor)
+                .Select(d => d.Position)
+                .OrderBy(p => (p - myPosition).Length())
+                .DefaultIfEmpty(myPosition)
+                .First(),
             _ => myPosition,
         };
 
@@ -1942,7 +2168,8 @@ public partial class Game1
         if (nearTurret)
             return "[F] сесть за орудие";
 
-        var nearHelm = NearEnough(snapshot.HelmConsole.Position, myPosition);
+        var nearHelm = NearEnough(snapshot.HelmConsole.Position, myPosition) ||
+            (snapshot.ExtraHelmConsoles ?? Array.Empty<HelmConsole>()).Any(c => NearEnough(c.Position, myPosition));
         if (nearHelm)
             return "[F] встать за навигационную панель";
 
@@ -1997,14 +2224,12 @@ public partial class Game1
         }
 
         var nearDoor = snapshot.Doors.Any(d => NearEnough(d.Position, myPosition));
-        var nearOuterDoor = snapshot.AirlockOuterDoors.Any(d => NearEnough(d.Position, myPosition));
+        var nearOuterDoor = snapshot.Doors.Any(d => d.LeadsToVacuum && NearEnough(d.Position, myPosition));
 
         // A destroyed door (World.Doors.cs) is jammed open and needs the same E-key minigame as a
         // damaged SystemDevice/Junction, not the ordinary click-to-toggle everything below assumes.
         var nearbyDestroyedDoorId =
             snapshot.Doors.FirstOrDefault(d => NearEnough(d.Position, myPosition) &&
-                (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == d.Id)?.Destroyed ?? false))?.Id
-            ?? snapshot.AirlockOuterDoors.FirstOrDefault(d => NearEnough(d.Position, myPosition) &&
                 (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == d.Id)?.Destroyed ?? false))?.Id;
         if (nearbyDestroyedDoorId is not null)
         {

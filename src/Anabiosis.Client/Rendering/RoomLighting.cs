@@ -59,9 +59,15 @@ public sealed class RoomLighting : IDisposable
     // still works and looks nearly the same, just faceted along the ray fan.
     private readonly Effect? _lightEffect;
     private readonly List<float> _offsets = new();
-    // Scratch buffer for ShadowCast.FilterNearby - reused across every lamp in a single Build call
-    // (own doc comment there) rather than a fresh List per lamp.
+    // Scratch buffer for the WallGrid query below - reused across every lamp in a single Build call
+    // rather than a fresh List per lamp.
     private readonly List<WallSegment> _nearbyWalls = new();
+    // Direct user report ("почему игра так сильно лагает") - see WallGrid.cs's own doc comment:
+    // this replaces a plain ShadowCast.FilterNearby linear scan (one per lamp, over the WHOLE
+    // combined ship+station wall list) with a grid rebuilt once per Build call, turning an
+    // O(lamps x walls) cost - genuinely quadratic in how built-out the player's own station is -
+    // into O(walls + lamps x nearby-cells).
+    private readonly WallGrid _wallGrid = new();
     private RenderTarget2D? _target;
     private VertexPositionColor[] _vertices = new VertexPositionColor[3 * 512];
     private int _vertexCount;
@@ -88,15 +94,17 @@ public sealed class RoomLighting : IDisposable
         if (!EnsureTarget())
             return false;
 
+        _wallGrid.Rebuild(walls);
+
         if (_lightEffect is not null && Enabled)
         {
-            RasterizePerPixel(walls, lights, renderScale, floor, origin);
+            RasterizePerPixel(lights, renderScale, floor, origin);
             return true;
         }
 
         _vertexCount = 0;
         foreach (var light in lights)
-            AddLight(walls, light, origin, fadeIntoVertices: true);
+            AddLight(light, origin, fadeIntoVertices: true);
         Rasterize(renderScale, floor);
         return true;
     }
@@ -104,13 +112,13 @@ public sealed class RoomLighting : IDisposable
     // fadeIntoVertices bakes the distance falloff into the rim vertex colours, which is what the
     // BasicEffect path needs and what the per-pixel path must not have - it measures the distance
     // itself, and pre-faded vertices would apply the curve twice.
-    private void AddLight(IReadOnlyList<WallSegment> walls, PointLight light, Vector2 origin, bool fadeIntoVertices)
+    private void AddLight(PointLight light, Vector2 origin, bool fadeIntoVertices)
     {
-        // See ShadowCast.FilterNearby's own doc comment - a wall farther than the lamp's own radius
-        // could never be hit by this lamp's own cast anyway, so it never needs to reach
-        // CollectRayOffsets/Cast at all. This is what actually made a docked ship+station's combined
-        // wall list affordable per-lamp (direct user report, "проблема из-за низкого фпс").
-        ShadowCast.FilterNearby(_nearbyWalls, walls, light.Position, light.Radius);
+        // A wall farther than the lamp's own radius could never be hit by this lamp's own cast
+        // anyway, so it never needs to reach CollectRayOffsets/Cast at all - same reasoning
+        // ShadowCast.FilterNearby always used, just sourced from the pre-built grid now instead of
+        // a fresh linear scan (WallGrid.cs's own doc comment).
+        _wallGrid.QueryNearby(_nearbyWalls, light.Position, light.Radius);
         ShadowCast.CollectRayOffsets(_offsets, _nearbyWalls, light.Position, 0f, MathF.PI * 2f, full: true);
 
         var rayCount = _offsets.Count;
@@ -144,8 +152,7 @@ public sealed class RoomLighting : IDisposable
     // One draw per lamp, because each one needs its own centre and radius in the shader. That is a
     // handful of draw calls for a room, against the one the vertex-colour path needed - cheap for
     // a pool of light that is actually round instead of faceted along the ray fan.
-    private void RasterizePerPixel(IReadOnlyList<WallSegment> walls, IReadOnlyList<PointLight> lights,
-        Matrix renderScale, Color floor, Vector2 origin)
+    private void RasterizePerPixel(IReadOnlyList<PointLight> lights, Matrix renderScale, Color floor, Vector2 origin)
     {
         _device.SetRenderTarget(_target);
         _device.Clear(floor);
@@ -161,7 +168,7 @@ public sealed class RoomLighting : IDisposable
         foreach (var light in lights)
         {
             _vertexCount = 0;
-            AddLight(walls, light, origin, fadeIntoVertices: false);
+            AddLight(light, origin, fadeIntoVertices: false);
             if (_vertexCount < 3)
                 continue;
 

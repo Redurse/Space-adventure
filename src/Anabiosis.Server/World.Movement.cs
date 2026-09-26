@@ -12,6 +12,26 @@ public sealed partial class World
     {
         foreach (var character in _characters.Values)
         {
+            // Direct user request ("экран смерти... почти точь в точь как в баротравме"; later "и
+            // через 10 секунд... игрок спанился на корабле в кокпите") - a dead character just lies
+            // where they fell: no more movement, no more ticking timers, same as everything else
+            // here (World.cs's own ApplyCommand gate is the other half) - EXCEPT the respawn
+            // countdown itself (StepRespawn, World.Respawn.cs), which is the one timer that keeps
+            // running specifically because it's what ends this state.
+            if (character.IsDead)
+            {
+                StepRespawn(character, deltaSeconds);
+                continue;
+            }
+
+            StepProduction(character, deltaSeconds);
+            // Direct user request ("когда игрок находился не в герметичных помещениях и пробоина
+            // была достаточно большая то игрок через 3 секунды мгновенно погибал") - runs for EVERY
+            // character every tick, not just an outside one: World.Eva.cs's own IsFullyExposedToVacuum
+            // also covers an indoor character standing in a room with a big enough breach or an open
+            // vacuum-facing door, and StepEvaCharacter (below) is never reached for them at all.
+            StepUnsuitedExposure(character, deltaSeconds);
+
             if (character.SuitActionRemaining > 0)
             {
                 character.SuitActionRemaining = Math.Max(0, character.SuitActionRemaining - (float)deltaSeconds);

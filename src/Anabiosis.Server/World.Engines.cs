@@ -210,7 +210,7 @@ public sealed partial class World
         if (aim.Length() < 0.01f)
             return null;
 
-        var origin = character.IsOutside ? GetEvaWorldPosition(character) : character.Position;
+        var origin = GetCharacterWorldPosition(character);
         var (hullCenter, _) = GetHullLocalBounds();
 
         for (var i = 1; i <= samples; i++)

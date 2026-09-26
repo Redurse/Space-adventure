@@ -305,9 +305,14 @@ internal static partial class TestRunner
     }
 
     // Bang-bang controller: drives the character toward a target via small realtime steps
-    // (same cadence GameServer.Tick uses), so it can also cross doors along the way.
+    // (same cadence GameServer.Tick uses), so it can also cross doors along the way - every door on
+    // a fresh hull now starts closed (humble-soaring-cat.md, "все двери на корабле изначально были
+    // закрыты"), and this helper's whole point is getting a character from A to B for a test whose
+    // own focus is something else, so it opens every door up front rather than making every caller
+    // reason about which specific doors sit on its own path.
     private static void MoveCharacterTo(World world, int playerId, float targetX, float targetY)
     {
+        world.DebugOpenAllDoors();
         for (var i = 0; i < 400; i++)
         {
             var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == playerId);

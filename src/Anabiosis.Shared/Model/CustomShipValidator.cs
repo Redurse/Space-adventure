@@ -40,8 +40,6 @@ public static class CustomShipValidator
         // Atmosphere.cs) - a hull with none would crash the very first tick, not just fly quiet.
         if (Count(CustomDeviceKind.Oxygen) == 0)
             errors.Add("Нужен хотя бы один генератор кислорода.");
-        if (def.Airlocks.Count == 0)
-            errors.Add("Нужен хотя бы один шлюзовой люк во внешний космос.");
         if (Count(CustomDeviceKind.SuitLocker) == 0)
             errors.Add("Нужен хотя бы один шкаф со скафандром.");
         // World.InitializeRackSlots always seeds the starter kit into the first shelf it finds -

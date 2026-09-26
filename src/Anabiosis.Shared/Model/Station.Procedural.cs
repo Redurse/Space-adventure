@@ -156,7 +156,7 @@ public sealed partial class Station
 
     // connectorAnchor is where the station's own umbilical door has to sit: the exact position of
     // the ship's outer airlock door in the ship's interior coordinates (same contract Station.
-    // Default.cs's old Create(kind, anchor) had). Every AirlockOuterDoor in the game is the same
+    // Default.cs's old Create(kind, anchor) had). Every vacuum-facing door in the game is the same
     // "vertical door on a side wall" shape (Width=1, Height=StandardSpanUnits) - confirmed across
     // every hand-authored and Ship-Editor-built hull - so this connector, and therefore the whole
     // generated shape hung off it, only ever needs a straight translation to follow a hull swap,
@@ -275,7 +275,7 @@ public sealed partial class Station
         }
 
         var (anchorX, anchorY) = connectorAnchor.AsFloat();
-        var shipConnector = new AirlockOuterDoor($"{pointId}-connector", rooms[0].Id, anchorX, anchorY, 1.0f, Door.StandardSpanUnits);
+        var shipConnector = new Door($"{pointId}-connector", rooms[0].Id, null, anchorX, anchorY, 1.0f, Door.StandardSpanUnits, Vertical: true);
 
         return new Station(rooms, shiftedDoors, shipConnector, shiftedNpcs, shiftedCrates, WorldCenter, rooms[0].Id);
     }

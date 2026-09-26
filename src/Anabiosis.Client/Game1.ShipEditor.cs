@@ -69,7 +69,7 @@ public partial class Game1
     private bool _editorPanDragEngaged;
     private const int EditorPanDragThreshold = 6;
 
-    private enum EditorTool { Floor, Wall, Door, Terminal, Device, Zone, Engine, Compartment }
+    private enum EditorTool { Floor, Wall, Door, Terminal, Device, Zone, Engine, Compartment, DoubleEngine }
     private enum EditorAction { Back, New, Save, SaveAs, Load, Play }
 
     private static readonly float[] EditorForwardOptions = { 0f, 90f, 180f, -90f };
@@ -84,7 +84,9 @@ public partial class Game1
     // itself, and every bit of code that renders/round-trips it, stays untouched for any save that
     // already placed one - only newly PLACING it from a palette button is what this removes.
     private static readonly CustomDeviceKind[] EditorDeviceKinds =
-        Enum.GetValues<CustomDeviceKind>().Where(k => k != CustomDeviceKind.TripleDoor).ToArray();
+        Enum.GetValues<CustomDeviceKind>()
+            .Where(k => k != CustomDeviceKind.TripleDoor)
+            .ToArray();
     private CustomDeviceKind _editorSelectedDeviceKind = EditorDeviceKinds[0];
     // Which Wall-tool variant is currently selected (direct user request - "усиленная стена"/
     // "иллюминатор") - a palette sub-choice, not its own EditorTool, same as _editorSelectedDeviceKind
@@ -154,10 +156,26 @@ public partial class Game1
     // equal dimensions changes nothing, so DeviceFootprintSize's own `rotated` flag is simply never
     // consulted for those regardless of what this dictionary says.
     private readonly Dictionary<TileCoord, bool> _editorDeviceRotation = new();
+    // Direct user bug report ("при повороте они не поворачиваются на все 4 стороны") - Helm/
+    // Navigation's own half tile can sit on any of the 4 sides of its anchor, not just the East/South
+    // _editorDeviceRotation's plain bool could ever express. Keyed by the SAME anchor as every other
+    // per-device dictionary above; only ever populated for these two kinds - _editorDeviceRotation
+    // keeps being written alongside it (true for South/North) so every OTHER consumer of that older
+    // dictionary (TileShipBuilder's own footprint width/height swap, the canvas save/load format)
+    // keeps seeing exactly the axis it always expected.
+    private readonly Dictionary<TileCoord, TileSide> _editorDeviceHalfSides = new();
     // R rotates this PENDING flag (cycled before placement, not dragged per-click) - same
     // before-placement convention _editorCompartmentPendingRotation/_editorEnginePendingFacing
-    // already use for their own tools.
+    // already use for their own tools. Used for every rotatable kind EXCEPT the half-width ones
+    // (CustomDeviceFootprint.IsHalfWidthKind), which cycle _editorDevicePendingHalfSide (below)
+    // through all 4 sides instead of this 2-state toggle.
     private bool _editorDevicePendingRotated;
+    // R rotates this PENDING half side (East -> South -> West -> North -> East) whenever the Device
+    // tool's selected kind is a half-width one (Helm/Navigation originally; Fabricator/Deconstructor
+    // too, direct user request "по аналогии... полтора на 3") - direct user bug report, the OLD
+    // 2-state _editorDevicePendingRotated above only ever reached East or South, never the West/North
+    // mirror.
+    private TileSide _editorDevicePendingHalfSide = TileSide.East;
     private bool _prevDeviceRotateKeyDown;
     // Kind (direct user request - all 4 described zone types, not just one) is set by picking one of
     // the 4 quick-select buttons in the naming prompt instead of typing a name; null means the player
@@ -179,6 +197,20 @@ public partial class Game1
     // this is the tool's own live "what would placing right now produce" state, like
     // _editorSelectedDeviceKind is for the Device tool.
     private TileSide _editorEnginePendingFacing = TileSide.West;
+    // Direct user request ("двойной двигатель... 2 наложенных друг на друга двигателя с общим
+    // началом... сразу 2 вектора тяги") - an L-shaped PAIR of ordinary marching engines sharing one
+    // Control tile, placed/rotated as a single unit. Kept as its own parallel dictionary rather than
+    // widening _editorEngineFacing to hold more than one TileSide per anchor - every single-engine
+    // code path (placement, removal, ghost, export) stays completely untouched; this tool's own
+    // handlers just also populate _editorEngineFootprint so hover/removal see all 5 tiles as one
+    // anchor, the same "shared lookup, separate bookkeeping" split _editorDeviceHalfSides already
+    // uses alongside _editorDeviceRotation.
+    private readonly Dictionary<TileCoord, (TileSide First, TileSide Second)> _editorDoubleEngineFacings = new();
+    // The second arm is always the first rotated 90 degrees clockwise (TileSideExtensions has no
+    // named "RotateClockwise", so this is spelled out via the same 4-state cycle
+    // _editorEnginePendingFacing's own switch already uses) - only ONE pending facing to cycle
+    // through the 4 possible corner orientations, not two independent ones.
+    private TileSide _editorDoubleEnginePendingFacing = TileSide.West;
     private bool _prevEngineRotateKeyDown;
     // A middling single constant (RoomCatalog.EnginesFor's own engine-small=5f/engine-big=12f) since
     // the editor only gets ONE engine tool, not several size tiers.
@@ -201,6 +233,21 @@ public partial class Game1
     private readonly Dictionary<TileCoord, string> _editorCompartmentAt = new();
     private readonly Dictionary<string, HashSet<TileCoord>> _editorCompartmentTiles = new();
     private readonly Dictionary<string, HashSet<TileCoord>> _editorCompartmentProtected = new();
+    // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - an interior
+    // partition (or any device flush against the compartment's own wall ring) can fragment the
+    // generic flood-fill room decomposition (TileShipBuilder.BuildDefinition) into several pieces,
+    // or leave a gap no piece claims - a real, pre-existing edge case in that algorithm, not
+    // specific to this feature, just never reachable before a compartment authored an interior wall.
+    // Direct user request for the actual fix ("отсеками должно считаться только то, что из раздела
+    // отсеков") - a placed compartment instance's own FootprintRects is the room's SOLE authority
+    // now: BuildDefinitionFromTiles overrides whatever the generic algorithm derived for a region
+    // that turns out to be entirely one compartment instance with these Rects directly. Stored as
+    // EntryId+Anchor+RotationSteps rather than the already-translated Rects themselves - the one
+    // thing CompartmentInstanceRects (below) needs to recompute them on demand, and exactly what a
+    // save file needs too (CustomShipTileCanvas.CompartmentInstanceRecord) to restore this same
+    // bookkeeping after a reload without re-stamping the already-loaded grid.
+    private readonly Dictionary<string, string> _editorCompartmentEntryId = new();
+    private readonly Dictionary<string, (TileCoord Anchor, int RotationSteps)> _editorCompartmentPlacement = new();
     private int _editorNextCompartmentInstance;
     // Direct user request ("чтобы игра говорила что так делать нельзя") - a short-lived rejection
     // toast, drawn over the canvas by DrawEditorCanvas while Environment.TickCount64 (plain wall-
@@ -268,6 +315,8 @@ public partial class Game1
             _editorCompartmentAt.Clear();
             _editorCompartmentTiles.Clear();
             _editorCompartmentProtected.Clear();
+            _editorCompartmentEntryId.Clear();
+            _editorCompartmentPlacement.Clear();
         }
         _editorTool = EditorTool.Floor;
         _editorWallMaterial = WallMaterial.Standard;
@@ -394,6 +443,9 @@ public partial class Game1
                 break;
             case EditorTool.Engine:
                 HandleEngineToolInput(leftClicked, rightClicked, keyboard);
+                break;
+            case EditorTool.DoubleEngine:
+                HandleDoubleEngineToolInput(leftClicked, rightClicked, keyboard);
                 break;
             case EditorTool.Compartment:
                 HandleCompartmentToolInput(leftClicked, rightClicked, keyboard);
@@ -792,11 +844,14 @@ public partial class Game1
 
         if (anchors.Any(a => !_editorTiles.CanPlaceDoorEdge(a, side)))
         {
+            // Direct user request ("сделай возможным поставить дверь если 1 клетка это пол а
+            // вторая космос") - CanPlaceDoorEdge now also accepts a flank that's genuinely open
+            // space (an airlock onto vacuum), not just floor on both sides.
             _editorToastMessage = spanTiles switch
             {
-                1 => "Нельзя поставить дверь - нужны 2 свободные соседние клетки пола.",
-                2 => "Нельзя поставить широкую дверь - нужны 4 свободные клетки пола (2 на 2).",
-                _ => $"Нельзя поставить тройную дверь - нужны {spanTiles * 2} свободных клеток пола ({spanTiles} на 2).",
+                1 => "Нельзя поставить дверь - нужна свободная клетка пола по одну сторону, а с другой - пол другой комнаты или открытый космос.",
+                2 => "Нельзя поставить широкую дверь - каждая из 2 пар клеток должна иметь пол хотя бы с одной стороны.",
+                _ => $"Нельзя поставить тройную дверь - каждая из {spanTiles} пар клеток должна иметь пол хотя бы с одной стороны.",
             };
             _editorToastUntilTicks = Environment.TickCount64 + EditorToastMilliseconds;
             return;
@@ -976,7 +1031,18 @@ public partial class Game1
     {
         var rDown = keyboard.IsKeyDown(Keys.R);
         if (rDown && !_prevDeviceRotateKeyDown)
-            _editorDevicePendingRotated = !_editorDevicePendingRotated;
+        {
+            if (CustomDeviceFootprint.IsHalfWidthKind(_editorSelectedDeviceKind))
+                _editorDevicePendingHalfSide = _editorDevicePendingHalfSide switch
+                {
+                    TileSide.East => TileSide.South,
+                    TileSide.South => TileSide.West,
+                    TileSide.West => TileSide.North,
+                    _ => TileSide.East,
+                };
+            else
+                _editorDevicePendingRotated = !_editorDevicePendingRotated;
+        }
         _prevDeviceRotateKeyDown = rDown;
 
         if (GridCellAt(_designMouse) is not { } cell)
@@ -997,7 +1063,8 @@ public partial class Game1
                 if (IsProtectedCompartmentCore(anchor))
                     return;
                 var wasRotated = _editorDeviceRotation.TryGetValue(anchor, out var rotatedFlag) && rotatedFlag;
-                var (removeWidth, removeHeight) = DeviceFootprintSize(_editorDeviceKinds[anchor], wasRotated);
+                var removedKind = _editorDeviceKinds[anchor];
+                var (removeWidth, removeHeight) = DeviceFootprintSize(removedKind, wasRotated);
                 foreach (var occupied in DeviceFootprintTiles(anchor, removeWidth, removeHeight))
                 {
                     _editorTiles.RemoveDevice(occupied);
@@ -1005,27 +1072,75 @@ public partial class Game1
                 }
                 _editorDeviceKinds.Remove(anchor);
                 _editorDeviceRotation.Remove(anchor);
+                _editorDeviceHalfSides.Remove(anchor);
+                if (IsTurretKind(removedKind))
+                    ClearTurretMountSkirt(anchor, wasRotated);
             }
             return;
         }
         if (!leftClicked)
             return;
-        var (width, height) = DeviceFootprintSize(_editorSelectedDeviceKind, _editorDevicePendingRotated);
+        var isHalfWidth = CustomDeviceFootprint.IsHalfWidthKind(_editorSelectedDeviceKind);
+        var halfSide = isHalfWidth ? _editorDevicePendingHalfSide : TileSide.East;
+        var pendingRotated = isHalfWidth ? halfSide is TileSide.South or TileSide.North : _editorDevicePendingRotated;
+        var (width, height) = DeviceFootprintSize(_editorSelectedDeviceKind, pendingRotated);
         var placeAnchor = FootprintAnchorFor(coord, width, height);
         var footprint = DeviceFootprintTiles(placeAnchor, width, height).ToList();
-        if (footprint.Any(t => _editorTiles.CellAt(t) is not { HasFloor: true, Wall: TileWallKind.None, DeviceId: null }))
-            return;
-        var deviceId = $"device-{placeAnchor.X}-{placeAnchor.Y}";
-        foreach (var occupied in footprint)
+        if (!CanPlaceDeviceFootprint(_editorSelectedDeviceKind, footprint, placeAnchor, halfSide))
         {
-            _editorTiles.PlaceDevice(occupied, deviceId);
-            _editorDeviceFootprint[occupied] = placeAnchor;
+            // Direct user bug report (screenshot - a half-width kind refused to place on a spot that
+            // LOOKS like open floor) - the ghost preview's red outline already says "not here", but
+            // gives no reason why, and the actual reason is often non-obvious: a half-width
+            // neighbor's own free-but-reserved half tile (IsWalkable's own combined truth table)
+            // reads as plain bare floor to the eye, since only the BLOCKED half of that tile gets the
+            // neighbor's own baked icon drawn over it. Same toast convention
+            // HandleCompartmentToolInput's own rejected-stamp case already uses, replacing what used
+            // to be a silent no-op plus a TEMP-DIAG debug overlay (removed - this is its permanent
+            // replacement).
+            _editorToastMessage = DeviceRejectionToastMessage(footprint, placeAnchor, halfSide);
+            _editorToastUntilTicks = Environment.TickCount64 + EditorToastMilliseconds;
+            return;
         }
+        var deviceId = $"device-{placeAnchor.X}-{placeAnchor.Y}";
+        PlaceDeviceFootprint(_editorSelectedDeviceKind, footprint, placeAnchor, halfSide, deviceId);
+        foreach (var occupied in footprint)
+            _editorDeviceFootprint[occupied] = placeAnchor;
         _editorDeviceKinds[placeAnchor] = _editorSelectedDeviceKind;
-        if (_editorDevicePendingRotated)
+        if (pendingRotated)
             _editorDeviceRotation[placeAnchor] = true;
+        if (isHalfWidth)
+            _editorDeviceHalfSides[placeAnchor] = halfSide;
         foreach (var occupied in footprint)
             EvictTerminalsAtJunctions(occupied);
+        // Direct user request (screenshot of a turret mount built out of wall tiles - "реальные
+        // такие границы... при установке в редакторе") - stamped immediately so the border is
+        // visible while designing, not just after a build (Ship.Custom.cs derives the same shape
+        // again at build time regardless, TurretMountSkirt.cs's own doc comment explains why).
+        if (IsTurretKind(_editorSelectedDeviceKind))
+            StampTurretMountSkirt(placeAnchor, pendingRotated);
+    }
+
+    private static bool IsTurretKind(CustomDeviceKind kind) => kind is CustomDeviceKind.TurretBallistic
+        or CustomDeviceKind.TurretLaser or CustomDeviceKind.TurretMachineGun or CustomDeviceKind.DefensiveTurret;
+
+    private void StampTurretMountSkirt(TileCoord anchor, bool rotated)
+    {
+        foreach (var skirt in TurretMountSkirt.SkirtTiles(anchor, rotated))
+        {
+            if (_editorTiles.CellAt(skirt.Position) is { DeviceId: not null })
+                continue;
+            _editorTiles.SetFloor(skirt.Position, true);
+            _editorTiles.SetWall(skirt.Position, TileWallKind.Solid);
+            if (skirt.OpenSide is { } side)
+                _editorTiles.SetWallOpenSide(skirt.Position, side);
+        }
+    }
+
+    private void ClearTurretMountSkirt(TileCoord anchor, bool rotated)
+    {
+        foreach (var skirt in TurretMountSkirt.SkirtTiles(anchor, rotated))
+            if (_editorTiles.CellAt(skirt.Position) is { Wall: TileWallKind.Solid, DeviceId: null })
+                _editorTiles.SetWall(skirt.Position, TileWallKind.None);
     }
 
     // Direct user request ("стеллаж... можно поворачивать") - a non-square device (StorageRack/
@@ -1037,6 +1152,97 @@ public partial class Game1
         var (width, height) = CustomDeviceFootprint.Size(kind);
         return rotated ? (height, width) : (width, height);
     }
+
+    // Every Device-tool kind needs bare floor on EVERY tile of its footprint (TileGrid.PlaceDevice's
+    // own precondition) - EXCEPT Helm/Navigation, whose SECOND (half) tile along the halved axis only
+    // needs TileGrid.CanPlaceHalfWidthDevice (bare floor, OR an already-matching half-block wall to
+    // coexist with - see that method's own doc comment). No other kind gets this - it's specific to
+    // these two consoles' own genuine 1.5-tile footprint, not a general placement rule change.
+    private bool CanPlaceDeviceFootprint(CustomDeviceKind kind, IReadOnlyList<TileCoord> footprint, TileCoord anchor, TileSide halfSide)
+    {
+        if (!CustomDeviceFootprint.IsHalfWidthKind(kind))
+            return footprint.All(t => _editorTiles.CellAt(t) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null });
+
+        var halfOpenSide = HalfOpenSideForHalfWidthDevice(halfSide);
+        foreach (var coord in footprint)
+        {
+            var ok = IsHalfTileOfHalfWidthFootprint(coord, anchor, halfSide)
+                ? _editorTiles.CanPlaceHalfWidthDevice(coord, halfOpenSide)
+                : _editorTiles.CellAt(coord) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
+            if (!ok)
+                return false;
+        }
+        return true;
+    }
+
+    // Direct user bug report (screenshot - trying to place a Щиток/Junction next to an existing one
+    // refused with no visible reason) - a short, translated toast (HandleCompartmentToolInput's own
+    // rejected-stamp convention) shown only on an actual rejected click, replacing the old per-frame
+    // TEMP-DIAG yellow text (removed) that dumped raw TileCoord/DeviceId internals. The single most
+    // common real cause: a half-width neighbor's own free-but-reserved half tile (e.g. this exact
+    // report - a second Щиток's half tile landing on the first one's already-claimed half) reads as
+    // plain bare floor to the eye, since only the BLOCKED half of that tile gets the neighbor's own
+    // baked icon drawn over it (DrawEditorDeviceAt) - the other half stays walkable and undrawn.
+    private string DeviceRejectionToastMessage(IReadOnlyList<TileCoord> footprint, TileCoord anchor, TileSide halfSide)
+    {
+        var isHalfWidth = CustomDeviceFootprint.IsHalfWidthKind(_editorSelectedDeviceKind);
+        var requiredOpenSide = HalfOpenSideForHalfWidthDevice(halfSide);
+        foreach (var coord in footprint)
+        {
+            var isHalf = isHalfWidth && IsHalfTileOfHalfWidthFootprint(coord, anchor, halfSide);
+            var ok = isHalf
+                ? _editorTiles.CanPlaceHalfWidthDevice(coord, requiredOpenSide)
+                : _editorTiles.CellAt(coord) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
+            if (ok)
+                continue;
+            var c = _editorTiles.CellAt(coord);
+            if (c is null)
+                return "Нельзя разместить устройство - здесь нет тайла корабля.";
+            if (!isHalf && !c.HasFloor)
+                return "Нельзя разместить устройство - здесь нет пола.";
+            if (c.DeviceId is not null)
+                return "Нельзя разместить устройство - место уже занято другим устройством (например, половиной соседнего прибора).";
+            if (c.Wall != TileWallKind.None)
+                return "Нельзя разместить устройство - здесь стена.";
+            return "Нельзя разместить устройство - недостаточно места.";
+        }
+        return "Нельзя разместить устройство.";
+    }
+
+    // Commits a footprint already validated by CanPlaceDeviceFootprint above - Helm/Navigation's
+    // "half" tile goes through PlaceHalfWidthDevice (bare floor OR a matching half-block wall it then
+    // coexists with, never destroyed), every other tile of every kind through ordinary PlaceDevice,
+    // unchanged. Shared by fresh placement (HandleDeviceToolInput) and canvas reload
+    // (Game1.ShipEditor.TileSave.cs's ApplyEditorTileCanvas) so both always agree on which tile of a
+    // Helm/Navigation footprint is the half one.
+    private void PlaceDeviceFootprint(CustomDeviceKind kind, IReadOnlyList<TileCoord> footprint, TileCoord anchor, TileSide halfSide, string deviceId)
+    {
+        if (!CustomDeviceFootprint.IsHalfWidthKind(kind))
+        {
+            foreach (var occupied in footprint)
+                _editorTiles.PlaceDevice(occupied, deviceId);
+            return;
+        }
+
+        var halfOpenSide = HalfOpenSideForHalfWidthDevice(halfSide);
+        foreach (var coord in footprint)
+        {
+            if (IsHalfTileOfHalfWidthFootprint(coord, anchor, halfSide))
+                _editorTiles.PlaceHalfWidthDevice(coord, halfOpenSide, deviceId);
+            else
+                _editorTiles.PlaceDevice(coord, deviceId);
+        }
+    }
+
+    // Moved to CustomDeviceFootprint.cs (Shared) so CompartmentPlacer.cs can share the exact same
+    // "which tile of a half-width footprint is the half one" rule instead of risking a second copy
+    // drifting out of sync - kept as thin aliases here so every existing call site in this file
+    // reads unchanged.
+    private static bool IsHalfTileOfHalfWidthFootprint(TileCoord coord, TileCoord anchor, TileSide halfSide) =>
+        CustomDeviceFootprint.IsHalfTileOfHalfWidthFootprint(coord, anchor, halfSide);
+
+    private static TileSide HalfOpenSideForHalfWidthDevice(TileSide halfSide) =>
+        CustomDeviceFootprint.HalfOpenSideForHalfWidthDevice(halfSide);
 
     private static IEnumerable<TileCoord> DeviceFootprintTiles(TileCoord anchor, int width, int height)
     {
@@ -1141,6 +1347,102 @@ public partial class Game1
         _editorTiles.RemoveDevice(anchor);
     }
 
+    // Direct user request ("двойной двигатель... 5 клеток... 2 сопла под углом 90 градусов") - the
+    // 5 tiles of a double engine: the shared Control, then each arm's own Bulkhead+Nozzle
+    // (EngineFootprintTiles(control, facing) already gives Control+Bulkhead+Nozzle for one arm -
+    // Skip(1) drops the Control tile the second arm would otherwise duplicate).
+    private static IEnumerable<TileCoord> DoubleEngineFootprintTiles(TileCoord control, TileSide facingA, TileSide facingB)
+    {
+        yield return control;
+        foreach (var t in EngineFootprintTiles(control, facingA).Skip(1))
+            yield return t;
+        foreach (var t in EngineFootprintTiles(control, facingB).Skip(1))
+            yield return t;
+    }
+
+    // The second arm is always the first rotated 90 degrees clockwise - direct user request ("2
+    // сопла двигателя смотрели под углом 90 градусов в их разнице"), one fixed relationship rather
+    // than letting the player choose each arm independently (R cycles the PAIR through all 4 corner
+    // orientations, same "rotate the pending facing before placing" shape HandleEngineToolInput
+    // already uses for a single engine).
+    private static TileSide DoubleEngineSecondFacing(TileSide first) => first switch
+    {
+        TileSide.West => TileSide.North,
+        TileSide.North => TileSide.East,
+        TileSide.East => TileSide.South,
+        _ => TileSide.West, // South
+    };
+
+    private void HandleDoubleEngineToolInput(bool leftClicked, bool rightClicked, KeyboardState keyboard)
+    {
+        var rDown = keyboard.IsKeyDown(Keys.R);
+        if (rDown && !_prevEngineRotateKeyDown)
+        {
+            _editorDoubleEnginePendingFacing = _editorDoubleEnginePendingFacing switch
+            {
+                TileSide.West => TileSide.North,
+                TileSide.North => TileSide.East,
+                TileSide.East => TileSide.South,
+                _ => TileSide.West,
+            };
+        }
+        _prevEngineRotateKeyDown = rDown;
+
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var control = new TileCoord(cell.X, cell.Y);
+
+        if (rightClicked)
+        {
+            if (_editorEngineFootprint.TryGetValue(control, out var anchor))
+                RemoveDoubleEngineAt(anchor);
+            return;
+        }
+        if (!leftClicked)
+            return;
+
+        var facingA = _editorDoubleEnginePendingFacing;
+        var facingB = DoubleEngineSecondFacing(facingA);
+        var bulkheadA = facingA.Offset(control);
+        var nozzleA = facingA.Offset(bulkheadA);
+        var bulkheadB = facingB.Offset(control);
+        var nozzleB = facingB.Offset(bulkheadB);
+
+        if (_editorTiles.CellAt(control) is not { HasFloor: true, Wall: TileWallKind.None, DeviceId: null })
+            return;
+        if (_editorTiles.CellAt(bulkheadA) is not { Wall: TileWallKind.Solid })
+            return;
+        if (_editorTiles.CellAt(nozzleA) is { HasFloor: true })
+            return;
+        if (_editorTiles.CellAt(bulkheadB) is not { Wall: TileWallKind.Solid })
+            return;
+        if (_editorTiles.CellAt(nozzleB) is { HasFloor: true })
+            return;
+        // Only the 4 arm tiles need to be free of every OTHER engine (single or double) - the
+        // Control tile itself is a fresh anchor being placed here, not shared with an existing one
+        // (the plain PlaceDevice precondition just above already guarantees DeviceId is null there).
+        if (DoubleEngineFootprintTiles(control, facingA, facingB).Skip(1).Any(_editorEngineFootprint.ContainsKey))
+            return;
+
+        var deviceId = $"doubleengine-{control.X}-{control.Y}";
+        _editorTiles.PlaceDevice(control, deviceId);
+        _editorDoubleEngineFacings[control] = (facingA, facingB);
+        foreach (var t in DoubleEngineFootprintTiles(control, facingA, facingB))
+            _editorEngineFootprint[t] = control;
+    }
+
+    private void RemoveDoubleEngineAt(TileCoord anchor)
+    {
+        if (IsProtectedCompartmentCore(anchor))
+            return;
+        if (!_editorDoubleEngineFacings.TryGetValue(anchor, out var facings))
+            return;
+        foreach (var t in DoubleEngineFootprintTiles(anchor, facings.First, facings.Second))
+            _editorEngineFootprint.Remove(t);
+        _editorDoubleEngineFacings.Remove(anchor);
+        _editorTiles.RemoveDevice(anchor);
+    }
+
     // R rotates the PENDING rotation step (0-3), same before-placement convention the Engine tool's
     // own _editorEnginePendingFacing already uses. The clicked tile is the rotated footprint's own
     // CENTER (FootprintAnchorFor's own convention for the Device tool) rather than its top-left corner
@@ -1188,6 +1490,14 @@ public partial class Game1
             _editorDeviceKinds[device.Coord] = device.Kind;
             if (device.Rotated)
                 _editorDeviceRotation[device.Coord] = true;
+            // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - the
+            // free-tile Device tool's own HandleDeviceToolInput already does this for a hand-placed
+            // Helm/Navigation; a compartment-placed half-width device needs the exact same
+            // bookkeeping or its own authored orientation resets to the East/South-by-Rotated
+            // fallback the moment the ship is exported (TileShipBuilder.BuildDefinition's own
+            // deviceHalfSides lookup would simply never find an entry for it).
+            if (device.HalfSide is { } halfSide)
+                _editorDeviceHalfSides[device.Coord] = halfSide;
             var (deviceWidth, deviceHeight) = DeviceFootprintSize(device.Kind, device.Rotated);
             foreach (var occupied in DeviceFootprintTiles(device.Coord, deviceWidth, deviceHeight))
                 _editorDeviceFootprint[occupied] = device.Coord;
@@ -1217,6 +1527,8 @@ public partial class Game1
             _editorCompartmentAt[t] = instance;
         _editorCompartmentTiles[instance] = allTiles;
         _editorCompartmentProtected[instance] = new HashSet<TileCoord>(result.ProtectedTiles);
+        _editorCompartmentEntryId[instance] = compartmentId;
+        _editorCompartmentPlacement[instance] = (anchor, _editorCompartmentPendingRotation);
     }
 
     // M83 - true if `coord` is a still-placed compartment's own protected "core" tile (its core device,
@@ -1252,6 +1564,23 @@ public partial class Game1
         }
         _editorCompartmentTiles.Remove(instanceId);
         _editorCompartmentProtected.Remove(instanceId);
+        _editorCompartmentEntryId.Remove(instanceId);
+        _editorCompartmentPlacement.Remove(instanceId);
+    }
+
+    // Recomputes a placed compartment instance's own authoritative FootprintRects on demand
+    // (Game1.ShipEditor.TileBridge.cs's own BuildDefinitionFromTiles, and BuildEditorTileCanvas's
+    // own save) rather than caching them separately - EntryId+Anchor+RotationSteps is the one
+    // source of truth, the exact same data a save file itself persists
+    // (CustomShipTileCanvas.CompartmentInstanceRecord) to restore this after a reload.
+    private IReadOnlyList<RectF>? CompartmentInstanceRects(string instanceId)
+    {
+        if (!_editorCompartmentEntryId.TryGetValue(instanceId, out var entryId) || CompartmentCatalog.Find(entryId) is not { } entry)
+            return null;
+        if (!_editorCompartmentPlacement.TryGetValue(instanceId, out var placement))
+            return null;
+        var rotated = CompartmentPlacer.Rotate(entry, placement.RotationSteps);
+        return rotated.FootprintRects.Select(r => new RectF(r.X + placement.Anchor.X, r.Y + placement.Anchor.Y, r.Width, r.Height)).ToList();
     }
 
     // Purely cosmetic (direct user answer: no validation requirement) - drag a rectangle over
@@ -1356,6 +1685,8 @@ public partial class Game1
         _editorCompartmentAt.Clear();
         _editorCompartmentTiles.Clear();
         _editorCompartmentProtected.Clear();
+        _editorCompartmentEntryId.Clear();
+        _editorCompartmentPlacement.Clear();
         _editorCurrentSlotName = null; // a blank hull isn't the previously-open named slot any more
         SaveEditorDefinition();
     }

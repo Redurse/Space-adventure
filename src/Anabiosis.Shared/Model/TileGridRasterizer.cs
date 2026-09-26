@@ -1,7 +1,7 @@
 namespace Anabiosis.Shared.Model;
 
 // M71 (humble-soaring-cat.md) - pure, one-way projection of the existing rectangle hull model
-// (Room/Door/AirlockOuterDoor) onto the new TileGrid (TileGrid.cs). Called ADDITIVELY from
+// (Room/Door) onto the new TileGrid (TileGrid.cs). Called ADDITIVELY from
 // Ship/Station/EnemyShipLayout's own constructors (see each type's `Tiles` property) so both
 // representations exist side by side, generated from the SAME source of truth (the old rectangle
 // lists), until each dependent system (atmosphere, movement, rendering...) migrates to reading
@@ -16,8 +16,8 @@ namespace Anabiosis.Shared.Model;
 // two rooms gets no WallBlock at all, because the OLD model's interior collision comes purely from
 // RoomLayout.MoveAlongAxis clamping a character to its own room's rectangle, never from a WallBlock
 // object. The new tile model has no such rectangle-clamp fallback - every room-to-room boundary
-// needs an explicit wall/door TILE - so walls are re-derived directly from Room/Door/AirlockOuterDoor
-// geometry instead, using the same per-unit-segment adjacency test Station.IsUnitCovered already
+// needs an explicit wall/door TILE - so walls are re-derived directly from Room/Door geometry
+// instead, using the same per-unit-segment adjacency test Station.IsUnitCovered already
 // uses for the opposite purpose.
 //
 // To keep an interior boundary exactly ONE tile thick (not two), each room walls its own LEADING
@@ -35,10 +35,18 @@ namespace Anabiosis.Shared.Model;
 // doors connecting exactly the right pair) holds regardless.
 public static class TileGridRasterizer
 {
+    // A door that LeadsToVacuum (humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный
+    // тип") is rasterized against ONLY its own room, never the full room list - a room elsewhere
+    // on the hull whose edge happens to share the same coordinate would otherwise make
+    // PerpendicularCoord pick the wrong leading/trailing branch and place the door tile one tile
+    // off (this was previously guaranteed by AirlockOuterDoor's own separate, single-RoomId type;
+    // now it has to be enforced explicitly here since both kinds share one Door type).
+    public static IReadOnlyList<Room> RoomsForDoor(IReadOnlyList<Room> rooms, Door door) =>
+        door.RoomBId is null ? new[] { rooms.First(r => r.Id == door.RoomAId) } : rooms;
+
     public static TileGrid FromRooms(
         IReadOnlyList<Room> rooms,
-        IReadOnlyList<Door> doors,
-        IReadOnlyList<AirlockOuterDoor> airlockOuterDoors)
+        IReadOnlyList<Door> doors)
     {
         var grid = new TileGrid();
 
@@ -105,8 +113,9 @@ public static class TileGridRasterizer
                         WallTile(new TileCoord(RoundToInt(x), bottom - 1));
             }
 
-        // A Door/AirlockOuterDoor is a StandardSpanUnits(2)-wide rectangle centered on the wall it
-        // sits in; whichever of Width/Height equals 1 tells you the wall's orientation (Door.cs).
+        // A Door (vacuum-facing or interior) is a StandardSpanUnits(2)-wide rectangle centered on
+        // the wall it sits in; whichever of Width/Height equals 1 tells you the wall's orientation
+        // (Door.cs).
         // Rasterized last so an opening always overrides whatever wall tile was placed above.
         //
         // Naively rounding a door's own center/width symmetrically (independent of any room) looks
@@ -126,9 +135,7 @@ public static class TileGridRasterizer
         // leading/trailing rule the walls above just used - never its own independent center/width
         // rounding on the perpendicular (wall-thickness) axis.
         foreach (var door in doors)
-            RasterizeDoor(grid, rooms, door.X, door.Y, door.Width, door.Height);
-        foreach (var airlock in airlockOuterDoors)
-            RasterizeDoor(grid, new[] { rooms.First(r => r.Id == airlock.RoomId) }, airlock.X, airlock.Y, airlock.Width, airlock.Height);
+            RasterizeDoor(grid, RoomsForDoor(rooms, door), door.X, door.Y, door.Width, door.Height);
 
         return grid;
     }
@@ -142,11 +149,11 @@ public static class TileGridRasterizer
         }
     }
 
-    // M72/M73 (World.TileSync.cs) reuses this to find which live tile(s) a Door/AirlockOuterDoor's
-    // id maps to, without needing a stored mapping. `rooms` should be every room that might border
-    // this door - the ship/station's full room list for a regular Door, or a single-element list
-    // with just the airlock's own RoomId for an AirlockOuterDoor (see FromRooms's own comment on why
-    // this needs to be room-aware rather than a pure function of the door's own X/Y/Width/Height).
+    // M72/M73 (World.TileSync.cs) reuses this to find which live tile(s) a Door's id maps to,
+    // without needing a stored mapping. `rooms` should be every room that might border this door -
+    // the ship/station's full room list for an interior door, or RoomsForDoor's single-element
+    // list for one that LeadsToVacuum (see FromRooms's own comment on why this needs to be
+    // room-aware rather than a pure function of the door's own X/Y/Width/Height).
     public static IEnumerable<TileCoord> DoorTileCoords(IReadOnlyList<Room> rooms, float centerX, float centerY, float width, float height)
     {
         var left = RoundToInt(centerX - width / 2f);
@@ -240,7 +247,7 @@ public static class TileGridRasterizer
     // computing a coordinate one tile off from where the wall/breach genuinely lives - so a fully cut
     // interior bulkhead never actually opened up in Ship.Tiles (TileMovement kept treating it as
     // solid) and World.Atmosphere.cs's leak-rate read the wrong tile's HP too. Now routed through the
-    // same room-list-aware PerpendicularCoord logic the Door/AirlockOuterDoor case above already
+    // same room-list-aware PerpendicularCoord logic the Door case above already
     // uses for exactly this leading/trailing ambiguity - needs every room in the hull, not just the
     // block's own, to know whether a neighbor's leading edge actually claimed this boundary first.
     // Generalized (M90) to find which of `room`'s own SUBRECTS this block actually sits on (a

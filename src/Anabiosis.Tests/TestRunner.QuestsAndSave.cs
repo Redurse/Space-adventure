@@ -66,7 +66,7 @@ internal static partial class TestRunner
             return false;
 
         var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        if (me.Inventory!.MainSlots.Count(s => s == ItemType.Mineral) < quest.RequiredAmount)
+        if (me.Inventory!.MainSlots.Count(s => s == ItemType.IronOre) < quest.RequiredAmount)
             return false; // didn't actually come home with the ore - setup problem, not the behavior under test
 
         var creditsBefore = world.Credits;
@@ -75,7 +75,7 @@ internal static partial class TestRunner
         var after = world.CreateSnapshot();
         return after.ActiveQuest is null
             && world.Credits == creditsBefore + quest.RewardCredits
-            && after.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Count(s => s == ItemType.Mineral) == 0;
+            && after.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Count(s => s == ItemType.IronOre) == 0;
     }
 
     private static bool World_Quest_Mining_TurnIn_FailsWithoutEnoughOre()
@@ -99,7 +99,7 @@ internal static partial class TestRunner
         var after = world.CreateSnapshot();
         return after.ActiveQuest is not null
             && world.Credits == creditsBefore
-            && after.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Count(s => s == ItemType.Mineral) == 1; // ore untouched
+            && after.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Count(s => s == ItemType.IronOre) == 1; // ore untouched
     }
 
     // Not every station kind staffs an Administrator (game_design.md section 10) - a Shipyard

@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using Anabiosis.Server;
 using Anabiosis.Shared.Model;
@@ -39,11 +40,15 @@ internal static partial class TestRunner
     private static bool CustomShip_FromDefinition_BuildsRoomsDoorsAndAirlock()
     {
         var ship = Ship.FromCustomDefinition(BuildSimpleCustomShipDefinition());
+        // Doors.Count == 2 now (humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный тип") -
+        // the interior door between "a"/"b" plus the hull door, both live in the one list; VacuumDoors
+        // is a filter over that same list, not a separate source.
         return ship.Rooms.Count == 2
-            && ship.Doors.Count == 1
-            && ship.Doors[0].Connects("a") && ship.Doors[0].Connects("b")
-            && ship.AirlockOuterDoors.Count == 1
-            && ship.AirlockOuterDoors[0].RoomId == "b"
+            && ship.Doors.Count == 2
+            && ship.Doors.Count(d => !d.LeadsToVacuum) == 1
+            && ship.Doors.First(d => !d.LeadsToVacuum).Connects("a") && ship.Doors.First(d => !d.LeadsToVacuum).Connects("b")
+            && ship.VacuumDoors.Count == 1
+            && ship.VacuumDoors[0].RoomAId == "b"
             && ship.ReactorBlock.RoomId == "a"
             && ship.HelmConsole.RoomId == "a"
             && ship.SuitLockers.Single().RoomId == "b";
@@ -95,5 +100,59 @@ internal static partial class TestRunner
         var world = new World(ShipKind.Custom, definition);
         var snapshot = world.CreateSnapshot();
         return snapshot.CurrentShipKind == ShipKind.Custom && snapshot.ShipForwardDegrees == 90f;
+    }
+
+    // Direct user bug report ("не могу зайти в игру на корабле cosmoteer1") - a real player-built
+    // ship with zero CustomAirlockDef entries (allowed ever since CustomShipValidator's own airlock-
+    // count check was removed, direct user request) used to crash the very first World construction:
+    // every new World starts docked (this constructor's own "a fresh run starts docked" comment) and
+    // immediately touches Station, whose GetOrCreateStation anchored itself on
+    // Ship.VacuumDoors.First() - an empty-sequence exception the client swallowed silently
+    // (Game1.Menu.cs's FinishPendingSessionIfReady), so the player just sat on the Ship Editor screen
+    // forever with no error. World must now build, dock, and snapshot cleanly with zero airlocks.
+    private static bool CustomShip_World_ZeroAirlocks_DoesNotCrashOnConstructionOrDocking()
+    {
+        var definition = BuildSimpleCustomShipDefinition() with { Airlocks = Array.Empty<CustomAirlockDef>() };
+        var world = new World(ShipKind.Custom, definition);
+        if (world.Ship.VacuumDoors.Count != 0)
+            return false; // setup problem - this test only means anything with genuinely zero airlocks
+        if (!world.IsDocked)
+            return false; // every fresh World starts docked - this is what used to crash right here
+
+        world.SpawnCharacter(1);
+        world.Step(RealtimeStep); // exercises CreateSnapshot's own docked-layout/station rendering path
+        return world.CreateSnapshot().Station.Rooms.Count > 0; // a station still generated, just unreachable
+    }
+
+    // Direct user bug report ("некоторые устройства в игре не отображаются а в редакторе они
+    // видны") - every DecorativeDevice.Kinds entry used to have no Ship.FromCustomDefinition case at
+    // all, so placing one in the editor produced nothing in the actual built Ship (and therefore
+    // nothing in WorldSnapshot, nothing to render). Picks two representative kinds - one with real
+    // DeviceSkin art (Bed) and one with only the generic tinted-swatch fallback (Table) - to cover
+    // both DrawDecorativeDevice branches without enumerating all ~25.
+    private static bool CustomShip_FromDefinition_BuildsDecorativeDevicesForOtherwiseUnhandledKinds()
+    {
+        var definition = BuildSimpleCustomShipDefinition() with
+        {
+            Devices = BuildSimpleCustomShipDefinition().Devices
+                .Append(new CustomDeviceDef(CustomDeviceKind.Bed, 5f, 1f))
+                .Append(new CustomDeviceDef(CustomDeviceKind.Table, 5f, 2f, Rotated: true))
+                .ToList(),
+        };
+        var ship = Ship.FromCustomDefinition(definition);
+        if (ship.DecorativeDevices.Count != 2)
+            return false;
+        var bed = ship.DecorativeDevices.SingleOrDefault(d => d.Kind == CustomDeviceKind.Bed);
+        var table = ship.DecorativeDevices.SingleOrDefault(d => d.Kind == CustomDeviceKind.Table);
+        if (bed is null || table is null)
+            return false;
+        if (bed.RoomId != "b" || table.RoomId != "b" || !table.Rotated)
+            return false;
+
+        // Round-trips back into CustomDeviceDef (Ship.Convert.cs's own ToDefinition), same "survives
+        // a rebuild" guarantee every other device kind already has.
+        var roundTripped = ship.ToDefinition();
+        return roundTripped.Devices.Count(d => d.Kind == CustomDeviceKind.Bed) == 1
+            && roundTripped.Devices.Count(d => d.Kind == CustomDeviceKind.Table && d.Rotated) == 1;
     }
 }

@@ -49,13 +49,16 @@ public sealed partial class World
         // Same batched-delta diffusion as the player's ship: computed against the pre-diffusion
         // levels so the order the doors happen to be listed in can't bias which side loses air.
         var deltas = new Dictionary<string, float>();
+        // layout.Doors is interior-only - the hull's own vacuum-facing hatches live in the
+        // separate OuterHatches list instead (humble-soaring-cat.md, "убрать AirlockOuterDoor как
+        // отдельный тип"), so RoomBId is never actually null here despite the type now allowing it.
         foreach (var door in layout.Doors)
         {
             if (!IsDoorOpen(door.Id))
                 continue;
-            var flow = OxygenDiffusionRatePerSecond * (_enemyRoomOxygen[door.RoomAId] - _enemyRoomOxygen[door.RoomBId]) * (float)deltaSeconds;
+            var flow = OxygenDiffusionRatePerSecond * (_enemyRoomOxygen[door.RoomAId] - _enemyRoomOxygen[door.RoomBId!]) * (float)deltaSeconds;
             deltas[door.RoomAId] = deltas.GetValueOrDefault(door.RoomAId) - flow;
-            deltas[door.RoomBId] = deltas.GetValueOrDefault(door.RoomBId) + flow;
+            deltas[door.RoomBId!] = deltas.GetValueOrDefault(door.RoomBId!) + flow;
         }
 
         foreach (var (roomId, delta) in deltas)

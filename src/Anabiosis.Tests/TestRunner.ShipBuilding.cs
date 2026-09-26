@@ -365,11 +365,12 @@ internal static partial class TestRunner
     {
         var world = NormalizeToCustomHullViaOneBuild(out var entry);
         var doorId = world.Ship.Doors[0].Id;
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: doorId)); // closes it (starts open)
-        world.Step(RealtimeStep);
+        // Every ship door now starts closed by default (direct user request, "сделай чтобы все
+        // двери на корабле изначально были закрыты") - no toggle needed to get it into the closed
+        // starting state this test wants before building the new room.
         var wasOpenAfterToggle = world.CreateSnapshot().DoorStates.First(d => d.DoorId == doorId).IsOpen;
         if (wasOpenAfterToggle)
-            return false; // setup problem - toggle didn't actually close it
+            return false; // setup problem - not closed by default as expected
 
         world.ApplyCommand(1, new ClientCommand(1, BuildRoom: new BuildRoomRequest(entry.Id)));
         CompletePendingRoomBuilds(world);

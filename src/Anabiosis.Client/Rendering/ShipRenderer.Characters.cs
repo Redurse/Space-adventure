@@ -172,7 +172,13 @@ public sealed partial class ShipRenderer
     public void DrawCharacterLabels(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, Matrix sceneTransform)
     {
         spriteBatch.Begin(transformMatrix: sceneTransform);
-        foreach (var character in snapshot.Characters)
+        // Same filter as DrawCharacters (ShipRenderer.cs) - an outside character's nameplate is
+        // drawn by FieldRenderer instead, not here (see ShipRenderer.cs's own doc comment on why
+        // this can't be left implicit).
+        // Direct user request ("модель игрока полностью пропадала") - a floating nameplate over an
+        // invisible body would look broken, so it goes with the body (ShipRenderer.cs's own
+        // DrawCharacters doc comment).
+        foreach (var character in snapshot.Characters.Where(c => !ShipLocalFrame.InFieldSpace(c) && c.Health > 0f))
             DrawCharacterLabel(spriteBatch, character, origin);
         spriteBatch.End();
     }

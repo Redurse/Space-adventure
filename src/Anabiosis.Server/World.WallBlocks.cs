@@ -88,6 +88,15 @@ public sealed partial class World
             DamageWallBlock(block.Id, MaxHpFor(block));
     }
 
+    // Same test-only precondition setter, but by exact id rather than "whichever block happens to
+    // come first in this room" - needed when a test wants a SPECIFIC block breached (e.g. two
+    // particular adjacent ones, to set up a passable breach - World.WallBlocks.cs's own
+    // IsPassableBreach/PassableBreachAdjacency) without breaching every wall the room has, which
+    // would otherwise trip CheckRoomStructuralFailure via DebugBreachWallBlock's own repeated calls
+    // always hitting that same first block.
+    public void DebugBreachWallBlockById(string blockId) =>
+        DamageWallBlock(blockId, MaxHpForBlockId(blockId));
+
     // Same test-only precondition setter as DebugBreachWallBlock above, just against whichever enemy
     // hull is currently boardable - a test that only cares "there's a hole in the enemy's hull, does
     // crossing it board correctly" doesn't need to actually simulate a cutter burning through it.
@@ -126,19 +135,22 @@ public sealed partial class World
             ? Array.Empty<WallBlockState>()
             : enemy.Layout.WallBlocks.Select(b => new WallBlockState(b.Id, enemy.GetWallBlockHp(b.Id), WallBlockMaxHp)).ToArray();
 
-    // Same per-instance split, for the hull's own two locked airlocks (EnemyShipLayout.AirlockOuterDoors).
-    private IReadOnlyList<WallBlockState> CreateEnemyAirlockStates() =>
+    // Same per-instance split, for the hull's own two locked hatches (EnemyShipLayout.OuterHatches) -
+    // folded into the same GetWallBlockHp dictionary as CreateEnemyHullWallBlockStates above now
+    // (humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный тип"), still reported as its
+    // own list (HatchStates) since the client needs to know which ids are hatches vs wall panels.
+    private IReadOnlyList<WallBlockState> CreateEnemyHatchStates() =>
         BoardableEnemy is not { } enemy
             ? Array.Empty<WallBlockState>()
-            : enemy.Layout.AirlockOuterDoors.Select(d => new WallBlockState(d.Id, enemy.GetAirlockHp(d.Id), WallBlockMaxHp)).ToArray();
+            : enemy.Layout.OuterHatches.Select(d => new WallBlockState(d.Id, enemy.GetWallBlockHp(d.Id), WallBlockMaxHp)).ToArray();
 
     // Test-only precondition setter, same convention as DebugBreachEnemyWallBlock above, for the
-    // hull's own two airlocks instead of a wall panel.
-    public bool DebugBreachEnemyAirlock(string airlockId)
+    // hull's own two hatches instead of a wall panel.
+    public bool DebugBreachEnemyHatch(string hatchId)
     {
-        if (BoardableEnemy is not { } enemy || enemy.Layout.AirlockOuterDoors.All(d => d.Id != airlockId))
+        if (BoardableEnemy is not { } enemy || enemy.Layout.OuterHatches.All(d => d.Id != hatchId))
             return false;
-        enemy.DamageAirlock(airlockId, WallBlockMaxHp);
+        enemy.DamageWallBlock(hatchId, WallBlockMaxHp);
         return true;
     }
 
@@ -157,7 +169,7 @@ public sealed partial class World
         if (aim.Length() < 0.01f)
             return null;
 
-        var origin = character.IsOutside ? GetEvaWorldPosition(character) : character.Position;
+        var origin = GetCharacterWorldPosition(character);
         var (hullCenter, _) = GetHullLocalBounds();
 
         for (var i = 1; i <= samples; i++)
@@ -206,7 +218,7 @@ public sealed partial class World
         // aimed at whichever enemy hull is actually boarded - FindAimedEnemyIndoorTarget is the
         // exact lookup CutIndoorAlongFlameOnEnemyShip/WeldIndoorAlongFlameOnEnemyShip themselves use
         // (World.Cutting.cs/World.Welding.cs), so the bar can never disagree with what's actually
-        // about to take the damage. Wall block or airlock, whichever it found - they never collide.
+        // about to take the damage. Wall block or hatch, whichever it found - they never collide.
         if (character.OnEnemyShip)
         {
             if (BoardableEnemy is null)
@@ -214,12 +226,12 @@ public sealed partial class World
             if (IsWelding(character.PlayerId))
             {
                 var target = FindAimedEnemyIndoorTarget(character, WelderReachUnits, WelderSamples, WeldPointRadius);
-                return target.WallBlockId ?? target.AirlockId;
+                return target.WallBlockId ?? target.HatchId;
             }
             if (IsCutting(character.PlayerId))
             {
                 var target = FindAimedEnemyIndoorTarget(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
-                return target.WallBlockId ?? target.AirlockId;
+                return target.WallBlockId ?? target.HatchId;
             }
             return null;
         }

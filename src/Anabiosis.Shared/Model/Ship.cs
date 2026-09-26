@@ -8,8 +8,14 @@
 public sealed partial class Ship
 {
     public IReadOnlyList<Room> Rooms { get; }
+    // A vacuum-facing door (Door.LeadsToVacuum - humble-soaring-cat.md, "убрать AirlockOuterDoor
+    // как отдельный тип") lives in this SAME list, not a separate one - VacuumDoors below is a
+    // computed filter over it, not an independent source of truth. Order matters: Ship.Custom.cs
+    // appends hull doors AFTER interior ones, so VacuumDoors[0] stays the same door the old
+    // AirlockOuterDoors[0] used to be (World.StationDocking.cs's ResolveShipAirlock/World.Eva.cs's
+    // TryCrossIntoVacuum both key off that first entry as the ship's own primary connector).
     public IReadOnlyList<Door> Doors { get; }
-    public IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors { get; }
+    public IReadOnlyList<Door> VacuumDoors { get; }
     // M-doors-as-edges (humble-soaring-cat.md) - narrow doors that sit on the EDGE between 2
     // already-free floor tiles instead of occupying a tile themselves. Empty for every hand-
     // authored hull (CreateStarter/.Scout/.Cruiser/.Corvette/.CatalogHulls never place one) - only
@@ -25,7 +31,7 @@ public sealed partial class Ship
     // empty for every hand-authored hull (CreateStarter/.Scout/.Cruiser/.Corvette never place one),
     // only ever populated by a Ship Editor-built hull (Ship.Custom.cs's FromCustomDefinition).
     public IReadOnlyList<ShipEngine> Engines { get; }
-    // M71 (humble-soaring-cat.md) - additive projection of Rooms/Doors/AirlockOuterDoors/WallBlocks
+    // M71 (humble-soaring-cat.md) - additive projection of Rooms/Doors/WallBlocks
     // onto the new tile-grid model (TileGrid.cs). Nobody reads this yet outside tests; it exists
     // purely to prove the projection is lossless before any dependent system (atmosphere, movement,
     // rendering...) migrates to it one milestone at a time.
@@ -36,7 +42,7 @@ public sealed partial class Ship
     // don't fit into any Room's own Rects at all - Ship.Custom.cs's FromCustomDefinition paints
     // them directly onto THIS Ship's own Tiles right after construction, which is correct for
     // SERVER-side collision (TileMovement.cs reads Tiles directly) but was NEVER reaching the
-    // CLIENT: WorldSnapshot only ever networked Rooms/Doors/AirlockOuterDoors/WallBlocks, and the
+    // CLIENT: WorldSnapshot only ever networked Rooms/Doors/WallBlocks, and the
     // client rebuilds its OWN copy of Tiles purely by re-running TileGridRasterizer.FromRooms on
     // those - the exact same "naive" rasterization that steps 3.5/3.6 exist to CORRECT, so the
     // client's rendering silently reverted to the wrong, uncorrected geometry while the server's
@@ -83,6 +89,12 @@ public sealed partial class Ship
     // list-of-fixtures shape as Terminals, no server-side state of its own at all (purely passive,
     // Game1.Lighting.cs lights it whenever the ship's own lamps are on).
     public IReadOnlyList<WallLamp> WallLamps { get; }
+    // Direct user request ("у тебя есть проблема что всех этих 4 устройств на корабле может быть
+    // только по одному") - many independent instances, same list-of-fixtures shape as WallLamps
+    // just above (not a fixture every hull gets - Ship Editor only, no hand-authored hull places
+    // either).
+    public IReadOnlyList<ShipStatusMonitor> ShipStatusMonitors { get; }
+    public IReadOnlyList<CommsConsole> CommsConsoles { get; }
     // Two per hull (game_design.md section 13) - a starter kit of 3 units of every hand
     // tool/tank/weapon/consumable used to live scattered across the ship as individual ToolStation
     // pickups; it now lives here instead, split across these two shelves (World.ShipPurchase.cs's
@@ -141,13 +153,16 @@ public sealed partial class Ship
     // Direct user bug report ("щитки отображались в игре а не была просто пустота") - the "Щиток"
     // fixture (JunctionBox.cs's own doc comment) is purely decorative, same shape as WallLamps.
     public IReadOnlyList<JunctionBox> JunctionBoxes { get; }
+    // Direct user bug report ("некоторые устройства в игре не отображаются а в редакторе они
+    // видны") - every remaining CustomDeviceKind with no dedicated mechanic (DecorativeDevice.Kinds),
+    // generalized instead of giving each its own JunctionBox-style record.
+    public IReadOnlyList<DecorativeDevice> DecorativeDevices { get; }
 
     private readonly Dictionary<string, Room> _roomsById;
 
     public Ship(
         IReadOnlyList<Room> rooms,
         IReadOnlyList<Door> doors,
-        IReadOnlyList<AirlockOuterDoor> airlockOuterDoors,
         IReadOnlyList<Turret> turrets,
         IReadOnlyList<HullCamera> cameras,
         IReadOnlyList<AmmoStorage> ammoStorages,
@@ -168,6 +183,8 @@ public sealed partial class Ship
         Jukebox? jukebox = null,
         IReadOnlyList<Terminal>? terminals = null,
         IReadOnlyList<WallLamp>? wallLamps = null,
+        IReadOnlyList<ShipStatusMonitor>? shipStatusMonitors = null,
+        IReadOnlyList<CommsConsole>? commsConsoles = null,
         int reactorDeviceCount = 1,
         int distributionDeviceCount = 1,
         int helmDeviceCount = 1,
@@ -179,6 +196,7 @@ public sealed partial class Ship
         int batteryDeviceCount = 1,
         IReadOnlyList<Vec2>? extraBatteryPositions = null,
         IReadOnlyList<JunctionBox>? junctionBoxes = null,
+        IReadOnlyList<DecorativeDevice>? decorativeDevices = null,
         IReadOnlyList<ShipEngine>? engines = null,
         IReadOnlyList<TileCoord>? supplementalWallTiles = null,
         IReadOnlyList<TileCoord>? forcedFloorTiles = null,
@@ -208,13 +226,16 @@ public sealed partial class Ship
         BatteryDeviceCount = batteryDeviceCount;
         ExtraBatteryPositions = extraBatteryPositions ?? Array.Empty<Vec2>();
         JunctionBoxes = junctionBoxes ?? Array.Empty<JunctionBox>();
+        DecorativeDevices = decorativeDevices ?? Array.Empty<DecorativeDevice>();
         ComponentMounts = componentMounts ?? Array.Empty<ComponentMount>();
         Jukebox = jukebox;
         Terminals = terminals ?? Array.Empty<Terminal>();
         WallLamps = wallLamps ?? Array.Empty<WallLamp>();
+        ShipStatusMonitors = shipStatusMonitors ?? Array.Empty<ShipStatusMonitor>();
+        CommsConsoles = commsConsoles ?? Array.Empty<CommsConsole>();
         Rooms = rooms;
         Doors = doors;
-        AirlockOuterDoors = airlockOuterDoors;
+        VacuumDoors = doors.Where(d => d.LeadsToVacuum).ToList();
         DoorEdges = doorEdges ?? Array.Empty<ShipDoorEdge>();
         Turrets = turrets;
         Cameras = cameras;
@@ -225,7 +246,7 @@ public sealed partial class Ship
         // room-to-room/vacuum leakage on IsDoorOpen directly) - it doesn't need a hull WallBlock
         // sitting underneath it too. GenerateOuterWallBlocks generates blindly along an edge's
         // whole length with no idea where a door was cut into it (e.g. the Corvette's shield-bay/
-        // life-support flanks, each with an AirlockOuterDoor on an otherwise-solid side), so any
+        // life-support flanks, each with a vacuum-facing door on an otherwise-solid side), so any
         // block that lands exactly on a door's own footprint is dropped here, once, for every hull.
         Engines = engines ?? Array.Empty<ShipEngine>();
         SupplementalWallTiles = supplementalWallTiles ?? Array.Empty<TileCoord>();
@@ -238,7 +259,7 @@ public sealed partial class Ship
         // otherwise ALSO place there, the same way a door's footprint already excludes one, so the
         // two don't silently coexist at (almost) the same position.
         WallBlocks = wallBlocks
-            .Where(b => !doors.Any(d => d.Contains(b.Position)) && !airlockOuterDoors.Any(d => d.Contains(b.Position))
+            .Where(b => !doors.Any(d => d.Contains(b.Position))
                 && !Engines.Any(e => (e.BulkheadPosition - b.Position).Length() < 0.1))
             .ToList();
         ReactorBlock = reactorBlock;
@@ -251,7 +272,7 @@ public sealed partial class Ship
         SpawnPoint = spawnPoint;
         SpawnRoomId = spawnRoomId;
         _roomsById = rooms.ToDictionary(r => r.Id);
-        Tiles = TileGridRasterizer.FromRooms(Rooms, Doors, AirlockOuterDoors);
+        Tiles = TileGridRasterizer.FromRooms(Rooms, Doors);
         Devices = BuildDevices();
     }
 

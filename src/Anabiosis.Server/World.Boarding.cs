@@ -69,7 +69,11 @@ public sealed partial class World
         character.EvaLocalOffset = EnemyShipFieldPosition - new Vec2(EjectClearRadius, 0);
         character.EvaVelocity = Vec2.Zero;
         character.PushedOffFrom = PushOffOrigin.None;
-        character.RoomId = Ship.AirlockOuterDoors.First().RoomId; // meaningless while outside, but valid for the trip home
+        // Meaningless while outside, but valid for the trip home - falls back to any room at all
+        // when the ship has no real airlock of either kind (ResolveShipAirlock, World.
+        // StationDocking.cs), since this id only ever needs to resolve to a real Ship.Rooms entry,
+        // never specifically the airlock's own room.
+        character.RoomId = ResolveShipAirlock()?.RoomId ?? Ship.Rooms[0].Id;
     }
 
     // Where the boarding party is headed: the lead hull's actual place in the field, which now
@@ -144,7 +148,7 @@ public sealed partial class World
 
     // Enemy ship -> back outside, through whichever cut-open hatch or wall panel the character is
     // actually standing at - generalizes the old single-fixed-hatch check to any of the hull's two
-    // AirlockOuterDoors or any breached WallBlock in the room being left, matching how many ways in
+    // OuterHatches or any breached WallBlock in the room being left, matching how many ways in
     // there now are. Puts the character back in free EVA flight (not attached to the hull) - they
     // still have to fly home, same as leaving used to work.
     private bool TryLeaveEnemyShip(Character character, Vec2 moveDelta)
@@ -153,8 +157,8 @@ public sealed partial class World
             return false;
 
         var next = character.Position + moveDelta;
-        var outerDoor = EnemyShipLayout.AirlockOuterDoors.FirstOrDefault(d =>
-            d.RoomId == character.RoomId && enemy.IsAirlockBreached(d.Id) && d.Contains(next));
+        var outerDoor = EnemyShipLayout.OuterHatches.FirstOrDefault(d =>
+            d.RoomAId == character.RoomId && enemy.IsWallBlockBreached(d.Id) && d.Contains(next));
         var breachBlock = outerDoor is null
             ? EnemyShipLayout.WallBlocks.FirstOrDefault(b => b.RoomId == character.RoomId && !b.IsInterior &&
                 enemy.IsWallBlockBreached(b.Id) && (b.Position - next).Length() <= RoomLayout.BreachCrossingRadius)

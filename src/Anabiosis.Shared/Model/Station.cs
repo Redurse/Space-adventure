@@ -11,11 +11,17 @@ namespace Anabiosis.Shared.Model;
 public sealed partial class Station
 {
     public IReadOnlyList<Room> Rooms { get; }
+    // Interior doors only - the umbilical to the ship (ShipConnector below) is deliberately kept
+    // out of this list, since it's addressed by identity everywhere (DockingPortPosition,
+    // StationSnapshot.ShipConnector), never by index into a list.
     public IReadOnlyList<Door> Doors { get; }
-    // The umbilical back to the ship's own airlock chamber - same "one side is a real room, the
-    // other isn't part of this structure's own Doors list" shape as Ship.AirlockOuterDoors, just
-    // crossing into a different physical structure instead of into vacuum.
-    public AirlockOuterDoor ShipConnector { get; }
+    // The umbilical back to the ship's own airlock chamber - a Door whose RoomBId is null, same
+    // shape every other vacuum-facing door in the game now uses (humble-soaring-cat.md, "убрать
+    // AirlockOuterDoor как отдельный тип"). Its own LeadsToVacuum reads true even though it
+    // actually crosses into a different physical structure (the ship), not open space - harmless
+    // in practice, since ShipConnector is addressed only by identity, never folded into a generic
+    // "iterate every door where LeadsToVacuum" loop the way Ship.VacuumDoors is.
+    public Door ShipConnector { get; }
     // Purely a target for the welder/cutter's aim-HP-bar UI (World.WallBlocks.cs's own comment on
     // FindAimedStationWallBlock explains why) - a station itself is never actually breachable, so
     // unlike Ship.WallBlocks this list never needs a mutable Hp dictionary behind it.
@@ -55,14 +61,15 @@ public sealed partial class Station
 
     private readonly Dictionary<string, Room> _roomsById;
 
-    public Station(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, AirlockOuterDoor shipConnector,
+    public Station(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, Door shipConnector,
         IReadOnlyList<StationNpc> npcs, IReadOnlyList<StationCrate> crates, Vec2 worldCenter, string dockRoomId)
     {
         Rooms = rooms;
         Doors = doors;
         ShipConnector = shipConnector;
-        WallBlocks = BuildWallBlocks(rooms, doors, new[] { shipConnector });
-        Tiles = TileGridRasterizer.FromRooms(rooms, doors, new[] { shipConnector });
+        var doorsWithConnector = doors.Append(shipConnector).ToList();
+        WallBlocks = BuildWallBlocks(rooms, doorsWithConnector);
+        Tiles = TileGridRasterizer.FromRooms(rooms, doorsWithConnector);
         Npcs = npcs;
         Crates = crates;
         DockRoomId = dockRoomId;

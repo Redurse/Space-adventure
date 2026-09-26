@@ -396,23 +396,21 @@ public sealed partial class World
             if (!_wallBlockHp.ContainsKey(block.Id))
                 _wallBlockHp[block.Id] = MaxHpFor(block);
 
-        var newDoorLikeIds = newShip.Doors.Select(d => d.Id).Concat(newShip.AirlockOuterDoors.Select(a => a.Id)).ToHashSet();
+        var newDoorLikeIds = newShip.Doors.Select(d => d.Id).ToHashSet();
         foreach (var key in _doorOpen.Keys.Where(k => !newDoorLikeIds.Contains(k)).ToList())
         {
             _doorOpen.Remove(key);
             _doorHp.Remove(key);
         }
+        // Closed by default, same rule InitializeShipState uses now (direct user request, "сделай
+        // чтобы все двери на корабле изначально были закрыты", World.ShipState.cs) - a newly built
+        // door starts sealed exactly like every other door on the ship, not just the vacuum-facing
+        // ones (the old, now-stale rule this replaced).
         foreach (var door in newShip.Doors)
             if (!_doorOpen.ContainsKey(door.Id))
             {
-                _doorOpen[door.Id] = true; // preserves the pre-M16 always-passable behavior
+                _doorOpen[door.Id] = false;
                 _doorHp[door.Id] = DoorMaxHp;
-            }
-        foreach (var outerDoor in newShip.AirlockOuterDoors)
-            if (!_doorOpen.ContainsKey(outerDoor.Id))
-            {
-                _doorOpen[outerDoor.Id] = false; // opening to vacuum is always a deliberate choice
-                _doorHp[outerDoor.Id] = DoorMaxHp;
             }
 
         var newRoomIds = newShip.Rooms.Select(r => r.Id).ToHashSet();

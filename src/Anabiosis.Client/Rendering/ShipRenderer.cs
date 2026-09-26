@@ -198,7 +198,15 @@ public sealed partial class ShipRenderer
     // real hull breach should read, so the ship is never drawn any other way now.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock,
         float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null,
-        IEnumerable<AtmosphereParticle>? atmosphere = null)
+        IEnumerable<AtmosphereParticle>? atmosphere = null,
+        // Direct user request ("монитор состояния корабля... консоль связи") - each opens its own
+        // full-screen panel (Game1.cs's own client-only bools), not a BlockKind/ClickTarget HUD
+        // overlay like every other console here - see Game1.cs's own doc comment on why these two
+        // don't fit that tier.
+        bool shipStatusMonitorOpen = false, bool commsConsoleOpen = false,
+        // Direct user request ("серый экран с надписью скоро") - drives DrawJunctionBox's own glow,
+        // same shared-not-per-instance shape as the two bools just above.
+        bool junctionComingSoonOpen = false)
     {
         var forwardDegrees = snapshot.ShipForwardDegrees;
 
@@ -215,7 +223,7 @@ public sealed partial class ShipRenderer
 
         // The armour the compartments sit inside, under everything else - what shows of it is the
         // plated border around the decks and the bow sticking out ahead of them.
-        HullSkin.Draw(spriteBatch, _pixel, _hullPlates, snapshot.Rooms, snapshot.AirlockOuterDoors, snapshot.SystemDevices,
+        HullSkin.Draw(spriteBatch, _pixel, _hullPlates, snapshot.Rooms, snapshot.Doors.Where(d => d.LeadsToVacuum).ToList(), snapshot.SystemDevices,
             origin, forwardDegrees, snapshot.CurrentShipKind, totalSeconds, snapshot.SystemStates);
 
         // Floors first, walls second: the bulkheads are thick and straddle the boundary between
@@ -245,27 +253,17 @@ public sealed partial class ShipRenderer
         // from TileGridRasterizer.DoorTileRect, not the door's own raw Left/Top/Width/Height - see
         // that method's own doc comment (bug report: the door sprite sat half a tile off from
         // DrawShipWalls' own tile-square wall art on either side of it).
+        // A vacuum-facing door rasterizes/draws against ONLY its own room, an interior one against
+        // the full room list (TileGridRasterizer.RoomsForDoor - humble-soaring-cat.md, "убрать
+        // AirlockOuterDoor как отдельный тип") - one loop covers both now. Default open state
+        // mirrors the server's own rule (World.ShipState.cs): closed iff LeadsToVacuum.
         foreach (var door in snapshot.Doors)
         {
             var state = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id);
-            var (left, top, width, height) = TileGridRasterizer.DoorTileRect(snapshot.Rooms, door.X, door.Y, door.Width, door.Height);
-            DrawDoor(spriteBatch, left, top, width, height, door.IsVertical, state?.IsOpen ?? true, origin,
-                destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
-        }
-
-        foreach (var outerDoor in snapshot.AirlockOuterDoors)
-        {
-            var state = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == outerDoor.Id);
-            // Just the airlock's own room, not the full ship - same scoping FromRooms/DoorTileCoords
-            // themselves require (their own doc comments), since an AirlockOuterDoor sits on a
-            // room's outer hull edge, not a shared boundary between two rooms in the list.
-            var ownRoom = new[] { snapshot.Rooms.First(r => r.Id == outerDoor.RoomId) };
-            var (left, top, width, height) = TileGridRasterizer.DoorTileRect(ownRoom, outerDoor.X, outerDoor.Y, outerDoor.Width, outerDoor.Height);
-            // AirlockOuterDoor has no Vertical field of its own (unlike Door) - same Width<=Height
-            // fallback Door.IsVertical itself uses, always unambiguous here since an airlock is
-            // always StandardSpanUnits-wide on its span axis.
-            DrawDoor(spriteBatch, left, top, width, height, outerDoor.Width <= outerDoor.Height, state?.IsOpen ?? false, origin,
-                leadsToVacuum: true, destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
+            var rooms = TileGridRasterizer.RoomsForDoor(snapshot.Rooms, door);
+            var (left, top, width, height) = TileGridRasterizer.DoorTileRect(rooms, door.X, door.Y, door.Width, door.Height);
+            DrawDoor(spriteBatch, left, top, width, height, door.IsVertical, state?.IsOpen ?? !door.LeadsToVacuum, origin,
+                leadsToVacuum: door.LeadsToVacuum, destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
         }
 
         // M-doors-as-edges - the new narrow-door-as-a-barrier-between-2-tiles primitive (empty for
@@ -275,7 +273,8 @@ public sealed partial class ShipRenderer
             {
                 var state = snapshot.DoorEdgeStates?.FirstOrDefault(s => s.Id == edge.Id);
                 DrawDoorEdge(spriteBatch, edge.Coord, edge.Side, state?.IsOpen ?? true,
-                    state?.Destroyed ?? false, origin, totalSeconds);
+                    state?.Destroyed ?? false, origin, totalSeconds,
+                    leadsToVacuum: edge.RoomAId is null || edge.RoomBId is null);
             }
 
         // Only breached blocks get drawn — an intact one is just an ordinary bit of the hull
@@ -338,8 +337,23 @@ public sealed partial class ShipRenderer
 
         // Cosmoteer-style marching engines (direct user request) - EngineState already carries its
         // own X/Y/Facing (no separate static list to cross-reference, unlike WallBlocks/WallBlockStates).
-        foreach (var engine in snapshot.EngineStates ?? Array.Empty<EngineState>())
-            DrawShipEngine(spriteBatch, engine, origin, totalSeconds);
+        // Grouped by (X,Y): a double engine (direct user request - "2 наложенных друг на друга
+        // двигателя с общим началом") is TWO EngineStates sharing one Control position, so the shared
+        // Control box is drawn exactly once per position (DrawSharedEngineControl's own doc comment),
+        // while each twin still gets its own Bulkhead drawn individually (DrawShipEngine's
+        // drawControl: false - Bulkhead differs by Facing and needs no dedup).
+        foreach (var group in (snapshot.EngineStates ?? Array.Empty<EngineState>()).GroupBy(e => (e.X, e.Y)))
+        {
+            var engines = group.ToList();
+            if (engines.Count == 1)
+            {
+                DrawShipEngine(spriteBatch, engines[0], origin, totalSeconds);
+                continue;
+            }
+            foreach (var engine in engines)
+                DrawShipEngine(spriteBatch, engine, origin, totalSeconds, drawControl: false);
+            DrawSharedEngineControl(spriteBatch, engines[0], engines.Any(e => e.ControlBroken), origin);
+        }
 
         DrawReactorBlock(spriteBatch, snapshot.ReactorBlock, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds,
             snapshot.Rooms.FirstOrDefault(r => r.Id == snapshot.ReactorBlock.RoomId)?.Name);
@@ -367,7 +381,21 @@ public sealed partial class ShipRenderer
         foreach (var wallLamp in snapshot.WallLamps ?? Array.Empty<WallLamp>())
             DrawWallLamp(spriteBatch, wallLamp, origin);
         foreach (var junctionBox in snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>())
-            DrawJunctionBox(spriteBatch, junctionBox, origin);
+            DrawJunctionBox(spriteBatch, junctionBox, junctionComingSoonOpen, origin, shipPowered);
+        foreach (var device in snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>())
+            DrawDecorativeDevice(spriteBatch, device, origin);
+        foreach (var shipStatusMonitor in snapshot.ShipStatusMonitors ?? Array.Empty<ShipStatusMonitor>())
+            DrawShipStatusMonitor(spriteBatch, shipStatusMonitor, shipStatusMonitorOpen, origin, shipPowered);
+        foreach (var commsConsole in snapshot.CommsConsoles ?? Array.Empty<CommsConsole>())
+            DrawCommsConsole(spriteBatch, commsConsole, commsConsoleOpen, origin, shipPowered);
+        // Direct user request ("у тебя есть проблема что всех этих 4 устройств на корабле может
+        // быть только по одному") - Helm/Navigation's own pre-existing "extra" consoles used to be
+        // purely cosmetic bonus-count fodder with no physical object at all (Ship.Custom.cs's own
+        // doc comment on ExtraHelmConsoles/ExtraNavigationConsoles); now real, rendered ones too.
+        foreach (var extraNav in snapshot.ExtraNavigationConsoles ?? Array.Empty<NavigationConsole>())
+            DrawNavigationConsole(spriteBatch, extraNav, false, origin, shipPowered);
+        foreach (var extraHelm in snapshot.ExtraHelmConsoles ?? Array.Empty<HelmConsole>())
+            DrawHelmConsole(spriteBatch, extraHelm, false, origin, shipPowered);
 
         foreach (var turret in snapshot.Turrets)
         {
@@ -415,9 +443,31 @@ public sealed partial class ShipRenderer
     // (Game1.cs), so a crewmate standing near the shared airlock boundary had their nameplate
     // partly painted over by the station's own hull art - moving the character pass to run after
     // both renderers fixes that regardless of which side the character is actually closer to.
+    //
+    // One half of THE character filter (ShipLocalFrame.InFieldSpace) - FieldRenderer.Draw's own
+    // character loop is the other half, and between them every character is drawn exactly once.
+    // This used to be implicit here: this pass drew everyone, relying on an outside character's
+    // field-scale coordinates being too large to land on the screen. That isn't actually a
+    // guarantee - a landed surface field (PlanetSurface) is 300 units across at 48 px/unit against
+    // a camera anchored on a ship-local point, so a spacewalker on the ground could land on screen
+    // here too and get a second, misplaced body painted on top of the correct one FieldRenderer draws.
     public void DrawCharacters(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ChatBubbleTracker? chatBubbles = null)
     {
-        foreach (var character in snapshot.Characters)
+        // Direct user request ("модель игрока полностью пропадала") - a dead character (Health <=
+        // 0, World.Respawn.cs's own countdown running server-side) has no body left to draw at all
+        // until it respawns, for every viewer - not just the local one showing the death screen.
+        foreach (var character in snapshot.Characters.Where(c => !ShipLocalFrame.InFieldSpace(c) && c.Health > 0f))
             DrawCharacter(spriteBatch, character, origin, chatBubbles?.BubbleFor(character.PlayerId));
     }
+
+    // The scene's one placement rule: a ship-local point times the scale, off the camera origin.
+    internal static Vector2 LocalToScreen(Vec2 shipLocal, Vector2 origin) =>
+        origin + new Vector2((float)shipLocal.X, (float)shipLocal.Y) * PixelsPerUnit;
+
+    // Folds AsteroidField world space into ship-local (ShipLocalFrame.ToLocal) and then onto the
+    // screen (LocalToScreen above) in one call - replaces the same two-step conversion that used to
+    // be written out at every call site that needed a world point on screen (dropped items, EVA
+    // characters' own RCS plume/suit lamp).
+    internal static Vector2 WorldToScreen(Vec2 world, ShipFieldState shipField, Vec2 hullCenter, Vector2 origin) =>
+        LocalToScreen(ShipLocalFrame.ToLocal(world, shipField, hullCenter), origin);
 }

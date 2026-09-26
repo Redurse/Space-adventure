@@ -106,19 +106,19 @@ public sealed partial class World
             DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
     }
 
-    // Same shape as AimedCutTarget above, plus an AirlockId slot - a boarded hull's own two hatches
-    // are reachable from the inside too (World.Boarding.cs's EnemyShipLayout.AirlockOuterDoors), so
+    // Same shape as AimedCutTarget above, plus a HatchId slot - a boarded hull's own two hatches
+    // are reachable from the inside too (World.Boarding.cs's EnemyShipLayout.OuterHatches), so
     // a boarding party can cut one open (or weld one shut) from either side, not just from EVA.
     // Doesn't discriminate already-breached targets the way the cutting-only lookups elsewhere do -
     // shared by both tools, and repairing something back from 0 Hp is the one case where "already
     // breached" is exactly what you're aiming for.
-    private readonly record struct EnemyToolTarget(string? DoorId, string? WallBlockId, string? AirlockId);
+    private readonly record struct EnemyToolTarget(string? DoorId, string? WallBlockId, string? HatchId);
 
     // Mirrors FindAimedCutTarget, just against whichever enemy hull is currently boarded
     // (character.RoomId is meaningless against the player's own Ship.Doors/WallBlocks while
     // OnEnemyShip) - the interior Doors still go through the same World._doorHp/ChopDoor as the
     // player's own (door ids are globally unique per class, World.cs's own constructor comment), only
-    // the hull's exterior (WallBlocks, AirlockOuterDoors) needs EnemyShipRuntime's per-instance Hp.
+    // the hull's exterior (WallBlocks, OuterHatches) needs EnemyShipRuntime's per-instance Hp.
     private EnemyToolTarget FindAimedEnemyIndoorTarget(Character character, float reachUnits, int samples, float pointRadius)
     {
         if (BoardableEnemy is not { } enemy)
@@ -136,10 +136,10 @@ public sealed partial class World
             if (door is not null)
                 return new EnemyToolTarget(door.Id, null, null);
 
-            var airlock = enemy.Layout.AirlockOuterDoors.FirstOrDefault(d =>
-                d.RoomId == character.RoomId && (d.Position - point).Length() <= pointRadius);
-            if (airlock is not null)
-                return new EnemyToolTarget(null, null, airlock.Id);
+            var hatch = enemy.Layout.OuterHatches.FirstOrDefault(d =>
+                d.RoomAId == character.RoomId && (d.Position - point).Length() <= pointRadius);
+            if (hatch is not null)
+                return new EnemyToolTarget(null, null, hatch.Id);
 
             var block = enemy.Layout.WallBlocks.FirstOrDefault(b =>
                 b.RoomId == character.RoomId && (b.Position - point).Length() <= pointRadius);
@@ -159,8 +159,8 @@ public sealed partial class World
         var target = FindAimedEnemyIndoorTarget(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
         if (target.DoorId is { } doorId)
             ChopDoor(doorId, WallCutDamagePerSecond * (float)deltaSeconds);
-        else if (target.AirlockId is { } airlockId)
-            enemy.DamageAirlock(airlockId, WallCutDamagePerSecond * (float)deltaSeconds);
+        else if (target.HatchId is { } hatchId)
+            enemy.DamageWallBlock(hatchId, WallCutDamagePerSecond * (float)deltaSeconds);
         else if (target.WallBlockId is { } blockId)
             enemy.DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
     }
@@ -196,7 +196,7 @@ public sealed partial class World
             var hp = _oreDepositHp[block.Id] - CutterDamagePerSecond * (float)deltaSeconds;
             _oreDepositHp[block.Id] = Math.Max(0f, hp);
             if (hp <= 0f)
-                _droppedItems.Add(new DroppedItem($"drop-{_nextDroppedItemId++}", ItemType.Mineral, block.X, block.Y));
+                _droppedItems.Add(new DroppedItem($"drop-{_nextDroppedItemId++}", block.OreType, block.X, block.Y));
             return; // one target at a time: the flame cuts what it is pointed at
         }
 
@@ -219,8 +219,8 @@ public sealed partial class World
         var enemyTarget = FindAimedEnemyOuterTarget(character, WallCutReachUnits, WallCutSamples, WallCutPointRadius);
         if (enemyTarget is { } target)
         {
-            if (target.AirlockId is { } airlockId)
-                target.Enemy.DamageAirlock(airlockId, WallCutDamagePerSecond * (float)deltaSeconds);
+            if (target.HatchId is { } hatchId)
+                target.Enemy.DamageWallBlock(hatchId, WallCutDamagePerSecond * (float)deltaSeconds);
             else if (target.WallBlockId is { } blockId)
                 target.Enemy.DamageWallBlock(blockId, WallCutDamagePerSecond * (float)deltaSeconds);
         }
@@ -233,10 +233,10 @@ public sealed partial class World
 
     // Mirrors FindAimedWallBlock's outside branch, just against whichever enemy hull is currently
     // boardable (BoardableEnemy) instead of the player's own Ship, and checking both of its locked
-    // AirlockOuterDoors alongside its wall panels - a hatch is just as cuttable (or weldable) as any
+    // OuterHatches alongside its wall panels - a hatch is just as cuttable (or weldable) as any
     // other bit of plating, it's simply the one the game calls out by name. Shared by cutting and
     // welding alike (EnemyToolTarget's own doc comment), so it doesn't discriminate on Hp itself.
-    private (EnemyShipRuntime Enemy, string? AirlockId, string? WallBlockId)? FindAimedEnemyOuterTarget(
+    private (EnemyShipRuntime Enemy, string? HatchId, string? WallBlockId)? FindAimedEnemyOuterTarget(
         Character character, float reachUnits, int samples, float pointRadius)
     {
         if (BoardableEnemy is not { } enemy)
@@ -253,9 +253,9 @@ public sealed partial class World
         {
             var point = origin + aim * (reachUnits * i / samples);
 
-            var airlock = enemy.Layout.AirlockOuterDoors.FirstOrDefault(d => (ToWorld(d.Position) - point).Length() <= pointRadius);
-            if (airlock is not null)
-                return (enemy, airlock.Id, null);
+            var hatch = enemy.Layout.OuterHatches.FirstOrDefault(d => (ToWorld(d.Position) - point).Length() <= pointRadius);
+            if (hatch is not null)
+                return (enemy, hatch.Id, null);
 
             var block = enemy.Layout.WallBlocks.FirstOrDefault(b => (ToWorld(b.Position) - point).Length() <= pointRadius);
             if (block is not null)

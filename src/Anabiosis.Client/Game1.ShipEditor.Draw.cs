@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -226,6 +227,8 @@ public partial class Game1
             DrawEditorDevicePlacementPreview();
         if (_editorTool == EditorTool.Engine)
             DrawEditorEnginePlacementPreview();
+        if (_editorTool == EditorTool.DoubleEngine)
+            DrawEditorDoubleEnginePlacementPreview();
         if (_editorTool == EditorTool.Compartment)
             DrawEditorCompartmentPlacementPreview();
 
@@ -316,11 +319,13 @@ public partial class Game1
 
         foreach (var (control, facing) in _editorEngineFacing)
             DrawEditorEngineAt(control, facing);
+        foreach (var (control, facings) in _editorDoubleEngineFacings)
+            DrawEditorDoubleEngineAt(control, facings.First, facings.Second);
 
         // M-doors-as-edges (humble-soaring-cat.md) - drawn as its own pass rather than folded into
         // the Wall/Door-tile loop above, since an edge has no Cells entry of its own to iterate.
         foreach (var (key, edge) in _editorTiles.DoorEdges)
-            DrawEditorDoorEdgeAt(key.Coord, key.Side, edge.Open);
+            DrawEditorDoorEdgeAt(key.Coord, key.Side, edge.Open, IsExteriorDoorEdge(key.Coord, key.Side));
 
         foreach (var zone in _editorZones)
             DrawEditorZone(zone);
@@ -330,7 +335,7 @@ public partial class Game1
     // just in the editor canvas's own pixel space (EditorTileRect/EditorCellSize/_editorPanOffset)
     // instead of the live game's PixelsPerUnit/origin - editor canvases have no HP/destroyed state
     // to show (walls never take damage in the editor), so this only ever needs the open/closed color.
-    private void DrawEditorDoorEdgeAt(TileCoord coord, TileSide side, bool open)
+    private void DrawEditorDoorEdgeAt(TileCoord coord, TileSide side, bool open, bool leadsToVacuum)
     {
         const float thicknessFraction = 0.22f;
         var thickness = Math.Max(4, (int)(thicknessFraction * EditorCellSize));
@@ -351,7 +356,19 @@ public partial class Game1
         }
 
         _spriteBatch.Draw(_pixel, frame, new Color(90, 68, 46));
-        _spriteBatch.Draw(_pixel, bar, open ? new Color(90, 230, 120) : new Color(255, 90, 90));
+        // Same "leadsToVacuum only changes the OPEN color" rule ShipRenderer.DrawDoorEdge uses.
+        _spriteBatch.Draw(_pixel, bar, open ? (leadsToVacuum ? new Color(190, 140, 255) : new Color(90, 230, 120)) : new Color(255, 90, 90));
+    }
+
+    // Direct user request ("сделай возможным поставить дверь если 1 клетка это пол а вторая
+    // космос... дверь будет считаться шлюзом") - mirrors IsExteriorDoorTile's own local
+    // approximation, just against an edge's two canonical flanking tiles instead of a tile-Door's
+    // through-axis neighbors.
+    private bool IsExteriorDoorEdge(TileCoord coord, TileSide side)
+    {
+        var floorA = _editorTiles.CellAt(coord)?.HasFloor ?? false;
+        var floorB = _editorTiles.CellAt(side.Offset(coord))?.HasFloor ?? false;
+        return floorA != floorB;
     }
 
     // Same neighbor-based orientation ShipRenderer.DrawWallTile uses in the real game (M75,
@@ -501,13 +518,35 @@ public partial class Game1
                 var merged = Rectangle.Union(EditorTileRect(coord), EditorTileRect(partner));
                 // Same X, differing Y - the pair is stacked in a column, i.e. sits on a VERTICAL
                 // shared wall (TileShipBuilder.cs's own direction==East/Vertical convention).
-                _shipRenderer.DrawDoor(_spriteBatch, merged, vertical: partner.X == coord.X, isOpen: false);
+                var mergedVertical = partner.X == coord.X;
+                _shipRenderer.DrawDoor(_spriteBatch, merged, vertical: mergedVertical, isOpen: false,
+                    leadsToVacuum: IsExteriorDoorTile(coord, mergedVertical));
                 return;
             }
         }
 
         var rect = EditorTileRect(coord);
-        _shipRenderer.DrawDoor(_spriteBatch, rect, vertical: ResolveDoorTileVertical(coord), isOpen: false);
+        var vertical = ResolveDoorTileVertical(coord);
+        _shipRenderer.DrawDoor(_spriteBatch, rect, vertical: vertical, isOpen: false,
+            leadsToVacuum: IsExteriorDoorTile(coord, vertical));
+    }
+
+    // Direct user report ("в разделе шлюз нет шлюзовой двери, вместо неё обычная дверь") - "Шлюз"
+    // in the palette places the exact same Door tool as "Дверь" (AirlockItems' own doc comment: an
+    // airlock is just a door on the outer hull, auto-detected by TileShipBuilder's SideIsAirlock at
+    // export time, not a separate mechanic) - so nothing ever told the player THIS particular door
+    // was actually on open hull rather than between two rooms until they hit Play. A light local
+    // stand-in for that same rule: SideIsAirlock needs a whole rectangular region reconstructed
+    // first, but a single door tile can approximate it from its own two immediate "through" neighbors
+    // alone - floor on exactly one side and nothing at all on the other is a door leading to open
+    // space, same as the real rule's "no cell = clean hull" case, good enough for a live preview
+    // without redoing that region analysis here.
+    private bool IsExteriorDoorTile(TileCoord coord, bool vertical)
+    {
+        var (a, b) = vertical ? (TileSide.West, TileSide.East) : (TileSide.North, TileSide.South);
+        var floorA = _editorTiles.CellAt(a.Offset(coord))?.HasFloor ?? false;
+        var floorB = _editorTiles.CellAt(b.Offset(coord))?.HasFloor ?? false;
+        return floorA != floorB;
     }
 
     // Direct user bug report ("после поворота двери при выставлении она всё равно ставится под
@@ -579,6 +618,11 @@ public partial class Game1
     private void DrawEditorWallDeviceHalfBlock(TileCoord coord, CustomDeviceKind kind, TileSide mountSide)
     {
         var rect = EditorHalfRect(EditorTileRect(coord), mountSide);
+        DrawWallDeviceHalfBlockRect(rect, kind);
+    }
+
+    private void DrawWallDeviceHalfBlockRect(Rectangle rect, CustomDeviceKind kind)
+    {
         var tint = CustomDeviceCatalog.Tint(kind);
         _spriteBatch.Draw(_pixel, rect, tint * 0.85f);
         DrawRectOutline(rect, Color.Gold, 2f);
@@ -600,16 +644,81 @@ public partial class Game1
         if (GridCellAt(_designMouse) is not { } cell)
             return;
         var hovered = new TileCoord(cell.X, cell.Y);
-        var (width, height) = DeviceFootprintSize(_editorSelectedDeviceKind, _editorDevicePendingRotated);
+        var isHalfWidth = CustomDeviceFootprint.IsHalfWidthKind(_editorSelectedDeviceKind);
+        var halfSide = isHalfWidth ? _editorDevicePendingHalfSide : TileSide.East;
+        var pendingRotated = isHalfWidth ? halfSide is TileSide.South or TileSide.North : _editorDevicePendingRotated;
+        var (width, height) = DeviceFootprintSize(_editorSelectedDeviceKind, pendingRotated);
         var anchor = FootprintAnchorFor(hovered, width, height);
         var footprint = DeviceFootprintTiles(anchor, width, height).ToList();
-        var valid = footprint.All(t => _editorTiles.CellAt(t) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null });
+        var valid = CanPlaceDeviceFootprint(_editorSelectedDeviceKind, footprint, anchor, halfSide);
 
-        var topLeft = EditorTileRect(anchor);
-        var bottomRight = EditorTileRect(new TileCoord(anchor.X + width - 1, anchor.Y + height - 1));
-        var rect = new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
+        // Direct user bug report ("не полтора на 2 а два на два исправь") - a half-width kind's ghost
+        // used to always outline the full anchor box (every tile the footprint TOUCHES), not the
+        // genuine fractional shape the device actually occupies (HalfWidthCombinedEditorRect - the
+        // same rect DrawEditorDeviceAt itself draws the baked icon into once placed). Every other
+        // kind still gets the full-footprint box, unchanged - only a half-width kind
+        // (CustomDeviceFootprint.IsHalfWidthKind) has a fractional-tile shape.
+        var rect = isHalfWidth
+            ? HalfWidthCombinedEditorRect(anchor, halfSide, CustomDeviceFootprint.Size(_editorSelectedDeviceKind).Height)
+            : FullFootprintEditorRect(anchor, width, height);
         _spriteBatch.Draw(_pixel, rect, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
         DrawRectOutline(rect, valid ? Color.LightGreen : Color.OrangeRed, 2f);
+        // A rejected CLICK gets a real reason (Game1.ShipEditor.cs's DeviceRejectionToastMessage,
+        // shown via the same toast HandleCompartmentToolInput's own rejected-stamp case uses) -
+        // merely hovering over an invalid spot only needs the red outline above, not a running wall
+        // of text following the cursor every frame.
+    }
+
+    private Rectangle FullFootprintEditorRect(TileCoord anchor, int width, int height)
+    {
+        var topLeft = EditorTileRect(anchor);
+        var bottomRight = EditorTileRect(new TileCoord(anchor.X + width - 1, anchor.Y + height - 1));
+        return new Rectangle(topLeft.X, topLeft.Y, bottomRight.Right - topLeft.X, bottomRight.Bottom - topLeft.Y);
+    }
+
+    // Shared by DrawEditorDeviceAt (baked-icon draw of an already-placed device) and
+    // DrawEditorDevicePlacementPreview (the pending ghost) - the genuine fractional rect a half-width
+    // kind (CustomDeviceFootprint.IsHalfWidthKind) occupies: the "full" side of the anchor's box
+    // (opposite halfSide) spans the OTHER axis in full - `otherAxisTiles` tiles long
+    // (CustomDeviceFootprint.Size(kind).Height - 2 for Helm/Navigation, 3 for Fabricator/
+    // Deconstructor, direct user request "по аналогии... полтора на 3") - while the "half" tile only
+    // contributes up to its own midpoint on the halved axis, which is always exactly 2 tiles wide
+    // regardless of otherAxisTiles.
+    private Rectangle HalfWidthCombinedEditorRect(TileCoord anchor, TileSide halfSide, int otherAxisTiles)
+    {
+        TileCoord fullA, fullB, half;
+        switch (halfSide)
+        {
+            case TileSide.East:
+                fullA = anchor; fullB = new TileCoord(anchor.X, anchor.Y + otherAxisTiles - 1);
+                half = new TileCoord(anchor.X + 1, anchor.Y);
+                break;
+            case TileSide.West:
+                fullA = new TileCoord(anchor.X + 1, anchor.Y); fullB = new TileCoord(anchor.X + 1, anchor.Y + otherAxisTiles - 1);
+                half = anchor;
+                break;
+            case TileSide.South:
+                fullA = anchor; fullB = new TileCoord(anchor.X + otherAxisTiles - 1, anchor.Y);
+                half = new TileCoord(anchor.X, anchor.Y + 1);
+                break;
+            default: // North
+                fullA = new TileCoord(anchor.X, anchor.Y + 1); fullB = new TileCoord(anchor.X + otherAxisTiles - 1, anchor.Y + 1);
+                half = anchor;
+                break;
+        }
+        var fullTopLeft = EditorTileRect(fullA);
+        var fullBottomRight = EditorTileRect(fullB);
+        var fullRect = new Rectangle(fullTopLeft.X, fullTopLeft.Y,
+            fullBottomRight.Right - fullTopLeft.X, fullBottomRight.Bottom - fullTopLeft.Y);
+        var halfTileRect = EditorTileRect(half);
+
+        return halfSide switch
+        {
+            TileSide.East => new Rectangle(fullRect.X, fullRect.Y, halfTileRect.Center.X - fullRect.X, fullRect.Height),
+            TileSide.West => new Rectangle(halfTileRect.Center.X, fullRect.Y, fullRect.Right - halfTileRect.Center.X, fullRect.Height),
+            TileSide.South => new Rectangle(fullRect.X, fullRect.Y, fullRect.Width, halfTileRect.Center.Y - fullRect.Y),
+            _ => new Rectangle(fullRect.X, halfTileRect.Center.Y, fullRect.Width, fullRect.Bottom - halfTileRect.Center.Y), // North
+        };
     }
 
     // Live ghost preview for the Engine tool, same green/red valid-placement convention
@@ -640,6 +749,41 @@ public partial class Game1
         DrawTile(control, controlValid);
         DrawTile(bulkhead, bulkheadValid);
         DrawTile(nozzle, nozzleValid);
+    }
+
+    // Direct user request ("двойной двигатель... 2 наложенных друг на друга двигателя с общим
+    // началом") - same per-tile green/red convention as DrawEditorEnginePlacementPreview, just 5
+    // boxes (shared Control + both arms' own Bulkhead/Nozzle) instead of 3.
+    private void DrawEditorDoubleEnginePlacementPreview()
+    {
+        if (GridCellAt(_designMouse) is not { } cell)
+            return;
+        var control = new TileCoord(cell.X, cell.Y);
+        var facingA = _editorDoubleEnginePendingFacing;
+        var facingB = DoubleEngineSecondFacing(facingA);
+        var bulkheadA = facingA.Offset(control);
+        var nozzleA = facingA.Offset(bulkheadA);
+        var bulkheadB = facingB.Offset(control);
+        var nozzleB = facingB.Offset(bulkheadB);
+
+        var controlValid = _editorTiles.CellAt(control) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
+        var bulkheadAValid = _editorTiles.CellAt(bulkheadA) is { Wall: TileWallKind.Solid };
+        var nozzleAValid = _editorTiles.CellAt(nozzleA) is not { HasFloor: true };
+        var bulkheadBValid = _editorTiles.CellAt(bulkheadB) is { Wall: TileWallKind.Solid };
+        var nozzleBValid = _editorTiles.CellAt(nozzleB) is not { HasFloor: true };
+        var noOverlap = !DoubleEngineFootprintTiles(control, facingA, facingB).Skip(1).Any(_editorEngineFootprint.ContainsKey);
+
+        void DrawTile(TileCoord coord, bool valid)
+        {
+            var rect = EditorTileRect(coord);
+            _spriteBatch.Draw(_pixel, rect, (valid && noOverlap ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
+            DrawRectOutline(rect, valid && noOverlap ? Color.LightGreen : Color.OrangeRed, 2f);
+        }
+        DrawTile(control, controlValid);
+        DrawTile(bulkheadA, bulkheadAValid);
+        DrawTile(nozzleA, nozzleAValid);
+        DrawTile(bulkheadB, bulkheadBValid);
+        DrawTile(nozzleB, nozzleBValid);
     }
 
     // M81 - live ghost preview for the Compartment tool, same green/red valid-placement convention
@@ -739,6 +883,22 @@ public partial class Game1
         }
 
         var face = FaceForKind(kind);
+
+        // Direct user bug report ("они должны быть вплотную это раз, а во вторых само устройство
+        // должно быть таких размеров а не состоять из двух элементов") - ONE seamless baked icon
+        // spanning the full tile's own far edge to the half tile's own midpoint (1.5 units along the
+        // halved axis, the kind's own other-axis length along the other), mirroring
+        // ShipRenderer.Devices.cs's own combined-rect fix - a prior version drew the full tile with
+        // real art and the half tile as a separate flat swatch, with a visible seam between them.
+        if (CustomDeviceFootprint.IsHalfWidthKind(kind) && face != DeviceSkin.Face.Generic)
+        {
+            var halfSide = _editorDeviceHalfSides.TryGetValue(anchor, out var hs) ? hs : CustomDeviceFootprint.ResolveHalfSide(null, rotated);
+            var combinedRect = HalfWidthCombinedEditorRect(anchor, halfSide, CustomDeviceFootprint.Size(kind).Height);
+            var baked = DeviceIconSkin.Get(face, combinedRect.Width, combinedRect.Height, lit: true);
+            _spriteBatch.Draw(baked, combinedRect, Color.White);
+            return;
+        }
+
         if (face != DeviceSkin.Face.Generic)
         {
             var fullRect = FullFootprintRect();
@@ -798,6 +958,35 @@ public partial class Game1
         var nozzleBox = new Rectangle(nozzleRect.Center.X - 6, nozzleRect.Center.Y - 6, 12, 12);
         _spriteBatch.Draw(_pixel, nozzleBox, new Color(220, 140, 60));
         DrawRectOutline(nozzleBox, Color.Black, 1f);
+    }
+
+    // Direct user request ("2 наложенных друг на друга двигателя с общим началом") - the shared
+    // Control tile is drawn ONCE (not once per arm, unlike ShipRenderer's own live-game Control-box
+    // dedup concern noted for this feature - the editor canvas has no HP/broken state at all, so
+    // there is no double-draw-with-conflicting-tint risk here to begin with), then both arms' own
+    // Nozzle swatch, same small warm "exhaust" box DrawEditorEngineAt already uses.
+    private void DrawEditorDoubleEngineAt(TileCoord control, TileSide facingA, TileSide facingB)
+    {
+        var controlRect = EditorTileRect(control);
+        const int size = 18;
+        var box = new Rectangle(controlRect.Center.X - size / 2, controlRect.Center.Y - size / 2, size, size);
+        _spriteBatch.Draw(_pixel, box, new Color(130, 110, 220));
+        DrawRectOutline(box, Color.Black, 1f);
+        var glyph = "2Дв";
+        var glyphSize = _font.MeasureString(glyph) * 0.35f;
+        _spriteBatch.DrawString(_font, glyph, new Vector2(box.Center.X - glyphSize.X / 2f, box.Center.Y - glyphSize.Y / 2f),
+            Color.White, 0f, Vector2.Zero, 0.35f, SpriteEffects.None, 0f);
+
+        void DrawNozzle(TileSide facing)
+        {
+            var nozzleCoord = facing.Offset(facing.Offset(control));
+            var nozzleRect = EditorTileRect(nozzleCoord);
+            var nozzleBox = new Rectangle(nozzleRect.Center.X - 6, nozzleRect.Center.Y - 6, 12, 12);
+            _spriteBatch.Draw(_pixel, nozzleBox, new Color(220, 140, 60));
+            DrawRectOutline(nozzleBox, Color.Black, 1f);
+        }
+        DrawNozzle(facingA);
+        DrawNozzle(facingB);
     }
 
     private void DrawEditorZone(EditorZone zone)
@@ -1002,12 +1191,14 @@ public partial class Game1
             EditorTool.Wall => "Клик - стена (нужен пол под ней). Зажать и протянуть - линия стен. ПКМ - убрать.",
             EditorTool.Door when _editorDoorSpanTiles == 2 => "R - выбрать ориентацию. Клик на стыке 2х2 свободных клеток пола - широкая дверь; клик на стыке 2 отсеков - тоже дверь. ПКМ по двери - убрать.",
             EditorTool.Door when _editorDoorSpanTiles == 3 => "R - выбрать ориентацию. Клик на стыке 3х2 свободных клеток пола - тройная дверь. ПКМ по двери - убрать.",
-            EditorTool.Door => "R - выбрать ориентацию. Клик на стыке 2 свободных клеток пола - дверь. ПКМ по двери - убрать.",
+            EditorTool.Door => "R - выбрать ориентацию. Клик на стыке пола и другой комнаты или открытого космоса - дверь (на космос - шлюз). ПКМ по двери - убрать.",
             EditorTool.Terminal => "R - выбрать сторону крепления. Клик на полутолщинной стене - врезать в неё. Клик по полу рядом со стеной - поставить снаружи. ПКМ - убрать.",
             EditorTool.Device => "Клик внутри отсека - поставить устройство. ПКМ рядом - убрать.",
             EditorTool.Zone => "Зажмите и протяните по клеткам с полом, затем впишите название отсека.",
             EditorTool.Engine => $"R - повернуть (сейчас: {EngineFacingLabel(_editorEnginePendingFacing)}). " +
                 "Клик - поставить (нужна стена в сторону сопла). ПКМ - убрать.",
+            EditorTool.DoubleEngine => $"R - повернуть (сейчас: {EngineFacingLabel(_editorDoubleEnginePendingFacing)} + {EngineFacingLabel(DoubleEngineSecondFacing(_editorDoubleEnginePendingFacing))}). " +
+                "Клик - поставить (нужна стена в сторону обоих сопел). ПКМ - убрать целиком.",
             EditorTool.Compartment => "R - повернуть отсек. Клик - поставить целиком (пол+стены+устройства). ПКМ по отсеку - убрать целиком.",
             _ => "",
         };

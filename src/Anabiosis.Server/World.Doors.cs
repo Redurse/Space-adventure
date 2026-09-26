@@ -8,8 +8,7 @@ namespace Anabiosis.Server;
 
 // Door open/close (game_design.md Phase 3, M16) — click any door to toggle it, no proximity
 // re-check server-side (same trusted-client convention as WireLinkInteractId/PowerSystemIndex:
-// the client only ever sends this when it detected a nearby click). Ids are unique across Doors
-// and AirlockOuterDoors, so one dictionary covers both.
+// the client only ever sends this when it detected a nearby click).
 //
 // Each of the player's own ship's doors also has its own hit points now (game_design.md) - the
 // same "quiet number, invisible until it matters" shape WallBlock's own Hp already has
@@ -29,8 +28,8 @@ public sealed partial class World
     private readonly Dictionary<string, float> _doorHp = new();
 
     // M-doors-as-edges (humble-soaring-cat.md) - a parallel id space (Ship.DoorEdges' own Ids never
-    // collide with Doors'/AirlockOuterDoors', so both dictionary pairs can be checked independently
-    // rather than merged into one). Populated in InitializeShipState, same as _doorOpen/_doorHp.
+    // collide with Doors', so both dictionary pairs can be checked independently rather than merged
+    // into one). Populated in InitializeShipState, same as _doorOpen/_doorHp.
     private readonly Dictionary<string, bool> _doorEdgeOpen = new();
     private readonly Dictionary<string, float> _doorEdgeHp = new();
 
@@ -42,14 +41,14 @@ public sealed partial class World
     public bool IsDoorDestroyed(string doorId) => DoorHp(doorId) <= 0f;
     private bool IsDoorEdgeId(string doorId) => _doorEdgeOpen.ContainsKey(doorId);
 
-    // Every physical door on the PLAYER'S OWN ship, interior Doors and outer airlocks alike, paired
-    // with a room-membership test suited to each: an interior Door connects two rooms (its own
-    // Connects), an AirlockOuterDoor only ever borders the one room the vacuum sits behind. Shared
-    // by the repair-proximity check (World.SystemRepair.cs) and the random combat-damage roll
-    // (World.EnemyAi.cs) so neither can drift out of sync with which doors actually exist.
+    // Every physical door on the PLAYER'S OWN ship, interior Doors and vacuum-facing ones alike -
+    // Door.Connects already does the right thing for both (a vacuum door's own RoomBId is null, so
+    // Connects simply never matches on that side, correctly reducing to "only borders RoomAId" with
+    // no special-casing needed - humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный
+    // тип"). Shared by the repair-proximity check (World.SystemRepair.cs) and the random combat-
+    // damage roll (World.EnemyAi.cs) so neither can drift out of sync with which doors actually exist.
     private IEnumerable<(string Id, Func<string, bool> Connects, Vec2 Position)> AllShipDoors() =>
-        Ship.Doors.Select(d => (d.Id, (Func<string, bool>)d.Connects, d.Position))
-            .Concat(Ship.AirlockOuterDoors.Select(d => (d.Id, (Func<string, bool>)(roomId => roomId == d.RoomId), d.Position)));
+        Ship.Doors.Select(d => (d.Id, (Func<string, bool>)d.Connects, d.Position));
 
     // One shot, same as a wall block's own combat damage (World.WallBlocks.cs's DamageWallBlock
     // call with WallBlockMaxHp) - a hit either misses entirely or wrecks the door outright, no
@@ -110,6 +109,28 @@ public sealed partial class World
     {
         foreach (var playerId in _axeCooldowns.Keys.ToList())
             _axeCooldowns[playerId] = Math.Max(0, _axeCooldowns[playerId] - (float)deltaSeconds);
+    }
+
+    // Test-only precondition setter, same convention as every other Debug* helper (e.g.
+    // World.WallBlocks.cs's DebugBreachWallBlockById) - every door on the player's own ship now
+    // starts closed (direct user request, "сделай чтобы все двери на корабле изначально были
+    // закрыты"), so a test whose own point is something else entirely (wiring, storage, combat...)
+    // needs a one-line way to get a walkable ship back rather than re-deriving every door on its
+    // character's path. Bypasses ToggleDoor's own DoorsLocked/destroyed gates on purpose - this
+    // isn't a player action, it's test setup.
+    // Vacuum-facing doors/edges (Door.LeadsToVacuum / a ShipDoorEdge with a null room side) are
+    // deliberately excluded - a real bug found live via TestRunner.Boarding.cs's BoardEnemyShip,
+    // whose whole setup walk happens mid-battle, undocked: opening the real airlock to space there
+    // bleeds the WHOLE ship's oxygen out continuously (World.Atmosphere.cs's own Diffuse only
+    // guards the leak while DOCKED, where it opens onto the station's pressurized dock chamber
+    // instead), silently killing the crew before they ever reach the enemy hull, which this helper
+    // never had any business doing - "get a walkable ship back" only ever meant the interior.
+    public void DebugOpenAllDoors()
+    {
+        foreach (var door in Ship.Doors.Where(d => !d.LeadsToVacuum))
+            _doorOpen[door.Id] = true;
+        foreach (var edge in Ship.DoorEdges.Where(e => e.RoomAId is not null && e.RoomBId is not null))
+            _doorEdgeOpen[edge.Id] = true;
     }
 
     public void ToggleDoor(string doorId)

@@ -41,6 +41,19 @@ public partial class Game1
                 _sounds.Play(state.IsOpen ? GameSounds.DoorOpen : GameSounds.DoorClose, nowSeconds, volume: 0.75f);
             }
 
+            // Direct user report ("добавь звук при открытии двери как это было раньше") - M-doors-
+            // as-edges (the Ship Editor's Door/"Шлюз" tool, now the only way to place a door there)
+            // carries its own state list (DoorEdgeStates), completely separate from DoorStates
+            // above - this loop was never added when that model shipped, so every door on a
+            // Ship-Editor-built hull has been silent regardless of open/closed state.
+            foreach (var state in current.DoorEdgeStates ?? Array.Empty<DoorEdgeState>())
+            {
+                var before = (previous.DoorEdgeStates ?? Array.Empty<DoorEdgeState>()).FirstOrDefault(s => s.Id == state.Id);
+                if (before is null || before.IsOpen == state.IsOpen)
+                    continue;
+                _sounds.Play(state.IsOpen ? GameSounds.DoorOpen : GameSounds.DoorClose, nowSeconds, volume: 0.75f);
+            }
+
             // A new hole in the hull. Counting rather than matching ids: a breach is loud enough that
             // one report per event is what is wanted, not one per broken block.
             var breaches = current.WallBlockStates.Count(b => b.Breached);

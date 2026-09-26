@@ -52,8 +52,18 @@ public sealed partial class StationRenderer
         // Same physical door as the ship's own outer airlock - its open/closed state is whatever
         // that door's DoorState already says (World.StationDocking.cs gates both directions on it).
         var connector = snapshot.Station.ShipConnector;
-        var shipDoorOpen = snapshot.DoorStates.FirstOrDefault(s => s.DoorId == snapshot.AirlockOuterDoors.First().Id)?.IsOpen ?? false;
-        _shipRenderer.DrawDoor(spriteBatch, connector.Left, connector.Top, connector.Width, connector.Height, connector.Width <= connector.Height, shipDoorOpen, origin, leadsToVacuum: true);
+        // Mirrors World.StationDocking.cs's own ResolveShipAirlock - either a real vacuum-facing
+        // Door (Door.LeadsToVacuum) or, failing that, a vacuum-facing door edge (direct user report -
+        // "но у меня на корабле 2 шлюза": a hull built entirely from Door-tool-onto-open-space
+        // airlocks). A ship with neither kind at all (relaxed CustomShipValidator rule) has no
+        // matching door state to read - the connector just reads permanently closed rather than crashing.
+        var shipAirlockId = snapshot.Doors.FirstOrDefault(d => d.LeadsToVacuum)?.Id
+            ?? snapshot.DoorEdges?.FirstOrDefault(e => e.RoomAId is null || e.RoomBId is null)?.Id;
+        var shipDoorOpen = shipAirlockId is not null &&
+            ((snapshot.DoorStates.FirstOrDefault(s => s.DoorId == shipAirlockId)?.IsOpen)
+                ?? snapshot.DoorEdgeStates?.FirstOrDefault(s => s.Id == shipAirlockId)?.IsOpen
+                ?? false);
+        _shipRenderer.DrawDoor(spriteBatch, connector.Left, connector.Top, connector.Width, connector.Height, connector.IsVertical, shipDoorOpen, origin, leadsToVacuum: true);
 
         // Unlooted crates only - a taken one leaves nothing behind (World.StationCrime.cs).
         foreach (var crate in snapshot.Station.Crates)

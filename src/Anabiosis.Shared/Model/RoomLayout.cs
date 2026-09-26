@@ -55,7 +55,11 @@ public static class RoomLayout
         // - otherwise a character could never get close enough to a door to actually reach it.
         var door = doors.FirstOrDefault(d => d.Connects(roomId) && d.Contains(next) && isDoorOpen(d.Id));
         if (door is not null)
-            return (next, door.OtherRoom(roomId));
+            // Never actually null here - this legacy rectangle-based collision system is only ever
+            // called with a structure's own interior Doors list (EnemyShipLayout.MoveAlongAxis), never
+            // a vacuum-facing one (those live in the separate OuterHatches list, humble-soaring-cat.md
+            // "убрать AirlockOuterDoor как отдельный тип") - so OtherRoom always resolves to a real room.
+            return (next, door.OtherRoom(roomId)!);
 
         // A passable breach in an interior bulkhead (World.WallBlocks.cs's IsPassableBreach) works
         // like a permanently-open door between the two rooms it separates - never a way out to

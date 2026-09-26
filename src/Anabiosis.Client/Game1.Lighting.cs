@@ -44,7 +44,13 @@ public partial class Game1
         // Info takes over the viewport the same way the helm does - a HUD screen, not something
         // seen through the character's own eyes, so it reads the same regardless of where they're
         // standing or how dark the room is (matches IsAtHelm above).
-        if (me is null || me.IsAtHelm || _infoPanelOpen)
+        // Direct user request ("чтобы в этом режиме убирались все невидимые зоны игрока когда он
+        // жив") - a dead character's own former sight cone/lamp reach means nothing to a free-
+        // floating spectator camera; the ship-interior scene itself still draws exactly as normal
+        // (DrawCore's own scene pass runs unconditionally - only the darkening COMPOSITE afterward
+        // is what this return value skips), so returning false here just means "show it all lit",
+        // not "show nothing".
+        if (me is null || me.IsAtHelm || _infoPanelOpen || _spectatorMode)
             return false;
 
         // A gunner at a periscope is looking through the hull, not standing in a dark corridor:
@@ -74,18 +80,19 @@ public partial class Game1
         {
             foreach (var door in snapshot.EnemyShip.Doors)
                 gaps.Add(Occluders.ToGap(door));
-            foreach (var airlock in snapshot.EnemyShip.AirlockOuterDoors)
-                gaps.Add(Occluders.ToGap(airlock));
+            foreach (var hatch in snapshot.EnemyShip.OuterHatches)
+                gaps.Add(Occluders.ToGap(hatch));
             // M78 (humble-soaring-cat.md) - tile-native occlusion; rasterized fresh from the same
-            // Rooms/Doors/AirlockOuterDoors the snapshot already carries, same approach ClientTileGrid
-            // uses for the player's own ship.
-            var enemyTiles = TileGridRasterizer.FromRooms(snapshot.EnemyShip.Rooms, snapshot.EnemyShip.Doors, snapshot.EnemyShip.AirlockOuterDoors);
+            // Rooms/Doors the snapshot already carries (OuterHatches included - humble-soaring-cat.md,
+            // "убрать AirlockOuterDoor как отдельный тип" - they're ordinary Doors now), same approach
+            // ClientTileGrid uses for the player's own ship.
+            var enemyDoors = snapshot.EnemyShip.Doors.Concat(snapshot.EnemyShip.OuterHatches).ToList();
+            var enemyTiles = TileGridRasterizer.FromRooms(snapshot.EnemyShip.Rooms, enemyDoors);
             // Same live-door-state overlay the ship/station sides need (humble-soaring-cat.md,
             // "не вижу через открытые двери" follow-up) - without it every enemy-ship door tile is
             // permanently "closed" to TileOccluders.IsOccluding, leaving a sliver of wall behind even
             // though the SightGap above is unconditionally cut through it.
-            ClientTileGrid.ApplyLiveDoorState(enemyTiles, snapshot.EnemyShip.Rooms, snapshot.EnemyShip.Doors,
-                snapshot.EnemyShip.AirlockOuterDoors, snapshot.DoorStates);
+            ClientTileGrid.ApplyLiveDoorState(enemyTiles, snapshot.EnemyShip.Rooms, enemyDoors, snapshot.DoorStates);
             walls = TileOccluders.Build(enemyTiles, gaps);
             origin = ComputeStationCamera(me);
             eye = new Vector2((float)me.X, (float)me.Y);
@@ -97,11 +104,8 @@ public partial class Game1
         else
         {
             foreach (var door in snapshot.Doors)
-                if (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? true)
+                if (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? !door.LeadsToVacuum)
                     gaps.Add(Occluders.ToGap(door));
-            foreach (var outerDoor in snapshot.AirlockOuterDoors)
-                if (snapshot.DoorStates.FirstOrDefault(s => s.DoorId == outerDoor.Id)?.IsOpen ?? false)
-                    gaps.Add(Occluders.ToGap(outerDoor));
             // A cockpit window is glass, not plating - sight carries through it into open space
             // exactly like an open door, even though (unlike a door) nothing can walk through it.
             foreach (var pane in CockpitWindows.Panes(snapshot.Rooms))
@@ -144,11 +148,15 @@ public partial class Game1
                 // so after the first dock this fingerprint check hits every single frame; it's
                 // usually the LARGER of the two structures (a station grows with the ship's own
                 // size), so this half used to be the bigger share of the ~89ms "Маска" cost.
-                var stationFingerprint = ClientTileGrid.ComputeStructuralFingerprint(
-                    snapshot.Station.Rooms, snapshot.Station.Doors, new[] { snapshot.Station.ShipConnector });
+                // ShipConnector is an ordinary vacuum-facing Door now (humble-soaring-cat.md, "убрать
+                // AirlockOuterDoor как отдельный тип") - included alongside Station.Doors here since
+                // rasterization/fingerprinting/live-state overlay all need it, same as Station.cs's
+                // own constructor does for wall-block generation.
+                var stationDoors = snapshot.Station.Doors.Append(snapshot.Station.ShipConnector).ToList();
+                var stationFingerprint = ClientTileGrid.ComputeStructuralFingerprint(snapshot.Station.Rooms, stationDoors);
                 if (_cachedStationTiles is null || _cachedStationTilesFingerprint != stationFingerprint)
                 {
-                    _cachedStationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, snapshot.Station.Doors, new[] { snapshot.Station.ShipConnector });
+                    _cachedStationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, stationDoors);
                     _cachedStationTilesFingerprint = stationFingerprint;
                 }
                 // Bug fix (humble-soaring-cat.md, "не вижу через открытые двери", follow-up) - the
@@ -156,8 +164,7 @@ public partial class Game1
                 // doc comment); the station side was missed the first time around, so a station door
                 // or the ship<->station connector was still permanently "closed" to TileOccluders no
                 // matter how it actually stood - the identical bug, just on the other structure.
-                ClientTileGrid.ApplyLiveDoorState(_cachedStationTiles, snapshot.Station.Rooms, snapshot.Station.Doors,
-                    new[] { snapshot.Station.ShipConnector }, snapshot.DoorStates);
+                ClientTileGrid.ApplyLiveDoorState(_cachedStationTiles, snapshot.Station.Rooms, stationDoors, snapshot.DoorStates);
                 walls = walls.Concat(TileOccluders.Build(_cachedStationTiles, gaps)).ToList();
             }
             // Outside the hull the camera folds the player's world position back into the ship's

@@ -20,17 +20,19 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         var door = world.Ship.Doors.First(d => d.Id == "door-cockpit-reactor");
 
-        var openSnapshot = world.CreateSnapshot();
-        var doorCoords = TileGridRasterizer.DoorTileCoords(openSnapshot.Rooms, door.X, door.Y, door.Width, door.Height).ToList();
-        var openTiles = ClientTileGrid.Build(openSnapshot);
-        // Doors start open (World_ToggleDoor_ViaClientCommand_FlipsState's own "before" assumption) -
-        // the exact regression: this used to come back DoorOpen=false here regardless of live state.
-        if (!doorCoords.All(c => openTiles.CellAt(c) is { Wall: TileWallKind.Door, DoorOpen: true }))
+        var closedSnapshot = world.CreateSnapshot();
+        var doorCoords = TileGridRasterizer.DoorTileCoords(closedSnapshot.Rooms, door.X, door.Y, door.Width, door.Height).ToList();
+        var closedTiles = ClientTileGrid.Build(closedSnapshot);
+        // Doors start closed now (direct user request, "сделай чтобы все двери на корабле
+        // изначально были закрыты") - the exact regression this guards against (this used to come
+        // back a stale DoorOpen value regardless of live state) still shows up either direction, so
+        // this checks the closed default first and the open state after toggling.
+        if (!doorCoords.All(c => closedTiles.CellAt(c) is { Wall: TileWallKind.Door, DoorOpen: false }))
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: door.Id));
-        var closedTiles = ClientTileGrid.Build(world.CreateSnapshot());
-        return doorCoords.All(c => closedTiles.CellAt(c) is { Wall: TileWallKind.Door, DoorOpen: false });
+        var openTiles = ClientTileGrid.Build(world.CreateSnapshot());
+        return doorCoords.All(c => openTiles.CellAt(c) is { Wall: TileWallKind.Door, DoorOpen: true });
     }
 
     // The true end-to-end proof: feeding a live, open-door snapshot through the exact same
@@ -43,6 +45,10 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         var door = world.Ship.Doors.First(d => d.Id == "door-cockpit-reactor");
+        // This test is specifically about an OPEN door, but every ship door now starts closed by
+        // default (direct user request, "сделай чтобы все двери на корабле изначально были
+        // закрыты") - has to open it explicitly now instead of relying on the old default.
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: door.Id));
         var snapshot = world.CreateSnapshot();
 
         var gaps = new List<SightGap> { Occluders.ToGap(door) }; // same construction Game1.Lighting.cs uses for an open door
@@ -75,9 +81,9 @@ internal static partial class TestRunner
 
         var snapshot = world.CreateSnapshot();
         var doorCoords = TileGridRasterizer.DoorTileCoords(snapshot.Station.Rooms, door.X, door.Y, door.Width, door.Height).ToList();
-        var stationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, snapshot.Station.Doors, new[] { snapshot.Station.ShipConnector });
-        ClientTileGrid.ApplyLiveDoorState(stationTiles, snapshot.Station.Rooms, snapshot.Station.Doors,
-            new[] { snapshot.Station.ShipConnector }, snapshot.DoorStates);
+        var stationDoors = snapshot.Station.Doors.Append(snapshot.Station.ShipConnector).ToList();
+        var stationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, stationDoors);
+        ClientTileGrid.ApplyLiveDoorState(stationTiles, snapshot.Station.Rooms, stationDoors, snapshot.DoorStates);
 
         // Station doors default open the same way a ship's own regular Door does (ClientTileGrid's
         // own ?? true fallback) - this must come back DoorOpen=true, not the pre-fix always-false.
@@ -108,7 +114,7 @@ internal static partial class TestRunner
         // And a real wall tile on the very same boundary, one row above the door (y=0, outside its
         // own y=[2,4) span), must actually sit at that same column 13 - proving the fix aligns with
         // the wall DrawShipWalls draws there, not just with an isolated recomputation.
-        var tiles = TileGridRasterizer.FromRooms(snapshot.Rooms, snapshot.Doors, snapshot.AirlockOuterDoors);
+        var tiles = TileGridRasterizer.FromRooms(snapshot.Rooms, snapshot.Doors);
         return tiles.CellAt(new TileCoord(13, 0)) is { Wall: TileWallKind.Solid };
     }
 }

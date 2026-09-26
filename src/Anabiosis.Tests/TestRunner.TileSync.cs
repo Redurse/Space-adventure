@@ -19,12 +19,14 @@ internal static partial class TestRunner
             return false;
 
         world.Step(RealtimeStep); // let the very first sync run before checking the starting state
-        if (coords.Any(c => world.Ship.Tiles.CellAt(c) is not { DoorOpen: true }))
-            return false; // doors start open (World.ShipPurchase.cs's InitializeShipState)
+        // Doors start closed now (direct user request, "сделай чтобы все двери на корабле
+        // изначально были закрыты", World.ShipState.cs's InitializeShipState).
+        if (coords.Any(c => world.Ship.Tiles.CellAt(c) is not { DoorOpen: false }))
+            return false;
 
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor"));
         world.Step(RealtimeStep);
-        return coords.All(c => world.Ship.Tiles.CellAt(c) is { DoorOpen: false });
+        return coords.All(c => world.Ship.Tiles.CellAt(c) is { DoorOpen: true });
     }
 
     private static bool World_TileSync_DestroyedDoor_ForcesTileOpenAndZeroesTileHp()

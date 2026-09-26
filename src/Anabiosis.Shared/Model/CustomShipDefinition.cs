@@ -128,6 +128,15 @@ public enum CustomDeviceKind
     CardTable,
     Jukebox,
     Terminal,
+    // Direct user request ("монитор состояния корабля... консоль связи") - sized/footprint like
+    // NavigationConsole (a console, not a small wall fixture like Terminal/WallLamp), each with its
+    // own full-screen panel. ShipStatusMonitor draws every room's own oxygen/Hp as a schematic;
+    // CommsConsole shows the current system's own map plus a stub "Установить связь" button that
+    // does nothing yet (deliberately - a placeholder for a not-yet-designed feature, same
+    // "заготовка, функционал добавим поэтапно" status this file's own genuinely-new devices below
+    // already carry, except these two DO have a real Ship.FromCustomDefinition case from day one).
+    ShipStatusMonitor,
+    CommsConsole,
     // M60 follow-up - neither of these had a CustomDeviceKind before (the Ship Editor doesn't offer
     // placing either), which meant Ship.FromCustomDefinition always produced zero cameras/mounts -
     // fine for an editor-drawn hull with none to begin with, but silently deleted them from a
@@ -232,6 +241,14 @@ public sealed record CustomDeviceDef(
     // out the wrong way round in the actual game every time. Defaults to false for every call site
     // that predates this (hand-authored hulls, older saves) - exactly today's unrotated behavior.
     bool Rotated = false,
+    // Direct user bug report ("при повороте они не поворачиваются на все 4 стороны") - any
+    // CustomDeviceFootprint.IsHalfWidthKind device's half tile can sit on any of its 4 sides now, not
+    // just the East/South Rotated alone could ever express (Helm/Navigation originally; Fabricator/
+    // Deconstructor too, direct user request "по аналогии... полтора на 3"). Null only for a save from
+    // before this field existed (same convention as WallDeviceFacingSide just above) - Ship.Custom.cs
+    // falls back to Rotated's own old East/South mapping (CustomDeviceFootprint.ResolveHalfSide)
+    // rather than crashing on an old definition.
+    TileSide? HalfWidthSide = null,
     // Optional override, defaulting to null for every ordinary editor-placed device - Ship.Custom.cs's
     // BuildTurrets/BuildSimpleDevices/BuildWallDevices all auto-number an id ("turret-N", "kind-N",
     // ...) exactly as before whenever this is absent, no behavior change for a real player's own

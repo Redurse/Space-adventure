@@ -27,12 +27,20 @@ public static partial class MenuLogo
 
         // Two posts and a diagonal heavy enough to match them. A thin diagonal here would make the
         // letter read as two separate bars with a scratch between them.
+        //
+        // Direct user request ("букву N... без швов") - the diagonal's own top-left and bottom-right
+        // corners used to land EXACTLY on the posts' own edges (Stroke and 104-Stroke), which reads
+        // fine in continuous coordinates but two independently-rasterized polygons that only just
+        // touch can leave a hairline gap once their edges round to pixels on their own - the distance
+        // field downstream then bevels that hairline like a real edge, which is the visible seam
+        // running through the letter. Overlap, a couple of units into each post, guarantees the
+        // rasterized shapes actually overlap regardless of rounding.
         'N' => (104f,
                 new[]
                 {
                     Rect(0, 0, Stroke, CellHeight),
                     Rect(104 - Stroke, 0, Stroke, CellHeight),
-                    new[] { Stroke, 0f, Stroke + 26f, 0f, 104f - Stroke, CellHeight, 104f - Stroke - 26f, CellHeight },
+                    new[] { Stroke - 2f, 0f, Stroke + 26f, 0f, 104f - Stroke + 2f, CellHeight, 104f - Stroke - 26f, CellHeight },
                 },
                 new float[0][]),
 

@@ -13,34 +13,59 @@ public sealed partial class World
 
     public IReadOnlyList<ItemType?> RackSlots => _rackSlots;
 
+    // Direct user request ("уменьшить стартовые инструменты до 2 шт") - dropped from 3 to 2 units
+    // each, freeing enough shelf space for RackMaterials below to actually fit (2 of every material
+    // type needs 30 slots; at the old 3-per-type count only 9 slots were ever free).
     private static readonly ItemType[] RackToolsAndTanks =
     {
-        ItemType.Wrench, ItemType.Wrench, ItemType.Wrench,
-        ItemType.Screwdriver, ItemType.Screwdriver, ItemType.Screwdriver,
-        ItemType.Cutter, ItemType.Cutter, ItemType.Cutter,
-        ItemType.WeldingTool, ItemType.WeldingTool, ItemType.WeldingTool,
-        ItemType.OxygenTank, ItemType.OxygenTank, ItemType.OxygenTank,
-        ItemType.WeldingTank, ItemType.WeldingTank, ItemType.WeldingTank,
-        ItemType.Axe, ItemType.Axe, ItemType.Axe,
-        ItemType.GoshaScrewdriver, ItemType.GoshaScrewdriver, ItemType.GoshaScrewdriver,
+        ItemType.Wrench, ItemType.Wrench,
+        ItemType.Screwdriver, ItemType.Screwdriver,
+        ItemType.Cutter, ItemType.Cutter,
+        ItemType.WeldingTool, ItemType.WeldingTool,
+        ItemType.OxygenTank, ItemType.OxygenTank,
+        ItemType.WeldingTank, ItemType.WeldingTank,
+        ItemType.Axe, ItemType.Axe,
+        ItemType.GoshaScrewdriver, ItemType.GoshaScrewdriver,
     };
 
     private static readonly ItemType[] RackSuppliesAndWeapons =
     {
-        ItemType.FuelRod, ItemType.FuelRod, ItemType.FuelRod,
-        ItemType.MedKit, ItemType.MedKit, ItemType.MedKit,
-        ItemType.WireSpool, ItemType.WireSpool, ItemType.WireSpool,
-        ItemType.Knife, ItemType.Knife, ItemType.Knife,
-        ItemType.Rifle, ItemType.Rifle, ItemType.Rifle,
-        ItemType.LaserRifle, ItemType.LaserRifle, ItemType.LaserRifle,
-        ItemType.BeltBag, ItemType.BeltBag, ItemType.BeltBag,
-        ItemType.IdCard, ItemType.IdCard, ItemType.IdCard,
+        ItemType.FuelRod, ItemType.FuelRod,
+        ItemType.MedKit, ItemType.MedKit,
+        ItemType.WireSpool, ItemType.WireSpool,
+        ItemType.Knife, ItemType.Knife,
+        ItemType.Rifle, ItemType.Rifle,
+        ItemType.LaserRifle, ItemType.LaserRifle,
+        ItemType.BeltBag, ItemType.BeltBag,
+        ItemType.IdCard, ItemType.IdCard,
         // Direct user request - radio voice needs a worn item now (ItemType.Radio's own doc
         // comment), so the starter kit has to actually carry some or nobody could ever use it.
-        ItemType.Radio, ItemType.Radio, ItemType.Radio,
+        ItemType.Radio, ItemType.Radio,
     };
 
-    // Every hull's starter kit (game_design.md section 13): 3 units of every hand tool/tank/weapon/
+    // Direct user request ("выдавай в стелажах по 2 материала каждого типа") - 2 units of every ore/
+    // refined material added this session (ItemType.cs's own Materials region), same enum-declaration
+    // order used everywhere else that lists them (ItemDefinitions.IsRawOre, ItemIcons.Materials.cs).
+    private static readonly ItemType[] RackMaterials =
+    {
+        ItemType.IronOre, ItemType.IronOre,
+        ItemType.NickelOre, ItemType.NickelOre,
+        ItemType.ZincOre, ItemType.ZincOre,
+        ItemType.CopperOre, ItemType.CopperOre,
+        ItemType.TitaniumOre, ItemType.TitaniumOre,
+        ItemType.UraniumOre, ItemType.UraniumOre,
+        ItemType.Silicon, ItemType.Silicon,
+        ItemType.Carbon, ItemType.Carbon,
+        ItemType.AluminumOre, ItemType.AluminumOre,
+        ItemType.PlastalloyOre, ItemType.PlastalloyOre,
+        ItemType.SteelPlate, ItemType.SteelPlate,
+        ItemType.TitaniumPlate, ItemType.TitaniumPlate,
+        ItemType.CopperCable, ItemType.CopperCable,
+        ItemType.Plastic, ItemType.Plastic,
+        ItemType.Plastalloy, ItemType.Plastalloy,
+    };
+
+    // Every hull's starter kit (game_design.md section 13): 2 units of every hand tool/tank/weapon/
     // consumable that used to be scattered across the ship as individual ToolStation pickups, split
     // evenly across the two shelves every hull carries - tools+tanks in the first, supplies+weapons
     // in the second, regardless of which rooms those two shelves happen to sit in on this hull.
@@ -58,6 +83,30 @@ public sealed partial class World
             var secondShelfOffset = StorageRack.Capacity;
             for (var i = 0; i < RackSuppliesAndWeapons.Length; i++)
                 _rackSlots[secondShelfOffset + i] = RackSuppliesAndWeapons[i];
+        }
+
+        // Spills into whatever slots the fixed tool/supply layout above left free, flat across every
+        // shelf in order (starting with shelf 1's own leftover slots, then shelf 2's, then a 3rd+
+        // shelf if this hull has one) rather than a 3rd fixed shelf offset - a hull with only 1
+        // StorageRack (every custom-built test/player ship in this session) still gets as many
+        // material types as its own leftover space allows instead of none at all.
+        //
+        // Deliberately leaves each shelf's own LAST slot empty rather than packing every last one:
+        // (1) TestRunner.Storage.cs's World_Rack_DragFromInventory_StowsItem/
+        // World_Rack_AwayFromTheRack_MoveIsRefused both hard-rely on "StorageRack.Capacity - 1" being
+        // a guaranteed-empty destination to drag an item onto (their own doc comments explain why a
+        // fixed index instead of searching for one); (2) a starter rack with every single slot
+        // pre-filled would leave a freshly-spawned crew nowhere to stow the very first thing they
+        // mine, defeating the whole point of adding minable materials in the first place.
+        var materialIndex = 0;
+        for (var slot = 0; slot < _rackSlots.Length && materialIndex < RackMaterials.Length; slot++)
+        {
+            if (_rackSlots[slot] is not null)
+                continue;
+            if ((slot + 1) % StorageRack.Capacity == 0)
+                continue;
+            _rackSlots[slot] = RackMaterials[materialIndex];
+            materialIndex++;
         }
     }
 

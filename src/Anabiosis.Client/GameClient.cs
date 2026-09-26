@@ -1,3 +1,4 @@
+using System;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -12,6 +13,12 @@ public sealed class GameClient
 
     public int PlayerId { get; }
     public WorldSnapshot? LatestSnapshot { get; private set; }
+    // Barotrauma-style pre-game lobby (screenshot 3 of the reference set) - non-null only while
+    // GameServer's own SessionPhase is Lobby, never overwritten back to null once the round starts
+    // (ordinary WorldSnapshots just take over from there; Game1.Menu.cs's own lobby screen reads
+    // _sessionStarted/_client.LatestSnapshot to notice the round began, the same way it already
+    // does for every other session).
+    public LobbySnapshot? LatestLobby { get; private set; }
 
     public GameClient(IClientConnection connection, int playerId)
     {
@@ -21,101 +28,22 @@ public sealed class GameClient
 
     public void Send(ClientCommand command) => _connection.Send(command);
 
-    public void SendInput(
-        Vec2 move,
-        int powerSystemIndex,
-        float powerDirection,
-        bool interactPressed,
-        float turretAimDirection,
-        bool firePressed,
-        int toggleHoldSlotIndex = -1,
-        int toggleReactorSlotIndex = -1,
-        ItemType? buyItemType = null,
-        int sellSlotIndex = -1,
-        bool acceptCargoQuestPressed = false,
-        bool turnInCargoQuestPressed = false,
-        ShipUpgradeTrack? purchaseUpgradeTrack = null,
-        string? doorToggleId = null,
-        bool pushOffPressed = false,
-        float pushOffDirectionX = 0,
-        float pushOffDirectionY = 0,
-        QuestKind? acceptQuestKind = null,
-        bool dockPressed = false,
-        SlotRef? moveItemFrom = null,
-        SlotRef? moveItemTo = null,
-        float lookX = 0,
-        float lookY = 0,
-        int? attachTankFromSlot = null,
-        int? attachTankToSlot = null,
-        int? detachTankSlot = null,
-        bool cutHeld = false,
-        string? hireCandidateId = null,
-        bool weldHeld = false,
-        PinRef? pinInteractId = null,
-        bool wireLayCancelPressed = false,
-        string? componentOperateId = null,
-        string? componentMountInteractId = null,
-        SlotRef? dropItemFrom = null,
-        string? pickupDroppedItemId = null,
-        bool abandonQuestPressed = false,
-        string? warpToSystemId = null,
-        string? nickname = null,
-        CrewRole? setOwnRoleTo = null,
-        int? playCardRank = null,
-        CardSuit? playCardSuit = null,
-        bool cardGameTakePressed = false,
-        bool cardGameEndRoundPressed = false,
-        long lastServerTimestampMs = 0,
-        float? wireBendAtX = null,
-        float? wireBendAtY = null,
-        bool toggleLightsPressed = false,
-        bool toggleReactorEmergencyPressed = false,
-        bool toggleDoorsLockedPressed = false,
-        bool axeSwingHeld = false,
-        string? sabotageDeviceId = null,
-        float scannerSweepDegrees = 0f,
-        float? placeScannerMarkerAtX = null,
-        float? placeScannerMarkerAtY = null,
-        bool scannerPingPressed = false,
-        ScannerMode requestedScannerMode = ScannerMode.Directional,
-        bool jukeboxTogglePressed = false,
-        bool jukeboxNextTrackPressed = false,
-        bool jukeboxPrevTrackPressed = false,
-        bool jukeboxVolumeUpPressed = false,
-        bool jukeboxVolumeDownPressed = false,
-        bool fireHeld = false,
-        bool debugSpawnEnemyPressed = false,
-        bool toggleLandingPressed = false,
-        int? requestedTimeAccelerationLevel = null,
-        string? engineerFocusDeviceId = null,
-        BuildRoomRequest? buildRoom = null,
-        string? demolishRoomId = null,
-        bool debugAddCreditsPressed = false,
-        string? chatMessage = null,
-        VoiceChunkPayload? voiceChunk = null,
-        CardTableGameKind? chooseCardTableGame = null,
-        int? frontsSetAllocationIndex = null,
-        int? frontsSetAllocationAmount = null,
-        bool frontsResolvePressed = false,
-        string? suitLockerInteractId = null,
-        string? turretInteractId = null,
-        string? ammoStorageInteractId = null,
-        string? stealCrateId = null,
-        string? repairDeviceId = null,
-        string? terminalInteractId = null,
-        // Direct user request ("игрок сможет указать на карте точку... автопилот") - appended last,
-        // same reasoning as ClientCommand.AutopilotTargetX's own doc comment (avoids renumbering
-        // every argument in this method's own giant positional Send(new ClientCommand(...)) call).
-        float? autopilotTargetX = null,
-        float? autopilotTargetY = null,
-        bool autopilotStopPressed = false,
-        float? desiredFacingDegrees = null) =>
-        Send(new ClientCommand(PlayerId, (float)move.X, (float)move.Y, powerSystemIndex, powerDirection, interactPressed, turretAimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, doorToggleId, pushOffPressed, pushOffDirectionX, pushOffDirectionY, acceptQuestKind, dockPressed, lookX, lookY, moveItemFrom, moveItemTo, attachTankFromSlot, attachTankToSlot, detachTankSlot, cutHeld, hireCandidateId, weldHeld, pinInteractId, wireLayCancelPressed, componentOperateId, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId, nickname, setOwnRoleTo, playCardRank, playCardSuit, cardGameTakePressed, cardGameEndRoundPressed, lastServerTimestampMs, wireBendAtX, wireBendAtY, toggleLightsPressed, toggleReactorEmergencyPressed, toggleDoorsLockedPressed, axeSwingHeld, sabotageDeviceId, scannerSweepDegrees, placeScannerMarkerAtX, placeScannerMarkerAtY, scannerPingPressed, requestedScannerMode, jukeboxTogglePressed, jukeboxNextTrackPressed, jukeboxPrevTrackPressed, jukeboxVolumeUpPressed, jukeboxVolumeDownPressed, fireHeld, debugSpawnEnemyPressed, toggleLandingPressed, requestedTimeAccelerationLevel, engineerFocusDeviceId, buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk, chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed, suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId, autopilotTargetX, autopilotTargetY, autopilotStopPressed, desiredFacingDegrees));
-
     public void PollSnapshots()
     {
         var snapshot = _connection.ReceiveLatestSnapshot();
         if (snapshot is not null)
-            LatestSnapshot = snapshot;
+        {
+            // Architecture proof-of-concept (WorldSnapshot.Doors/Turrets's own doc comment) - null
+            // here means "unchanged since your very first snapshot, GameServer.cs didn't resend it
+            // this tick", not "the ship has none". Merging here, once, is what lets every OTHER
+            // reader in this project keep treating LatestSnapshot.Doors/Turrets as always-populated,
+            // completely unaware this optimization exists.
+            var doors = snapshot.Doors ?? LatestSnapshot?.Doors ?? Array.Empty<Door>();
+            var turrets = snapshot.Turrets ?? LatestSnapshot?.Turrets ?? Array.Empty<Turret>();
+            LatestSnapshot = snapshot with { Doors = doors, Turrets = turrets };
+        }
+        var lobby = _connection.ReceiveLatestLobby();
+        if (lobby is not null)
+            LatestLobby = lobby;
     }
 }

@@ -103,7 +103,17 @@ public sealed class VoiceCapture
         _isRadio = isRadio;
         try
         {
-            _capture = new WasapiCapture(device, false, 100);
+            // Direct user bug report ("голосовой чат работает с такими помехами что почти ничего
+            // нельзя разобрать" - both local and radio equally, so not RadioVoiceFilter's own effect)
+            // - useEventSync:true instead of false. Polling mode has NAudio's own capture thread wake
+            // up on a plain Thread.Sleep timer and grab whatever's accumulated since, rather than
+            // being woken by WASAPI's own buffer-ready event the instant a period completes; under
+            // the same CPU load this game's own render/simulation/network loop already puts on the
+            // machine (worse specifically in multiplayer, matching the report), a delayed poll lets
+            // the shared-mode ring buffer overrun before it's finally read, and the garbled/overwritten
+            // tail of that read is exactly what "помехи" sounds like. Event-driven capture is WASAPI's
+            // own recommended low-latency mode for precisely this reason.
+            _capture = new WasapiCapture(device, true, 100);
             _capture.DataAvailable += OnDataAvailable;
             _capture.StartRecording();
             IsRecording = true;

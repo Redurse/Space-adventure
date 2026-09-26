@@ -75,10 +75,10 @@ public sealed class BoardingRenderer
         // Locked hatches, not standing-open holes: each only reads as passable once actually cut
         // through (EnemyShipRuntime's own per-hull Hp, World.Cutting.cs), same "destroyed reads as
         // open" convention the player's own airlocks use.
-        foreach (var airlock in snapshot.EnemyShip.AirlockOuterDoors)
+        foreach (var hatch in snapshot.EnemyShip.OuterHatches)
         {
-            var breached = snapshot.EnemyShip.AirlockStates.FirstOrDefault(s => s.Id == airlock.Id)?.Breached ?? false;
-            _shipRenderer.DrawDoor(spriteBatch, airlock.Left, airlock.Top, airlock.Width, airlock.Height, airlock.Width <= airlock.Height,
+            var breached = snapshot.EnemyShip.HatchStates.FirstOrDefault(s => s.Id == hatch.Id)?.Breached ?? false;
+            _shipRenderer.DrawDoor(spriteBatch, hatch.Left, hatch.Top, hatch.Width, hatch.Height, hatch.IsVertical,
                 isOpen: breached, origin, leadsToVacuum: true, destroyed: breached);
         }
 

@@ -78,20 +78,15 @@ public partial class Game1
     // Doors need TileGridRasterizer's own tile-aligned rect, not the door's raw (boundary-centred)
     // Left/Top/Width/Height - see this method's own doc comment above for why that distinction is
     // load-bearing, not cosmetic.
+    // Covers both interior and vacuum-facing doors now (humble-soaring-cat.md, "убрать
+    // AirlockOuterDoor как отдельный тип") - RoomsForDoor scopes the rasterization to just the
+    // door's own room when it LeadsToVacuum, same as ShipRenderer's own draw loop.
     private static Rectangle? DoorRectIfNear(IReadOnlyList<Room> rooms, Door door, Vec2 fromPosition, Vector2 origin)
     {
         if ((door.Position - fromPosition).Length() >= InteractionConstants.DeviceInteractionRadius)
             return null;
-        var (left, top, width, height) = TileGridRasterizer.DoorTileRect(rooms, door.X, door.Y, door.Width, door.Height);
-        return ShipRenderer.GetDoorRect(left, top, width, height, origin);
-    }
-
-    private static Rectangle? OuterDoorRectIfNear(IReadOnlyList<Room> rooms, AirlockOuterDoor door, Vec2 fromPosition, Vector2 origin)
-    {
-        if ((door.Position - fromPosition).Length() >= InteractionConstants.DeviceInteractionRadius)
-            return null;
-        var ownRoom = new[] { rooms.First(r => r.Id == door.RoomId) };
-        var (left, top, width, height) = TileGridRasterizer.DoorTileRect(ownRoom, door.X, door.Y, door.Width, door.Height);
+        var doorRooms = TileGridRasterizer.RoomsForDoor(rooms, door);
+        var (left, top, width, height) = TileGridRasterizer.DoorTileRect(doorRooms, door.X, door.Y, door.Width, door.Height);
         return ShipRenderer.GetDoorRect(left, top, width, height, origin);
     }
 
@@ -162,24 +157,65 @@ public partial class Game1
         var (navWidth, navHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Navigation, snapshot.NavigationConsole.Rotated);
         if (BlockRectIfNear(snapshot.NavigationConsole.Position, myPosition, navWidth, navHeight, origin) is { } navRect && navRect.Contains(_designMouse))
             return navRect;
+        foreach (var extraNav in snapshot.ExtraNavigationConsoles ?? Array.Empty<NavigationConsole>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Navigation, extraNav.Rotated);
+            if (BlockRectIfNear(extraNav.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        }
+        foreach (var extraHelm in snapshot.ExtraHelmConsoles ?? Array.Empty<HelmConsole>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Helm, extraHelm.Rotated);
+            if (BlockRectIfNear(extraHelm.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        }
         var (cardTableWidth, cardTableHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.CardTable);
         if (BlockRectIfNear(snapshot.CardTable.Position, myPosition, cardTableWidth, cardTableHeight, origin) is { } cardTableRect && cardTableRect.Contains(_designMouse))
             return cardTableRect;
         var (jukeboxWidth, jukeboxHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Jukebox);
         if (snapshot.Jukebox is { } jukebox && BlockRectIfNear(jukebox.Block.Position, myPosition, jukeboxWidth, jukeboxHeight, origin) is { } jukeboxRect && jukeboxRect.Contains(_designMouse))
             return jukeboxRect;
+        // Direct user bug report ("не могу нажать... не отображается их коллизия при наведении") -
+        // ShipStatusMonitor/CommsConsole were missing from this shared hover-highlight layer
+        // entirely (added alongside Navigation/Helm above at the time, this pair just got missed) -
+        // no visible "you're over something clickable" cue, which read as broken hit-testing even
+        // though the E-based open itself (Game1.cs's own proximity check) already worked. Now
+        // genuinely many instances - hovering ANY one of them highlights it.
+        foreach (var shipStatusMonitor in snapshot.ShipStatusMonitors ?? Array.Empty<ShipStatusMonitor>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.ShipStatusMonitor, shipStatusMonitor.Rotated);
+            if (BlockRectIfNear(shipStatusMonitor.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        }
+        foreach (var commsConsole in snapshot.CommsConsoles ?? Array.Empty<CommsConsole>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.CommsConsole, commsConsole.Rotated);
+            if (BlockRectIfNear(commsConsole.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        }
+        // Direct user request ("сделай щитку свою собственную текстуру") - JunctionBox is now a real
+        // half-width fixture with its own bespoke face, not the flat unclickable swatch it used to be.
+        foreach (var junctionBox in snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Junction, junctionBox.Rotated);
+            if (BlockRectIfNear(junctionBox.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        }
         foreach (var terminal in snapshot.Terminals ?? Array.Empty<TerminalState>())
             if (BlockRectIfNear(terminal.Block.Position, myPosition, ShipRenderer.MediumBlockSize, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
 
-        // Same 3x3-tile footprint as CustomDeviceFootprint.Size gives every turret kind in the Ship
-        // Editor (this session's earlier "все турели 3 на 3" fix, extended to the live game's own
-        // hit-rect - direct user request, "терминал для управления пушкой... не 3 на 3 тайла").
-        // TurretBallistic is just a stand-in kind here - every turret kind shares the same size.
-        var (turretWidth, turretHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.TurretBallistic);
+        // Same 1x3-tile mount footprint CustomDeviceFootprint.Size gives every turret kind in the
+        // Ship Editor (direct user request, screenshot of a turret mount built out of wall tiles -
+        // "реальные такие границы... при наведении мышкой в игре"), extended to the live game's own
+        // hit-rect. TurretBallistic is just a stand-in kind here - every turret kind shares the same
+        // size; Turret.Rotated (added alongside this) is per-INSTANCE, unlike the kind itself.
         foreach (var turret in snapshot.Turrets)
+        {
+            var (turretWidth, turretHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.TurretBallistic, turret.Rotated);
             if (BlockRectIfNear(turret.PeriscopePosition, myPosition, turretWidth, turretHeight, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
+        }
         var (ammoWidth, ammoHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.AmmoStorage);
         foreach (var storage in snapshot.AmmoStorages)
             if (BlockRectIfNear(storage.Position, myPosition, ammoWidth, ammoHeight, origin) is { } rect && rect.Contains(_designMouse))
@@ -205,26 +241,49 @@ public partial class Game1
         foreach (var junction in snapshot.Wiring.Components.Where(c => c.Kind == ComponentKind.Junction))
             if (BlockRectIfNear(junction.Position, myPosition, ShipRenderer.NormalBlockSize, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
-        // A Door/AirlockOuterDoor's own Position is always the ship's local, unrotated interior
-        // frame, but IsOutside switches CharacterState's own X/Y to AsteroidField world-space
-        // (World.cs's CreateSnapshot) - the same conversion HandleMouseClick's own door click
-        // already applies (doorClickPosition), needed here too or a suited character near an open
-        // airlock would never see it highlight even though clicking it does work.
-        var doorProximityPosition = me.IsOutside
-            ? ShipLocalFrame.ToLocal(myPosition, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms))
-            : myPosition;
+        // A door's own Position is always the ship's local, unrotated interior frame, but IsOutside
+        // switches CharacterState's own X/Y to AsteroidField world-space (World.cs's CreateSnapshot) -
+        // the same conversion HandleMouseClick's own door click already applies (doorClickPosition),
+        // needed here too or a suited character near an open airlock would never see it highlight
+        // even though clicking it does work.
+        var doorProximityPosition = ShipLocalFrame.CharacterToLocal(me, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms));
         foreach (var door in snapshot.Doors)
             if (DoorRectIfNear(snapshot.Rooms, door, doorProximityPosition, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
-        foreach (var outerDoor in snapshot.AirlockOuterDoors)
-            if (OuterDoorRectIfNear(snapshot.Rooms, outerDoor, doorProximityPosition, origin) is { } rect && rect.Contains(_designMouse))
-                return rect;
-        foreach (var edge in snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>())
-            if (DoorEdgeRectIfNear(edge, doorProximityPosition, origin) is { } rect && rect.Contains(_designMouse))
-                return rect;
+        // Direct user request ("чтобы у двойной и тройной двери... высвечивался весь хитбокс а не 1
+        // на 1 на каждую клетку") - a wide/triple door is several parallel edges sharing one Id
+        // (DoorSpanTiles, PlaceEdgeDoor), each with its own narrow GetDoorEdgeHitRect; hovering over
+        // just the one segment under the cursor used to highlight only that segment's own 2-tile
+        // rect instead of the door's whole footprint. Once ANY segment of a group is near enough and
+        // under the cursor, the highlight is every segment's rect unioned together - the same door
+        // toggles as one unit either way (ToggleDoor keys off the shared Id), this only changes what
+        // the outline shows.
+        foreach (var group in (snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>()).GroupBy(e => e.Id))
+        {
+            var groupList = group.ToList();
+            if (!groupList.Any(edge => DoorEdgeRectIfNear(edge, doorProximityPosition, origin) is { } r && r.Contains(_designMouse)))
+                continue;
+            var union = ShipRenderer.GetDoorEdgeHitRect(groupList[0].Coord, groupList[0].Side, origin);
+            foreach (var edge in groupList.Skip(1))
+                union = Rectangle.Union(union, ShipRenderer.GetDoorEdgeHitRect(edge.Coord, edge.Side, origin));
+            return union;
+        }
         foreach (var dropped in snapshot.DroppedItems.Where(d => d.RoomId is not null))
             if (DroppedItemRectIfNear(dropped, myPosition, origin) is { } rect && rect.Contains(_designMouse))
                 return rect;
+
+        // Direct user request ("некоторые устройства... чтобы у них был хитбокс при наведении, но у
+        // тех что нет функции при нажатии на них просто ничего не делали") - DecorativeDevice.Kinds
+        // now render (ShipRenderer.Devices.cs's own DrawDecorativeDevice), so they need the same
+        // hover highlight every other device gets; deliberately NOT added to HandleMouseClick's own
+        // per-device checks below it in that file, so clicking one falls through and does nothing,
+        // exactly like clicking empty floor.
+        foreach (var device in snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>())
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(device.Kind, device.Rotated);
+            if (BlockRectIfNear(device.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        }
 
         return null;
     }

@@ -9,7 +9,11 @@ namespace Anabiosis.Shared.Model;
 // to one - and Radius is what the flame has to touch, which is also what the client draws.
 // X/Y are double, not float, for the same reason Asteroid's own doc comment gives - a deposit's
 // small offset from its parent asteroid's already-huge absolute position needs it too.
-public sealed record OreDeposit(string Id, string AsteroidId, double X, double Y, float MaxHp, float Radius = 0.55f)
+// OreType (direct user request, "добавим множество предметов материалов") - which specific
+// ItemType.*Ore/element this deposit drops once its Hp reaches 0 (World.Cutting.cs's CutAlongFlame),
+// replacing the old one-size-fits-all ItemType.Mineral drop. Defaults to Mineral so nothing outside
+// AsteroidField.CreateDefault's own 13 hand-placed deposits (the only real call site) needs updating.
+public sealed record OreDeposit(string Id, string AsteroidId, double X, double Y, float MaxHp, float Radius = 0.55f, ItemType OreType = ItemType.Mineral)
 {
     public Vec2 Position => new(X, Y);
 

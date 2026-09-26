@@ -8,7 +8,7 @@ using Anabiosis.Shared.Protocol;
 namespace Anabiosis.Client.Rendering;
 
 // Hostile hulls, baked once per class - the same armour HullSkin draws for the player's own ship,
-// run once offscreen against each EnemyShipLayout's own real Rooms/AirlockOuterDoors instead of a
+// run once offscreen against each EnemyShipLayout's own real Rooms/OuterHatches instead of a
 // hand-drawn silhouette unrelated to what boarding actually finds inside. A raider really is a
 // squat 15x6 box; a boarded Frigate really is the same footprint as the player's own Corvette
 // (EnemyShipLayout.Classes.cs's own comment says so) - this is what makes that true on screen as
@@ -100,7 +100,7 @@ public sealed class EnemyHullSkin : IDisposable
             // engine-nozzle fitting (which only draws for a device it's actually given) simply
             // contributes nothing, and the damage-scorch overlay (which needs systemStates) never
             // lights, the same "nothing to show" outcome null/empty already gives the player's ship.
-            HullSkin.Draw(spriteBatch, _pixel, _hullPlates, layout.Rooms, layout.AirlockOuterDoors,
+            HullSkin.Draw(spriteBatch, _pixel, _hullPlates, layout.Rooms, layout.OuterHatches,
                 Array.Empty<ShipSystemDevice>(), drawOrigin, ForwardDegreesFor(kind));
             spriteBatch.End();
         }

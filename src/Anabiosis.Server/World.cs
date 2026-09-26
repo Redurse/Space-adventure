@@ -64,15 +64,34 @@ public sealed partial class World
         // fixed forever (seeded from pointId alone, Station.Procedural.cs) - only this anchor
         // translation gets redone.
         var kind = GalaxyMap.GetPoint(pointId).StationKind;
-        var airlock = Ship.AirlockOuterDoors.First();
-        var anchor = airlock.Position;
-        // Which wall of the ship's own room this airlock actually sits on - every hand-authored hull
-        // puts it on the Right (east) wall, but the free-tile Ship Editor allows any of the 4 sides
-        // (CustomShipDefinition.EdgeSide), and Station.Procedural.cs's layout would otherwise always
-        // grow east/south from this anchor regardless, landing station rooms on top of the ship's own
-        // hull whenever the door actually faces some other direction.
-        var airlockRoom = Ship.Rooms.First(r => r.Id == airlock.RoomId);
-        var airlockSide = Ship.InferAirlockSide(airlockRoom, airlock.X, airlock.Y);
+        Vec2 anchor;
+        EdgeSide airlockSide;
+        // ResolveShipAirlock (World.StationDocking.cs) covers both a real vacuum-facing Door and a
+        // vacuum-facing door edge (direct user report - "но у меня на корабле 2 шлюза": a Ship
+        // Editor hull built entirely from Door-tool-onto-open-space airlocks used to be invisible to
+        // docking, which only ever looked at the rect-door kind).
+        if (ResolveShipAirlock() is { } airlock)
+        {
+            anchor = airlock.Position;
+            airlockSide = airlock.Side;
+        }
+        else
+        {
+            // Direct fallout of relaxing CustomShipValidator's "needs an airlock" rule (direct user
+            // request) - a Ship-Editor-built hull can genuinely have zero airlocks of either kind now
+            // (confirmed live: a player's own custom ship, 0 airlocks, used to crash right here on
+            // the very first World construction - Ship.VacuumDoors.First() throwing on an
+            // empty sequence before the player ever got to see the game start). There's no real door
+            // to anchor a station on, so fall back to the ship's own overall bounding box's right
+            // edge - the same EdgeSide.Right every hand-authored hull's real airlock already sits on
+            // - so a station still generates instead of crashing; the ship's own side just has no
+            // matching door to actually walk through, same as if that wall were solid.
+            var minY = Ship.Rooms.Min(r => r.Y);
+            var maxRight = Ship.Rooms.Max(r => r.Right);
+            var maxBottom = Ship.Rooms.Max(r => r.Bottom);
+            anchor = new Vec2(maxRight, (minY + maxBottom) / 2);
+            airlockSide = EdgeSide.Right;
+        }
         var station = Station.CreateProcedural(pointId, kind, anchor, airlockSide);
         _stationsByPointId[pointId] = station;
         // Every station's doors, not just the one currently resolved - door state is one flat
@@ -183,7 +202,7 @@ public sealed partial class World
         {
             // Closed: a crew that has just been boarded seals its compartments, and opening one is
             // a decision with a cost now that the hull leaks air (World.EnemyAtmosphere.cs). The
-            // hull's own AirlockOuterDoors are locked hatches now too - cutting one open (or a wall
+            // hull's own OuterHatches are locked hatches now too - cutting one open (or a wall
             // panel instead) is tracked per hull instance (EnemyShipRuntime), not in this shared
             // dictionary, so they get no entry here at all.
             foreach (var door in layout.Doors)
@@ -209,6 +228,11 @@ public sealed partial class World
     }
 
     public void SpawnCharacter(int playerId) => _characters[playerId] = new Character(playerId, Ship.SpawnPoint, Ship.SpawnRoomId);
+
+    // Test-only precondition setter, same convention as every other Debug* helper here (e.g.
+    // World.WallBlocks.cs's DebugBreachWallBlockById) - a test that just needs "this character is
+    // dead" doesn't need to actually simulate 3 seconds of unsuited vacuum exposure to get there.
+    public void DebugKillCharacter(int playerId) => _characters[playerId].Health = 0f;
 
     // A player left the session (GameServer.Tick). Everything keyed by their id goes with them,
     // including a seat they were occupying - a turret nobody is sitting at must not stay manned by
@@ -239,11 +263,18 @@ public sealed partial class World
         if (!_characters.ContainsKey(playerId))
             return;
 
+        var character = _characters[playerId];
+        // Direct user request ("экран смерти... почти точь в точь как в баротравме") - a dead
+        // character does nothing at all any more (World.Movement.cs's own StepCharacters gate is
+        // the other half); deliberately doesn't drop held items or force them off a manned turret/
+        // helm, only what the plan itself actually asked for.
+        if (character.IsDead)
+            return;
+
         _moveInput[playerId] = new Vec2(command.MoveX, command.MoveY);
-        _characters[playerId].LookDirection = new Vec2(command.LookX, command.LookY);
+        character.LookDirection = new Vec2(command.LookX, command.LookY);
         PowerGrid.ApplyInput(playerId, command.PowerSystemIndex, command.PowerDirection);
 
-        var character = _characters[playerId];
         ObserveTutorialInput(character, command);
 
         // Sent every tick once the client knows it - ignore an empty/missing one rather than
@@ -422,6 +453,15 @@ public sealed partial class World
         if (command.RepairDeviceId is { } repairDeviceId)
             TryRepairDeviceById(character, repairDeviceId);
 
+        if (command.FabricatorCraftRecipeId is { } fabricatorCraftRecipeId)
+            TryCraftAtFabricator(character, fabricatorCraftRecipeId);
+
+        if (command.DeconstructItemType is { } deconstructItemType)
+            TryDeconstructAt(character, deconstructItemType);
+
+        if (command.ProductionCancelPressed)
+            TryCancelProduction(character);
+
         if (command.PushOffPressed)
             HandlePushOff(character, new Vec2(command.PushOffDirectionX, command.PushOffDirectionY));
 
@@ -551,7 +591,6 @@ public sealed partial class World
         Tick,
         Ship.Rooms,
         Ship.Doors,
-        Ship.AirlockOuterDoors,
         CreateDoorStates(),
         Ship.Turrets,
         _turretRuntimes.Values.Select(t => new TurretState(
@@ -597,7 +636,7 @@ public sealed partial class World
         new EnemyShipSnapshot(
             EnemyShipLayout.Rooms,
             EnemyShipLayout.Doors,
-            EnemyShipLayout.AirlockOuterDoors,
+            EnemyShipLayout.OuterHatches,
             EnemyShipLayout.Name,
             CreateEnemyRoomOxygenStates(),
             EnemyShipFieldPosition,
@@ -605,7 +644,7 @@ public sealed partial class World
             CreateEnemyCrewStates(),
             BoardableEnemy?.Layout.WallBlocks ?? Array.Empty<WallBlock>(),
             CreateEnemyHullWallBlockStates(),
-            CreateEnemyAirlockStates()),
+            CreateEnemyHatchStates()),
         CreateProjectileStates(),
         CreatePersonalShotStates(),
         CreateFactionStandings(),
@@ -625,7 +664,7 @@ public sealed partial class World
         {
             // While outside, X/Y mean an absolute AsteroidField world position instead of ship-
             // interior coordinates - the client picks which "scene" to place them in from IsOutside.
-            var renderPosition = c.IsOutside ? GetEvaWorldPosition(c) : c.Position;
+            var renderPosition = GetCharacterWorldPosition(c);
             return new CharacterState(
                 c.PlayerId, renderPosition.X, renderPosition.Y, c.CarryingAmmoCrate, c.Health, c.WearingSuit, c.SuitActionRemaining,
                 // What the client draws the sight cone along: the head if it's aimed, otherwise
@@ -661,7 +700,11 @@ public sealed partial class World
                 CreateScannerContacts(c.PlayerId),
                 c.ScannerCooldownRemaining,
                 c.ScannerMode,
-                IsRecentlySpeaking(c.PlayerId));
+                IsRecentlySpeaking(c.PlayerId),
+                c.ProductionActionRemaining,
+                c.ProductionRecipeId,
+                c.ProductionIsDeconstruct,
+                c.RespawnSecondsRemaining);
         }).ToArray(),
         PowerGrid.CreateState(),
         new VoyageState(ShipMapPosition, _dockedPointId, IsInBattle, IsDocked || _nearestStationPointId is not null, _landedBodyId),
@@ -714,5 +757,10 @@ public sealed partial class World
         CreateDoorEdgeStates(),
         CreateRoomHpStates(),
         Ship.WreckPatches,
-        CreateAutopilotState());
+        CreateAutopilotState(),
+        Ship.DecorativeDevices,
+        Ship.ShipStatusMonitors,
+        Ship.CommsConsoles,
+        Ship.ExtraNavigationConsoles,
+        Ship.ExtraHelmConsoles);
 }

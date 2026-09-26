@@ -270,7 +270,7 @@ internal static partial class TestRunner
 
         // Both frames now differ by exactly Station.WorldOffset, so the two door rectangles land on
         // the same spot - which is what makes the crossing an ordinary doorway.
-        var outerDoor = world.Ship.AirlockOuterDoors.First();
+        var outerDoor = world.Ship.VacuumDoors.First();
         return (outerDoor.Position - world.Station.ShipConnector.Position).Length() < 0.001f;
     }
 

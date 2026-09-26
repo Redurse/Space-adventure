@@ -110,7 +110,11 @@ internal static partial class TestRunner
 
         var roomGone = world.Ship.Rooms.All(r => r.Id != "b" && r.Id != "c") && world.Ship.Rooms.Count == 1;
         var engineGone = world.Ship.Engines.Count == 0;
-        var doorsGone = world.Ship.Doors.Count == 0;
+        // Both interior doors (a/b and b/c) touched the exploded room "b" and are gone with it - but
+        // room "a"'s own airlock survives (room "a" itself was never destroyed), and now lives in this
+        // SAME Doors list rather than a separate one (humble-soaring-cat.md, "убрать AirlockOuterDoor
+        // как отдельный тип"), so this checks "no interior doors left", not "the list is empty".
+        var doorsGone = world.Ship.Doors.Count(d => !d.LeadsToVacuum) == 0 && world.Ship.VacuumDoors.Count == 1;
         var gotWreckPatch = world.Ship.WreckPatches.Count == wreckPatchesBefore + 1;
 
         var snapshot = world.CreateSnapshot();

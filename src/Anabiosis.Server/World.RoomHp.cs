@@ -79,20 +79,17 @@ public sealed partial class World
         ApplyShipDefinition(withWreck);
     }
 
-    // A door borders one or two rooms rather than sitting inside a single one (Door.RoomAId/RoomBId,
-    // or AirlockOuterDoor's single RoomId with vacuum on the other side) - damages whichever of them
-    // actually exist rather than requiring callers (DamageDoor/ChopDoor, World.Doors.cs) to know
-    // which shape of door they're dealing with.
+    // A door borders one or two rooms rather than sitting inside a single one (Door.RoomAId always,
+    // RoomBId only when it's not vacuum-facing) - damages whichever of them actually exist rather
+    // than requiring callers (DamageDoor/ChopDoor, World.Doors.cs) to know which shape of door
+    // they're dealing with.
     private void DamageRoomsForDoor(string doorId, float amount)
     {
         if (Ship.Doors.FirstOrDefault(d => d.Id == doorId) is { } door)
         {
             DamageRoom(door.RoomAId, amount);
-            DamageRoom(door.RoomBId, amount);
-        }
-        else if (Ship.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorId) is { } airlock)
-        {
-            DamageRoom(airlock.RoomId, amount);
+            if (door.RoomBId is not null)
+                DamageRoom(door.RoomBId, amount);
         }
     }
 

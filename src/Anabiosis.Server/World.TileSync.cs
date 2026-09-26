@@ -9,8 +9,8 @@ namespace Anabiosis.Server;
 // silently stay frozen at "every door closed, every wall at full HP" forever, no matter what the
 // player actually does, which both World.Atmosphere.cs (M72) and Ship/Station's own MoveAlongAxis
 // (M73) now read from. EnemyShipLayout is deliberately NOT synced here yet - its interior doors
-// share World's dictionaries the same way Ship's do, but its two AirlockOuterDoors are tracked in
-// EnemyShipRuntime's own separate _airlockHp instead (never toggle-able, only cut open) - a
+// share World's dictionaries the same way Ship's do, but its two OuterHatches are tracked in
+// EnemyShipRuntime's own separate per-instance Hp instead (never toggle-able, only cut open) - a
 // different-enough shape that EnemyShipLayout.MoveAlongAxis stays on the old RoomLayout system for
 // now rather than rush a half-tested hybrid sync for boarding.
 //
@@ -23,10 +23,11 @@ public sealed partial class World
 {
     private void SyncShipTiles()
     {
+        // A vacuum-facing door rasterizes against ONLY its own room (TileGridRasterizer.RoomsForDoor -
+        // humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный тип"), same as an interior
+        // one against the full room list - one loop covers both now, same as the rasterizer itself.
         foreach (var door in Ship.Doors)
-            SyncDoorTile(Ship.Tiles, TileGridRasterizer.DoorTileCoords(Ship.Rooms, door.X, door.Y, door.Width, door.Height), door.Id);
-        foreach (var airlock in Ship.AirlockOuterDoors)
-            SyncDoorTile(Ship.Tiles, TileGridRasterizer.DoorTileCoords(new[] { Ship.GetRoom(airlock.RoomId) }, airlock.X, airlock.Y, airlock.Width, airlock.Height), airlock.Id);
+            SyncDoorTile(Ship.Tiles, TileGridRasterizer.DoorTileCoords(TileGridRasterizer.RoomsForDoor(Ship.Rooms, door), door.X, door.Y, door.Width, door.Height), door.Id);
         SyncWallBlockTiles(Ship.Tiles, Ship.Rooms, Ship.WallBlocks);
 
         // M-doors-as-edges - same reconciliation-every-tick shape as SyncDoorTile above, just
@@ -56,12 +57,17 @@ public sealed partial class World
         // looked open. Mirrors GetDockedLayout's own "same id" convention (its synthetic connector
         // Door reuses the ship's own outer-door id rather than ShipConnector's) - kept in sync with
         // that SAME live door state, not a second, independent one.
-        if (Ship.AirlockOuterDoors.Count > 0)
+        // ResolveShipAirlock (World.StationDocking.cs), not a raw Ship.VacuumDoors[0] check -
+        // direct user report ("но у меня на корабле 2 шлюза"): a hull whose only airlock is a
+        // vacuum-facing door edge used to leave this sync skipped entirely, so the station's own
+        // connector tile stayed rasterized-closed forever even once the player opened their own
+        // door, silently blocking the crossing GetDockedTileGrid was supposed to allow.
+        if (ResolveShipAirlock() is { } shipAirlock)
         {
-            var connectorOpen = IsDoorOpen(Ship.AirlockOuterDoors[0].Id);
+            var connectorOpen = IsDoorOpen(shipAirlock.Id);
             var connector = Station.ShipConnector;
             SyncDoorOpenOnly(Station.Tiles,
-                TileGridRasterizer.DoorTileCoords(new[] { Station.GetRoom(connector.RoomId) }, connector.X, connector.Y, connector.Width, connector.Height),
+                TileGridRasterizer.DoorTileCoords(new[] { Station.GetRoom(connector.RoomAId) }, connector.X, connector.Y, connector.Width, connector.Height),
                 connectorOpen);
         }
     }

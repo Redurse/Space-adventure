@@ -60,6 +60,17 @@ public sealed class Character
     public float Health { get; set; } = MaxHealth;
     public const float BleedingThreshold = 50f;
     public bool IsBleeding => Health > 0 && Health < BleedingThreshold;
+    // Same "derived from Health, no separate flag to keep in sync" shape as IsBleeding just above,
+    // and the same convention World.Boarding.cs's own EnemyCrewState.Alive/StationCrimeState.Alive
+    // already use the other way round. No new protocol field needed - CharacterState.Health is
+    // already networked, so the client derives death (and the death screen) from it directly.
+    public bool IsDead => Health <= 0f;
+    // Direct user request ("через 10 секунд... в игре сверху пишется таймер... игрок спанился на
+    // корабле в кокпите") - 0 while alive (World.Respawn.cs's own StepRespawn arms it the first
+    // tick IsDead is found true), counts down to 0 while dead, echoed to the client
+    // (CharacterState.RespawnSecondsRemaining) purely so the death screen/HUD can show it counting
+    // down - nothing server-side reads it except StepRespawn itself.
+    public float RespawnSecondsRemaining { get; set; }
     public bool WearingSuit => Inventory.Equipped[EquipSlot.Suit] == ItemType.Spacesuit;
 
     // Wearing a suit and being safe in one are two different things now: the suit is a shell, and
@@ -71,6 +82,15 @@ public sealed class Character
     // Which locker the in-progress action started at - taking a suit out empties it, putting one
     // back fills it, resolved once the action finishes (World.Movement.cs).
     public string? SuitActionLockerId { get; set; }
+    // Direct user request ("процесс сборки и разборки... занимал 2 секунды... заполнялась снизу
+    // вверх зелёная зарисовка") - the Fabricator/Deconstructor's own in-progress timer, same "just a
+    // personal timer, movement not locked" shape as SuitActionRemaining above (World.Fabricator.cs's
+    // own StepProduction counts it down every tick). >0 while a craft or deconstruct is running;
+    // ProductionRecipeId is which FabricatorCatalog.Recipe it's for either way (a deconstruct just
+    // runs that same recipe's Ingredients/Output in reverse - ProductionIsDeconstruct says which).
+    public float ProductionActionRemaining { get; set; }
+    public string? ProductionRecipeId { get; set; }
+    public bool ProductionIsDeconstruct { get; set; }
     public Vec2 FacingDirection { get; set; } = new Vec2(-1, 0); // last nonzero move direction
     // Where the head is turned, which is a different question from where the feet are going: the
     // suit lamp shines along it (the client's vision cone), and it's aimed with the mouse. Zero

@@ -96,8 +96,12 @@ public sealed partial class World
                 if (quest.IssuedByPointId != _dockedPointId)
                     return;
                 // The ore is real inventory, not an abstract flag - hand over the actual items.
+                // Direct user request ("добавим множество предметов материалов") - mining now yields
+                // one of 10 specific ItemType.*Ore/element types (OreDeposit.OreType), not the old
+                // one-size-fits-all Mineral, so this quest turns in Iron Ore specifically (the most
+                // common one - Quest.cs's own description stays the generic "добыть руду" either way).
                 var oreSlots = Enumerable.Range(0, Inventory.MainSlotCount)
-                    .Where(i => character.Inventory.ItemAt(i) == ItemType.Mineral)
+                    .Where(i => character.Inventory.ItemAt(i) == ItemType.IronOre)
                     .Take(quest.RequiredAmount)
                     .ToList();
                 if (oreSlots.Count < quest.RequiredAmount)

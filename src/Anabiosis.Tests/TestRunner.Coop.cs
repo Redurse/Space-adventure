@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using Anabiosis.Server;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
+using CrewRole = Anabiosis.Shared.Model.CrewRole;
 
 // Co-op over a real socket: the wire format, and what happens to the world when a crew member
 // joins or drops out. Everything else in the game is already per-player and needs no test of its
@@ -140,6 +141,82 @@ internal static partial class TestRunner
             snapshot.TurretStates.All(t => t.MannedByPlayerId is null);
     }
 
+    // Barotrauma-style pre-game lobby (GameServer's own SessionPhase.Lobby, screenshot 3 of the
+    // reference set): both players join before the round exists at all, pick a nickname/role/ready
+    // state, and only the host's own LobbyStartRoundPressed actually spawns anyone.
+    private static bool Coop_Lobby_HostStartsRoundAfterPlayersJoinAndSetRoles()
+    {
+        var server = new GameServer("Тестовый сервер", maxPlayers: 4, savePath: null);
+        var hostTransport = new InProcessTransport();
+        var hostId = server.Connect(hostTransport);
+        var guestTransport = new InProcessTransport();
+        var guestId = server.Connect(guestTransport);
+
+        server.Tick(); // dequeues both joiners into the lobby roster, no World yet
+
+        ((IClientConnection)hostTransport).Send(new ClientCommand(hostId, Nickname: "Капитан", SetOwnRoleTo: CrewRole.Captain));
+        ((IClientConnection)guestTransport).Send(new ClientCommand(guestId, Nickname: "Инженер", LobbyReady: true));
+        server.Tick();
+
+        var hostLobby = ((IClientConnection)hostTransport).ReceiveLatestLobby();
+        var hostRow = hostLobby?.Players.FirstOrDefault(p => p.PlayerId == hostId);
+        var guestRow = hostLobby?.Players.FirstOrDefault(p => p.PlayerId == guestId);
+        if (hostLobby is not { Players.Count: 2 } || hostRow is not { IsHost: true, Nickname: "Капитан", Role: CrewRole.Captain } ||
+            guestRow is not { IsHost: false, Nickname: "Инженер", IsReady: true })
+            return false;
+
+        // Not started yet - no World, no WorldSnapshot for anyone.
+        if (((IClientConnection)hostTransport).ReceiveLatestSnapshot() is not null)
+            return false;
+
+        ((IClientConnection)hostTransport).Send(new ClientCommand(hostId, LobbyStartRoundPressed: true));
+        server.Tick();
+
+        var snapshot = ((IClientConnection)hostTransport).ReceiveLatestSnapshot();
+        return snapshot?.Characters.Count == 2 &&
+            snapshot.Characters.Any(c => c.PlayerId == hostId) &&
+            snapshot.Characters.Any(c => c.PlayerId == guestId);
+    }
+
+    // GameServer.ApplyLobbyCommand only honors LobbyStartRoundPressed from _lobbyHostPlayerId -
+    // anyone else's copy of that field has to be a silent no-op, not a way to force-start someone
+    // else's lobby out from under them.
+    private static bool Coop_Lobby_NonHostCannotStartRound()
+    {
+        var server = new GameServer("Тестовый сервер", maxPlayers: 4, savePath: null);
+        var hostTransport = new InProcessTransport();
+        server.Connect(hostTransport);
+        var guestTransport = new InProcessTransport();
+        var guestId = server.Connect(guestTransport);
+        server.Tick();
+
+        ((IClientConnection)guestTransport).Send(new ClientCommand(guestId, LobbyStartRoundPressed: true));
+        server.Tick();
+
+        return ((IClientConnection)hostTransport).ReceiveLatestSnapshot() is null &&
+            ((IClientConnection)hostTransport).ReceiveLatestLobby() is { Players.Count: 2 };
+    }
+
+    // NetworkHost's own accept-loop cap (Game1.Menu.cs's "Макс. игроков") - a joiner past the limit
+    // never gets a player id at all, just a Rejected welcome frame the client surfaces as an error.
+    private static bool Coop_NetworkHost_RejectsJoinerPastMaxPlayers()
+    {
+        var server = new GameServer();
+        var hostTransport = new InProcessTransport();
+        server.Connect(hostTransport); // fills the one and only seat
+
+        using var host = new NetworkHost(server, port: 0, maxPlayers: 1);
+        try
+        {
+            using var joined = TcpClientConnection.Join("127.0.0.1", host.Port, TimeSpan.FromSeconds(5));
+            return false; // should have been refused before a Welcome ever went out
+        }
+        catch (IOException ex)
+        {
+            return ex.Message.Contains("заполнен");
+        }
+    }
+
     // Stands in for a socket that dies: GameServer only ever asks a connection whether it is still
     // open, so a flag is the whole of what a dropped player looks like from the tick loop.
     private sealed class DroppableConnection : IServerConnection
@@ -149,6 +226,10 @@ internal static partial class TestRunner
         public bool IsOpen => Open;
 
         public void Send(WorldSnapshot snapshot)
+        {
+        }
+
+        public void SendLobby(LobbySnapshot lobby)
         {
         }
 

@@ -10,11 +10,14 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
+        // Every ship door now starts closed (direct user request, "сделай чтобы все двери на
+        // корабле изначально были закрыты"), so the flip this proves is closed -> open, not the
+        // old open -> closed.
         var before = world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor").IsOpen;
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor"));
         var after = world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor").IsOpen;
 
-        return before && !after;
+        return !before && after;
     }
 
     // Doors have their own hit points now (game_design.md) - a destroyed one is forced open (its
@@ -24,7 +27,9 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // starts open -> closed
+        // Every ship door now starts closed by default (direct user request, "сделай чтобы все
+        // двери на корабле изначально были закрыты") - no toggle needed to get it into the closed
+        // starting state this test wants before damaging it.
         var closedBeforeDamage = !world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-cockpit-reactor").IsOpen;
 
         world.DamageDoor("door-cockpit-reactor");
@@ -176,7 +181,9 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         CastOffIntoSpace(world); // docked, that door opens onto the station rather than vacuum
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-engine-airlock")); // starts open -> closed
+        // door-engine-airlock (the inner door) already starts closed by default now (direct user
+        // request, "сделай чтобы все двери на корабле изначально были закрыты") - no toggle needed
+        // to get it into the closed state this test is named for.
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum")); // starts closed -> open
 
         for (var i = 0; i < 20 * 30; i++)
@@ -188,13 +195,17 @@ internal static partial class TestRunner
         return chamberOxygen < 10f && engineOxygen > 99f;
     }
 
-    // Same setup, but the inner door is left at its default (open) - the vent now drags the rest
-    // of the ship down too, which is exactly the risk the previous test's closed door avoids.
+    // Same setup, but the inner door is explicitly opened instead - the vent now drags the rest
+    // of the ship down too, which is exactly the risk the previous test's closed door avoids. Both
+    // doors start closed by default now (see the door-default note above), so unlike before, this
+    // one can no longer rely on the inner door's default state to represent "open" - it has to
+    // toggle it open itself.
     private static bool World_OpenInnerDoor_LetsVentedChamberDrainRestOfShip()
     {
         var world = new World();
         world.SpawnCharacter(1);
         CastOffIntoSpace(world); // docked, that door opens onto the station rather than vacuum
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-engine-airlock")); // starts closed -> open
         world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum")); // starts closed -> open
 
         for (var i = 0; i < 20 * 30; i++)
@@ -287,8 +298,12 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        EnterAsteroidFieldStationary(world);
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum")); // open it
+        EnterAsteroidFieldStationary(world); // its own SitAtHelm -> MoveCharacterTo already force-opens
+        // every door (world.DebugOpenAllDoors(), TestRunner.Core.cs) as a side effect of walking to the
+        // helm, so this door is already open by this point - a blind DoorToggleId here would slam it
+        // back SHUT instead. Check-then-toggle instead of assuming either starting state.
+        if (!world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-airlock-vacuum").IsOpen)
+            world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
 
         MoveCharacterTo(world, 1, 23f, 3f); // corridor -> ... -> engine -> airlock-chamber
         WalkFixedDirection(world, 1, 1f, 0f); // walk straight through the open outer door, unsuited
@@ -297,13 +312,98 @@ internal static partial class TestRunner
         if (!afterExit.IsOutside)
             return false; // stepping out unsuited has to be possible at all
 
-        // Four seconds against a three second grace: past the limit without being so far past that
-        // the test would still pass if the limit were quietly doubled.
-        for (var i = 0; i < 240; i++)
+        // Direct user request ("при выходе начинается дамаг игрока и через 3 секунды игрок
+        // мгновенно умирает") - Health has to fall VISIBLY and MONOTONICALLY across the whole
+        // 3-second grace, not sit untouched until an abrupt final-tick snap to 0 (the old flat-
+        // counter model this replaced) - sampled once per second so a regression back to the old
+        // model would show up as two equal readings in a row, not just a wrong final number.
+        var oneSecond = (int)(1.0 / RealtimeStep);
+        var previousHealth = afterExit.Health;
+        if (previousHealth <= 0f)
+            return false; // setup problem - should still be alive the instant they step out
+        for (var second = 1; second <= 3; second++)
+        {
+            for (var i = 0; i < oneSecond; i++)
+                world.Step(RealtimeStep);
+            var health = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health;
+            if (health >= previousHealth)
+                return false; // damage must keep decreasing every second, not just snap at the end
+            previousHealth = health;
+        }
+
+        // A little further past the 3-second mark for good measure, same margin the old test used.
+        for (var i = 0; i < 30; i++)
+            world.Step(RealtimeStep);
+        return world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health <= 0f;
+    }
+
+    // Two adjacent (World.WallBlocks.cs's own PassableBreachAdjacency) exterior blocks on the same
+    // wall - "wide enough to climb through", the same bar IsPassableBreach already sets for walking
+    // OUT through a breach (World.Eva.cs's TryCrossIntoVacuum). Checks every pair rather than
+    // sorting-then-checking-consecutive-only: a room's exterior blocks span more than one wall (a
+    // rectangular room's Top and Bottom edges share the same X range), so sorting by X alone
+    // interleaves two unrelated walls and a "consecutive after sort" check can miss a real adjacent
+    // pair entirely - a handful of blocks per room makes the full O(n²) scan cheap regardless.
+    private static (string First, string Second)? FindTwoAdjacentExteriorWallBlockIds(World world, string roomId)
+    {
+        var blocks = world.Ship.WallBlocks.Where(b => b.RoomId == roomId && !b.IsInterior).ToList();
+        for (var i = 0; i < blocks.Count; i++)
+            for (var j = i + 1; j < blocks.Count; j++)
+                if ((blocks[i].Position - blocks[j].Position).Length() <= 1.05)
+                    return (blocks[i].Id, blocks[j].Id);
+        return null;
+    }
+
+    // Direct user request ("я хочу сделать чтобы когда игрок находился не в герметичных помещениях
+    // и пробоина была достаточно большая то игрок через 3 секунды мгновенно погибал") - a character
+    // standing INSIDE the ship, never crossing into EVA at all, dies on the exact same 3-second ramp
+    // as stepping outside once the room they're in has a passable breach (World.Eva.cs's
+    // IsFullyExposedToVacuum) - not the slower, oxygen-level-based leak an ordinary breach uses.
+    private static bool World_RoomHp_LargeBreachInRoom_KillsUnsuitedCharacterLikeEva()
+    {
+        var world = new World();
+        world.SpawnCharacter(1); // spawns at the helm, in the cockpit - not the corridor
+        MoveCharacterTo(world, 1, 11.5f, 3f); // corridor
+        world.ApplyCommand(1, new ClientCommand(1)); // stop drifting once arrived - MoveCharacterTo leaves the last move input active
+        if (FindTwoAdjacentExteriorWallBlockIds(world, "corridor") is not { } pair)
+            return false; // setup problem - the corridor should have an exterior wall to breach
+
+        world.DebugBreachWallBlockById(pair.First);
+        world.DebugBreachWallBlockById(pair.Second);
+
+        var before = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (before.IsOutside || before.Health <= 0f)
+            return false; // setup problem - still inside the ship, still alive
+
+        // A little past the 3-second mark, same margin World_Eva_ExitUnsuited_AllowedButFatalAfterGrace
+        // uses for the outside case.
+        for (var i = 0; i < 3 * 30 + 30; i++)
             world.Step(RealtimeStep);
 
-        var afterGrace = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        return afterGrace.Health <= 0f;
+        var after = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        return !after.IsOutside && after.Health <= 0f; // dies right there, never gets ejected to EVA
+    }
+
+    // Same setup, but only ONE block breached - a pinhole, not wide enough to fit through
+    // (IsPassableBreach needs a second adjacent broken block). This must NOT trip the fast 3-second
+    // ramp - only StepAtmosphere's own much slower, oxygen-level-based leak applies here, which
+    // hasn't come anywhere near the lethal threshold yet at the same time mark the large-breach test
+    // above already proves fatal.
+    private static bool World_RoomHp_SmallPinholeBreach_DoesNotKillUnsuitedCharacterLikeALargeOne()
+    {
+        var world = new World();
+        world.SpawnCharacter(1); // spawns at the helm, in the cockpit - not the corridor
+        MoveCharacterTo(world, 1, 11.5f, 3f); // corridor
+        world.ApplyCommand(1, new ClientCommand(1)); // stop drifting once arrived - MoveCharacterTo leaves the last move input active
+        if (FindTwoAdjacentExteriorWallBlockIds(world, "corridor") is not { } pair)
+            return false; // setup problem - the corridor should have an exterior wall to breach
+
+        world.DebugBreachWallBlockById(pair.First); // exactly one - deliberately NOT the second
+
+        for (var i = 0; i < 3 * 30 + 30; i++)
+            world.Step(RealtimeStep);
+
+        return world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health > 0f;
     }
 
     private static bool World_Eva_ExitSuited_SetsIsOutsideAndAttachesToShip()

@@ -39,16 +39,69 @@ public static class TileShipBuilder
         // Width/Height got swapped before stamping (Game1.ShipEditor.cs's own
         // _editorDeviceRotation) - defaults to null/empty for the one test call site that never
         // needed rotation, same convention WallMaterialsRaw/EnginesRaw already use.
-        IReadOnlyDictionary<TileCoord, bool>? deviceRotations = null)
+        IReadOnlyDictionary<TileCoord, bool>? deviceRotations = null,
+        // Direct user bug report ("при повороте они не поворачиваются на все 4 стороны") - keyed by
+        // the SAME anchor as deviceKinds/deviceRotations, only ever populated for a placed Helm/
+        // Navigation (Game1.ShipEditor.cs's own _editorDeviceHalfSides); every other kind ignores
+        // this entirely. Defaults to null/empty for every call site that predates the 4-way half
+        // side (deviceRotations' own East/South-only convention is used as the fallback below).
+        IReadOnlyDictionary<TileCoord, TileSide>? deviceHalfSides = null,
+        // Direct user request ("двойной двигатель... 2 наложенных друг на друга двигателя с общим
+        // началом") - keyed by the shared Control tile, same anchor convention as `engines` above;
+        // each entry exports as TWO CustomEngineDef records sharing that one center point (see
+        // ShipEngine.cs's own doc comment - Bulkhead/Nozzle are computed from Facing, never stored,
+        // so two engines can already validly share a Control position with zero data-model changes).
+        IReadOnlyDictionary<TileCoord, (EngineSpec First, EngineSpec Second)>? doubleEngines = null,
+        // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил" ->
+        // "отсеками должно считаться только то, что из раздела отсеков") - each placed
+        // CompartmentCatalog instance's own authoritative geometry, keyed by instance id. Tiles is
+        // its FULL footprint (floor + wall ring + any interior wall - Game1.ShipEditor.cs's own
+        // _editorCompartmentTiles), used ONLY to recognize "this region is entirely one compartment
+        // instance"; Rects/DisplayName then become that region's own CustomRoomDef directly,
+        // bypassing steps 1-3.6's generic flood-fill decomposition for it entirely. That generic
+        // algorithm decomposes a region's OPEN-FLOOR tiles (Wall:None) into rectangles and then
+        // tries to reabsorb each rectangle's own wall ring one side at a time, which only works when
+        // a side is uniformly solid its WHOLE length - an authored interior wall that doesn't span
+        // the full separating boundary (leaves flanking gaps, exactly what lets it stay ONE
+        // walkable compartment rather than splitting it into two) is neither a clean ring nor a
+        // clean internal seam from either neighboring piece's own perspective, so it can fragment
+        // into several disconnected rectangles with a real gap along the partition that belongs to
+        // NEITHER piece - CustomShipValidator's own device-containment check then (correctly, given
+        // that geometry) rejects anything positioned there, even though the compartment itself is
+        // one intentional, continuous room by construction. A compartment instance's own
+        // FootprintRects has no such ambiguity: it was authored as one shape from the start.
+        // Defaults to null/empty for every call site that predates this (every existing test, and
+        // any hand-drawn canvas with zero placed compartments) - falls back to the old, unmodified
+        // generic-only behavior.
+        IReadOnlyDictionary<string, (IReadOnlySet<TileCoord> Tiles, IReadOnlyList<RectF> Rects, string DisplayName)>? compartments = null)
     {
         zones ??= Array.Empty<(string, IReadOnlySet<TileCoord>)>();
         deviceRotations ??= new Dictionary<TileCoord, bool>();
+        deviceHalfSides ??= new Dictionary<TileCoord, TileSide>();
+        compartments ??= new Dictionary<string, (IReadOnlySet<TileCoord>, IReadOnlyList<RectF>, string)>();
         var errors = new List<string>();
         if (tiles.Regions.Count == 0)
         {
             errors.Add("Нарисуйте хотя бы один отсек (пол внутри стен), прежде чем играть.");
             return (null, errors);
         }
+
+        // 0) Every tile any compartment instance owns (direct user request, "отсеками должно
+        // считаться только то, что из раздела отсеков") - excluded from the generic per-region
+        // decomposition below ENTIRELY, regardless of whether the region flood-fill also happens to
+        // pull in adjacent hand-painted floor (a compartment built flush against an existing hull,
+        // sharing one connected walkable region with it) - a compartment instance always gets its
+        // OWN authoritative room (step 1.5 below), never re-derived from tile geometry, so removing
+        // its tiles here before decomposition ever sees them is what actually keeps that promise
+        // regardless of what else the region turned out to contain. Without this, only the narrow
+        // case of "the compartment's own region contains NOTHING else" was ever safe - the moment a
+        // player built a compartment against their already-existing ship (the ordinary way this
+        // feature is actually used), the compartment tiles rejoined the SAME region as the rest of
+        // the hull and this exclusion never ran at all.
+        var compartmentOwnedTiles = new HashSet<TileCoord>();
+        foreach (var compartment in compartments.Values)
+            foreach (var t in compartment.Tiles)
+                compartmentOwnedTiles.Add(t);
 
         // 1) Decompose every region's tile set into a small union of non-overlapping rectangles
         // (RectilinearDecomposition, humble-soaring-cat.md M87) instead of rejecting anything that
@@ -58,9 +111,12 @@ public static class TileShipBuilder
         var rects = new Dictionary<int, List<TileRoomRect>>();
         foreach (var (regionId, region) in tiles.Regions)
         {
-            if (region.Tiles.Count == 0)
+            var nonCompartmentTiles = compartmentOwnedTiles.Count == 0
+                ? region.Tiles
+                : (IReadOnlySet<TileCoord>)region.Tiles.Where(t => !compartmentOwnedTiles.Contains(t)).ToHashSet();
+            if (nonCompartmentTiles.Count == 0)
                 continue;
-            var (decomposed, error) = RectilinearDecomposition.Decompose(region.Tiles);
+            var (decomposed, error) = RectilinearDecomposition.Decompose(nonCompartmentTiles);
             if (error is not null || decomposed is null)
             {
                 errors.Add($"{ZoneNameFor(zones, region.Tiles) ?? $"Отсек {regionId}"}: {error ?? "не удалось разобрать форму отсека."}");
@@ -224,7 +280,10 @@ public static class TileShipBuilder
             var isRotated = deviceRotations.TryGetValue(coord, out var rotatedFlag) && rotatedFlag;
             if (isRotated)
                 (footprintWidth, footprintHeight) = (footprintHeight, footprintWidth);
-            devices.Add(new CustomDeviceDef(kind, coord.X + footprintWidth / 2f, coord.Y + footprintHeight / 2f, Rotated: isRotated));
+            var halfSide = CustomDeviceFootprint.IsHalfWidthKind(kind)
+                ? deviceHalfSides.TryGetValue(coord, out var hs) ? hs : CustomDeviceFootprint.ResolveHalfSide(null, isRotated)
+                : (TileSide?)null;
+            devices.Add(new CustomDeviceDef(kind, coord.X + footprintWidth / 2f, coord.Y + footprintHeight / 2f, Rotated: isRotated, HalfWidthSide: halfSide));
         }
 
         // Closes the gap flagged this session: TileCell.WallDeviceId ("Терминал"/"Настенная лампа"
@@ -236,15 +295,74 @@ public static class TileShipBuilder
         // independent instances" shape AmmoStorage/SuitLocker already have). WallDeviceFacingSide is
         // WallDeviceMountSide directly - already "which side the half-block visual sits on" in
         // either mode (TileCell's own doc comment), no recessed/protruding branch needed here.
+        // Terminal/WallLamp are the only two kinds that ever reach WallDeviceId at all - Helm/
+        // Navigation are ordinary Device-tool devices, already covered by the `devices` loop above.
         foreach (var (coord, cell) in tiles.Cells)
-            if (cell.WallDeviceId is not null && cell.WallDeviceKind is { } wallDeviceKind)
-                devices.Add(new CustomDeviceDef(wallDeviceKind, coord.X + 0.5f, coord.Y + 0.5f,
-                    WallDeviceFacingSide: cell.WallDeviceMountSide));
+        {
+            if (cell.WallDeviceId is null || cell.WallDeviceKind is not { } wallDeviceKind)
+                continue;
+            devices.Add(new CustomDeviceDef(wallDeviceKind, coord.X + 0.5f, coord.Y + 0.5f,
+                WallDeviceFacingSide: cell.WallDeviceMountSide));
+        }
 
         var rooms = rects.Select(kv => new CustomRoomDef(
-            roomIds[kv.Key], ZoneNameFor(zones, tiles.Regions[kv.Key].Tiles) ?? $"Отсек {kv.Key}",
+            roomIds[kv.Key],
+            ZoneNameFor(zones, tiles.Regions[kv.Key].Tiles) ?? $"Отсек {kv.Key}",
             kv.Value.Select(r => new RectF(r.MinX, r.MinY, r.Width, r.Height)).ToArray())).ToList();
+
+        // 1.5) One room per placed compartment instance, ALWAYS, straight from its own authoritative
+        // FootprintRects/DisplayName - never re-derived from tile geometry (direct user request,
+        // "отсеками должно считаться только то, что из раздела отсеков"). Step 0 above already
+        // excluded every one of these tiles from the generic decomposition entirely, regardless of
+        // whether the region flood-fill pulled them in together with an adjacent hand-painted hull
+        // (a compartment built flush against an already-existing ship, the ordinary way this feature
+        // is actually used) - so this is unconditional, not a match-and-override step. Room id is
+        // the instance id itself - distinct from every "room-{int}" a bare regionId produces, so the
+        // two id spaces can never collide.
+        foreach (var (instanceId, compartment) in compartments)
+            rooms.Add(new CustomRoomDef(instanceId, compartment.DisplayName, compartment.Rects));
+
         var doors = BuildDoorDefs(doorTiles);
+
+        // 3.7) Final self-verifying catch-all (direct user bug report - a hand-painted wall visible
+        // in the editor renders as plain vacuum in the actual game, even though every earlier step
+        // above is trying to preserve exactly this). Steps 2/3.5/3.6 each recognize one particular
+        // SHAPE of wall tile - a clean full-length gap between exactly two regions, a subrect's own
+        // side that's uniformly walled its whole length, or a region's own private ring that never
+        // touches a different region's floor - and each has its own real gap:
+        //  - A wall tile at a genuine multi-region JUNCTION (touching region A on one side, region B
+        //    on another) borders "foreign floor" from BOTH neighbors' own ExpandToPrivateWallRing
+        //    call, so neither one's flood-fill ever claims it.
+        //  - A wall separating two DIFFERENT rooms that's actually 2 tiles thick (not the usual 1)
+        //    gets each of its two columns/rows absorbed into a DIFFERENT room's own Rects by step
+        //    3.5 (each room's own IsWallLine sees a clean, uniformly-solid line on its own side and
+        //    expands into it) - the two absorbed slices then sit flush against each other, so
+        //    TileGridRasterizer.FromRooms's own "one shared wall tile, placed by whichever side is a
+        //    LEADING edge" rule (its own class comment) reads them as one ordinary 1-tile boundary
+        //    and skips walling the trailing side's slice entirely - it's already inside a room's
+        //    Rects as if it were that room's own ordinary FLOOR, not flagged as unclaimed the way the
+        //    junction case above is, so nothing here would ever see it as missing at all just from
+        //    set membership (confirmed via a real, live ship export: two side-by-side single-column
+        //    rooms with a 2-tile gap between them, room-168/room-166 in the repro, each swallow one
+        //    column of the other's shared wall this way).
+        //
+        // Rather than special-case either shape (or the next one nobody's hit yet), this asks the
+        // one question that actually matters: does re-rasterizing the rooms this method is ABOUT TO
+        // return actually reproduce every originally-Solid tile as Solid? Anything the real
+        // TileGridRasterizer.FromRooms - the exact code every one of these rooms is headed for at
+        // Ship.FromCustomDefinition time - would fail to mark Solid gets patched straight into
+        // supplementalWallTiles, regardless of why. Doors are passed empty here on purpose: this
+        // check only cares about Solid tiles (a Door tile in `tiles` is never TileWallKind.Solid,
+        // so it can never spuriously trip this check even with every door punched out), and
+        // resolving real Door room-membership here would be pure overhead for a check that doesn't
+        // need it. No risk of double-painting - supplementalWallTiles is a HashSet, and
+        // Ship.Custom.cs's own application of it (SetFloor + SetWall Solid) is idempotent either way.
+        var verifyGrid = TileGridRasterizer.FromRooms(
+            rooms.Select(r => new Room(r.Id, r.Name, r.Rects)).ToList(),
+            Array.Empty<Door>());
+        foreach (var (coord, cell) in tiles.Cells)
+            if (cell.Wall == TileWallKind.Solid && verifyGrid.CellAt(coord) is not { Wall: TileWallKind.Solid })
+                supplementalWallTiles.Add(coord);
 
         // Wall materials (direct user request - "усиленная стена"/"иллюминатор") - every painted
         // Solid tile whose material isn't the default Standard, keyed by the SAME tile coordinate
@@ -274,6 +392,14 @@ public static class TileShipBuilder
         var engineDefs = engines
             .Select(kv => new CustomEngineDef(kv.Key.X + 0.5f, kv.Key.Y + 0.5f, kv.Value.Facing, kv.Value.MaxThrust))
             .ToList();
+        if (doubleEngines is not null)
+        {
+            foreach (var (control, pair) in doubleEngines)
+            {
+                engineDefs.Add(new CustomEngineDef(control.X + 0.5f, control.Y + 0.5f, pair.First.Facing, pair.First.MaxThrust));
+                engineDefs.Add(new CustomEngineDef(control.X + 0.5f, control.Y + 0.5f, pair.Second.Facing, pair.Second.MaxThrust));
+            }
+        }
 
         var forcedFloorTiles = tiles.Regions.Values.SelectMany(r => r.Tiles).ToList();
 

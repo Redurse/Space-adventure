@@ -38,6 +38,15 @@ public sealed class DeviceSkin : IDisposable
         // Direct user request ("тройная дверь") - a purely cosmetic device themed to look like the
         // real in-game door (ShipRenderer.Doors.cs's own bronze frame/orange panel/brace reskin).
         TripleDoor,
+        // Direct user request ("сделай им свои уникальные текстуры") - ShipStatusMonitor/
+        // CommsConsole used to both borrow Navigation's own scope-dish art (no bespoke look existed
+        // yet); each gets its own now.
+        ShipStatusMonitor, CommsConsole,
+        // Direct user request ("сделай щитку свою собственную текстуру") - "Щиток"
+        // (CustomDeviceKind.Junction) used to fall back to the flat tinted-swatch-plus-glyph look
+        // every not-yet-fitted kind gets (ShipRenderer.Devices.cs's own DrawJunctionBox); a small
+        // single-breaker relay box now, distinct from Distribution's own full multi-breaker panel.
+        Junction,
     }
 
     private readonly GraphicsDevice _graphics;
@@ -338,6 +347,9 @@ public sealed class DeviceSkin : IDisposable
             case Face.Bed: Bed(lit); break;
             case Face.ShuttleHangar: ShuttleHangar(lit); break;
             case Face.TripleDoor: TripleDoor(lit); break;
+            case Face.ShipStatusMonitor: ShipStatusMonitor(lit); break;
+            case Face.CommsConsole: CommsConsole(lit); break;
+            case Face.Junction: Junction(lit); break;
             default: Housing(new Color(140, 148, 160), 97); break;
         }
 
@@ -1160,29 +1172,75 @@ public sealed class DeviceSkin : IDisposable
     // deliberately distinct from Weapons' capacitor-bank look (that's the CHARGING station, not
     // the gun itself): a rotating ring base with twin barrels, so a 3x3 turret reads as a weapon
     // the moment it's placed, not a bigger version of the charger icon.
+    // Direct user request (screenshot: wall tiles arranged in the shape a turret mount should have -
+    // "в сумме форм всех стен так должно выглядеть устройство") - the real gun/muzzle the player
+    // actually sees rotate and fire lives entirely outside the hull (TurretMount.cs, ShipRenderer.
+    // Devices.cs's own DrawTurret/TurretSkin - untouched by any of this); this is only the periscope
+    // station's own EDITOR-CANVAS icon, now reshaped for its own real 1-wide x 3-tall mount column
+    // (CustomDeviceFootprint.Size) instead of the old plain 3x3 square. Runs in absolute CANVAS space
+    // (bypassing the usual U()-scaled/centered content square - Housing's own doc comment explains
+    // the split) so the same three-part read - a scope/sight domed at the muzzle end, a wide
+    // traverse ring at the crew's own periscope position, a mounting foot at the far end - fills the
+    // real elongated shape instead of shrinking to a small centered logo. `vertical` picks which
+    // canvas axis is the long (3-tile) one, so a Rotated instance (CustomDeviceFootprint.Size
+    // swapped to 3 wide x 1 tall) still reads the same mount turned on its side, not stretched.
     private void Turret(bool lit)
     {
         var accent = new Color(190, 70, 60);
         Housing(accent, 173);
-        Ring(U(20), U(24), U(12), new Color(40, 38, 40), 0.9f, 2.2f);
-        Disc(U(20), U(24), U(9), new Color(58, 56, 58));
-        for (var i = 0; i < 8; i++)
+
+        var vertical = _canvasHeight >= _canvasWidth;
+        var longSize = vertical ? _canvasHeight : _canvasWidth;
+        var shortSize = vertical ? _canvasWidth : _canvasHeight;
+        // Canvas-absolute coordinates - Px/Rect/Disc/Ring/Line all add _offsetX/_offsetY themselves
+        // (the usual content-square centering), so this cancels that back out to a true canvas
+        // position, the same trick Housing's own background pass above uses.
+        (float X, float Y) At(float along, float across)
         {
-            var ang = i * MathF.PI / 4f;
-            Disc(U(20) + MathF.Cos(ang) * U(10.5f), U(24) + MathF.Sin(ang) * U(10.5f),
-                MathF.Max(1f, U(1.2f)), new Color(30, 28, 28));
+            var a = along * longSize;
+            var c = across * shortSize;
+            return vertical ? (c - _offsetX, a - _offsetY) : (a - _offsetX, c - _offsetY);
         }
-        Disc(U(20), U(24), U(6.4f), new Color(70, 68, 70));
-        Ring(U(20), U(24), U(6.4f), new Color(30, 28, 28), 0.7f, 1f);
-        // Twin barrels, protruding well past the housing's own top edge.
-        foreach (var bx in new[] { U(16), U(24) })
+        (float W, float H) Size(float alongSpan, float acrossSpan) =>
+            vertical ? (acrossSpan * shortSize, alongSpan * longSize) : (alongSpan * longSize, acrossSpan * shortSize);
+
+        // The scope/sight dome at the muzzle end (canvas "along" 0) - a lit lens under a hooded
+        // shade, the one detail that reads as "aims at something" even standing still.
+        var (domeX, domeY) = At(0.14f, 0.5f);
+        Disc(domeX, domeY, shortSize * 0.34f, new Color(46, 44, 46));
+        Ring(domeX, domeY, shortSize * 0.34f, new Color(24, 22, 22), 0.8f, MathF.Max(1f, shortSize * 0.06f));
+        Disc(domeX, domeY, shortSize * 0.18f, lit ? new Color(230, 90, 70) : new Color(60, 48, 46), 0.95f);
+
+        // The traverse ring/collar, centered at "along" 0.5 - roughly where the mount's own middle
+        // skirt row sits (TurretMountSkirt.cs), so the fixture's own widest point visually lines up
+        // with the half-block armor plates flanking it.
+        var (ringX, ringY) = At(0.5f, 0.5f);
+        Ring(ringX, ringY, shortSize * 0.46f, new Color(40, 38, 40), 0.9f, shortSize * 0.09f);
+        for (var i = 0; i < 6; i++)
         {
-            Rect(bx - U(1.6f), U(3), U(3.2f), U(21), new Color(38, 36, 38));
-            Rect(bx - U(1.6f), U(3), U(1f), U(21), new Color(94, 92, 96), 0.5f);
-            Rect(bx - U(2f), U(3), U(4f), MathF.Max(1f, U(2)), new Color(20, 18, 18));
+            var ang = i * MathF.PI / 3f;
+            Disc(ringX + MathF.Cos(ang) * shortSize * 0.4f, ringY + MathF.Sin(ang) * shortSize * 0.4f,
+                MathF.Max(1f, shortSize * 0.05f), new Color(30, 28, 28));
         }
-        Disc(U(20), U(24), U(3.4f), lit ? new Color(230, 90, 70) : new Color(50, 40, 38), 0.9f);
-        Glass(U(9), U(33), U(10), MathF.Max(2f, U(3)), accent, lit);
+        Disc(ringX, ringY, shortSize * 0.3f, new Color(70, 68, 70));
+        Ring(ringX, ringY, shortSize * 0.3f, new Color(30, 28, 28), 0.7f, 1f);
+
+        // The spine connecting scope to ring to the mounting foot - a single fixture, not three
+        // floating shapes.
+        var (spineX, spineY) = At(0.16f, 0.42f);
+        var (spineW, spineH) = Size(0.68f, 0.16f);
+        Rect(spineX, spineY, spineW, spineH, new Color(58, 60, 66), 0.85f);
+
+        // The mounting foot at the far end - a small bolted plate, echoing the corner blocks the
+        // skirt itself uses either side.
+        var (footX, footY) = At(0.84f, 0.5f);
+        var (footW, footH) = Size(0.22f, 0.8f);
+        Rect(footX - footW / 2f, footY - footH / 2f, footW, footH, new Color(50, 52, 58));
+        Rect(footX - footW / 2f, footY - footH / 2f, footW, 1, new Color(150, 158, 170), 0.4f);
+
+        var (glassX, glassY) = At(0.9f, 0.2f);
+        var (glassW, glassH) = Size(0.09f, 0.6f);
+        Glass(glassX, glassY, MathF.Max(2f, glassW), MathF.Max(4f, glassH), accent, lit);
     }
 
     // Direct user request ("сделай чтобы кровать занимала 1 на 2 тайла") - a pillow, a folded
@@ -1264,5 +1322,138 @@ public sealed class DeviceSkin : IDisposable
         Line(U(23), U(9), U(31), U(31), brace, 0.85f);
 
         Glass(U(15), U(15), U(10), MathF.Max(2f, U(3)), accent, lit);
+    }
+
+    // Direct user request ("монитор состояния корабля... своя уникальная текстура") - a damage-
+    // control board: a simplified top-down hull silhouette subdivided into status cells, the same
+    // "one characteristic shape per machine" instinct Navigation's own scope dish follows, just
+    // themed as a readout of the WHOLE ship rather than one instrument.
+    private void ShipStatusMonitor(bool lit)
+    {
+        var accent = new Color(120, 220, 150);
+        Housing(accent, 191);
+
+        // The screen recess the hull diagram sits inside - a plain rect rather than Glass (used
+        // below for the status strip instead), since the diagram itself has to paint over it.
+        Rect(U(6), U(9), U(28), U(20), new Color(10, 16, 13));
+        Rect(U(6), U(9), U(28), 1, new Color(150, 200, 165), 0.35f);
+
+        // A top-down hull outline: nose narrow, midsection wide, tail narrower - the same reading
+        // order a real tactical plot uses, legible even this small.
+        var hull = new (float X, float Y)[] { (20, 10), (26, 14), (28, 22), (25, 27), (15, 27), (12, 22), (14, 14) };
+        for (var i = 0; i < hull.Length; i++)
+        {
+            var (x0, y0) = hull[i];
+            var (x1, y1) = hull[(i + 1) % hull.Length];
+            Line(U(x0), U(y0), U(x1), U(y1), lit ? new Color(170, 235, 190) : new Color(60, 74, 64), lit ? 0.9f : 0.6f);
+        }
+        // Compartment grid inside the hull, each cell its own status colour - dead cells when the
+        // ship can't power the board, same reasoning every other Glass/lit branch here uses.
+        var cellColors = new[]
+        {
+            new Color(90, 200, 120), new Color(90, 200, 120), new Color(226, 176, 60),
+            new Color(90, 200, 120), new Color(200, 80, 70), new Color(90, 200, 120),
+        };
+        var cells = new (float X, float Y)[] { (17, 16), (23, 16), (17, 20), (23, 20), (17, 24), (23, 24) };
+        for (var i = 0; i < cells.Length; i++)
+        {
+            var (cx, cy) = cells[i];
+            Rect(U(cx - 2.4f), U(cy - 1.6f), U(4.8f), U(3.2f), lit ? cellColors[i] : new Color(40, 46, 42), lit ? 0.85f : 1f);
+        }
+        Line(U(20), U(10), U(20), U(27), new Color(20, 30, 24), 0.4f);
+        Line(U(12.5f), U(18), U(27.5f), U(18), new Color(20, 30, 24), 0.4f);
+        Line(U(12.5f), U(22), U(27.5f), U(22), new Color(20, 30, 24), 0.4f);
+
+        // A status-key row under the screen - the same 3 colours the cells above use, so the legend
+        // reads as belonging to the diagram rather than as decoration.
+        var keyColors = new[] { new Color(90, 200, 120), new Color(226, 176, 60), new Color(200, 80, 70) };
+        for (var i = 0; i < 3; i++)
+            Disc(U(11) + i * U(4), U(32), MathF.Max(0.9f, U(1.1f)), lit ? keyColors[i] : new Color(50, 54, 58), 0.9f);
+
+        Glass(U(9), U(35.5f), U(22), MathF.Max(2f, U(3)), accent, lit);
+    }
+
+    // Direct user request ("консоль связи... своя уникальная текстура") - a parabolic dish on a
+    // swivel mount with signal waves radiating off it, the one shape that reads as "talks to
+    // something far away" the same instinct Navigation's own scope disc gives to "reads a bearing".
+    private void CommsConsole(bool lit)
+    {
+        var accent = new Color(220, 170, 90);
+        Housing(accent, 199);
+
+        // Cast shadow the pedestal throws onto the plate.
+        Rect(U(10), U(31.5f), U(20), MathF.Max(1f, U(1.2f)), Color.Black, 0.2f);
+
+        // The dish itself: a shallow arc rather than a full disc - the same "silhouette over
+        // detail" choice Navigation's own bezel makes, tilted to read as a receiver, not a porthole.
+        for (var i = 0; i <= 40; i++)
+        {
+            var t = i / 40f;
+            var ang = MathF.PI * (0.15f + t * 0.7f);
+            Disc(U(20) + MathF.Cos(ang) * U(12), U(15) - MathF.Sin(ang) * U(7), MathF.Max(1f, U(1.3f)), new Color(180, 186, 196), 0.9f);
+        }
+        // Mesh grid across the dish's own face.
+        for (var i = 1; i < 5; i++)
+            Line(U(20) + (i - 2.5f) * U(4), U(9), U(20) + (i - 2.5f) * U(3), U(19), new Color(120, 126, 136), 0.35f);
+        Line(U(9), U(14), U(31), U(14), new Color(120, 126, 136), 0.3f);
+        // Feed horn at the dish's own focal point.
+        Disc(U(20), U(14), U(1.8f), new Color(60, 64, 72));
+        Disc(U(20), U(14), U(0.9f), lit ? new Color(255, 210, 130) : new Color(70, 62, 50), 0.9f);
+        // Signal waves radiating off the feed horn - the one detail that says "transmitting" rather
+        // than just "shaped like a dish"; dead when the ship can't power it, same reasoning
+        // Weapons' own spark gap gets.
+        if (lit)
+            foreach (var r in new[] { 3f, 5.5f, 8f })
+                Ring(U(20), U(6), U(r), new Color(255, 210, 130), 0.35f - r * 0.02f, 1f);
+        // Swivel mount and pedestal.
+        Rect(U(18), U(19), MathF.Max(2f, U(4)), U(8), new Color(70, 74, 82));
+        Rect(U(18), U(19), MathF.Max(2f, U(4)), 1, new Color(180, 186, 196), 0.4f);
+        Rect(U(11), U(27), U(18), MathF.Max(2f, U(4)), new Color(58, 62, 70));
+        Rect(U(11), U(27), U(18), 1, new Color(150, 158, 170), 0.4f);
+        Disc(U(20), U(29), U(2.2f), new Color(44, 48, 54));
+        // A frequency-readout strip - the console's own tuning display.
+        Glass(U(9), U(33), U(22), MathF.Max(2f, U(4)), accent, lit);
+    }
+
+    // Direct user request ("сделай щитку свою собственную текстуру") - a single breaker/relay box,
+    // deliberately smaller and plainer than Distribution's own full multi-breaker panel (this is the
+    // one-off fixture scattered through a "Щитовая" room's interior, not the room's own main hub) -
+    // one toggle lever, one status light, a couple of mounting screws.
+    private void Junction(bool lit)
+    {
+        var accent = new Color(210, 200, 80);
+        Housing(accent, 233);
+
+        // Cast shadow the breaker throws onto the plate.
+        Rect(U(10), U(25.5f), U(20), MathF.Max(1f, U(1.1f)), Color.Black, 0.18f);
+
+        // The breaker's own recessed mounting plate.
+        Rect(U(10), U(11), U(20), U(16), new Color(46, 50, 58));
+        Rect(U(10), U(11), U(20), 1, new Color(150, 158, 170), 0.4f);
+        // Two mounting screws, top corners of the plate.
+        foreach (var sx in new[] { U(12.5f), U(27.5f) })
+        {
+            Disc(sx, U(13), MathF.Max(0.8f, U(1.1f)), new Color(70, 74, 82));
+            Line(sx - U(0.6f), U(13), sx + U(0.6f), U(13), new Color(40, 42, 46), 0.6f);
+        }
+
+        // The lever itself, thrown up (on) or down (off) - the one moving-looking part on a fixture
+        // this small, same reasoning Distribution's own up/down breaker row uses.
+        var throwUp = lit;
+        Rect(U(18), U(16), MathF.Max(2f, U(4)), U(2), new Color(40, 42, 46));
+        Rect(U(18.5f), throwUp ? U(13) : U(19), MathF.Max(1.4f, U(3)), U(6), new Color(60, 64, 72));
+        Rect(U(18.5f), throwUp ? U(13) : U(19), MathF.Max(1.4f, U(3)), 1, new Color(150, 158, 170), 0.5f);
+        Disc(U(20), throwUp ? U(13) : U(19), MathF.Max(1f, U(1.4f)), new Color(210, 214, 220), 0.6f);
+
+        // Status light, the same lit/dead convention every other panel here uses.
+        Disc(U(25.5f), U(16), MathF.Max(0.9f, U(1.2f)), lit ? new Color(120, 240, 150) : new Color(52, 56, 62), 0.95f);
+
+        // A short stencilled warning stripe along the plate's own bottom edge - the same tag
+        // Distribution's own breaker row carries, just one row instead of a full strip.
+        for (var i = 0; i < 6; i++)
+            Rect(U(11) + i * MathF.Max(1.6f, U(2.8f)), U(24), MathF.Max(1.2f, U(1.8f)), MathF.Max(0.8f, U(1)),
+                i % 2 == 0 ? new Color(226, 194, 40) : new Color(24, 24, 26), 0.5f);
+
+        Glass(U(11), U(29), U(18), MathF.Max(2f, U(4)), accent, lit);
     }
 }

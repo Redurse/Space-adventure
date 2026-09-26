@@ -4,31 +4,37 @@ using System.Linq;
 using Anabiosis.Client.Rendering;
 using Anabiosis.Server;
 using Anabiosis.Shared.Model;
+using Anabiosis.Shared.Protocol;
 
 // Direct user request ("я хочу полностью переделать двери" - the narrow/1-tile door specifically,
 // humble-soaring-cat.md) - the new door-as-an-EDGE-between-two-tiles primitive on TileGrid, tested
 // directly the same way TestRunner.TileGrid.cs already tests Solid/Door TILE region topology.
 internal static partial class TestRunner
 {
-    private static bool TileGrid_DoorEdge_RequiresBothFlankingTilesAlreadyFreeFloor()
+    private static bool TileGrid_DoorEdge_RequiresAtLeastOneFlankingTileAlreadyFreeFloor()
     {
         var grid = new TileGrid();
         var a = new TileCoord(0, 0);
         var b = new TileCoord(1, 0);
 
-        // Neither tile floored yet - can't place.
+        // Neither tile floored yet (both genuinely open space) - can't place.
         if (grid.CanPlaceDoorEdge(a, TileSide.East))
             return false;
 
         grid.SetFloor(a, true);
-        if (grid.CanPlaceDoorEdge(a, TileSide.East))
-            return false; // b still has no floor
+        // Direct user request ("сделай возможным поставить дверь если 1 клетка это пол а вторая
+        // космос") - b has no floor at all, so this is a door straight onto open space, i.e. an
+        // airlock, and must now be allowed.
+        if (!grid.CanPlaceDoorEdge(a, TileSide.East))
+            return false;
 
         grid.SetFloor(b, true);
         if (!grid.CanPlaceDoorEdge(a, TileSide.East))
-            return false; // both free floor now - valid
+            return false; // both free floor now - still valid
 
-        // A wall on either tile blocks it (this door never converts/steals a wall tile).
+        // A wall on either tile blocks it (this door never converts/steals a wall tile) - even
+        // though b has no FLOOR once walled, it isn't "open space" either, so this must still
+        // refuse rather than quietly treating a wall as vacuum.
         grid.SetWall(b, TileWallKind.Solid);
         if (grid.CanPlaceDoorEdge(a, TileSide.East))
             return false;
@@ -43,6 +49,17 @@ internal static partial class TestRunner
         grid.AddDoorEdge(a, TileSide.East, "door-1");
         // Already has an edge there now - placing a second one at the same seam should refuse.
         return !grid.CanPlaceDoorEdge(a, TileSide.East);
+    }
+
+    // The other order - the ANCHOR tile itself is the one with no floor, its neighbor the one
+    // with real floor - must be just as valid; CanPlaceDoorEdge's own OR'd cases are symmetric.
+    private static bool TileGrid_DoorEdge_AllowsSpaceOnTheAnchorSideToo()
+    {
+        var grid = new TileGrid();
+        var a = new TileCoord(0, 0);
+        var b = new TileCoord(1, 0);
+        grid.SetFloor(b, true);
+        return grid.CanPlaceDoorEdge(a, TileSide.East);
     }
 
     // Both flanking tiles STAY ordinary floor region members (unlike a wall/door TILE, which drops
@@ -243,6 +260,131 @@ internal static partial class TestRunner
         return definition;
     }
 
+    // Same base hull as BuildDoorEdgeShipDefinition, but the edge sits on the room's own East
+    // boundary with genuinely nothing painted beyond it - direct user request ("сделай возможным
+    // поставить дверь если 1 клетка это пол а вторая космос... дверь будет считаться шлюзом").
+    // Deliberately WITHOUT BuildDoorEdgeShipDefinition's own north door tile at (3,-1) - that Door
+    // TILE (the OLD TileWallKind.Door model) sits on genuinely open space too and would get
+    // auto-detected as its own real CustomAirlockDef by TileShipBuilder's SideIsAirlock, defeating
+    // the entire point of this ship (a real bug caught live: with it left in, Ship.AirlockOuterDoors
+    // had 1 entry there instead of 0, so ResolveShipAirlock picked THAT one, anchoring the station
+    // nowhere near the door edge this test actually exercises).
+    private static CustomShipDefinition BuildExteriorDoorEdgeShipDefinition()
+    {
+        var tiles = new TileGrid();
+        for (var y = 0; y < 10; y++)
+            for (var x = 0; x <= 6; x++)
+                tiles.SetFloor(new TileCoord(x, y), true);
+
+        var deviceKinds = new Dictionary<TileCoord, CustomDeviceKind>
+        {
+            [new TileCoord(1, 1)] = CustomDeviceKind.Reactor,
+            [new TileCoord(2, 1)] = CustomDeviceKind.Distribution,
+            [new TileCoord(3, 1)] = CustomDeviceKind.Helm,
+            [new TileCoord(4, 1)] = CustomDeviceKind.Navigation,
+            [new TileCoord(5, 1)] = CustomDeviceKind.Oxygen,
+            [new TileCoord(1, 2)] = CustomDeviceKind.SuitLocker,
+            [new TileCoord(2, 2)] = CustomDeviceKind.StorageRack,
+        };
+        foreach (var (coord, kind) in deviceKinds)
+            tiles.PlaceDevice(coord, kind.ToString());
+
+        var engineControl = new TileCoord(5, 2);
+        tiles.PlaceDevice(engineControl, "engine");
+        var engines = new Dictionary<TileCoord, TileShipBuilder.EngineSpec> { [engineControl] = new(TileSide.South, 10f) };
+
+        // The airlock itself - (7, 8) is never floored at all, genuinely open space.
+        tiles.AddDoorEdge(new TileCoord(6, 8), TileSide.East, "vacuum-door-edge");
+
+        var (definition, errors) = TileShipBuilder.BuildDefinition(tiles, deviceKinds, engines, "exterior-door-edge-ship", 0f);
+        if (definition is null)
+            throw new InvalidOperationException("setup problem: " + string.Join("; ", errors));
+        return definition;
+    }
+
+    private static bool World_DoorEdge_ExteriorEdgeGetsNullRoomIdOnTheVacuumSideAndLeaksOxygenWhenOpen()
+    {
+        var definition = BuildExteriorDoorEdgeShipDefinition();
+        var world = new World(ShipKind.Custom, definition);
+        if (world.Ship.DoorEdges.Count != 1)
+            return false;
+        var edge = world.Ship.DoorEdges[0];
+        // Exactly one side is a real room, the other genuinely nothing - never both, never neither.
+        if ((edge.RoomAId is null) == (edge.RoomBId is null))
+            return false;
+        var roomId = edge.RoomAId ?? edge.RoomBId!;
+
+        // A hole to space must never start already open (World.ShipState.cs's own AirlockOuterDoor-
+        // style "opening to vacuum is always a deliberate choice" default, now shared by this kind
+        // of edge too) - unlike an ordinary interior door edge, which defaults open.
+        world.Step(0.01);
+        if (world.CreateSnapshot().RoomOxygen.First(o => o.RoomId == roomId).Oxygen < 99f)
+            return false;
+
+        // Every fresh World starts docked (World.cs's own constructor) - this test wants a genuine
+        // vacuum leak, not the "docked = safe" case World_DoorEdge_VacuumAirlock_ClosedToSpace_
+        // WhileDocked_DoesNotLeak covers separately, so it casts off first.
+        world.SpawnCharacter(1);
+        CastOffIntoSpace(world);
+        world.ToggleDoor(edge.Id);
+        for (var i = 0; i < 15 * 30; i++)
+            world.Step(RealtimeStep);
+
+        return world.CreateSnapshot().RoomOxygen.First(o => o.RoomId == roomId).Oxygen < 10f;
+    }
+
+    // Direct user bug report ("при открытии шлюза но будучи пристыкованным на станции воздух все
+    // равно утекает") - World.Atmosphere.cs's DoorEdge loop was missing the same IsDocked guard the
+    // AirlockOuterDoor loop already has, so a vacuum-facing door edge kept leaking even once
+    // ResolveShipAirlock (World.StationDocking.cs) made it double as the real docking connector -
+    // opening onto the station's own pressurized dock chamber, not space, while docked.
+    private static bool World_DoorEdge_VacuumAirlock_ClosedToSpace_WhileDocked_DoesNotLeak()
+    {
+        var definition = BuildExteriorDoorEdgeShipDefinition();
+        var world = new World(ShipKind.Custom, definition);
+        if (!world.IsDocked)
+            return false; // setup problem - every fresh World starts docked
+        var edge = world.Ship.DoorEdges.Single(e => e.RoomAId is null || e.RoomBId is null);
+        var roomId = edge.RoomAId ?? edge.RoomBId!;
+
+        world.ToggleDoor(edge.Id); // open it, still docked
+        for (var i = 0; i < 15 * 30; i++)
+            world.Step(RealtimeStep);
+
+        return world.CreateSnapshot().RoomOxygen.First(o => o.RoomId == roomId).Oxygen > 99f;
+    }
+
+    // Direct user report ("но у меня на корабле 2 шлюза") - docking used to only ever look at
+    // Ship.AirlockOuterDoors, so a hull built entirely from Door-tool-onto-open-space airlocks
+    // (this test's own BuildExteriorDoorEdgeShipDefinition) generated a station with no way to
+    // actually walk aboard it at all. World.StationDocking.cs's ResolveShipAirlock now falls back to
+    // a vacuum-facing ShipDoorEdge - this exercises the whole path end to end: open the edge, walk
+    // through it, and land OnStation for real, exactly like World_Station_Docking_WalksThroughSeamlessly
+    // does for a hand-authored hull's real AirlockOuterDoor.
+    private static bool World_DoorEdge_VacuumAirlock_LetsCrewWalkAboardTheStation()
+    {
+        var definition = BuildExteriorDoorEdgeShipDefinition();
+        var world = new World(ShipKind.Custom, definition);
+        if (world.Ship.VacuumDoors.Count != 0)
+            return false; // setup problem - this test only means anything with genuinely zero rect-based vacuum doors
+        if (!world.IsDocked)
+            return false;
+
+        world.SpawnCharacter(1);
+        var edge = world.Ship.DoorEdges.Single(e => e.RoomAId is null || e.RoomBId is null);
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: edge.Id)); // starts closed -> open
+        MoveCharacterTo(world, 1, 6.4f, 8.5f); // right up against the airlock, from inside the room
+
+        for (var i = 0; i < 90; i++)
+        {
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: 1f, MoveY: 0f));
+            world.Step(RealtimeStep);
+            if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnStation)
+                return true;
+        }
+        return false;
+    }
+
     private static bool World_DoorEdge_ServerAndClientAgreeOnCollisionAndOcclusion()
     {
         var definition = BuildDoorEdgeShipDefinition();
@@ -261,42 +403,43 @@ internal static partial class TestRunner
         // (GameServer.cs calls Step every tick, ahead of every per-client CreateSnapshot).
         world.Step(0.01);
 
-        // Interior door edges default OPEN (InitializeShipState's own "preserves the pre-M16
-        // always-passable behavior") - open must never block movement or sight.
+        // Every door edge on the player's own ship now starts CLOSED (direct user request,
+        // "сделай чтобы все двери на корабле изначально были закрыты") - closed must block
+        // movement and occlude sight, checked first here rather than the old "open by default".
+        if (world.Ship.Tiles.DoorEdgeAt(edgeCoord, edgeSide) is not { Open: false, Hp: > 0 })
+            return false;
+        if (world.Ship.Tiles.IsWalkableAcrossEdge(edgeCoord, edgeSide.Offset(edgeCoord)))
+            return false; // must not be walkable while closed
+
+        var closedSnapshot = world.CreateSnapshot();
+        if (closedSnapshot.DoorEdges is not { Count: 1 } || closedSnapshot.DoorEdgeStates is not { Count: 1 })
+            return false;
+        var closedClientTiles = ClientTileGrid.Build(closedSnapshot);
+        if (closedClientTiles.DoorEdgeAt(edgeCoord, edgeSide) is not { Open: false })
+            return false;
+        var closedSegments = TileOccluders.Build(closedClientTiles, Array.Empty<SightGap>());
+        var seam = new WallSegment(edgeCoord.X, edgeCoord.Y + 1, edgeCoord.X + 1, edgeCoord.Y + 1);
+        if (!closedSegments.Contains(seam))
+            return false; // closed - must occlude sight along the full seam
+
+        // Now open it (ToggleDoor reuses the SAME id space ClientCommand.DoorToggleId already
+        // carries, no protocol change) and re-run the whole pipeline from scratch.
+        world.ToggleDoor(edge.Id);
+        world.Step(0.01);
+
         if (world.Ship.Tiles.DoorEdgeAt(edgeCoord, edgeSide) is not { Open: true, Hp: > 0 })
             return false;
         if (!world.Ship.Tiles.IsWalkableAcrossEdge(edgeCoord, edgeSide.Offset(edgeCoord)))
-            return false;
+            return false; // must now be walkable
 
         var openSnapshot = world.CreateSnapshot();
-        if (openSnapshot.DoorEdges is not { Count: 1 } || openSnapshot.DoorEdgeStates is not { Count: 1 })
-            return false;
         var openClientTiles = ClientTileGrid.Build(openSnapshot);
         if (openClientTiles.DoorEdgeAt(edgeCoord, edgeSide) is not { Open: true })
             return false;
         // Open - no occluding segment on the seam line at all (same "no wall here" treatment an open
         // door tile already gets, TileOccluders.IsOccluding's own doc comment).
         var openSegments = TileOccluders.Build(openClientTiles, Array.Empty<SightGap>());
-        var seam = new WallSegment(edgeCoord.X, edgeCoord.Y + 1, edgeCoord.X + 1, edgeCoord.Y + 1);
-        if (openSegments.Contains(seam))
-            return false;
-
-        // Now close it (ToggleDoor reuses the SAME id space ClientCommand.DoorToggleId already
-        // carries, no protocol change) and re-run the whole pipeline from scratch.
-        world.ToggleDoor(edge.Id);
-        world.Step(0.01);
-
-        if (world.Ship.Tiles.DoorEdgeAt(edgeCoord, edgeSide) is not { Open: false, Hp: > 0 })
-            return false;
-        if (world.Ship.Tiles.IsWalkableAcrossEdge(edgeCoord, edgeSide.Offset(edgeCoord)))
-            return false; // must now block movement
-
-        var closedSnapshot = world.CreateSnapshot();
-        var closedClientTiles = ClientTileGrid.Build(closedSnapshot);
-        if (closedClientTiles.DoorEdgeAt(edgeCoord, edgeSide) is not { Open: false })
-            return false;
-        var closedSegments = TileOccluders.Build(closedClientTiles, Array.Empty<SightGap>());
-        return closedSegments.Contains(seam); // closed - must occlude sight along the full seam
+        return !openSegments.Contains(seam);
     }
 
     // Direct user request ("сделай по аналогии дверь 1 на 2 т е дверь занимающую 4 клетки и назови
@@ -376,25 +519,26 @@ internal static partial class TestRunner
 
         var seg1 = new TileCoord(3, 6);
         var seg2 = new TileCoord(3, 7);
-        // Interior edges default open (same as a narrow one) - both segments together, from one id.
-        if (world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is not { Open: true })
+        // Every door edge now starts CLOSED by default (direct user request, "сделай чтобы все
+        // двери на корабле изначально были закрыты") - both segments together, from one id.
+        if (world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is not { Open: false })
             return false;
-        if (world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is not { Open: true })
+        if (world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is not { Open: false })
             return false;
 
-        var openStates = world.CreateSnapshot().DoorEdgeStates;
+        var closedStates = world.CreateSnapshot().DoorEdgeStates;
         // One shared id -> ONE state entry, not two - _doorEdgeOpen is keyed by Id, exactly the same
         // "one door, several segments" collapse the client-side rendering/hitbox loops rely on.
-        if (openStates is not { Count: 1 } || openStates[0].Id != "wide-door-1" || !openStates[0].IsOpen)
+        if (closedStates is not { Count: 1 } || closedStates[0].Id != "wide-door-1" || closedStates[0].IsOpen)
             return false;
 
         world.ToggleDoor("wide-door-1");
         world.Step(0.01);
-        // BOTH segments must have moved together from the single toggle - a half-closed wide door
+        // BOTH segments must have moved together from the single toggle - a half-open wide door
         // (one segment open, the other still shut) would let a corner-sampled character partially
         // clip through where TileMovement.IsClear checks the two crossings independently.
-        return world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is { Open: false }
-            && world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is { Open: false };
+        return world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is { Open: true }
+            && world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is { Open: true };
     }
 
     // Direct user request ("сделай тоже самое с тройной дверью, чтобы она занимала 2 на 3 тайла") -
@@ -477,21 +621,24 @@ internal static partial class TestRunner
         var seg1 = new TileCoord(3, 6);
         var seg2 = new TileCoord(3, 7);
         var seg3 = new TileCoord(3, 8);
-        if (world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is not { Open: true })
+        // Every door edge now starts CLOSED by default (direct user request, "сделай чтобы все
+        // двери на корабле изначально были закрыты") - see World_DoorEdge_WideDoor_
+        // TwoSegmentsShareIdAndToggleTogether's own note for the same swap.
+        if (world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is not { Open: false })
             return false;
-        if (world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is not { Open: true })
+        if (world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is not { Open: false })
             return false;
-        if (world.Ship.Tiles.DoorEdgeAt(seg3, TileSide.East) is not { Open: true })
+        if (world.Ship.Tiles.DoorEdgeAt(seg3, TileSide.East) is not { Open: false })
             return false;
 
-        var openStates = world.CreateSnapshot().DoorEdgeStates;
-        if (openStates is not { Count: 1 } || openStates[0].Id != "triple-door-1" || !openStates[0].IsOpen)
+        var closedStates = world.CreateSnapshot().DoorEdgeStates;
+        if (closedStates is not { Count: 1 } || closedStates[0].Id != "triple-door-1" || closedStates[0].IsOpen)
             return false;
 
         world.ToggleDoor("triple-door-1");
         world.Step(0.01);
-        return world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is { Open: false }
-            && world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is { Open: false }
-            && world.Ship.Tiles.DoorEdgeAt(seg3, TileSide.East) is { Open: false };
+        return world.Ship.Tiles.DoorEdgeAt(seg1, TileSide.East) is { Open: true }
+            && world.Ship.Tiles.DoorEdgeAt(seg2, TileSide.East) is { Open: true }
+            && world.Ship.Tiles.DoorEdgeAt(seg3, TileSide.East) is { Open: true };
     }
 }

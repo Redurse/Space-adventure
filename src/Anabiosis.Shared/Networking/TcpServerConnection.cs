@@ -23,6 +23,7 @@ public sealed class TcpServerConnection : IServerConnection, IDisposable
     // *time* and then see the present, not replay a queue of stale worlds at the wrong speed -
     // exactly what IClientConnection.ReceiveLatestSnapshot already does at the other end.
     private WorldSnapshot? _outgoing;
+    private LobbySnapshot? _outgoingLobby;
 
     private volatile bool _closed;
 
@@ -48,6 +49,13 @@ public sealed class TcpServerConnection : IServerConnection, IDisposable
     void IServerConnection.Send(WorldSnapshot snapshot)
     {
         Volatile.Write(ref _outgoing, snapshot);
+        if (!_closed)
+            _outgoingReady.Set();
+    }
+
+    void IServerConnection.SendLobby(LobbySnapshot lobby)
+    {
+        Volatile.Write(ref _outgoingLobby, lobby);
         if (!_closed)
             _outgoingReady.Set();
     }
@@ -91,10 +99,14 @@ public sealed class TcpServerConnection : IServerConnection, IDisposable
             {
                 _outgoingReady.WaitOne();
                 var snapshot = Interlocked.Exchange(ref _outgoing, null);
-                if (snapshot is null)
-                    continue; // woken by Close, or the slot was already taken
+                var lobby = Interlocked.Exchange(ref _outgoingLobby, null);
+                if (snapshot is null && lobby is null)
+                    continue; // woken by Close, or both slots were already taken
 
-                Wire.WriteFrame(_stream, new ServerMessage(ServerMessageKind.Snapshot, 0, snapshot));
+                if (snapshot is not null)
+                    Wire.WriteFrame(_stream, new ServerMessage(ServerMessageKind.Snapshot, 0, snapshot));
+                if (lobby is not null)
+                    Wire.WriteFrame(_stream, new ServerMessage(ServerMessageKind.Lobby, 0, Lobby: lobby));
             }
         }
         catch (Exception)

@@ -152,7 +152,7 @@ public static partial class HullSkin
     // hazard yellow because that is what every airlock in this game is edged with, so the way out
     // is findable from outside as well as from the corridor.
     private static void DrawDockingCollars(SpriteBatch spriteBatch, Texture2D pixel,
-        IReadOnlyList<AirlockOuterDoor> ports, Vector2 hullCenter, Vector2 origin)
+        IReadOnlyList<Door> ports, Vector2 hullCenter, Vector2 origin)
     {
         foreach (var port in ports)
         {

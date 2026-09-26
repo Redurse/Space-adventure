@@ -44,7 +44,25 @@ public partial class Game1
     private (CustomShipDefinition? Definition, IReadOnlyList<string> Errors) BuildDefinitionFromTiles()
     {
         var engines = _editorEngineFacing.ToDictionary(kv => kv.Key, kv => new TileShipBuilder.EngineSpec(kv.Value, EngineMaxThrust));
+        var doubleEngines = _editorDoubleEngineFacings.ToDictionary(
+            kv => kv.Key,
+            kv => (new TileShipBuilder.EngineSpec(kv.Value.First, EngineMaxThrust), new TileShipBuilder.EngineSpec(kv.Value.Second, EngineMaxThrust)));
         var zones = _editorZones.Select(z => (z.Name, (IReadOnlySet<TileCoord>)z.Tiles)).ToList();
-        return TileShipBuilder.BuildDefinition(_editorTiles, _editorDeviceKinds, engines, _editorShipName, _editorForwardDegrees, zones, _editorDeviceRotation);
+        // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил" ->
+        // "отсеками должно считаться только то, что из раздела отсеков") - each placed compartment
+        // instance's own authoritative shape (Tiles for matching a region, Rects+DisplayName for
+        // the room TileShipBuilder.BuildDefinition builds when it finds a match), see that method's
+        // own doc comment for why the generic flood-fill decomposition alone can't be trusted for
+        // one of these once it authors an interior wall.
+        var compartments = new Dictionary<string, (IReadOnlySet<TileCoord> Tiles, IReadOnlyList<RectF> Rects, string DisplayName)>();
+        foreach (var (instanceId, tiles) in _editorCompartmentTiles)
+        {
+            if (CompartmentInstanceRects(instanceId) is not { } rects) continue;
+            var displayName = _editorCompartmentEntryId.TryGetValue(instanceId, out var entryId) && CompartmentCatalog.Find(entryId) is { } entry
+                ? entry.DisplayName
+                : instanceId;
+            compartments[instanceId] = (tiles, rects, displayName);
+        }
+        return TileShipBuilder.BuildDefinition(_editorTiles, _editorDeviceKinds, engines, _editorShipName, _editorForwardDegrees, zones, _editorDeviceRotation, _editorDeviceHalfSides, doubleEngines, compartments);
     }
 }

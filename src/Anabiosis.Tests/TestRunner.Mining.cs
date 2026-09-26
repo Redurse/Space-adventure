@@ -161,13 +161,13 @@ internal static partial class TestRunner
         var afterCut = world.CreateSnapshot();
         if (ticks >= 20 * 30 || afterCut.Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
             return false;
-        if (!afterCut.DroppedItems.Any(d => d.Item == ItemType.Mineral))
+        if (!afterCut.DroppedItems.Any(d => d.Item == ItemType.IronOre))
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // pick the ore up off the rock
         var afterPickup = world.CreateSnapshot();
-        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.Mineral)
-               && !afterPickup.DroppedItems.Any(d => d.Item == ItemType.Mineral);
+        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.IronOre)
+               && !afterPickup.DroppedItems.Any(d => d.Item == ItemType.IronOre);
     }
 
     // Click-to-pick-up (World.Mining.cs's TryPickupDroppedItem) works in EVA too, alongside the
@@ -185,10 +185,10 @@ internal static partial class TestRunner
         if (ticks >= 20 * 30 || afterCut.Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
             return false;
 
-        var droppedId = afterCut.DroppedItems.First(d => d.Item == ItemType.Mineral).Id;
+        var droppedId = afterCut.DroppedItems.First(d => d.Item == ItemType.IronOre).Id;
         world.ApplyCommand(1, new ClientCommand(1, PickupDroppedItemId: droppedId));
         var afterPickup = world.CreateSnapshot();
-        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.Mineral)
+        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.IronOre)
             && afterPickup.DroppedItems.All(d => d.Id != droppedId);
     }
 
@@ -227,10 +227,10 @@ internal static partial class TestRunner
         ExitShipAndFlyTo(world, deposit.Position);
 
         CutBlock(world, deposit.Id);
-        var dropsAfterFirst = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.Mineral);
+        var dropsAfterFirst = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.NickelOre);
 
         CutBlock(world, deposit.Id, maxTicks: 5 * 30); // keep burning at a hole in the rock
-        var dropsAfterExtra = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.Mineral);
+        var dropsAfterExtra = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.NickelOre);
 
         return dropsAfterFirst == 1 && dropsAfterExtra == 1
                && world.CreateSnapshot().Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp <= 0f;
@@ -287,18 +287,20 @@ internal static partial class TestRunner
     }
 
     // The generic sell flow (World.Trade.cs) doesn't care where the character physically is, only
-    // that the ship is docked - mining just needed to prove Mineral reaches an inventory slot at
+    // that the ship is docked - mining just needed to prove ore reaches an inventory slot at
     // all; turning it into credits is exactly the same mechanic already covered by the M10 trade
     // tests, exercised here with a mined item instead of a bought one.
     // Flies to the asteroid field, cuts `count` ore out of a deposit and walks back aboard,
     // leaving the ship free to travel. Shared by the M18 sell test and the mining-contract tests -
-    // the Trader prices Mineral out of reach on purpose, so genuinely mining it is the only way a
-    // test can get any.
+    // the Trader prices ore out of reach on purpose, so genuinely mining it is the only way a
+    // test can get any. Always asteroid-4's own vein (AsteroidField.CreateDefault's own doc
+    // comment - deliberately all ItemType.IronOre, the mining contract's own required item), so
+    // `count` ore comes home regardless of how many blocks that ends up being.
     private static void MineOre(World world, int count)
     {
         EnterAsteroidFieldStationary(world);
         // One block, one item: cutting `count` of them is the only way to come home with `count`
-        // minerals now that a block is a body with hit points rather than a marker with charges.
+        // ore now that a block is a body with hit points rather than a marker with charges.
         var blocks = world.AsteroidField.OreDeposits.Where(d => d.AsteroidId == "asteroid-4").Take(count).ToList();
         ExitShipAndFlyTo(world, blocks[0].Position);
 
@@ -335,7 +337,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         MineOre(world, 1);
 
-        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.Mineral);
+        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.IronOre);
         var creditsBefore = world.Credits;
 
         DockAtStation(world, "home-station");
@@ -360,7 +362,7 @@ internal static partial class TestRunner
         var hullCenterLocal = new Vec2(
             (world.Ship.Rooms.Min(r => r.Left) + world.Ship.Rooms.Max(r => r.Right)) / 2f,
             (world.Ship.Rooms.Min(r => r.Top) + world.Ship.Rooms.Max(r => r.Bottom)) / 2f);
-        var doorLocal = world.Ship.AirlockOuterDoors.First().Position;
+        var doorLocal = world.Ship.VacuumDoors.First().Position;
         var doorFieldTarget = new Vec2(
             shipFieldForDoor.X + (doorLocal.X - hullCenterLocal.X),
             shipFieldForDoor.Y + (doorLocal.Y - hullCenterLocal.Y));

@@ -587,7 +587,9 @@ internal static partial class TestRunner
         world.AddComponent(new Component("ctrl", ComponentKind.AutoDoorController, "corridor", 0, 0, TargetId: "door-reactor-corridor"));
         world.AddWire("w", new PinRef("relay", "out"), new PinRef("ctrl", "open"));
 
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-reactor-corridor")); // manually close it (starts open)
+        // Every ship door now starts closed by default (direct user request, "сделай чтобы все
+        // двери на корабле изначально были закрыты") - no manual toggle needed to get it into the
+        // closed starting state this test wants before the controller's own signal fires.
         world.Step(RealtimeStep);
         var closedManually = !world.CreateSnapshot().DoorStates.First(d => d.DoorId == "door-reactor-corridor").IsOpen;
 
@@ -684,9 +686,11 @@ internal static partial class TestRunner
     // (direct user request, "удали все текущие корабли... полностью удалить из кода").
 
     // ToolStation is gone entirely - every hand tool/tank/weapon/consumable that used to be a
-    // scattered pickup now starts as 3 units in the ship's own storage racks (game_design.md
-    // section 13), split evenly across the two shelves every hull carries.
-    private static bool World_Storage_RackStartsWithThreeOfEachStarterItemAcrossTwoShelves()
+    // scattered pickup now starts as 2 units in the ship's own storage racks (game_design.md
+    // section 13), split evenly across the two shelves every hull carries. Direct user request
+    // ("уменьшить стартовые инструменты до 2 шт") - dropped from 3 to free enough shelf space for
+    // World_Storage_RackStartsWithTwoOfEachMaterial below to actually fit.
+    private static bool World_Storage_RackStartsWithTwoOfEachStarterItemAcrossTwoShelves()
     {
         var world = new World();
         world.SpawnCharacter(1);
@@ -700,7 +704,31 @@ internal static partial class TestRunner
         };
 
         return snapshot.StorageRacks.Count == 2 &&
-            expectedTypes.All(t => snapshot.RackSlots.Count(s => s == t) == 3);
+            expectedTypes.All(t => snapshot.RackSlots.Count(s => s == t) == 2);
+    }
+
+    // Direct user request ("выдавай в стелажах по 2 материала каждого типа") - the default hull's 2
+    // shelves only have 24 slots free for materials after the starter kit above (World.Storage.cs's
+    // InitializeRackSlots deliberately reserves each shelf's own last slot, see its own doc comment) -
+    // 6 short of the 30 a full "2 of every one of the 15 material types" would need. RackMaterials'
+    // own doc comment (World.Storage.cs) lists raw ores before refined materials on purpose, so the 3
+    // types left uncovered here are refined (CopperCable/Plastic/Plastalloy, craftable at the
+    // Fabricator) rather than a raw ore a recipe test would need. Only the ones the current free
+    // space actually covers are asserted here.
+    private static bool World_Storage_RackStartsWithTwoOfEachMaterial()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        var snapshot = world.CreateSnapshot();
+
+        ItemType[] expectedTypes =
+        {
+            ItemType.IronOre, ItemType.NickelOre, ItemType.ZincOre, ItemType.CopperOre,
+            ItemType.TitaniumOre, ItemType.UraniumOre, ItemType.Silicon, ItemType.Carbon,
+            ItemType.AluminumOre, ItemType.PlastalloyOre, ItemType.SteelPlate, ItemType.TitaniumPlate,
+        };
+
+        return expectedTypes.All(t => snapshot.RackSlots.Count(s => s == t) == 2);
     }
 
     // World_Storage_RackResetsOnShipPurchase used to live here, testing that swapping hulls at the

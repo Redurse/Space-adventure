@@ -130,21 +130,31 @@ public sealed class AsteroidField
         // M18). Each is cut apart on its own and drops one item, so a rock is worth a couple of
         // minutes of work rather than a couple of keypresses. Written as points near the nominal
         // circle and pulled onto the real outline below.
+        // OreType per deposit (direct user request, "добавим множество предметов материалов") - every
+        // one of the 10 raw ore/element ItemTypes appears at least once across the cluster; Iron/
+        // Copper/Aluminum (the most recipe-hungry ones, FabricatorCatalog.cs) each get a second spot
+        // so a solo miner isn't starved of them.
         var oreDeposits = new[]
         {
-            new OreDeposit("ore-1a", "asteroid-1", 85f, 60f, 100f),
-            new OreDeposit("ore-1b", "asteroid-1", 80f, 55f, 100f),
-            new OreDeposit("ore-1c", "asteroid-1", 75f, 60f, 100f),
-            new OreDeposit("ore-2a", "asteroid-2", 188f, 200f, 120f),
-            new OreDeposit("ore-2b", "asteroid-2", 184f, 208f, 120f),
-            new OreDeposit("ore-2c", "asteroid-2", 176f, 194f, 120f),
-            new OreDeposit("ore-3a", "asteroid-3", 64f, 220f, 90f),
-            new OreDeposit("ore-3b", "asteroid-3", 58f, 216f, 90f),
-            new OreDeposit("ore-4a", "asteroid-4", 226f, 100f, 110f),
-            new OreDeposit("ore-4b", "asteroid-4", 220f, 106f, 110f),
-            new OreDeposit("ore-4c", "asteroid-4", 214f, 100f, 110f),
-            new OreDeposit("ore-5a", "asteroid-5", 154f, 40f, 90f),
-            new OreDeposit("ore-5b", "asteroid-5", 148f, 36f, 90f),
+            new OreDeposit("ore-1a", "asteroid-1", 85f, 60f, 100f, OreType: ItemType.CopperOre),
+            new OreDeposit("ore-1b", "asteroid-1", 80f, 55f, 100f, OreType: ItemType.AluminumOre),
+            new OreDeposit("ore-1c", "asteroid-1", 75f, 60f, 100f, OreType: ItemType.TitaniumOre),
+            new OreDeposit("ore-2a", "asteroid-2", 188f, 200f, 120f, OreType: ItemType.Silicon),
+            new OreDeposit("ore-2b", "asteroid-2", 184f, 208f, 120f, OreType: ItemType.NickelOre),
+            new OreDeposit("ore-2c", "asteroid-2", 176f, 194f, 120f, OreType: ItemType.Carbon),
+            new OreDeposit("ore-3a", "asteroid-3", 64f, 220f, 90f, OreType: ItemType.NickelOre),
+            new OreDeposit("ore-3b", "asteroid-3", 58f, 216f, 90f, OreType: ItemType.ZincOre),
+            // Asteroid 4's own vein is deliberately all Iron Ore - TestRunner.Mining.cs's own
+            // MineOre helper always cuts blocks here for "just get me some ore" tests (the mining
+            // contract quest turns in Iron Ore specifically, World.Quests.cs), and relies on every
+            // block in this one vein being close enough together to walk between via
+            // FlyToWithinReach - splitting the ore types across a SINGLE vein like the other
+            // asteroids would strand that helper on a rock with no more of what it came for.
+            new OreDeposit("ore-4a", "asteroid-4", 226f, 100f, 110f, OreType: ItemType.IronOre),
+            new OreDeposit("ore-4b", "asteroid-4", 220f, 106f, 110f, OreType: ItemType.IronOre),
+            new OreDeposit("ore-4c", "asteroid-4", 214f, 100f, 110f, OreType: ItemType.IronOre),
+            new OreDeposit("ore-5a", "asteroid-5", 154f, 40f, 90f, OreType: ItemType.UraniumOre),
+            new OreDeposit("ore-5b", "asteroid-5", 148f, 36f, 90f, OreType: ItemType.PlastalloyOre),
         }.Select(d => d with { X = d.X - 150.0 + clusterCenter.X, Y = d.Y - 150.0 + clusterCenter.Y }).ToArray();
 
         // Veins are written down as points on the nominal circle, then pulled onto the rock's real

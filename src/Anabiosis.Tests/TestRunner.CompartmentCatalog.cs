@@ -60,15 +60,24 @@ internal static partial class TestRunner
                     return false;
                 }
 
-                foreach (var (position, kind, _, _, deviceRotated) in rotated.Devices)
+                foreach (var (position, kind, _, _, deviceRotated, halfSide) in rotated.Devices)
                 {
                     var (baseWidth, baseHeight) = CustomDeviceFootprint.Size(kind);
                     var (width, height) = deviceRotated ? (baseHeight, baseWidth) : (baseWidth, baseHeight);
+                    // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его
+                    // сохранил") - an IsHalfWidthKind device's own "half" tile is now allowed to
+                    // sit ON the ring (CompartmentPlacer.Stamp places it via PlaceHalfWidthDevice,
+                    // coexisting with the wall rather than needing bare floor there); every OTHER
+                    // tile of every device, half-width or not, still must be strictly interior.
+                    var resolvedHalfSide = CustomDeviceFootprint.IsHalfWidthKind(kind)
+                        ? halfSide ?? CustomDeviceFootprint.ResolveHalfSide(null, deviceRotated)
+                        : (TileSide?)null;
                     for (var dx = 0; dx < width; dx++)
                         for (var dy = 0; dy < height; dy++)
                         {
                             var tile = new TileCoord(position.X + dx, position.Y + dy);
-                            if (!Inside(tile) || OnRing(tile))
+                            var isHalfTile = resolvedHalfSide is { } hs && CustomDeviceFootprint.IsHalfTileOfHalfWidthFootprint(tile, position, hs);
+                            if (!Inside(tile) || (OnRing(tile) && !isHalfTile))
                                 return false;
                         }
                 }

@@ -24,6 +24,56 @@ public sealed partial class World
     // slow speed indefinitely on its own until the pilot actually takes the stick.
     private const float UndockDriftSpeed = 0.6f;
 
+    // Direct user report ("но у меня на корабле 2 шлюза") - a Ship-Editor-built ship can have a
+    // real airlock two different ways now: a rect-based vacuum-facing Door (Door.LeadsToVacuum - a
+    // compartment prefab like "Шлюз 1", or a hand-authored hull) or a plain door edge placed onto
+    // open space via the Door/"Шлюз" palette tool (this session's earlier "дверь будет считаться
+    // шлюзом" feature, TileGrid.CanPlaceDoorEdge). Docking/boarding only ever knew about the first
+    // kind - this record + resolver is the one place that picks WHICHEVER kind actually exists, so
+    // GetOrCreateStation/GetDockedLayout/PullCrewOffStation never have to special-case which system
+    // built the ship. (These two are still genuinely separate representations - rect vs edge - not
+    // unified by humble-soaring-cat.md's "убрать AirlockOuterDoor как отдельный тип", which only
+    // removed the rect-based type's own now-redundant sibling.)
+    private readonly record struct ShipAirlock(string Id, string RoomId, Vec2 Position, EdgeSide Side, bool Vertical, float Width, float Height);
+
+    private ShipAirlock? ResolveShipAirlock()
+    {
+        if (Ship.VacuumDoors.Count > 0)
+        {
+            var door = Ship.VacuumDoors[0];
+            var room = Ship.Rooms.First(r => r.Id == door.RoomAId);
+            var side = Ship.InferAirlockSide(room, door.X, door.Y);
+            return new ShipAirlock(door.Id, door.RoomAId, door.Position, side, door.IsVertical, door.Width, door.Height);
+        }
+
+        var edge = Ship.DoorEdges.FirstOrDefault(e => e.RoomAId is null || e.RoomBId is null);
+        if (edge is null)
+            return null;
+
+        var roomId = edge.RoomAId ?? edge.RoomBId!;
+        // Ship.DoorEdges' own Side is always East or South (TileGrid.CanonicalEdgeKey) regardless of
+        // which of the two flanking tiles is the room - if the room is on the FAR side (RoomAId
+        // null, meaning Coord itself is the vacuum tile), the room actually faces the OPPOSITE
+        // compass direction from the canonical Side.
+        var facingFromRoom = edge.RoomAId is null ? edge.Side.Opposite() : edge.Side;
+        var edgeSide = facingFromRoom switch
+        {
+            TileSide.North => EdgeSide.Top,
+            TileSide.South => EdgeSide.Bottom,
+            TileSide.East => EdgeSide.Right,
+            _ => EdgeSide.Left,
+        };
+        // The seam's own center, in the same continuous room-local coordinates Ship.Custom.cs's
+        // doorEdges builder already used to resolve RoomAId/RoomBId in the first place.
+        var position = edge.Side == TileSide.East
+            ? new Vec2(edge.Coord.X + 1f, edge.Coord.Y + 0.5f)
+            : new Vec2(edge.Coord.X + 0.5f, edge.Coord.Y + 1f);
+        // A single tile-edge door has no separate span - both axes are exactly 1 unit, same
+        // Door.FootprintRect-scale narrow door every hand-painted single-tile interior door already
+        // uses (Ship.Custom.cs's BuildDoors, `doorDef.Wide ? ... : 1f`).
+        return new ShipAirlock(edge.Id, roomId, position, edgeSide, Vertical: edge.Side == TileSide.East, Width: 1f, Height: 1f);
+    }
+
     // Where the hull's centre has to end up for the ship's own outer airlock door to sit exactly on
     // top of the station's connector. Both structures are laid out in the same interior frame
     // (Station.Create's connectorAnchor), so mating them is a pure translation: park the hull here
@@ -106,7 +156,11 @@ public sealed partial class World
         foreach (var character in _characters.Values.Where(c => c.OnStation))
         {
             character.OnStation = false;
-            character.RoomId = Ship.AirlockOuterDoors.First().RoomId;
+            // Falls back to any room at all only when the ship genuinely has no airlock of either
+            // kind (ResolveShipAirlock) - a ship with no real airlock at all (relaxed
+            // CustomShipValidator rule) has nowhere meaningful to pull this character back through,
+            // but it must still land somewhere real.
+            character.RoomId = ResolveShipAirlock()?.RoomId ?? Ship.Rooms[0].Id;
             character.Position = Ship.GetRoom(character.RoomId).Center;
         }
     }
@@ -131,13 +185,25 @@ public sealed partial class World
     // than cached, since either side can be replaced (a bought hull, a different station kind).
     private (IReadOnlyList<Room> Rooms, IReadOnlyList<Door> Doors) GetDockedLayout()
     {
-        var outerDoor = Ship.AirlockOuterDoors.First();
+        // A ship with no real airlock at all (relaxed CustomShipValidator rule, and no vacuum-facing
+        // door edge either) has no door to mate with the station's own connector - the station
+        // simply stays unreachable rather than crashing; still "docked" in every other sense (galaxy
+        // position, trading, etc.).
+        if (ResolveShipAirlock() is not { } airlock)
+            return (Ship.Rooms, Ship.Doors);
         var rooms = Ship.Rooms.Concat(Station.Rooms).ToList();
-        // Same id as the ship's own outer door, so it opens and closes with it - the connector and
-        // that door are physically the same rectangle once mated.
-        var connector = new Door(outerDoor.Id, outerDoor.RoomId, Station.DockRoomId,
-            outerDoor.X, outerDoor.Y, outerDoor.Width, outerDoor.Height);
-        var doors = Ship.Doors.Append(connector).Concat(Station.Doors).ToList();
+        // Same id as the ship's own outer door/door edge, so it opens and closes with it - the
+        // connector and that door are physically the same rectangle once mated. Vertical passed
+        // explicitly rather than left to IsVertical's Width<=Height fallback - correct either way
+        // for a rect-based vacuum-facing Door (always wider on its span axis) but load-bearing for a
+        // door-edge-based airlock, whose Width and Height are both exactly 1.
+        var connector = new Door(airlock.Id, airlock.RoomId, Station.DockRoomId,
+            (float)airlock.Position.X, (float)airlock.Position.Y, airlock.Width, airlock.Height, Vertical: airlock.Vertical);
+        // The rect-based case's own airlock.Id already sits in Ship.Doors (Ship.VacuumDoors is a
+        // filter over that same list, not a separate source, since humble-soaring-cat.md's "убрать
+        // AirlockOuterDoor как отдельный тип") - excluded here so `connector` doesn't end up listed
+        // twice under the same id once mated.
+        var doors = Ship.Doors.Where(d => d.Id != airlock.Id).Append(connector).Concat(Station.Doors).ToList();
         return (rooms, doors);
     }
 
@@ -154,7 +220,7 @@ public sealed partial class World
     // already share one coordinate frame (Station.cs's own doc comment: "positioned so ShipConnector
     // lands exactly on the ship's outer airlock door") and never otherwise overlap, so a plain
     // Cells-dictionary union (Ship's own cell wins at the one shared connector coordinate - it alone
-    // is kept synced to the live door-open state, via SyncShipTiles's AirlockOuterDoors loop;
+    // is kept synced to the live door-open state, via SyncShipTiles's vacuum-door loop;
     // Station.Tiles's separate copy of that same tile is never synced) is exact, with no region
     // recompute needed: TileMovement only ever calls CellAt/IsWalkable, never reads Regions, so
     // going through TileGrid's own SetFloor/SetWall mutators here would pay for BFS region-merging

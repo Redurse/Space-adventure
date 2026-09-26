@@ -77,12 +77,17 @@ internal static partial class TestRunner
                 break;
         }
 
-        // Spawn a fresh, full-health character straight into the now-dangerous corridor (that's
-        // the ship's spawn point) right before measuring. A character present for the whole
-        // search above would keep taking damage the entire time oxygen sits under the 50
-        // threshold — which the 300s search budget is easily long enough to do, bottoming out at
-        // 0 well before the measurement window and making "after < before" fail on bad luck.
+        // Spawn a fresh, full-health character and walk it straight into the now-dangerous
+        // corridor right before measuring. A character present for the whole search above would
+        // keep taking damage the entire time oxygen sits under the 50 threshold — which the 300s
+        // search budget is easily long enough to do, bottoming out at 0 well before the
+        // measurement window and making "after < before" fail on bad luck. Every door now starts
+        // closed by default (humble-soaring-cat.md, "все двери на корабле изначально были
+        // закрыты"), sealing the leak to just this one room rather than letting it drain the whole
+        // ship by diffusion the way an always-open interior door used to - so this needs an actual
+        // move into the breached room now, not just a fresh spawn at the (unrelated) helm.
         world.SpawnCharacter(2);
+        MoveCharacterTo(world, 2, 11.5f, 3f); // corridor
         var before = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 2).Health;
         for (var i = 0; i < 30; i++) // 1 more second while oxygen is critically low
             world.Step(RealtimeStep);

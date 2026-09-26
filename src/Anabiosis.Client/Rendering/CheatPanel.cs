@@ -10,7 +10,7 @@ namespace Anabiosis.Client.Rendering;
 public sealed class CheatPanel
 {
     public const int PanelWidth = 300;
-    public const int PanelHeight = 152;
+    public const int PanelHeight = 208;
     private const int ButtonWidth = 260;
     private const int ButtonHeight = 44;
     private const int TopPadding = 38;
@@ -44,6 +44,15 @@ public sealed class CheatPanel
         (int)panelOrigin.Y + TopPadding + ButtonHeight + ButtonGap,
         ButtonWidth, ButtonHeight);
 
+    // Direct user request ("в чит меню на букву ё была возможность перейти в режим наблюдателя") -
+    // the same one-way EnterSpectatorMode the death screen's own "НАБЛЮДАТЬ" button uses
+    // (Game1.Input.cs), just reachable without actually dying first - a testing shortcut, same
+    // "not a real game action" spirit as the 2 buttons above.
+    public static Rectangle GetSpectatorModeButtonRect(Vector2 panelOrigin) => new(
+        (int)panelOrigin.X + (PanelWidth - ButtonWidth) / 2,
+        (int)panelOrigin.Y + TopPadding + 2 * (ButtonHeight + ButtonGap),
+        ButtonWidth, ButtonHeight);
+
     public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
@@ -54,6 +63,7 @@ public sealed class CheatPanel
 
         DrawButton(spriteBatch, GetSpawnEnemyButtonRect(panelOrigin), hoverPoint, "Заспавнить врага рядом");
         DrawButton(spriteBatch, GetAddCreditsButtonRect(panelOrigin), hoverPoint, "Выдать 100 кредитов");
+        DrawButton(spriteBatch, GetSpectatorModeButtonRect(panelOrigin), hoverPoint, "Режим наблюдателя");
     }
 
     private void DrawButton(SpriteBatch spriteBatch, Rectangle buttonRect, Point hoverPoint, string label)

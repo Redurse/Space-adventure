@@ -44,10 +44,14 @@ public partial class Game1 : Game
         // count, which is not known out here - the standard height is used as its grab/hit box, so
         // an unusually tall one has a dead strip along its bottom.
         BlockKind.Connections => new Point(ConnectionsPanel.Width, DevicePanelChrome.Standard.Y),
+        BlockKind.Fabricator => FabricatorPanel.PanelSize,
+        BlockKind.Deconstructor => DeconstructorPanel.PanelSize,
         _ => DevicePanelChrome.Standard,
     };
     private Vector2 PowerPanelOrigin => PanelOrigin(CurrentPanelKey, DevicePanelChrome.Standard);
     private Vector2 RackPanelOrigin => PanelOrigin(CurrentPanelKey, RackPanel.PanelSize);
+    private Vector2 FabricatorPanelOrigin => PanelOrigin(CurrentPanelKey, FabricatorPanel.PanelSize);
+    private Vector2 DeconstructorPanelOrigin => PanelOrigin(CurrentPanelKey, DeconstructorPanel.PanelSize);
     private static readonly Vector2 VoyagePanelOrigin = new(250, 12);
     // The carried row is centred on the bottom edge and the equipment slots are pinned to the
     // bottom-right corner, so both are derived from the design resolution rather than fixed at
@@ -134,6 +138,9 @@ public partial class Game1 : Game
     // panel that shares the screen with the rest of the HUD.
     private static readonly Vector2 PauseMenuPanelOrigin =
         new((DesignWidth - PauseMenuPanel.PanelWidth) / 2f, (DesignHeight - PauseMenuPanel.PanelHeight) / 2f);
+    // Same centered-modal treatment as PauseMenuPanelOrigin above.
+    private static readonly Vector2 DeathScreenPanelOrigin =
+        new((DesignWidth - DeathScreenPanel.PanelWidth) / 2f, (DesignHeight - DeathScreenPanel.PanelHeight) / 2f);
     // Top-left corner, out of the way of the HUD's own top bar and side panels - a dev tool, not
     // something that needs a prime screen position.
     private static readonly Vector2 CheatPanelOrigin = new(20, 80);
@@ -186,6 +193,16 @@ public partial class Game1 : Game
     private InventoryPanel _inventoryPanel = null!;
     private ReactorPanel _reactorPanel = null!;
     private JukeboxPanel _jukeboxPanel = null!;
+    private FabricatorPanel _fabricatorPanel = null!;
+    // Purely local UI state (direct user request, "сделай меню фабрикатора") - never sent to the
+    // server, unlike _pendingFabricatorCraftRecipeId; only which recipe is highlighted/how the list
+    // is filtered right now.
+    private bool _fabricatorOnlyAvailable;
+    private bool _fabricatorSortByName;
+    private string? _fabricatorSelectedRecipeId;
+    private DeconstructorPanel _deconstructorPanel = null!;
+    // Same "purely local, never sent" shape as the Fabricator fields above.
+    private ItemType? _deconstructorSelectedItem;
     private BatteryPanel _batteryPanel = null!;
     private SystemDevicePanel _systemDevicePanel = null!;
     private GalaxyMapPanel _galaxyMapPanel = null!;
@@ -262,6 +279,11 @@ public partial class Game1 : Game
     private readonly VoiceCapture _voiceCapture = new();
     private VoicePlayback _voicePlayback = null!;
 
+    // Direct user request ("система достижений... как в Стиме") - one unlocked-set for the whole
+    // process lifetime, loaded eagerly (not lazily on first session start) so the Settings screen's
+    // own Achievements tab can show already-earned ones even before any session this launch has run.
+    private readonly Achievements.AchievementTracker _achievementTracker = new();
+
     // Direct user request ("в Baротравме... микрофон активируется и передаёт звук в уши") - a local
     // mic-monitor for the Settings screen's own Audio tab, entirely separate from the multiplayer
     // voice chat above (Audio/MicMonitor.cs's own doc comment explains why). Started/stopped each
@@ -296,6 +318,10 @@ public partial class Game1 : Game
     private SuitLockerPanel _suitLockerPanel = null!;
     private SystemRepairPanel _systemRepairPanel = null!;
     private PauseMenuPanel _pauseMenuPanel = null!;
+    private DeathScreenPanel _deathScreenPanel = null!;
+    private ShipStatusMonitorPanel _shipStatusMonitorPanel = null!;
+    private CommsConsolePanel _commsConsolePanel = null!;
+    private ComingSoonPanel _comingSoonPanel = null!;
     private CheatPanel _cheatPanel = null!;
     private CrewPanel _crewPanel = null!;
     private InfoPanel _infoPanel = null!;
@@ -311,6 +337,23 @@ public partial class Game1 : Game
     // The inter-system map (GalacticMapPanel) - opened by the M key from anywhere (Update's own
     // edge-triggered check), not gated behind walking to a console like _openBlock's other targets.
     private bool _galacticMapOpen;
+    // Direct user request ("монитор состояния корабля... консоль связи") - each a full-screen
+    // takeover like _infoPanelOpen/_galacticMapOpen above, opened by walking up to its own physical
+    // console and pressing E (same pattern NavigationConsole's own opening code below uses), not a
+    // BlockKind/ClickTarget HUD overlay - that tier is for small HUD-corner panels (Reactor,
+    // Battery, the porthole-sized Scanner...), the wrong scale for a whole-screen schematic/map.
+    private bool _shipStatusMonitorOpen;
+    private bool _commsConsoleOpen;
+    // Direct user request ("сделай чтобы при заходе в него открывался серый экран с надписью
+    // скоро") - same full-screen-takeover shape as the two above, just with nothing behind it yet
+    // (ComingSoonPanel.cs's own doc comment) - walking up to ANY Junction ("Щиток") opens the one
+    // shared placeholder screen.
+    private bool _junctionComingSoonOpen;
+    // The comms console's own read-only view of GalaxyMapPanel (Game1.Camera.cs's own pilotView -
+    // kept separate from _mapZoom/_mapPanOffset, which the Navigation console/helm branches also
+    // read, so panning this map never disturbs theirs).
+    private float _commsConsoleMapZoom = 1f;
+    private Vector2 _commsConsoleMapPanOffset = Vector2.Zero;
     private string? _shipEditorSelectedComponentId;
     private SlotRef? _dragFrom;
     // Oxygen-tank sockets: clicking one plugs in the tank you're holding, or pulls the tank back
@@ -354,6 +397,50 @@ public partial class Game1 : Game
     // Esc's own menu (Game1.Update) - opens only once nothing else is open, edge-triggered like
     // every other single-key toggle in this project (holding it down mustn't flip it every frame).
     private bool _pauseMenuOpen;
+    // Barotrauma-style death screen (direct user request, "экран смерти... почти точь в точь как
+    // в баротравме") - true once this player's own Health has hit 0 (derived from the already-
+    // networked CharacterState.Health, no protocol change needed). One-way switch to the free-roam
+    // spectator camera below, set by the death screen's own "НАБЛЮДАТЬ" button (Game1.Input.cs) -
+    // there's no respawn in this game yet, so nothing ever clears it back to false except starting
+    // a fresh session.
+    private bool _spectatorMode;
+    // Faster than walking (World.Movement.cs's own MoveSpeed is 3) - a free camera looking around
+    // isn't bound by a character's own legs.
+    private const float SpectatorPanUnitsPerSecond = 6f;
+    // Where the free camera is currently looking while spectating, in the same ship-local units
+    // ComputeCamera's own anchorLocal already uses (Game1.Camera.cs) - seeded from the character's
+    // last real position the moment spectator mode is entered, then panned directly by WASD/arrows
+    // instead of moving the now-frozen corpse.
+    private Vec2 _spectatorAnchor;
+    // Direct user request ("отдалять экран и приближать в 3 раза относительно текущего при помощи
+    // колесика мыши") - SceneZoom's own new spectator branch multiplies the whole scene batch by
+    // this, same "one number moves camera+world+hit-tests together" trick TurretViewZoom/
+    // ShipOverviewZoom already use. Bounds are relative to the 1x EnterSpectatorMode always resets
+    // to, not an absolute floor/ceiling shared with any other zoom.
+    private const float SpectatorZoomMin = 1f / 3f;
+    private const float SpectatorZoomMax = 3f;
+    private float _spectatorZoom = 1f;
+
+    // Direct user request ("двигать игру при приближении курсора мыши к краю экрана") - same
+    // dead-zone-then-linear-falloff shape as the system map's own edge-scroll, returning a plain
+    // -1..1-per-axis direction (ReadMoveInput's own shape) rather than a screen-space delta, so it
+    // can just be added straight onto the WASD input above instead of needing its own separate
+    // scaling/units.
+    private const float SpectatorEdgeScrollMargin = 48f;
+
+    private Vec2 ReadEdgeScrollPanInput()
+    {
+        float Axis(float coordinate, float extent)
+        {
+            if (coordinate < SpectatorEdgeScrollMargin)
+                return -(1f - coordinate / SpectatorEdgeScrollMargin);
+            if (coordinate > extent - SpectatorEdgeScrollMargin)
+                return 1f - (extent - coordinate) / SpectatorEdgeScrollMargin;
+            return 0f;
+        }
+
+        return new Vec2(Axis(_designMouse.X, DesignWidth), Axis(_designMouse.Y, DesignHeight));
+    }
     // Direct user request ("чтобы во время игры при нажатии на одну из кнопок в esc (настройки)
     // также можно было зайти в них") - the pause menu's own "НАСТРОЙКИ" button now opens the real
     // Settings screen (Game1.Settings.cs) as a nested layer over the pause menu, rather than the
@@ -450,6 +537,13 @@ public partial class Game1 : Game
     // click-a-specific-instance-by-id shape as _pendingSuitLockerInteractId, edge-triggered/cleared
     // the same way (replaced the old single shared toggle-key flag).
     private string? _pendingTerminalInteractId;
+    // The recipe id the Fabricator panel's own "СОЗДАТЬ" button was clicked for (direct user
+    // request, "сделай меню фабрикатора как в баротравме") - edge-triggered/cleared the same way as
+    // _pendingTerminalInteractId above; everything else about the panel (filter text, selected
+    // recipe, category) is purely local UI state (FabricatorPanel.cs), never sent to the server.
+    private string? _pendingFabricatorCraftRecipeId;
+    private ItemType? _pendingDeconstructItemType;
+    private bool _pendingProductionCancel;
     // The galaxy map's own camera - purely a client view of server-authoritative positions, so it
     // lives here rather than in any snapshot. Zoom via scroll wheel, pan via right-drag; both only
     // read while the navigation console is actually open.
@@ -506,6 +600,7 @@ public partial class Game1 : Game
     // near acceptable, so this narrows down which of the three renderers it actually is.
     private double _diagShipMs, _diagStationMs, _diagFieldMs;
     private Point? _mapPanLastMouse;
+    private Point? _commsConsoleMapPanLastMouse;
     private int _prevScrollWheelValue;
     // The console's own housing can be dragged around the HUD by its own right-drag (M48 follow-up -
     // "панельку сонара можно было перетаскивать при зажатии ПКМ") - unlike the helm's free camera
@@ -664,6 +759,8 @@ public partial class Game1 : Game
         _inventoryPanel = new InventoryPanel(GraphicsDevice, _font);
         _reactorPanel = new ReactorPanel(GraphicsDevice, _font);
         _jukeboxPanel = new JukeboxPanel(GraphicsDevice, _font);
+        _fabricatorPanel = new FabricatorPanel(GraphicsDevice, _font);
+        _deconstructorPanel = new DeconstructorPanel(GraphicsDevice, _font);
         _batteryPanel = new BatteryPanel(GraphicsDevice, _font);
         _systemDevicePanel = new SystemDevicePanel(GraphicsDevice, _font);
         _galaxyMapPanel = new GalaxyMapPanel(GraphicsDevice, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
@@ -705,6 +802,10 @@ public partial class Game1 : Game
         _suitLockerPanel = new SuitLockerPanel(GraphicsDevice, _font);
         _systemRepairPanel = new SystemRepairPanel(GraphicsDevice, _font);
         _pauseMenuPanel = new PauseMenuPanel(GraphicsDevice, _font);
+        _deathScreenPanel = new DeathScreenPanel(GraphicsDevice, _font);
+        _shipStatusMonitorPanel = new ShipStatusMonitorPanel(GraphicsDevice, _font);
+        _commsConsolePanel = new CommsConsolePanel(GraphicsDevice, _font);
+        _comingSoonPanel = new ComingSoonPanel();
         _cheatPanel = new CheatPanel(GraphicsDevice, _font);
         _crewPanel = new CrewPanel(GraphicsDevice, _font);
         _infoPanel = new InfoPanel(GraphicsDevice, _font);
@@ -991,6 +1092,15 @@ public partial class Game1 : Game
                 base.Update(gameTime);
                 return;
             }
+            // Same shape as _pendingSession above, for the "Создать сервер" screen's own lobby-mode
+            // SoloSession construction (Game1.Menu.cs's StartHostedLobby) - a separate field so the
+            // two paths never collide.
+            if (_pendingLobbySession is not null)
+            {
+                FinishPendingLobbySessionIfReady();
+                base.Update(gameTime);
+                return;
+            }
             HandleMenu(keyboard, (float)gameTime.ElapsedGameTime.TotalSeconds);
             base.Update(gameTime);
             return;
@@ -1009,6 +1119,13 @@ public partial class Game1 : Game
         var myCharacter = _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         var isAtHelm = myCharacter?.IsAtHelm ?? false;
         var isOutside = myCharacter?.IsOutside ?? false;
+
+        // Direct user request ("через 10 секунд... игрок спанился на корабле в кокпите") -
+        // World.Respawn.cs brings the character itself back automatically; the client's own
+        // one-way spectator switch has to let go the instant that happens, or a respawned player
+        // would be stuck staring through the free camera at their own resurrected body forever.
+        if (_spectatorMode && myCharacter is { Health: > 0f })
+            _spectatorMode = false;
 
         // During a session: Esc closes whatever's open (a block/console, a top-bar panel, the
         // turret/helm) one thing at a time, same priority a second click on a console already has;
@@ -1049,7 +1166,8 @@ public partial class Game1 : Game
                 _externalCameraFullscreenIndex = null;
             }
             else if (_openBlock.Kind != BlockKind.None || _crewPanelOpen || _infoPanelOpen || _shipEditorOpen
-                     || _galacticMapOpen || _talkingToNpcId is not null || isManningTurret || isAtHelm || _externalCameraMode)
+                     || _galacticMapOpen || _talkingToNpcId is not null || (!_spectatorMode && (isManningTurret || isAtHelm)) || _externalCameraMode
+                     || _shipStatusMonitorOpen || _commsConsoleOpen || _junctionComingSoonOpen)
             {
                 _openBlock = ClickTarget.None;
                 _crewPanelOpen = false;
@@ -1058,7 +1176,10 @@ public partial class Game1 : Game
                 _galacticMapOpen = false;
                 _talkingToNpcId = null;
                 _externalCameraMode = false;
-                escapeSendsInteract = isManningTurret || isAtHelm;
+                _shipStatusMonitorOpen = false;
+                _commsConsoleOpen = false;
+                _junctionComingSoonOpen = false;
+                escapeSendsInteract = !_spectatorMode && (isManningTurret || isAtHelm);
             }
             else
             {
@@ -1099,6 +1220,9 @@ public partial class Game1 : Game
                 _openBlock = ClickTarget.None;
                 _infoPanelOpen = false;
                 _shipEditorOpen = false;
+                _shipStatusMonitorOpen = false;
+                _commsConsoleOpen = false;
+                _junctionComingSoonOpen = false;
             }
         }
 
@@ -1190,11 +1314,62 @@ public partial class Game1 : Game
         // Esc is the one way out (Game1.Input.cs's own CloseBlockIfWalkedAway explicitly excludes
         // BlockKind.Navigation from its usual auto-close-on-distance sweep for the same reason).
         if (interactPressed && myCharacter is not null && _openBlock.Kind != BlockKind.Navigation &&
-            (new Vec2(myCharacter.X, myCharacter.Y) - _client.LatestSnapshot!.NavigationConsole.Position).Length() < TurretInteractionRadius)
+            ((new Vec2(myCharacter.X, myCharacter.Y) - _client.LatestSnapshot!.NavigationConsole.Position).Length() < TurretInteractionRadius ||
+             (_client.LatestSnapshot!.ExtraNavigationConsoles ?? Array.Empty<NavigationConsole>()).Any(c =>
+                 (new Vec2(myCharacter.X, myCharacter.Y) - c.Position).Length() < TurretInteractionRadius)))
         {
             _openBlock = ClickTarget.Navigation;
             _infoPanelOpen = false;
             _shipEditorOpen = false;
+        }
+
+        // Direct user request ("монитор состояния корабля... консоль связи", later "всех этих 4
+        // устройств на корабле может быть только по одному. сделай это не так") - same walk-up-
+        // and-E pattern as the scanner console just above, opening a full-screen panel (this file's
+        // own scene-dispatch chain, not a BlockKind/ClickTarget HUD overlay - see this file's own
+        // _shipStatusMonitorOpen/_commsConsoleOpen field comments for why). Genuinely many
+        // independent instances now (Ship.ShipStatusMonitors/CommsConsoles) - walking up to ANY one
+        // of them opens the same single shared panel, same as any of several Terminals would each
+        // open the terminal panel; there's simply nothing to walk up to on a hull that never built
+        // one at all.
+        if (interactPressed && myCharacter is not null && !_shipStatusMonitorOpen &&
+            (_client.LatestSnapshot?.ShipStatusMonitors ?? Array.Empty<ShipStatusMonitor>()).Any(m =>
+                (new Vec2(myCharacter.X, myCharacter.Y) - m.Position).Length() < TurretInteractionRadius))
+        {
+            _shipStatusMonitorOpen = true;
+            _commsConsoleOpen = false;
+            _junctionComingSoonOpen = false;
+            _openBlock = ClickTarget.None;
+            _infoPanelOpen = false;
+            _shipEditorOpen = false;
+            _galacticMapOpen = false;
+        }
+        if (interactPressed && myCharacter is not null && !_commsConsoleOpen &&
+            (_client.LatestSnapshot?.CommsConsoles ?? Array.Empty<CommsConsole>()).Any(c =>
+                (new Vec2(myCharacter.X, myCharacter.Y) - c.Position).Length() < TurretInteractionRadius))
+        {
+            _commsConsoleOpen = true;
+            _shipStatusMonitorOpen = false;
+            _junctionComingSoonOpen = false;
+            _openBlock = ClickTarget.None;
+            _infoPanelOpen = false;
+            _shipEditorOpen = false;
+            _galacticMapOpen = false;
+        }
+        // Direct user request ("сделай чтобы при заходе в него открывался серый экран с надписью
+        // скоро") - same walk-up-and-E pattern as the two consoles just above; every JunctionBox
+        // shares this one placeholder screen (ComingSoonPanel.cs's own doc comment).
+        if (interactPressed && myCharacter is not null && !_junctionComingSoonOpen &&
+            (_client.LatestSnapshot?.JunctionBoxes ?? Array.Empty<JunctionBox>()).Any(j =>
+                (new Vec2(myCharacter.X, myCharacter.Y) - j.Position).Length() < TurretInteractionRadius))
+        {
+            _junctionComingSoonOpen = true;
+            _shipStatusMonitorOpen = false;
+            _commsConsoleOpen = false;
+            _openBlock = ClickTarget.None;
+            _infoPanelOpen = false;
+            _shipEditorOpen = false;
+            _galacticMapOpen = false;
         }
 
         // Space means something different outside (push off toward the cursor) than manning a
@@ -1210,6 +1385,27 @@ public partial class Game1 : Game
         // above it) - the character just stands still rather than getting walked around by whatever
         // letters happen to spell the message.
         var move = (isManningTurret || isAtHelm || _chatFocused) ? Vec2.Zero : ReadMoveInput(keyboard, _keyBindings);
+        // Direct user request ("экран смерти... наблюдать") - once spectating, WASD/arrows pan the
+        // free camera directly (Game1.Camera.cs's ComputeCamera reads _spectatorAnchor) instead of
+        // moving the corpse; nothing is sent to the server for it (a dead character's own move
+        // input is ignored server-side anyway, World.cs's own ApplyCommand gate).
+        if (_spectatorMode)
+        {
+            // Direct user request ("двигать игру при приближении курсора мыши к краю экрана") -
+            // added straight onto the WASD/arrows input rather than replacing it, so either one (or
+            // both at once) pans the free camera; same margin/falloff shape as the system map's own
+            // edge-scroll (Game1.cs's own Captain-tab block above), just in ship-local units/second
+            // instead of screen-space panOffset.
+            var panInput = _chatFocused ? Vec2.Zero : ReadMoveInput(keyboard, _keyBindings) + ReadEdgeScrollPanInput();
+            // Direct user request ("при малом отдалении... медленнее чем при большом отдалении") -
+            // world-units/second scales with how zoomed OUT the view currently is (1/_spectatorZoom,
+            // since SceneZoom's own convention is smaller number = more reach/more zoomed out,
+            // TurretViewZoom's own doc comment - "half scale = twice the reach"), so flying sideways
+            // crosses roughly the same FRACTION of the current view per second at any zoom instead
+            // of the same absolute world distance - slow and precise zoomed in, fast zoomed out.
+            _spectatorAnchor += panInput * (SpectatorPanUnitsPerSecond / _spectatorZoom) * (float)gameTime.ElapsedGameTime.TotalSeconds;
+            move = Vec2.Zero;
+        }
         _evaThrustLocal = Vec2.Zero;
         // The barrel traverses toward wherever the cursor is; A/D still nudge it for anyone who
         // wants the keyboard. Either way it's a rate, not a snap - the gun swings at its own
@@ -1293,14 +1489,32 @@ public partial class Game1 : Game
                 _shipOverviewPanOffset += new Vector2(mouse.Position.X - lastOverviewMouse.X, mouse.Position.Y - lastOverviewMouse.Y) / SceneZoom(shipOverviewSnapshot!);
             _shipOverviewPanLastMouse = mouse.Position;
         }
+        else if (_commsConsoleOpen && mouse.RightButton == ButtonState.Pressed)
+        {
+            // Screen-space drag, same shape as the helm's own free camera above - a read-only view
+            // with nothing ship-locked to hold still, so there's no compensation to solve for.
+            if (_commsConsoleMapPanLastMouse is { } lastCommsMouse)
+                _commsConsoleMapPanOffset += new Vector2(mouse.Position.X - lastCommsMouse.X, mouse.Position.Y - lastCommsMouse.Y);
+            _commsConsoleMapPanLastMouse = mouse.Position;
+        }
         else
         {
             _mapPanLastMouse = null;
             _shipOverviewPanLastMouse = null;
+            _commsConsoleMapPanLastMouse = null;
         }
         var scrollDelta = mouse.ScrollWheelValue - _prevScrollWheelValue;
         _prevScrollWheelValue = mouse.ScrollWheelValue;
-        if (mapOpen && scrollDelta != 0)
+        if (_spectatorMode && scrollDelta != 0)
+        {
+            // Direct user request ("отдалять экран и приближать в 3 раза относительно текущего при
+            // помощи колесика мыши") - takes priority over every other scroll-zoom branch below,
+            // same reasoning the spectator anchor already overrides every other camera mode for
+            // (Game1.Camera.cs's own ComputeCamera doc comment) - a corpse can still be sitting at a
+            // manned turret/helm, whose OWN zoom this must not fight over the same scroll tick.
+            _spectatorZoom = Math.Clamp(_spectatorZoom * MathF.Pow(1.1f, scrollDelta / 120f), SpectatorZoomMin, SpectatorZoomMax);
+        }
+        else if (mapOpen && scrollDelta != 0)
         {
             // No panOffset compensation needed here (unlike the helm branch below) - the console's
             // own view is always ship-centred, so zooming in/out already holds the ship (and
@@ -1347,6 +1561,43 @@ public partial class Game1 : Game
             // wide multiplier range would make it trivial to zoom the hull down to a few pixels or
             // blow it up past the screen entirely.
             _shipOverviewZoomMultiplier = Math.Clamp(_shipOverviewZoomMultiplier * MathF.Pow(1.1f, scrollDelta / 120f), 0.4f, 3f);
+        }
+        else if (_commsConsoleOpen && scrollDelta != 0)
+        {
+            // Zooms toward screen-centre, not the cursor - this is a read-only stub view (direct
+            // user request, "пока просто... без какой-либо функции"), not worth the helm branch's
+            // own cursor-anchored solve-backward math above for a button that doesn't do anything
+            // yet either.
+            _commsConsoleMapZoom = Math.Clamp(_commsConsoleMapZoom * MathF.Pow(1.1f, scrollDelta / 120f), GalaxyMapPanel.MinConsoleZoom, 3f);
+        }
+
+        // Direct user request ("если курсор мыши около края экрана то экран начинал двигаться в ту
+        // сторону, как это сделано в большинстве игр") - edge-scroll for the Captain tab's own system
+        // map: right-drag can't drive panOffset there (RMB is the ship's own facing-aim override,
+        // the drag-pan branch above already excludes this tab for exactly that reason), but nothing
+        // stops the cursor's own screen POSITION from nudging it every frame instead, the same
+        // standard RTS/strategy-game idiom - a dead zone in the middle, linearly faster the closer
+        // the cursor sits to whichever edge(s) it's touching (0 right at the margin's own inner
+        // edge, full speed flush against the screen's own outer edge), both axes independent so a
+        // corner scrolls diagonally. _mapPanOffset is the exact same field the drag-pan/zoom code
+        // above already reads - GalaxyMapPanel.Draw(..., captainHelmView: true) needs no changes at
+        // all to pick this up.
+        if (isAtHelm && _helmTab == HelmTab.Captain && _openBlock.Kind == BlockKind.None)
+        {
+            const float margin = 48f;
+            const float speed = 700f; // design-space px/sec at the screen's own outer edge
+            var dt = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            float Push(float coordinate, float extent)
+            {
+                if (coordinate < margin)
+                    return -speed * (1f - coordinate / margin) * dt;
+                if (coordinate > extent - margin)
+                    return speed * (1f - (extent - coordinate) / margin) * dt;
+                return 0f;
+            }
+
+            _mapPanOffset -= new Vector2(Push(_designMouse.X, DesignWidth), Push(_designMouse.Y, DesignHeight));
         }
 
         // Scanner sweep (World.Scanner.cs, M44) - M48 follow-up made this Barotrauma-style: instead
@@ -1572,12 +1823,18 @@ public partial class Game1 : Game
         var stealCrateId = _pendingStealCrateId;
         var repairDeviceId = _pendingRepairDeviceId;
         var terminalInteractId = _pendingTerminalInteractId;
+        var fabricatorCraftRecipeId = _pendingFabricatorCraftRecipeId;
+        var deconstructItemType = _pendingDeconstructItemType;
+        var productionCancelPressed = _pendingProductionCancel;
+        _pendingDeconstructItemType = null;
+        _pendingProductionCancel = false;
         _pendingSuitLockerInteractId = null;
         _pendingTurretInteractId = null;
         _pendingAmmoStorageInteractId = null;
         _pendingStealCrateId = null;
         _pendingRepairDeviceId = null;
         _pendingTerminalInteractId = null;
+        _pendingFabricatorCraftRecipeId = null;
 
         var abandonQuestPressed = _pendingAbandonQuest;
         _pendingAbandonQuest = false;
@@ -1694,7 +1951,21 @@ public partial class Game1 : Game
         // capture-send-clear lifecycle as chatMessage above, so a mic buffer is never resent.
         var voiceChunk = _voiceCapture.TakePendingChunk();
 
-        _client.SendInput(move, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, questKind, dockPressed, moveItemFrom, moveItemTo, (float)lookDirection.X, (float)lookDirection.Y,
+        // Direct user request ("внутренний строитель вместо SendInput") - GameClient.SendInput used
+        // to be a SECOND ~90-parameter positional list mirroring ClientCommand's own constructor
+        // (itself a third, inside SendInput's own body) - three parallel lists that all had to stay
+        // in lockstep, the exact fragility this replaces. Constructing ClientCommand directly here
+        // removes one whole layer: every expression below is unchanged from what used to go to
+        // SendInput, in the SAME order it used to be passed in, EXCEPT for two differences verified
+        // by diffing SendInput's own (now-deleted) signature order against its own internal call
+        // order before removing it: move (a single Vec2 there) is split into MoveX/MoveY here, and
+        // LookX/LookY move ahead of MoveItemFrom/MoveItemTo (ClientCommand's own real field order -
+        // SendInput's body silently reordered these same two pairs too, just hidden inside it; the
+        // compiler caught this immediately, as an argument-type mismatch, the one time this was
+        // first typed in SendInput's OWN signature order instead). The tail's own named arguments
+        // now use ClientCommand's PascalCase field names directly, instead of SendInput's
+        // lowerCamelCase mirror of them.
+        _client.Send(new ClientCommand(_client.PlayerId, (float)move.X, (float)move.Y, powerSystemIndexToSend, powerDirection, interactPressed, aimDirection, firePressed, toggleHoldSlotIndex, toggleReactorSlotIndex, buyItemType, sellSlotIndex, acceptCargoQuestPressed, turnInCargoQuestPressed, purchaseUpgradeTrack, doorToggleId, pushOffPressed, (float)pushOffDirection.X, (float)pushOffDirection.Y, questKind, dockPressed, (float)lookDirection.X, (float)lookDirection.Y, moveItemFrom, moveItemTo,
             tankAttach?.From, tankAttach?.To, tankDetach, cutHeld, hireCandidateId, weldHeld, pinInteract, wireLayCancelPressed, null, componentMountInteractId, dropItemFrom, pickupDroppedItemId, abandonQuestPressed, warpToSystemId,
             _nickname, setOwnRoleTo, playCard?.Rank, playCard?.Suit, cardGameTakePressed, cardGameEndRoundPressed,
             _client.LatestSnapshot?.ServerTimestampMs ?? 0, (float?)wireBendAt?.X, (float?)wireBendAt?.Y,
@@ -1705,9 +1976,14 @@ public partial class Game1 : Game
             buildRoom, demolishRoomId, debugAddCreditsPressed, chatMessage, voiceChunk,
             chooseCardTableGame, frontsSetAllocationIndex, frontsSetAllocationAmount, frontsResolvePressed,
             suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId,
-            autopilotTargetX: autopilotTarget?.X, autopilotTargetY: autopilotTarget?.Y,
-            autopilotStopPressed: autopilotStopPressed, desiredFacingDegrees: desiredFacingDegrees);
+            AutopilotTargetX: autopilotTarget?.X, AutopilotTargetY: autopilotTarget?.Y,
+            AutopilotStopPressed: autopilotStopPressed, DesiredFacingDegrees: desiredFacingDegrees,
+            FabricatorCraftRecipeId: fabricatorCraftRecipeId, DeconstructItemType: deconstructItemType, ProductionCancelPressed: productionCancelPressed));
         _client.PollSnapshots();
+        // Direct user request ("система достижений... как в Стиме") - checked every frame a real
+        // snapshot exists, same as every other per-frame HUD read off _client.LatestSnapshot.
+        if (_client.LatestSnapshot is { } achievementSnapshot)
+            _achievementTracker.Update(achievementSnapshot, _client.PlayerId, gameTime.ElapsedGameTime.TotalSeconds);
         CloseBlockIfWalkedAway(_client.LatestSnapshot);
         UpdateCameraLookOffset(_client.LatestSnapshot, (float)gameTime.ElapsedGameTime.TotalSeconds);
 
@@ -1848,11 +2124,99 @@ public partial class Game1 : Game
         _diagLastDrawMs = diagDrawStopwatch.Elapsed.TotalMilliseconds;
     }
 
+    // Direct user request ("в главном меню около версии маленькую кнопку... расписаны вкратце все
+    // изменения... закрыть менюшку можно нажав на крестик") - main-menu-only (DrawVersionFooter
+    // itself also runs in-session, HUD.cs's own call site, where there's no changelog button/panel
+    // to show at all).
+    private bool _changelogOpen;
+    // Direct user request ("прямоугольничек... тянешь его вниз... листается список") - how far the
+    // popup has scrolled (pixels), and the last mouse Y seen while actively dragging the scrollbar
+    // thumb (null when not dragging) - both owned here since ChangelogPanel itself is static/
+    // stateless, same split every other draggable HUD element in this project already uses
+    // (_sonarPanelDragOffset, _mapPanLastMouse, ...).
+    private float _changelogScrollOffset;
+    private int? _changelogThumbDragLastMouseY;
+
     private void DrawVersionFooter()
     {
         var position = new Vector2(8, DesignHeight - 16);
         _spriteBatch.DrawString(_font, GameVersionText, position, VersionTextColor, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        if (_sessionStarted || _menuScreen != MenuScreen.Main)
+            return;
+
+        var buttonRect = ChangelogButtonRect(position);
+        var hovered = buttonRect.Contains(_designMouse);
+        _spriteBatch.Draw(_pixel, buttonRect, (hovered ? new Color(90, 220, 195) : new Color(60, 64, 72)) * 0.85f);
+        const string label = "ИЗМЕНЕНИЯ";
+        var labelSize = _font.MeasureString(label) * 0.36f;
+        _spriteBatch.DrawString(_font, label,
+            new Vector2(buttonRect.Center.X - labelSize.X / 2f, buttonRect.Center.Y - labelSize.Y / 2f),
+            Color.White, 0f, Vector2.Zero, 0.36f, SpriteEffects.None, 0f);
+
+        if (_changelogOpen)
+            ChangelogPanel.Draw(_spriteBatch, _pixel, _font, ChangelogPanelOrigin,
+                $"Изменения в {GameVersionText}", ChangelogEntries, _changelogScrollOffset, _designMouse);
     }
+
+    // Direct user request ("через 10 секунд... в игре сверху пишется таймер и пишется его
+    // уменьшение до спавна игрока") - a plain top-center HUD line, visible through the death
+    // screen and the free spectator camera alike (both just draw on top of the same HUD batch).
+    private void DrawRespawnCountdown(SpriteBatch spriteBatch, float secondsRemaining)
+    {
+        var label = $"Возрождение через {(int)MathF.Ceiling(secondsRemaining)} с";
+        const float scale = 0.6f;
+        var size = _font.MeasureString(label) * scale;
+        var position = new Vector2((DesignWidth - size.X) / 2f, 10f);
+        spriteBatch.Draw(_pixel, new Rectangle((int)position.X - 8, (int)position.Y - 4, (int)size.X + 16, (int)size.Y + 8),
+            Color.Black * 0.55f);
+        spriteBatch.DrawString(_font, label, position, Color.White, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+    }
+
+    // Direct user request ("буквально как в Стиме") - bottom-right corner popup, one at a time
+    // (AchievementTracker's own queue), a glyph badge + "ДОСТИЖЕНИЕ ОТКРЫТО" header + the
+    // achievement's own name/description. Reuses the Settings screen's own gold/dim palette
+    // (SettingsAccentGold/SettingsTextPrimary/SettingsTextDim, Game1.Settings.cs) purely for visual
+    // consistency with the rest of this project's chrome - no functional link to that screen.
+    private const int AchievementToastWidth = 320;
+    private const int AchievementToastHeight = 72;
+    private const float AchievementToastFadeSeconds = 0.4f;
+
+    private void DrawAchievementToast(SpriteBatch spriteBatch, Achievements.AchievementDefinition achievement, float remainingSeconds)
+    {
+        var elapsed = Achievements.AchievementTracker.ToastDurationSeconds - remainingSeconds;
+        var fadeIn = MathHelper.Clamp(elapsed / AchievementToastFadeSeconds, 0f, 1f);
+        var fadeOut = MathHelper.Clamp(remainingSeconds / AchievementToastFadeSeconds, 0f, 1f);
+        var alpha = MathF.Min(fadeIn, fadeOut);
+        // Slides in from off-screen rather than just popping into place, the same "arrives, doesn't
+        // just appear" feel every other transient panel in this project already uses.
+        var slideOffset = (1f - fadeIn) * 40f;
+
+        var origin = new Vector2(DesignWidth - AchievementToastWidth - 16 + slideOffset, DesignHeight - AchievementToastHeight - 16);
+        var box = new Rectangle((int)origin.X, (int)origin.Y, AchievementToastWidth, AchievementToastHeight);
+        spriteBatch.Draw(_pixel, box, new Color(18, 20, 26) * (0.95f * alpha));
+        ShipRenderer.DrawRectOutline(spriteBatch, _pixel, box, SettingsAccentGold * alpha, 2);
+
+        var badge = new Rectangle(box.X + 12, box.Y + (box.Height - 40) / 2, 40, 40);
+        spriteBatch.Draw(_pixel, badge, SettingsAccentGold * (0.85f * alpha));
+        var glyphSize = _font.MeasureString(achievement.Glyph) * 0.7f;
+        spriteBatch.DrawString(_font, achievement.Glyph, new Vector2(badge.Center.X - glyphSize.X / 2f, badge.Center.Y - glyphSize.Y / 2f),
+            new Color(30, 24, 10) * alpha, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+
+        var textX = badge.Right + 12;
+        spriteBatch.DrawString(_font, "ДОСТИЖЕНИЕ ОТКРЫТО", new Vector2(textX, box.Y + 10), SettingsAccentGold * alpha, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, achievement.Name, new Vector2(textX, box.Y + 26), SettingsTextPrimary * alpha, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, achievement.Description, new Vector2(textX, box.Y + 46), SettingsTextDim * alpha, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
+    }
+
+    // Shared by the draw call above and HandleMainMenuClick's own hit-test (Game1.Menu.cs) - a
+    // fixed offset from the version text's own top-left, same "one true rect" split every other
+    // click target in this project already uses.
+    private static Rectangle ChangelogButtonRect(Vector2 versionPosition) =>
+        new((int)versionPosition.X + 168, (int)versionPosition.Y - 1, 92, 15);
+
+    private static Vector2 ChangelogPanelOrigin =>
+        new((DesignWidth - ChangelogPanel.Size.X) / 2f, (DesignHeight - ChangelogPanel.Size.Y) / 2f);
 
     private void DrawCore(GameTime gameTime)
     {
@@ -2068,6 +2432,14 @@ public partial class Game1 : Game
                 // overlay (ExternalCameraPanel needs its own scissored sub-batches per quadrant
                 // anyway, which this shared, rotated/masked scene batch has no room for).
             }
+            else if (_shipStatusMonitorOpen || _commsConsoleOpen || _junctionComingSoonOpen)
+            {
+                // Direct user request ("монитор состояния корабля... консоль связи"; later "серый
+                // экран с надписью скоро" for the Junction) - same reasoning as the galactic map
+                // above: drawn later as a HUD-batch overlay, exempt from the sight-cone/room-lighting
+                // mask (a full-screen schematic/map/placeholder has no business going dark just
+                // because the character happens to be standing in shadow).
+            }
             else if (_infoPanelOpen)
                 _infoPanel.Draw(_spriteBatch, snapshot, _client.PlayerId, _infoPanelTab, InfoPanelOrigin);
             else if (myIsAtHelm)
@@ -2137,6 +2509,7 @@ public partial class Game1 : Game
                 _diagShipMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
                 diagSubStopwatch.Restart();
                 // TEMP-DIAG-END
+
 
                 if (_showTileGridOverlay)
                     _shipRenderer.DrawTileGridOverlay(_spriteBatch, snapshot, origin);
@@ -2338,6 +2711,12 @@ public partial class Game1 : Game
                 case BlockKind.Jukebox when hudSnapshot.Jukebox is { } jukeboxState:
                     _jukeboxPanel.Draw(_spriteBatch, jukeboxState, PowerPanelOrigin, totalSeconds);
                     break;
+                case BlockKind.Fabricator:
+                    _fabricatorPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, FabricatorPanelOrigin, _fabricatorOnlyAvailable, _fabricatorSortByName, _fabricatorSelectedRecipeId);
+                    break;
+                case BlockKind.Deconstructor:
+                    _deconstructorPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, DeconstructorPanelOrigin, _deconstructorSelectedItem);
+                    break;
                 case BlockKind.Battery:
                     _batteryPanel.Draw(_spriteBatch, hudSnapshot.Power, PowerPanelOrigin, totalSeconds);
                     break;
@@ -2433,22 +2812,24 @@ public partial class Game1 : Game
                     if (block is not null && state is not null)
                         _shipRenderer.DrawWallToolTargetBar(_spriteBatch, block, state, wallToolOrigin);
 
-                    // An enemy hull's own locked airlock, aimed at from inside instead of a wall
-                    // panel - AirlockOuterDoor isn't a WallBlock, so it can't go through the typed
-                    // wrapper above; the underlying bar only needs a position and a fraction.
-                    var airlockState = hudSnapshot.EnemyShip.AirlockStates.FirstOrDefault(s => s.Id == targetId);
-                    if (block is null && airlockState is not null)
+                    // An enemy hull's own locked hatch, aimed at from inside instead of a wall
+                    // panel - reported through the same WallBlockState-shaped HatchStates now
+                    // (EnemyShipRuntime, humble-soaring-cat.md), but it isn't itself a WallBlock, so
+                    // it can't go through the typed wrapper above; the underlying bar only needs a
+                    // position and a fraction.
+                    var hatchState = hudSnapshot.EnemyShip.HatchStates.FirstOrDefault(s => s.Id == targetId);
+                    if (block is null && hatchState is not null)
                     {
-                        var airlock = hudSnapshot.EnemyShip.AirlockOuterDoors.FirstOrDefault(d => d.Id == targetId);
-                        if (airlock is not null)
-                            _shipRenderer.DrawToolTargetBar(_spriteBatch, new Vector2((float)airlock.Position.X, (float)airlock.Position.Y),
-                                airlockState.Fraction, wallToolOrigin);
+                        var hatch = hudSnapshot.EnemyShip.OuterHatches.FirstOrDefault(d => d.Id == targetId);
+                        if (hatch is not null)
+                            _shipRenderer.DrawToolTargetBar(_spriteBatch, new Vector2((float)hatch.Position.X, (float)hatch.Position.Y),
+                                hatchState.Fraction, wallToolOrigin);
                     }
                 }
 
                 // Same bar, over a door the cutter is cutting through instead of a hull block -
-                // DoorToolTargetId can name either an interior Door or an AirlockOuterDoor (both
-                // share Id/X/Y but not a common base type), so both lists get checked.
+                // DoorToolTargetId can name either the player's own Door (interior or vacuum-facing,
+                // both live in hudSnapshot.Doors now) or an enemy hull's own interior Door.
                 foreach (var character in hudSnapshot.Characters)
                 {
                     if (character.DoorToolTargetId is not { } doorTargetId)
@@ -2457,7 +2838,6 @@ public partial class Game1 : Game
                     if (doorState is null)
                         continue;
                     var doorPosition = hudSnapshot.Doors.FirstOrDefault(d => d.Id == doorTargetId)?.Position
-                        ?? hudSnapshot.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorTargetId)?.Position
                         ?? hudSnapshot.EnemyShip.Doors.FirstOrDefault(d => d.Id == doorTargetId)?.Position;
                     if (doorPosition is { } position)
                         _shipRenderer.DrawDoorToolTargetBar(_spriteBatch, new Vector2((float)position.X, (float)position.Y), doorState, wallToolOrigin);
@@ -2504,9 +2884,7 @@ public partial class Game1 : Game
                     // Same card again, for a destroyed door (World.Doors.cs) - jammed open by its
                     // own hit points hitting zero, repaired the same wrench/screwdriver minigame way.
                     Vec2? DoorPosition(string doorId) =>
-                        hudSnapshot.Doors.FirstOrDefault(d => d.Id == doorId) is { } door ? door.Position
-                        : hudSnapshot.AirlockOuterDoors.FirstOrDefault(d => d.Id == doorId) is { } outer ? outer.Position
-                        : null;
+                        hudSnapshot.Doors.FirstOrDefault(d => d.Id == doorId)?.Position;
 
                     var nearbyDestroyedDoor = hudSnapshot.DoorStates.FirstOrDefault(s =>
                         s.Destroyed && DoorPosition(s.DoorId) is { } doorPos && (doorPos - repairPosition).Length() < TurretInteractionRadius);
@@ -2547,7 +2925,36 @@ public partial class Game1 : Game
                     _externalCameraPanel.DrawGrid(_spriteBatch, GraphicsDevice, hudSnapshot, cameraArea, _renderScale, totalSeconds);
             }
 
+            // Direct user request ("монитор состояния корабля... консоль связи") - same HUD-batch
+            // overlay treatment as the galactic map/external cameras above.
+            if (_shipStatusMonitorOpen)
+                _shipStatusMonitorPanel.Draw(_spriteBatch, hudSnapshot, new Rectangle(0, 0, DesignWidth, DesignHeight), _designMouse);
+            if (_commsConsoleOpen)
+            {
+                // Reuses the SAME GalaxyMapPanel instance/origin the Scientist helm tab's own
+                // pilotView already draws full-screen with (GalaxyMapPanel.cs's own doc comment,
+                // "reused wholesale as the helm's own window 1") - just this console's own
+                // independent zoom/pan fields, so it never fights the helm's over shared state.
+                _galaxyMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin, _commsConsoleMapZoom, _commsConsoleMapPanOffset,
+                    _client.PlayerId, serverTotalSeconds, pilotView: true);
+                _commsConsolePanel.DrawChrome(_spriteBatch, new Rectangle(0, 0, DesignWidth, DesignHeight), _designMouse);
+            }
+            // Direct user request ("серый экран с надписью скоро") - same HUD-batch overlay
+            // treatment as the two panels just above.
+            if (_junctionComingSoonOpen)
+                _comingSoonPanel.Draw(_spriteBatch, _pixel, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
+
             DrawTopBar(_spriteBatch, hudSnapshot);
+            // Direct user request ("сверху пишется таймер и пишется его уменьшение до спавна
+            // игрока") - shown regardless of death-screen/spectator state, since respawn keeps
+            // counting down through either one.
+            if (hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { RespawnSecondsRemaining: > 0f } respawningMe)
+                DrawRespawnCountdown(_spriteBatch, respawningMe.RespawnSecondsRemaining);
+            // Direct user request ("буквально как в Стиме") - drawn regardless of what else is open
+            // (pause menu, a block, spectator mode) so a toast can never be silently missed just
+            // because the player happened to have a panel open the instant it unlocked.
+            if (_achievementTracker.CurrentToast is { } toastAchievement)
+                DrawAchievementToast(_spriteBatch, toastAchievement, _achievementTracker.CurrentToastRemainingSeconds);
             if (_crewPanelOpen)
                 _crewPanel.Draw(_spriteBatch, hudSnapshot, CrewPanelOrigin, _client.PlayerId);
             // HUD batch rather than the scene batch InfoPanel uses - it's never rotated/zoomed or
@@ -2597,8 +3004,11 @@ public partial class Game1 : Game
                 TurretReticle.Draw(_spriteBatch, _pixel, new Vector2(_designMouse.X, _designMouse.Y), new Color(190, 225, 240));
 
             // Last of all - the one overlay that's meant to sit over literally everything else,
-            // including the reticle (there's nothing to aim at while it's up).
-            if (_pauseMenuOpen && _inGameSettingsOpen)
+            // including the reticle (there's nothing to aim at while it's up). The death screen
+            // takes priority over the pause menu - dying is the more urgent thing to react to.
+            if (hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { Health: <= 0f } && !_spectatorMode)
+                _deathScreenPanel.Draw(_spriteBatch, DeathScreenPanelOrigin, _designMouse);
+            else if (_pauseMenuOpen && _inGameSettingsOpen)
                 DrawSettingsScreen(totalSeconds);
             else if (_pauseMenuOpen)
                 _pauseMenuPanel.Draw(_spriteBatch, PauseMenuPanelOrigin, _designMouse, _sessionStartedFromEditor);

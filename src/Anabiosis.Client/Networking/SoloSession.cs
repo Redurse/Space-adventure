@@ -29,7 +29,7 @@ public sealed class SoloSession : IDisposable
     // game with the chosen hull. Either way the embedded server keeps autosaving to the standard
     // slot on every docking.
     public SoloSession(ShipKind shipKind = ShipKind.Custom, SaveGame? loadFrom = null, int? listenPort = null,
-        CustomShipDefinition? customShip = null, bool isTutorial = false)
+        CustomShipDefinition? customShip = null, bool isTutorial = false, int maxPlayers = int.MaxValue)
     {
         // A tutorial run never touches the real autosave slot - null disables persistence entirely,
         // same as the test suite's own embedded servers.
@@ -45,7 +45,25 @@ public sealed class SoloSession : IDisposable
         // Opened only after the tick loop is running, so a player who joins in the same instant is
         // accepted by a server that is already stepping the world.
         if (listenPort is { } port)
-            _host = new NetworkHost(_server, port);
+            _host = new NetworkHost(_server, port, maxPlayers);
+    }
+
+    // Direct user request (screenshot 3 of the Barotrauma reference set) - the host connects to a
+    // GameServer that hasn't built a World yet at all (GameServer's own lobby constructor). Nothing
+    // "starts" here the way the constructor above starts a round immediately - the round only
+    // actually begins once the host's own LobbyStartRoundPressed command reaches the server (the
+    // new lobby screen's "НАЧАТЬ" button), same embedded-server-plus-listen-socket shape as before.
+    public SoloSession(string lobbyServerName, int maxPlayers, int listenPort)
+    {
+        _server = new GameServer(lobbyServerName, maxPlayers, SaveStore.DefaultPath);
+        PlayerId = _server.Connect(_transport);
+        _serverThread = new Thread(() => _server.Run(_cts.Token))
+        {
+            IsBackground = true,
+            Name = "EmbeddedServer",
+        };
+        _serverThread.Start();
+        _host = new NetworkHost(_server, listenPort, maxPlayers);
     }
 
     public void Dispose()

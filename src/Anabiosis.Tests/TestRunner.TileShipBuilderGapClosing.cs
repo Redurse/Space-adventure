@@ -110,6 +110,60 @@ internal static partial class TestRunner
         return roomA is not null && roomB is not null && definition.Doors.Count == 0;
     }
 
+    // ---- Regression: two rooms separated by a wall THICKER than the usual 1 tile (2 tiles here).
+    // Each room's own step-3.5 wall-ring absorption independently swallows ONE column of that 2-tile
+    // gap into its own Rects - a normal, correct absorption when looked at in isolation (its own
+    // IsWallLine check sees a clean, uniformly-Solid line the whole length of its own side). But the
+    // two absorbed columns then sit flush against each other, so TileGridRasterizer.FromRooms's own
+    // "one wall tile per shared boundary, placed by whichever side is a LEADING edge" rule reads them
+    // as an ordinary 1-tile interior seam and skips walling the TRAILING column - silently losing it
+    // as real wall material even though it's genuinely Solid, separate material in the source grid.
+    // Confirmed against a real player-built ship (two single-column rooms 2 tiles apart) - direct
+    // user report ("в середине корабля до сих пор нет некоторых стен, хотя их коллизия есть").
+    // BuildDefinition's own step-3.7 self-verification catch-all (re-rasterize the rooms this method
+    // is about to return and patch anything that doesn't come back Solid into SupplementalWallTiles)
+    // is the fix - this asserts every originally-Solid tile in the 2-tile gap survives a real
+    // TileGridRasterizer.FromRooms + SupplementalWallTiles round trip, the same one Ship.
+    // FromCustomDefinition itself does. ----
+    private static bool TileShipBuilder_TwoTileThickWallBetweenRooms_NeitherColumnIsDropped()
+    {
+        var tiles = new TileGrid();
+        for (var y = 0; y < 3; y++)
+        {
+            tiles.SetFloor(new TileCoord(0, y), true); // room A - a single floor column
+            tiles.SetFloor(new TileCoord(1, y), true);
+            tiles.SetWall(new TileCoord(1, y), TileWallKind.Solid); // 2-tile-thick gap...
+            tiles.SetFloor(new TileCoord(2, y), true);
+            tiles.SetWall(new TileCoord(2, y), TileWallKind.Solid); // ...between here...
+            tiles.SetFloor(new TileCoord(3, y), true); // room B - a single floor column
+        }
+
+        var (definition, errors) = BuildTileDefinition(tiles);
+        if (definition is null || errors.Count > 0)
+            return false;
+        if (definition.Rooms.Count != 2)
+            return false;
+
+        // Re-rasterize exactly the way Ship.FromCustomDefinition does: Rects through
+        // TileGridRasterizer.FromRooms, then paint SupplementalWallTiles on top.
+        var rooms = definition.Rooms.Select(r => new Room(r.Id, r.Name, r.Rects)).ToList();
+        var rebuilt = TileGridRasterizer.FromRooms(rooms, new List<Door>());
+        foreach (var coord in definition.SupplementalWallTiles)
+        {
+            rebuilt.SetFloor(coord, true);
+            rebuilt.SetWall(coord, TileWallKind.Solid);
+        }
+
+        for (var y = 0; y < 3; y++)
+        {
+            if (rebuilt.CellAt(new TileCoord(1, y)) is not { Wall: TileWallKind.Solid })
+                return false;
+            if (rebuilt.CellAt(new TileCoord(2, y)) is not { Wall: TileWallKind.Solid })
+                return false;
+        }
+        return true;
+    }
+
     // ---- M88 (humble-soaring-cat.md, non-rectangular compartments) - a genuinely L-shaped region
     // (a 4x2 arm plus a 2x2 arm below its left half - a step, not a rectangle) must decompose into
     // a multi-rect CustomRoomDef instead of being rejected, AND still gap-close/door-connect

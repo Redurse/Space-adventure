@@ -323,14 +323,9 @@ public partial class Game1
     // and multiplying those by PixelsPerUnit put the exhaust some eighty screens past the right-hand
     // edge. It was never too dim; it was never in the picture. The camera and the sight mask have
     // always done this conversion, and these two draws were the only things that skipped it.
-    private static Vector2 BodyPixels(WorldSnapshot snapshot, CharacterState me, Vector2 origin)
-    {
-        var here = new Vec2(me.X, me.Y);
-        var local = me.IsOutside
-            ? ShipLocalFrame.ToLocal(here, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms))
-            : here;
-        return origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
-    }
+    private static Vector2 BodyPixels(WorldSnapshot snapshot, CharacterState me, Vector2 origin) =>
+        ShipRenderer.LocalToScreen(
+            ShipLocalFrame.CharacterToLocal(me, snapshot.ShipField, ShipLocalFrame.GetHullCenter(snapshot.Rooms)), origin);
 
     private void DrawSuitLamp(WorldSnapshot snapshot, CharacterState me, Vector2 origin, Matrix sceneTransform)
     {

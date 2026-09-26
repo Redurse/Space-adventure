@@ -39,11 +39,13 @@ public partial class Game1
     // Applied to the whole scene batch, so one number moves the camera, the world and the hit
     // tests together instead of each renderer growing a scale parameter.
     private float SceneZoom(WorldSnapshot snapshot) =>
-        MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen
-            ? TurretViewZoom
-            : ShipBuildOverviewActive(snapshot)
-                ? ShipOverviewZoom(snapshot)
-                : 1f;
+        _spectatorMode
+            ? _spectatorZoom
+            : MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen
+                ? TurretViewZoom
+                : ShipBuildOverviewActive(snapshot)
+                    ? ShipOverviewZoom(snapshot)
+                    : 1f;
 
     // Content-каталог отсеков - "видно весь корабль" build screen: talking to the Shipwright pulls
     // the whole scene back far enough to fit the entire hull on screen at once (plus a margin for
@@ -95,7 +97,16 @@ public partial class Game1
     {
         var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);
         Vec2 anchorLocal;
-        if (ShipBuildOverviewActive(snapshot))
+        if (_spectatorMode)
+        {
+            // Direct user request ("экран смерти... наблюдать") - a dead character stays exactly
+            // where they dropped (World.Movement.cs's own StepCharacters gate), so following `me`
+            // any further would just stare at a corpse; _spectatorAnchor is panned directly instead
+            // (Game1.Input.cs's own Update handling of WASD once spectating), overriding every other
+            // camera mode below - even a corpse still seated at a manned turret/helm.
+            anchorLocal = _spectatorAnchor;
+        }
+        else if (ShipBuildOverviewActive(snapshot))
         {
             // Content-каталог отсеков - centered on the hull itself rather than the character, who
             // is off talking to the Shipwright somewhere on the station and isn't the point of this
@@ -117,9 +128,7 @@ public partial class Game1
         }
         else
         {
-            anchorLocal = me.IsOutside
-                ? ShipLocalFrame.ToLocal(new Vec2(me.X, me.Y), snapshot.ShipField, hullCenter)
-                : new Vec2(me.X, me.Y);
+            anchorLocal = ShipLocalFrame.CharacterToLocal(me, snapshot.ShipField, hullCenter);
         }
         // _cameraLookOffset (Barotrauma-style cursor pan) only ever shifts where the camera itself
         // centers on screen - never the returned Anchor, which BuildVisibilityMask uses as the
@@ -165,9 +174,7 @@ public partial class Game1
         else
         {
             var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);
-            var baseAnchor = me.IsOutside
-                ? ShipLocalFrame.ToLocal(new Vec2(me.X, me.Y), snapshot.ShipField, hullCenter)
-                : new Vec2(me.X, me.Y);
+            var baseAnchor = ShipLocalFrame.CharacterToLocal(me, snapshot.ShipField, hullCenter);
             target = CursorLookAheadFrom(snapshot, baseAnchor, CameraLookAheadFactor, CameraLookAheadMaxDistance);
         }
 

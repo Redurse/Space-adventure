@@ -357,6 +357,8 @@ public sealed partial class GalaxyMapPanel
             HudIcons.DrawRingArc(spriteBatch, _pixel, destScreen, 9f, 0f, 360f, Color.LimeGreen, 16, 2f);
             spriteBatch.Draw(_pixel, new Vector2(destScreen.X - 1, destScreen.Y - 9), null, Color.LimeGreen, 0f, Vector2.Zero, new Vector2(2f, 18f), SpriteEffects.None, 0f);
             spriteBatch.Draw(_pixel, new Vector2(destScreen.X - 9, destScreen.Y - 1), null, Color.LimeGreen, 0f, Vector2.Zero, new Vector2(18f, 2f), SpriteEffects.None, 0f);
+
+            DrawAutopilotGhostHull(spriteBatch, snapshot, destScreen, new Vec2(destX, destY), zoom, snapshot.Autopilot.PredictedFacingDegrees);
         }
 
         // Masked down to a round porthole last (M48 follow-up - "круговой обзор был только на

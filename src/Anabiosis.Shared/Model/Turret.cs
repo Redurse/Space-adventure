@@ -29,7 +29,15 @@ public sealed record Turret(
     float RechargePerPowerUnitPerSecond = 0f, // laser only — cooling rate, scales with WeaponCharger allocation
     TurretMountSide MountSide = TurretMountSide.Aft,
     int PelletsPerBurst = 1,               // MachineGun only — how many individually-traced pellets one trigger-pull fires
-    float PelletSpreadDegrees = 0f)        // MachineGun only — random aim jitter applied to each pellet
+    float PelletSpreadDegrees = 0f,        // MachineGun only — random aim jitter applied to each pellet
+    // Direct user request (screenshot of a turret mount built out of wall tiles - "реальные такие
+    // границы... при наведении мышкой в игре") - the periscope's own real tile footprint shrank
+    // from a plain 3x3 square to a 1x3 column (CustomDeviceFootprint.Size), so which way it's
+    // turned now actually changes its shape - unlike every other rotatable-but-square kind before
+    // it, a turret's own hover/click rect (Game1.Interactables.cs/Game1.Input.cs) needs to know
+    // this to stay correct client-side, the same reason HelmConsole/NavigationConsole already carry
+    // their own Rotated flag through to the snapshot instead of leaving it editor-only cosmetic.
+    bool Rotated = false)
 {
     public Vec2 PeriscopePosition => new(PeriscopeX, PeriscopeY);
 }

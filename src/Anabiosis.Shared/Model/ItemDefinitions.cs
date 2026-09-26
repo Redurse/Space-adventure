@@ -22,11 +22,22 @@ public static class ItemDefinitions
         ItemType.Mineral => 1,
         ItemType.OxygenTank => 1,
         ItemType.WeldingTank => 1,
+        ItemType.IronOre or ItemType.NickelOre or ItemType.ZincOre or ItemType.CopperOre or ItemType.TitaniumOre
+            or ItemType.UraniumOre or ItemType.Silicon or ItemType.Carbon or ItemType.AluminumOre or ItemType.PlastalloyOre => 1,
+        ItemType.SteelPlate or ItemType.TitaniumPlate or ItemType.CopperCable or ItemType.Plastic or ItemType.Plastalloy => 1,
         _ when ComponentDefinitions.ComponentKindFor(type) is not null => 1, // small electronics box
         _ => 0, // AmmoCrate, Spacesuit
     };
 
     public static bool IsHoldable(ItemType type) => HandsRequired(type) > 0;
+
+    // Raw, unrefined mining output only - not the FabricatorCatalog.cs refined materials crafted
+    // FROM these (SteelPlate/TitaniumPlate/CopperCable/Plastic/Plastalloy), which never come out of
+    // an OreDeposit directly. World.Trade.cs's MiningStationOreSellBonus checks this - a mining
+    // outpost pays extra for raw ore, not for goods a Fabricator already added value to.
+    public static bool IsRawOre(ItemType type) => type is ItemType.Mineral or ItemType.IronOre or ItemType.NickelOre
+        or ItemType.ZincOre or ItemType.CopperOre or ItemType.TitaniumOre or ItemType.UraniumOre
+        or ItemType.Silicon or ItemType.Carbon or ItemType.AluminumOre or ItemType.PlastalloyOre;
 
     // The 14 purchasable component items delegate to ComponentDefinitions - the ComponentKind
     // they install as (World.ComponentMounts.cs, M23) already owns the one true name/label for
@@ -56,6 +67,21 @@ public static class ItemDefinitions
         ItemType.Mineral => "минеральная руда",
         ItemType.OxygenTank => "кислородный баллон",
         ItemType.WeldingTank => "сварочный баллон",
+        ItemType.IronOre => "железная руда",
+        ItemType.NickelOre => "никелевая руда",
+        ItemType.ZincOre => "цинковая руда",
+        ItemType.CopperOre => "медная руда",
+        ItemType.TitaniumOre => "титановая руда",
+        ItemType.UraniumOre => "урановая руда",
+        ItemType.Silicon => "кремний",
+        ItemType.Carbon => "углерод",
+        ItemType.AluminumOre => "алюминиевая руда",
+        ItemType.PlastalloyOre => "пласталивая руда",
+        ItemType.SteelPlate => "стальная пластина",
+        ItemType.TitaniumPlate => "титановая пластина",
+        ItemType.CopperCable => "медный кабель",
+        ItemType.Plastic => "пластик",
+        ItemType.Plastalloy => "пласталь",
         _ => type.ToString(),
     };
 
@@ -85,6 +111,21 @@ public static class ItemDefinitions
         ItemType.Mineral => "Ру",
         ItemType.OxygenTank => "О2",
         ItemType.WeldingTank => "Сб",
+        ItemType.IronOre => "Fe",
+        ItemType.NickelOre => "Ni",
+        ItemType.ZincOre => "Zn",
+        ItemType.CopperOre => "Cu",
+        ItemType.TitaniumOre => "Ti",
+        ItemType.UraniumOre => "U",
+        ItemType.Silicon => "Si",
+        ItemType.Carbon => "C",
+        ItemType.AluminumOre => "Al",
+        ItemType.PlastalloyOre => "Пл.р",
+        ItemType.SteelPlate => "СП",
+        ItemType.TitaniumPlate => "ТП",
+        ItemType.CopperCable => "МК",
+        ItemType.Plastic => "Пк",
+        ItemType.Plastalloy => "Пл",
         _ => "?",
     };
 }

@@ -12,7 +12,11 @@ namespace Anabiosis.Shared.Protocol;
 public sealed record EnemyShipSnapshot(
     IReadOnlyList<Room> Rooms,
     IReadOnlyList<Door> Doors,
-    IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors,
+    // The hull's two locked hatches (humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный
+    // тип") - ordinary vacuum-facing Doors (LeadsToVacuum), kept in their own list rather than
+    // folded into Doors above since a hatch is never toggleable, only cuttable (see
+    // EnemyShipLayout.cs's own doc comment on OuterHatches).
+    IReadOnlyList<Door> OuterHatches,
     string ClassName,
     IReadOnlyList<RoomOxygenState> RoomOxygen,
     Vec2 Position,
@@ -23,7 +27,7 @@ public sealed record EnemyShipSnapshot(
     // state actually needs to cross the wire, same split Station/Ship's own wall blocks already use.
     IReadOnlyList<WallBlock> WallBlocks,
     IReadOnlyList<WallBlockState> WallBlockStates,
-    // The hull's own two locked hatches - same per-instance Hp split as WallBlockStates above
-    // (EnemyShipRuntime's own dictionary), reusing WallBlockState's shape since a hatch takes
-    // damage/reports Breached exactly the same way a wall panel does.
-    IReadOnlyList<WallBlockState> AirlockStates);
+    // The hull's own two locked hatches' Hp - folded into the SAME _wallBlockHp dictionary as
+    // WallBlockStates now (EnemyShipRuntime, humble-soaring-cat.md), reusing WallBlockState's
+    // shape since a hatch takes damage/reports Breached exactly the same way a wall panel does.
+    IReadOnlyList<WallBlockState> HatchStates);

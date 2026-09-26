@@ -47,7 +47,9 @@ public static partial class ItemIcons
         or ItemType.AutoDoorController or ItemType.AlarmKlaxon or ItemType.LightToggle
         // Direct user request ("сделай картинки предметов интереснее и качественнее") - the five
         // types that used to fall through to InventoryPanel's plain coloured square + label.
-        or ItemType.Axe or ItemType.GoshaScrewdriver or ItemType.BeltBag or ItemType.IdCard or ItemType.Radio;
+        or ItemType.Axe or ItemType.GoshaScrewdriver or ItemType.BeltBag or ItemType.IdCard or ItemType.Radio
+        // Direct user request ("добавим множество предметов материалов") - ItemIcons.Materials.cs.
+        || HasMaterialIcon(type);
 
     // rotation: the angle to actually draw the tool at, in the same frame ShipRenderer's
     // HeldToolOffset/facing already uses - null keeps the fixed "as if held" tilt every inventory
@@ -62,6 +64,9 @@ public static partial class ItemIcons
             DrawComponentChip(spriteBatch, pixel, rect, componentKind);
             return;
         }
+
+        if (DrawMaterialIcon(spriteBatch, pixel, type, rect))
+            return;
 
         switch (type)
         {

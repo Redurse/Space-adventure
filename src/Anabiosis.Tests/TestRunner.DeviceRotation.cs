@@ -3,14 +3,18 @@ using Anabiosis.Shared.Model;
 internal static partial class TestRunner
 {
     // Direct user request ("навигационная панель и сканер были размерами в 3 на 2 тайла... его
-    // можно поворачивать") - Helm/Navigation are now a real 3x2 (not 1x1 or square) footprint, and
-    // TileShipBuilder.BuildDefinition must export the device's CENTER using whichever of Width/
+    // можно поворачивать") - Helm/Navigation used to be a real 3x2 (not 1x1 or square) footprint, so
+    // TileShipBuilder.BuildDefinition had to export the device's CENTER using whichever of Width/
     // Height actually applies once a placed instance's own rotation flag is taken into account.
-    private static bool CustomDeviceFootprint_HelmAndNavigation_AreThreeByTwo()
+    // Direct user follow-up ("данные блоки можно ставить на любых 4 тайлах в виде квадрата") -
+    // shrunk to a plain 2x2 square once free-floor placement became a fallback rather than the only
+    // option (CustomDeviceFootprint.cs's own doc comment) - width/height still swap under rotation
+    // in principle, they just no longer visibly differ since both are 2.
+    private static bool CustomDeviceFootprint_HelmAndNavigation_AreTwoByTwo()
     {
         var (helmWidth, helmHeight) = CustomDeviceFootprint.Size(CustomDeviceKind.Helm);
         var (navWidth, navHeight) = CustomDeviceFootprint.Size(CustomDeviceKind.Navigation);
-        return helmWidth == 3 && helmHeight == 2 && navWidth == 3 && navHeight == 2;
+        return helmWidth == 2 && helmHeight == 2 && navWidth == 2 && navHeight == 2;
     }
 
     private static TileGrid BuildSmallRoomWithOneDeviceTile(TileCoord deviceAnchor)
@@ -23,34 +27,38 @@ internal static partial class TestRunner
         return tiles;
     }
 
-    private static bool TileShipBuilder_UnrotatedHelm_ExportsCenterUsingAuthoredWidthHeight()
+    // Direct user follow-up on the test above - Helm/Navigation are now square (2x2), so they no
+    // longer exercise this rotation-aware center-export mechanism at all (swapping equal dimensions
+    // changes nothing). Switched to ConstructionBench (2,3), a real non-square rotatable kind, to
+    // keep testing the actual mechanism rather than deleting the coverage.
+    private static bool TileShipBuilder_UnrotatedConstructionBench_ExportsCenterUsingAuthoredWidthHeight()
     {
         var anchor = new TileCoord(1, 1);
         var tiles = BuildSmallRoomWithOneDeviceTile(anchor);
-        var deviceKinds = new Dictionary<TileCoord, CustomDeviceKind> { [anchor] = CustomDeviceKind.Helm };
+        var deviceKinds = new Dictionary<TileCoord, CustomDeviceKind> { [anchor] = CustomDeviceKind.ConstructionBench };
         var (definition, errors) = TileShipBuilder.BuildDefinition(
             tiles, deviceKinds, new Dictionary<TileCoord, TileShipBuilder.EngineSpec>(), "Тест", 0f);
         if (definition is null || errors.Count > 0)
             return false;
-        var device = definition.Devices.SingleOrDefault(d => d.Kind == CustomDeviceKind.Helm);
-        // Unrotated 3x2: center = anchor + (1.5, 1.0).
-        return device is not null && !device.Rotated && MathF.Abs(device.X - 2.5f) < 0.01f && MathF.Abs(device.Y - 2f) < 0.01f;
+        var device = definition.Devices.SingleOrDefault(d => d.Kind == CustomDeviceKind.ConstructionBench);
+        // Unrotated 2x3: center = anchor + (1.0, 1.5).
+        return device is not null && !device.Rotated && MathF.Abs(device.X - 2f) < 0.01f && MathF.Abs(device.Y - 2.5f) < 0.01f;
     }
 
-    private static bool TileShipBuilder_RotatedHelm_ExportsCenterUsingSwappedWidthHeight()
+    private static bool TileShipBuilder_RotatedConstructionBench_ExportsCenterUsingSwappedWidthHeight()
     {
         var anchor = new TileCoord(1, 1);
         var tiles = BuildSmallRoomWithOneDeviceTile(anchor);
-        var deviceKinds = new Dictionary<TileCoord, CustomDeviceKind> { [anchor] = CustomDeviceKind.Helm };
+        var deviceKinds = new Dictionary<TileCoord, CustomDeviceKind> { [anchor] = CustomDeviceKind.ConstructionBench };
         var deviceRotations = new Dictionary<TileCoord, bool> { [anchor] = true };
         var (definition, errors) = TileShipBuilder.BuildDefinition(
             tiles, deviceKinds, new Dictionary<TileCoord, TileShipBuilder.EngineSpec>(), "Тест", 0f,
             deviceRotations: deviceRotations);
         if (definition is null || errors.Count > 0)
             return false;
-        var device = definition.Devices.SingleOrDefault(d => d.Kind == CustomDeviceKind.Helm);
-        // Rotated (swapped to 2x3): center = anchor + (1.0, 1.5).
-        return device is not null && device.Rotated && MathF.Abs(device.X - 2f) < 0.01f && MathF.Abs(device.Y - 2.5f) < 0.01f;
+        var device = definition.Devices.SingleOrDefault(d => d.Kind == CustomDeviceKind.ConstructionBench);
+        // Rotated (swapped to 3x2): center = anchor + (1.5, 1.0).
+        return device is not null && device.Rotated && MathF.Abs(device.X - 2.5f) < 0.01f && MathF.Abs(device.Y - 2f) < 0.01f;
     }
 
     // Direct user bug report ("в кокпите в самой игре устройства не повернуты как в редакторе") -
@@ -86,7 +94,7 @@ internal static partial class TestRunner
         tiles.SetWall(new TileCoord(10, 5), TileWallKind.Door);
 
         var helmAnchor = new TileCoord(0, 0);
-        var navAnchor = new TileCoord(2, 0); // unrotated Helm is 3 wide - stay clear of it
+        var navAnchor = new TileCoord(2, 0); // unrotated Helm is 2 wide - stay clear of it
         tiles.PlaceDevice(helmAnchor, "helm");
         tiles.PlaceDevice(new TileCoord(navAnchor.X, navAnchor.Y), "nav");
         var deviceKinds = new Dictionary<TileCoord, CustomDeviceKind>
@@ -106,8 +114,9 @@ internal static partial class TestRunner
                 continue; // already placed above with a fixed id
             tiles.PlaceDevice(anchor, $"device-{anchor.X}-{anchor.Y}");
         }
-        // Helm rotated (2x3), Navigation left unrotated (3x2) - proves the flag travels per-device,
-        // not as some ship-wide toggle.
+        // Helm rotated, Navigation left unrotated - proves the flag travels per-device, not as some
+        // ship-wide toggle (both are square now, so the flag has no visible width/height effect of
+        // its own here, but it still has to survive the round trip independently per device).
         var deviceRotations = new Dictionary<TileCoord, bool> { [helmAnchor] = true };
 
         var (definition, errors) = TileShipBuilder.BuildDefinition(

@@ -36,8 +36,6 @@ public static class Occluders
 
     public static SightGap ToGap(Door door) => new(door.Left, door.Top, door.Right, door.Bottom);
 
-    public static SightGap ToGap(AirlockOuterDoor door) => new(door.Left, door.Top, door.Right, door.Bottom);
-
     // Direct user follow-up ("да давай" - digging into Маска's own remaining allocation pressure
     // after the wall-bleed fringe was confirmed cheap) - AddHorizontal/AddVertical run once per
     // merged wall run, i.e. dozens of times per TileOccluders.Build call, and each used to allocate

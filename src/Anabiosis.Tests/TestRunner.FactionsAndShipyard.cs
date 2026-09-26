@@ -119,6 +119,14 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
+        // WinBattleAt's real-time combat can open a hull breach wide enough to trigger the same
+        // "unsuited in a passable breach dies in 3 seconds" fast ramp an EVA character already
+        // risks (World.Eva.cs's IsFullyExposedToVacuum) - unrelated to door state itself, but this
+        // fight only started actually running to completion once BoardEnemyShip's sibling
+        // door-default fallout (TestRunner.Boarding.cs) stopped it from dying to something else
+        // first, so this risk is only now actually exercised. Same defensive suit-up already used
+        // by World_Station_HostileStandingTriggersDefensiveSquadronOnApproach for the same reason.
+        EquipSuit(world, 1); // survives any breaches the fight opens up
         WinBattleAt(world, "sector-alpha"); // FreeFleet space
 
         return world.GetStanding(FactionId.FreeFleet) == FactionDefinitions.StandingPerShipDestroyed
@@ -260,14 +268,14 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         MineOre(world, 1);
 
-        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.Mineral);
+        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.IronOre);
         var creditsBefore = world.Credits;
 
         DockAtStation(world, "mining-outpost");
         world.ApplyCommand(1, new ClientCommand(1, SellSlotIndex: slotIndex));
 
         var gained = world.Credits - creditsBefore;
-        return gained > TradeCatalog.Find(ItemType.Mineral)!.SellPrice;
+        return gained > TradeCatalog.Find(ItemType.IronOre)!.SellPrice;
     }
 
     // Enough Consortium losses hand their own frontier station to FreeFleet outright

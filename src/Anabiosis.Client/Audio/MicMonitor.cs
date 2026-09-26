@@ -50,7 +50,10 @@ public sealed class MicMonitor
 
         try
         {
-            _capture = new WasapiCapture(device, false, 100);
+            // Same event-driven-instead-of-polling fix as VoiceCapture.BeginTalking (its own doc
+            // comment has the full reasoning) - this is the identical capture setup, just for the
+            // Settings screen's own local self-listen loopback instead of the network voice path.
+            _capture = new WasapiCapture(device, true, 100);
             _sampleRate = 0; // forced fresh on the first buffer, since the real rate is only known once DataAvailable fires
             _capture.DataAvailable += OnDataAvailable;
             _capture.StartRecording();

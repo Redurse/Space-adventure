@@ -54,27 +54,48 @@ public sealed partial class World
     // never settling, since plain sign(error) bang-bang keeps accelerating the spin right up until
     // the moment it crosses the target, by which point it's already too fast to stop there).
     private const float AutopilotTurnSettleAngularVelocityDegreesPerSecond = 10f;
-    // Safety margin on the braking-distance estimate (speed^2 / (2*decel)) - starts slowing down a
-    // little earlier than the bare physics would strictly require, so it never overshoots the
-    // destination before EngageAutoStabilize's own flat deceleration can catch up.
-    private const float AutopilotBrakingSafetyFactor = 1.3f;
+    // Direct user request ("как в cosmoteer... как замедлиться") - a classic Reynolds "Arrive"
+    // steering behavior replaces the old discrete seek-then-brake state machine below: desired SPEED
+    // (not just direction) ramps linearly from ShipMaxSpeed down to 0 as distance shrinks inside this
+    // radius, instead of switching abruptly between "full seek" and "full EngageAutoStabilize brake"
+    // at a computed braking-distance threshold. That discrete switch needed its own sticky
+    // _autopilotBraking latch plus a from-scratch un-stick rule to avoid oscillating in an endless
+    // orbit or freezing short of the target (both found live via scratch Diagnostic() traces) -
+    // continuous speed control never enters either failure mode, since "how hard to brake" is
+    // recomputed smoothly every tick from the actual velocity error rather than a one-time decision.
+    private const float AutopilotSlowingRadius = 130f;
+    // How much velocity error (units/s) saturates the throttle/strafe stick to full - below this,
+    // the stick scales down proportionally instead of slamming to ±1, which is what actually makes
+    // the final approach smooth rather than bang-bang. Reached whenever the ship is already close to
+    // its own desired velocity (cruising well, or nearly arrived) - a small fraction of ShipMaxSpeed.
+    private const float AutopilotVelocityErrorSaturation = 15f;
     // Close enough, and slow enough, to call it arrived - the same order of magnitude as
     // NpcShipRuntime's own NpcWaypointArriveRadius (World.NpcShips.cs), a little tighter since the
     // player's own destination click is a precise point, not a wide station/waypoint.
     private const float AutopilotArriveRadius = 6f;
     private const float AutopilotArriveSpeed = 1.5f;
+    // Above this speed, a hull with real strafe/reverse capability (hasRealEngines below) trusts its
+    // own current velocity direction for the default facing rather than the raw bearing to target -
+    // found live via a scratch Diagnostic() trace: right at AutopilotArriveSpeed(1.5) the ship's own
+    // small residual settling wobble near arrival was still enough to swing the nose wildly; a wider
+    // margin only matters for how much of that last-second wobble leaks into facing, not for the
+    // main cruise/brake phase (which stays well above this either way).
+    private const float AutopilotVelocityHeadingThreshold = 8f;
+    // Direct user request ("около конца маршрута призрак начинает поворачиваться, а так ведь быть
+    // не должно") - throttleVector's own bearing (the facing target for a hull with no real
+    // strafe/reverse capability) gets genuinely noisy right near arrival: the velocity-error vector
+    // it's derived from is small there, so tiny per-tick fluctuations in the ship's own residual
+    // drift swing its DIRECTION disproportionately, even though its magnitude barely matters any
+    // more. Found live via a scratch Diagnostic() trace on an off-axis destination (not perfectly
+    // aligned with the ship's own start heading, closer to a real map click): the real ship's own
+    // RotationDegrees oscillated ~13° for several seconds near arrival, chasing that noise with
+    // HelmTurnAngularAccelerationPerSecond's own strong angular response. This exponential smoothing
+    // factor (how much of the raw-vs-smoothed gap closes each tick) turns that into a calmer, damped
+    // signal ComputeTurnInput can actually settle against, without touching that bang-bang's own
+    // already-tuned logic.
+    private const float AutopilotFacingSmoothingPerTick = 0.12f;
 
     private Vec2? _autopilotDestination;
-    // Once StepAutopilot decides distance is inside braking range, it commits to braking for the
-    // rest of this destination rather than re-deciding fresh every tick - found live via a scratch
-    // Diagnostic() trace: a fresh distance-vs-brakingDistance comparison every tick let the ship
-    // settle into an endless tight orbit a couple of units off the target, because one tick's brake
-    // shed enough speed to shrink brakingDistance below the (slightly overshot, due to the ship's
-    // own momentum) remaining distance, flipping back to full-seek and re-accelerating toward the
-    // target, which immediately re-triggered braking again next tick, forever. Reset whenever a
-    // fresh destination is set (SetAutopilotDestination) or the autopilot goes idle (CancelAutopilot/
-    // arrival) so the next pursuit gets its own fresh decision.
-    private bool _autopilotBraking;
     // Non-null only for the tick(s) the player actually holds RMB - World.cs's own command handler
     // sets this fresh from ClientCommand.DesiredFacingDegrees every tick and clears it the instant
     // they let go, so releasing RMB always falls straight back to "face the direction of travel"
@@ -88,12 +109,30 @@ public sealed partial class World
     // autopilot this way, but a test exercising the stick in isolation needs to. Consumed once, the
     // same tick it's set, same "one-shot" shape as every edge-triggered ClientCommand field.
     private bool _debugSkipAutopilotThisTick;
+    // Last desiredBearingDegrees StepAutopilot actually steered toward - relayed to the client via
+    // CreateAutopilotState() so the destination ghost's predicted facing matches reality instead of
+    // a separately-guessed (and near-arrival, unstable) approximation. Stays at whatever it last
+    // was while idle (no destination) - harmless, since AutopilotState.IsActive gates whether the
+    // client draws the ghost at all.
+    private float? _autopilotLastPredictedFacingDegrees;
+    // Exponentially-smoothed throttleVector bearing (no-real-engines facing target only) - see
+    // AutopilotFacingSmoothingPerTick's own doc comment. Reset whenever a fresh destination is set
+    // so a new pursuit doesn't inherit a stale smoothed heading from the last one.
+    private float? _autopilotSmoothedNoEnginesBearing;
+    // Direct user bug report ("призрак поворачивается вместе с кораблём... конечный поворот
+    // меняется, а не должен") - a hasRealEngines hull's own default (non-RMB-override) facing target,
+    // committed ONCE (the first tick after a fresh destination, or the instant RMB lets go) instead
+    // of recomputed every tick from the live travel/velocity direction, both of which genuinely
+    // change over the course of a real flight. Only ever set/read for a hull with real strafe -
+    // see StepAutopilot's own doc comment on why a no-real-engines hull keeps its existing adaptive
+    // behavior instead. Reset alongside _autopilotSmoothedNoEnginesBearing above.
+    private float? _autopilotCommittedFacingDegrees;
 
     public bool IsAutopilotActive => _autopilotDestination is not null;
     public Vec2? AutopilotDestination => _autopilotDestination;
 
     private AutopilotState CreateAutopilotState() =>
-        new(_autopilotDestination is not null, (float?)_autopilotDestination?.X, (float?)_autopilotDestination?.Y);
+        new(_autopilotDestination is not null, (float?)_autopilotDestination?.X, (float?)_autopilotDestination?.Y, _autopilotLastPredictedFacingDegrees);
 
     // Direct user request ("игрок сможет указать на карте точку куда корабль должен долететь") -
     // the one entry point a fresh destination click goes through. Snapped into field bounds and, if
@@ -122,14 +161,15 @@ public sealed partial class World
             clamped = AsteroidShape.SurfacePoint(asteroid, clamped, clearance);
             break; // good enough - a click landing inside two overlapping rocks at once doesn't happen in practice
         }
-        // Only a genuinely NEW point resets the braking latch below - re-affirming the SAME
+        // Only a genuinely NEW point resets the smoothed facing below - re-affirming the SAME
         // destination (TestRunner.Core.cs's own SteerToward resends it every tick, inherited from
-        // the old dumb-pilot convention) must not repeatedly un-commit an already-started brake,
-        // which is exactly what re-zeroing this on every call used to do (found live via a scratch
-        // Diagnostic() trace: the ship never actually settled, because "still chasing the same spot"
-        // kept looking identical to "just got a fresh click" every single tick).
+        // the old dumb-pilot convention) must not repeatedly wipe out smoothing that's already
+        // converging, which would defeat the whole point of it.
         if (_autopilotDestination is not { } current || (current - clamped).Length() > 0.01)
-            _autopilotBraking = false;
+        {
+            _autopilotSmoothedNoEnginesBearing = null;
+            _autopilotCommittedFacingDegrees = null;
+        }
         _autopilotDestination = clamped;
     }
 
@@ -143,7 +183,6 @@ public sealed partial class World
     public void CancelAutopilot()
     {
         _autopilotDestination = null;
-        _autopilotBraking = false;
         EngageAutoStabilize();
     }
 
@@ -172,42 +211,6 @@ public sealed partial class World
         if (distance < AutopilotArriveRadius && speed < AutopilotArriveSpeed)
         {
             _autopilotDestination = null;
-            _autopilotBraking = false;
-            EngageAutoStabilize();
-            return;
-        }
-
-        // Already braked down to a near-stop but still short of the arrival radius - a transient
-        // early trigger below (a momentary dip in speed while still far out) must not strand the
-        // ship braking forever short of the destination; un-commit and resume seeking instead.
-        // Found live via a scratch Diagnostic() trace: without this, the ship parked itself dead
-        // stopped ~180 units short of the target and just sat there, "active" forever.
-        if (_autopilotBraking && speed < AutopilotArriveSpeed)
-            _autopilotBraking = false;
-
-        // Start braking early enough that the flat EngageAutoStabilize deceleration (not a real
-        // proportional brake) can still stop by the time the ship actually reaches the destination.
-        // Once true, _autopilotBraking stays true until the near-stop check above releases it or
-        // arrival clears it - a fresh distance-vs-brakingDistance comparison every tick oscillates
-        // instead of converging (this file's own SetAutopilotDestination doc comment has the trace).
-        //
-        // Matches IntegrateShipFieldMotion's own real stabilize deceleration (World.ShipField.cs),
-        // which IS scaled by enginePowerScale (less than full power routed to Engine really does
-        // brake weaker) - unlike a first attempt at this fix, this does NOT gate the seek-and-steer
-        // branch below on it: that attempt returned early whenever this scale was near zero,
-        // which silently disabled the WHOLE autopilot on any hull whose real per-engine thrust
-        // (ComputeEngineForces, deliberately NOT gated by this same legacy scale - this file's own
-        // top-of-file reasoning) doesn't route power through the legacy Engine slider at all - real
-        // gameplay hits that the instant a player clicks a destination right after undocking, before
-        // ever touching the reactor slider. Floored well above zero only to avoid dividing by it.
-        var enginePowerScale = Math.Min(2f, GetEffectivePower(PowerSystemId.Engine) / ShipEngineReferencePower);
-        var brakingDistance = enginePowerScale > 0.01f
-            ? speed * speed / (2f * ShipAutoStabilizeDecelerationPerSecond * enginePowerScale) * AutopilotBrakingSafetyFactor
-            : 0f; // no real stabilize-braking capability from this scale alone - never trigger it, just keep seeking
-        if (distance < brakingDistance)
-            _autopilotBraking = true;
-        if (_autopilotBraking)
-        {
             EngageAutoStabilize();
             return;
         }
@@ -215,12 +218,103 @@ public sealed partial class World
         var seek = distance > 0.01 ? toTarget.Normalized() : Vec2.Zero;
         var avoidance = ComputeAvoidance(seek);
         var blended = seek + avoidance * AutopilotAvoidanceWeight;
-        var desired = blended.Length() > 0.01 ? blended.Normalized() : seek;
+        var travelDirection = blended.Length() > 0.01 ? blended.Normalized() : seek;
 
-        // Facing: the RMB override if the player is actively holding it, otherwise the direction of
-        // travel - the default "nose points where it's going" any autopilot would use on its own.
-        var desiredBearingDegrees = _autopilotFacingOverrideDegrees
-            ?? MathF.Atan2((float)desired.Y, (float)desired.X) * (180f / MathF.PI);
+        // Arrive steering (Reynolds) - desired SPEED ramps down linearly with distance instead of a
+        // discrete seek/brake switch, so slowing down falls out of the same velocity-error feedback
+        // every tick recomputes, rather than a one-time "start braking now" decision (this file's own
+        // top-of-file doc comment has the full reasoning for dropping that older approach).
+        var desiredSpeed = MathF.Min(ShipMaxSpeed, (float)distance / AutopilotSlowingRadius * ShipMaxSpeed);
+        var desiredVelocity = travelDirection * desiredSpeed;
+        var steering = desiredVelocity - _shipVelocity;
+        var steeringMagnitude = steering.Length();
+        var throttleVector = steeringMagnitude > AutopilotVelocityErrorSaturation
+            ? steering.Normalized()
+            : steering * (1f / AutopilotVelocityErrorSaturation);
+
+        // Facing: the RMB override if the player is actively holding it. Otherwise it depends on
+        // whether this hull can actually realize a sideways correction: a hull with real Ship.Engines
+        // fixtures (built via the ship editor) answers to strafe as genuine force from its own
+        // side-facing engines (World.Engines.cs's ComputeEngineForces/EffectiveControl), so the nose
+        // can stay pointed along the direction of travel while strafe does the correcting - direct
+        // user request ("летел боком не опрокидываясь"). A hull with none (every hand-authored hull,
+        // World.Engines.cs's own top-of-file doc comment: "entirely unaffected" by that model) has
+        // no real force behind strafe at all - only the legacy throttle-only thrust term responds -
+        // so any sideways component of the needed correction that strafe would carry is silently
+        // lost whenever the nose ISN'T already aligned with it. Found live via a scratch
+        // Diagnostic() trace on exactly this hull: aiming the nose at travelDirection while thrust
+        // chased the (usually different) velocity-error direction spiralled the ship away from the
+        // destination in a widening arc, since the unrealized strafe component never actually
+        // cancelled anything. Aligning the nose with throttleVector itself instead makes throttle
+        // alone carry the FULL correction (strafe becomes ~0 as the turn catches up), which is
+        // exactly correct for a hull that can't strafe for real - it does mean turning to face
+        // whichever way it needs to brake/correct, same as a Cosmoteer ship built with only
+        // forward-facing thrusters would have to.
+        // travelDirection itself is unstable right at/near the destination - "bearing to target"
+        // flips a full 180° the instant the ship's own overshoot carries it past the point, which
+        // spun the nose right through the arrival phase even on a hull that could otherwise brake
+        // without turning at all (found live via a scratch Diagnostic() trace on the omnidirectional
+        // fixture below). The ship's own CURRENT VELOCITY direction never flips discontinuously like
+        // that - it just shrinks smoothly toward zero under Arrive steering - so it's the stabler
+        // reference once actually moving; only falls back to travelDirection from a near-standstill,
+        // where velocity direction is itself noise (speed too small to mean anything).
+        var hasRealEngines = Ship.Engines.Count > 0;
+        var headingReferenceDirection = hasRealEngines && speed > AutopilotVelocityHeadingThreshold
+            ? _shipVelocity.Normalized()
+            : travelDirection;
+
+        // Direct user request ("зачем корабль разворачивается... если он может просто сдать назад
+        // двигателями без разворота") - a hull with no real strafe still doesn't need to swing all
+        // the way around just because throttleVector happens to point behind it: reverse throttle
+        // from the CURRENT nose realizes the exact same force (throttle*nose, just negative) as
+        // turning 180° and pushing forward would, for a fraction of the rotation. Whichever of
+        // throttleVector's own bearing or its 180°-flip is CLOSER to the nose's current heading is
+        // the one actually chased below - once nose converges to either, decomposing throttleVector
+        // onto it still drives strafe to ~0 and throttle to the full (now correctly signed)
+        // magnitude, so this loses nothing the "always face throttleVector directly" version had.
+        var throttleBearing = MathF.Atan2((float)throttleVector.Y, (float)throttleVector.X) * (180f / MathF.PI);
+        var currentNoseBearing = _shipRotationDegrees + Ship.ForwardDegrees;
+        var rawNoEnginesBearing = MathF.Abs(ShortestAngle(throttleBearing - currentNoseBearing)) > 90f
+            ? throttleBearing + 180f
+            : throttleBearing;
+
+        // Exponential smoothing (AutopilotFacingSmoothingPerTick's own doc comment) - throttleVector
+        // is genuinely noisy near arrival (a small velocity-error vector's DIRECTION swings a lot
+        // for very little real magnitude), which otherwise fed straight into the turn controller and
+        // made the ship visibly wobble in place for several seconds. ShortestAngle's own wraparound
+        // handling, not a naive lerp, so this closes across the 180°/-180° seam correctly.
+        var smoothingStep = ShortestAngle(rawNoEnginesBearing - (_autopilotSmoothedNoEnginesBearing ?? rawNoEnginesBearing)) * AutopilotFacingSmoothingPerTick;
+        var noEnginesBearing = (_autopilotSmoothedNoEnginesBearing ?? rawNoEnginesBearing) + smoothingStep;
+        _autopilotSmoothedNoEnginesBearing = noEnginesBearing;
+
+        // Direct user bug report (screenshots - the destination ghost's own promised heading
+        // visibly drifted between two points of the same trip; confirmed via a direct clarifying
+        // question that this project's own ships all carry real engines) - a hasRealEngines hull
+        // commits to ONE facing target instead of recomputing it every tick from the live travel/
+        // velocity direction, which genuinely changes as the ship accelerates, brakes, and steers
+        // around obstacles over the course of a real flight. Safe specifically because this hull
+        // type has real strafe force: holding a fixed nose direction never costs it the ability to
+        // still correct sideways drift, unlike a no-real-engines hull (kept on its existing adaptive
+        // noEnginesBearing below, unchanged - see AutopilotFacingSmoothingPerTick's own doc comment
+        // for why THAT hull type's nose has to keep actively tracking the live correction direction).
+        float desiredBearingDegrees;
+        if (_autopilotFacingOverrideDegrees is { } overrideDegrees)
+        {
+            desiredBearingDegrees = overrideDegrees;
+            if (hasRealEngines)
+                _autopilotCommittedFacingDegrees = overrideDegrees; // releasing RMB commits whatever was last aimed
+        }
+        else if (hasRealEngines)
+        {
+            _autopilotCommittedFacingDegrees ??=
+                MathF.Atan2((float)headingReferenceDirection.Y, (float)headingReferenceDirection.X) * (180f / MathF.PI);
+            desiredBearingDegrees = _autopilotCommittedFacingDegrees.Value;
+        }
+        else
+        {
+            desiredBearingDegrees = noEnginesBearing;
+        }
+        _autopilotLastPredictedFacingDegrees = desiredBearingDegrees;
         var headingError = ShortestAngle(desiredBearingDegrees - (_shipRotationDegrees + Ship.ForwardDegrees));
         var turn = ComputeTurnInput(headingError);
 
@@ -230,8 +324,8 @@ public sealed partial class World
         // "летел боком не опрокидываясь", now genuinely possible while aiming elsewhere too).
         var noseWorld = ShipNoseDirection;
         var rightWorld = TurretMount.FromDegrees(_shipRotationDegrees + Ship.ForwardDegrees + 90f);
-        var throttle = (float)(desired.X * noseWorld.X + desired.Y * noseWorld.Y);
-        var strafe = (float)(desired.X * rightWorld.X + desired.Y * rightWorld.Y);
+        var throttle = (float)(throttleVector.X * noseWorld.X + throttleVector.Y * noseWorld.Y);
+        var strafe = (float)(throttleVector.X * rightWorld.X + throttleVector.Y * rightWorld.Y);
 
         SetHelmInput(throttle, strafe, turn);
     }

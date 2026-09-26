@@ -119,7 +119,7 @@ public sealed partial class ShipRenderer
     // so the one texture that actually reads well wins everywhere a wall is drawn.
     // Kept fully intact for BoardingRenderer/StationRenderer (an enemy hull's/station's own rooms
     // aren't part of the client's per-tile grid - ClientTileGrid.Build only ever rasterizes the
-    // player's OWN Ship.Rooms/Doors/AirlockOuterDoors from WorldSnapshot). The player's own ship no
+    // player's OWN Ship.Rooms/Doors from WorldSnapshot). The player's own ship no
     // longer calls this for its walls (M75, humble-soaring-cat.md) - see DrawRoomWallLamps/
     // DrawShipWalls below and this method's own call site in Draw().
     internal void DrawRoomWalls(SpriteBatch spriteBatch, Room room, float oxygen, Vector2 origin, Color? accentOverride = null)
@@ -154,7 +154,7 @@ public sealed partial class ShipRenderer
     }
 
     // M75 (humble-soaring-cat.md) - real per-tile wall rendering: rebuilds the exact same tile shape
-    // Ship.Tiles has (ClientTileGrid.Build, a pure function of Rooms/Doors/AirlockOuterDoors - no new
+    // Ship.Tiles has (ClientTileGrid.Build, a pure function of Rooms/Doors - no new
     // protocol field needed) and draws one tile-sized square per Solid wall cell, oriented by which
     // of its 4 neighbors are also wall-kind (a door counts as "wall" for orientation - same material
     // either side of it). Door tiles themselves are skipped entirely - DrawDoor already draws them,
@@ -187,10 +187,10 @@ public sealed partial class ShipRenderer
 
     internal TileGrid GetLiveShipTiles(WorldSnapshot snapshot)
     {
-        var fingerprint = ClientTileGrid.ComputeStructuralFingerprint(snapshot.Rooms, snapshot.Doors, snapshot.AirlockOuterDoors);
+        var fingerprint = ClientTileGrid.ComputeStructuralFingerprint(snapshot.Rooms, snapshot.Doors);
         if (_cachedShipTiles is null || _cachedShipTilesFingerprint != fingerprint)
         {
-            _cachedShipTiles = TileGridRasterizer.FromRooms(snapshot.Rooms, snapshot.Doors, snapshot.AirlockOuterDoors);
+            _cachedShipTiles = TileGridRasterizer.FromRooms(snapshot.Rooms, snapshot.Doors);
             // Direct user bug report ("стены отображаются не на своих местах, а коллизии там же") -
             // a Ship Editor-built hull's own post-rasterization corrections (a T-junction's residual
             // wall, or a half-block notch at a region's edge) live outside Room.Rects entirely, so
@@ -206,7 +206,7 @@ public sealed partial class ShipRenderer
                 snapshot.WallMaterialOverrides ?? Array.Empty<CustomWallMaterialDef>());
             _cachedShipTilesFingerprint = fingerprint;
         }
-        ClientTileGrid.ApplyLiveDoorState(_cachedShipTiles, snapshot.Rooms, snapshot.Doors, snapshot.AirlockOuterDoors, snapshot.DoorStates);
+        ClientTileGrid.ApplyLiveDoorState(_cachedShipTiles, snapshot.Rooms, snapshot.Doors, snapshot.DoorStates);
         ClientTileGrid.ApplyWallOpenSides(_cachedShipTiles, snapshot.Rooms, snapshot.WallBlocks);
         // Direct user bug report ("не вижу ничего через стену являющейся иллюминатором") - the real
         // material has to land on the cell itself (not just the separate materialByTile dictionary
@@ -220,7 +220,7 @@ public sealed partial class ShipRenderer
     {
         var tiles = GetLiveShipTiles(snapshot);
         // Material lives on the WallBlock itself (WallBlock.cs), not on the tile grid (a pure
-        // projection of Rooms/Doors/AirlockOuterDoors, no WallBlock input - see ClientTileGrid's own
+        // projection of Rooms/Doors, no WallBlock input - see ClientTileGrid's own
         // doc comment) - matched back to a tile coordinate via the same WallBlockTileCoord mapping
         // World.TileSync.cs already uses server-side, so this can never disagree with which block
         // actually owns that position.
@@ -674,14 +674,15 @@ public sealed partial class ShipRenderer
         DrawToolTargetBar(spriteBatch, new Vector2(block.X, block.Y), state.Fraction, origin);
 
     // Same bar, over a door being cut open (World.Cutting.cs's CutIndoorAlongFlame) instead of a
-    // hull block - worldPosition is whichever of Door/AirlockOuterDoor matched
-    // (character.DoorToolTargetId), since both share the same X/Y shape but not a common base type.
+    // hull block - worldPosition is whichever Door matched (character.DoorToolTargetId), interior
+    // or vacuum-facing alike.
     internal void DrawDoorToolTargetBar(SpriteBatch spriteBatch, Vector2 worldPosition, DoorState state, Vector2 origin) =>
         DrawToolTargetBar(spriteBatch, worldPosition, state.Fraction, origin);
 
-    // internal: Game1's HUD batch also calls this directly for an enemy hull's own airlock target
-    // (a WallBlockState like a wall block's, but on an AirlockOuterDoor, which isn't a WallBlock) -
-    // the two typed wrappers above only cover the player's own ship's WallBlock/Door shapes.
+    // internal: Game1's HUD batch also calls this directly for an enemy hull's own hatch target
+    // (a WallBlockState like a wall block's, since a hatch's own Hp is folded into the same
+    // dictionary now - EnemyShipRuntime, humble-soaring-cat.md) - the two typed wrappers above only
+    // cover the player's own ship's WallBlock/Door shapes.
     internal void DrawToolTargetBar(SpriteBatch spriteBatch, Vector2 worldPosition, float fraction, Vector2 origin)
     {
         const int width = 32;

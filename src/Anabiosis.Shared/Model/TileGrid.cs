@@ -73,6 +73,16 @@ public sealed class TileCell
     // them paired through remove/save/load.
     public string? DoorGroupId;
     public string? DeviceId;    // at most one device per cell; occupies the floor slot, blocks movement
+    // Direct user request (confirmed geometry, doubly-confirmed via 2 rounds of clarifying
+    // questions - this feature had been implemented twice before and rejected twice) - meaningful
+    // only when DeviceId is also set, and only ever set for a Helm/Navigation "half" tile
+    // (TileGrid.PlaceHalfWidthDevice); null for every ordinary device kind, unchanged. Mirrors
+    // WallOpenSide's own EXACT effective convention (verified empirically against a real, passing
+    // test - TestRunner.HalfThickWalls.cs): the named side ends up BLOCKED, the opposite side stays
+    // walkable - see TileGrid.IsWalkable's position-aware overload for the combined truth table,
+    // including the "this tile is ALSO a half-block wall's own open half" coexistence case (both
+    // fields can be set on the very same TileCell at once - that's the whole point of this feature).
+    public TileSide? DeviceOpenSide;
     // A wall-mounted device (direct user request - "на стену размером с полублок можно крепить
     // только терминал и настенную лампу"; TileGrid.PlaceWallDevice/PlaceRecessedWallDevice enforce
     // that restriction) - at most one per cell. WallDeviceKind is null exactly when WallDeviceId is.
@@ -184,10 +194,23 @@ public sealed class TileGrid
     // on either one (direct user request: "чтобы блоки рядом не удалялись" - this door never
     // converts or clears anything, it only ever occupies the seam between two tiles that were
     // already exactly what they needed to be) - and there must be no door edge there yet.
+    //
+    // Direct user request ("сделай возможным поставить дверь если 1 клетка это пол а вторая
+    // космос") - an edge with bare floor on exactly one side and genuinely nothing at all on the
+    // other (no cell there, or a cell that was never floored) is a door onto open space, i.e. an
+    // airlock (Ship.Custom.cs's doorEdges builder turns it into one by leaving that side's RoomId
+    // null instead of throwing) - allowed alongside the original floor/floor case, never floor/
+    // wall or space/space.
     public bool CanPlaceDoorEdge(TileCoord coord, TileSide side)
     {
         bool IsFreeFloor(TileCoord c) => CellAt(c) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
-        return IsFreeFloor(coord) && IsFreeFloor(side.Offset(coord)) && DoorEdgeAt(coord, side) is null;
+        bool IsOpenSpace(TileCoord c) => CellAt(c) is null or { HasFloor: false, Wall: TileWallKind.None, DeviceId: null };
+
+        var neighbor = side.Offset(coord);
+        var valid = (IsFreeFloor(coord) && IsFreeFloor(neighbor))
+            || (IsFreeFloor(coord) && IsOpenSpace(neighbor))
+            || (IsFreeFloor(neighbor) && IsOpenSpace(coord));
+        return valid && DoorEdgeAt(coord, side) is null;
     }
 
     public int? RegionIdAt(TileCoord coord) => RegionIdOf.TryGetValue(coord, out var id) ? id : null;
@@ -211,6 +234,7 @@ public sealed class TileGrid
                 WallMaterial = cell.WallMaterial,
                 DoorGroupId = cell.DoorGroupId,
                 DeviceId = cell.DeviceId,
+                DeviceOpenSide = cell.DeviceOpenSide,
                 WallDeviceId = cell.WallDeviceId,
                 WallDeviceKind = cell.WallDeviceKind,
                 WallDeviceMountSide = cell.WallDeviceMountSide,
@@ -262,10 +286,42 @@ public sealed class TileGrid
     // IsWalkable(cell) above, unchanged - this only special-cases an intact, half-thick, non-corner
     // Solid wall, which is the one situation where "walkable" genuinely depends on WHERE inside the
     // tile the point falls, not just which tile it's in.
+    // Extended (direct user request, confirmed geometry via 2 rounds of clarifying questions - a
+    // feature implemented twice before and rejected twice) to also fold in TileCell.DeviceOpenSide -
+    // Helm/Navigation's own genuine 1.5-tile collision, mirroring WallOpenSide's exact convention
+    // (do not invert it, see DeviceOpenSide's own doc comment) via the SAME IsInSolidHalf helper.
+    // The combined truth table, verified against real TileMovement.MoveAlongAxis calls (this file's
+    // own test suite), not just by inspection:
+    //  - No wall, DeviceId set, DeviceOpenSide null -> blocked everywhere (every ordinary device,
+    //    completely unchanged).
+    //  - No wall, DeviceId set, DeviceOpenSide = X -> blocked only in half X, walkable in the
+    //    opposite half (Helm/Navigation standing alone on open floor).
+    //  - Solid wall with WallOpenSide = O, no DeviceId -> blocked only in half O (existing
+    //    half-block wall, completely unchanged).
+    //  - Solid wall with WallOpenSide = O, WallDeviceId set (Terminal/WallLamp) -> blocked
+    //    everywhere (existing behavior, unrelated field, completely unchanged).
+    //  - Solid wall with WallOpenSide = O, DeviceId set (Helm/Navigation's half tile, placed via
+    //    PlaceHalfWidthDevice which only ever allows this when DeviceOpenSide already equals the
+    //    wall's own O) -> blocked everywhere: the wall's own half O is blocked by the wall check
+    //    below exactly as it always was, and the tile's remaining (formerly open) half is now ALSO
+    //    claimed by the device - by construction, not a special-cased "if openSide==O" shortcut,
+    //    since simply reaching this branch with any DeviceId present already means the device
+    //    occupies whatever's left of this tile once the wall's own half is accounted for. This is
+    //    the "console uses the wall's own already-open half, the wall itself is never destroyed"
+    //    case (previously wrong: TileGrid.PlaceDeviceWithHalfBlockWallLeniency used to delete the
+    //    wall outright to make room - deleted along with this bug).
     public static bool IsWalkable(TileCell cell, TileCoord coord, Vec2 position)
     {
-        if (cell.Wall == TileWallKind.Solid && cell.WallHp > 0 && cell.WallOpenSide is { } openSide)
-            return cell.WallDeviceId is null && !IsInSolidHalf(coord, position, openSide);
+        if (cell.Wall == TileWallKind.Solid && cell.WallHp > 0 && cell.WallOpenSide is { } wallOpenSide)
+        {
+            if (cell.WallDeviceId is not null)
+                return false;
+            if (IsInSolidHalf(coord, position, wallOpenSide))
+                return false;
+            return cell.DeviceId is null;
+        }
+        if (cell.DeviceId is not null)
+            return cell.DeviceOpenSide is { } deviceOpenSide && !IsInSolidHalf(coord, position, deviceOpenSide);
         return IsWalkable(cell);
     }
 
@@ -584,7 +640,15 @@ public sealed class TileGrid
     public void RemoveDevice(TileCoord coord)
     {
         if (Cells.TryGetValue(coord, out var cell))
+        {
             cell.DeviceId = null;
+            // Direct user request - clearing DeviceOpenSide too (harmless no-op for every ordinary
+            // device, which never had it set) is what lets a removed Helm/Navigation "half" tile's
+            // own coexisting half-block wall come back into full, ordinary use - RemoveDevice never
+            // touches Wall/WallHp/WallOpenSide at all, so a wall that was coexisting here is left
+            // completely undisturbed, exactly as before this device ever claimed half its tile.
+            cell.DeviceOpenSide = null;
+        }
     }
 
     // Direct user request ("на стену размером с полублок можно крепить только терминал и настенную
@@ -610,18 +674,14 @@ public sealed class TileGrid
     public void PlaceWallDevice(TileCoord coord, TileSide wallSide, CustomDeviceKind kind, string deviceId)
     {
         RequireWallMountable(kind);
-        if (!Cells.TryGetValue(coord, out var cell) || !cell.HasFloor)
-            throw new InvalidOperationException($"Cannot place {kind} at {coord} without a floor there first.");
-        var neighbor = wallSide.Offset(coord);
-        if (!Cells.TryGetValue(neighbor, out var neighborCell) || neighborCell.Wall == TileWallKind.None)
-            throw new InvalidOperationException($"Cannot place {kind} at {coord} facing {wallSide} - no wall there to mount against.");
-        if (neighborCell.WallOpenSide is not null)
-            throw new InvalidOperationException($"Cannot place {kind} at {coord} facing {wallSide} - that wall is half-thick, recess into it instead.");
-        cell.WallDeviceId = deviceId;
-        cell.WallDeviceKind = kind;
-        cell.WallDeviceMountSide = wallSide;
+        if (!IsFloorAdjacentMountable(coord, wallSide))
+            throw new InvalidOperationException($"Cannot place {kind} at {coord} facing {wallSide} - needs a floor tile with a full-thickness wall neighbor there.");
+        RestoreWallDevice(coord, kind, deviceId, wallSide, recessed: false);
     }
 
+    // Removes a wall device from `coord` - Terminal/WallLamp are the only two kinds that ever reach
+    // here (Helm/Navigation went back to being plain ordinary Device-tool devices, removed via
+    // RemoveDevice like any other), so a single-tile clear is always correct.
     public void RemoveWallDevice(TileCoord coord)
     {
         if (!Cells.TryGetValue(coord, out var cell))
@@ -630,6 +690,22 @@ public sealed class TileGrid
         cell.WallDeviceKind = null;
         cell.WallDeviceMountSide = null;
         cell.WallDeviceRecessed = false;
+    }
+
+    // Direct user request/persistence support - sets every wall-device field directly with NO
+    // validation, for the one legitimate case that isn't a fresh placement: reloading a previously-
+    // placed device from a save (Game1.ShipEditor.TileSave.cs's ApplyEditorTileCanvas). The data was
+    // already valid when first placed, so re-running PlaceWallDevice/PlaceRecessedWallDevice's own
+    // checks would be redundant at best. Every public Place* method below validates first, then calls
+    // this to actually apply the change.
+    public void RestoreWallDevice(TileCoord coord, CustomDeviceKind kind, string deviceId, TileSide mountSide, bool recessed)
+    {
+        if (!Cells.TryGetValue(coord, out var cell))
+            return;
+        cell.WallDeviceId = deviceId;
+        cell.WallDeviceKind = kind;
+        cell.WallDeviceMountSide = mountSide;
+        cell.WallDeviceRecessed = recessed;
     }
 
     // Direct user request ("на пустой стороне можно поставить терминал и он будет занимать весь
@@ -642,14 +718,98 @@ public sealed class TileGrid
     public void PlaceRecessedWallDevice(TileCoord coord, CustomDeviceKind kind, string deviceId)
     {
         RequireWallMountable(kind);
-        if (!Cells.TryGetValue(coord, out var cell) || cell.Wall != TileWallKind.Solid || cell.WallOpenSide is not { } openSide)
+        if (!IsRecessedMountableAnySide(coord, out var mountSide))
             throw new InvalidOperationException($"Cannot recess {kind} at {coord} - needs a non-corner Solid wall tile.");
-        if (cell.WallDeviceId != null)
-            throw new InvalidOperationException($"Cannot recess {kind} at {coord} - already occupied.");
-        cell.WallDeviceId = deviceId;
-        cell.WallDeviceKind = kind;
-        cell.WallDeviceMountSide = openSide.Opposite();
-        cell.WallDeviceRecessed = true;
+        RestoreWallDevice(coord, kind, deviceId, mountSide, recessed: true);
+    }
+
+    // A floor tile with a genuine FULL-thickness wall/door neighbor on `mountSide` - PlaceWallDevice's
+    // own single-tile precondition.
+    private bool IsFloorAdjacentMountable(TileCoord coord, TileSide mountSide) =>
+        CellAt(coord) is { HasFloor: true, WallDeviceId: null } &&
+        CellAt(mountSide.Offset(coord)) is { Wall: not TileWallKind.None, WallOpenSide: null };
+
+    // A non-corner half-thick Solid wall tile whose own free half (WallOpenSide.Opposite()) is
+    // `mountSide` - PlaceRecessedWallDevice's own single-tile precondition, factored out the same way.
+    private bool IsRecessedMountable(TileCoord coord, TileSide mountSide) =>
+        CellAt(coord) is { Wall: TileWallKind.Solid, WallDeviceId: null } cell && cell.WallOpenSide == mountSide.Opposite();
+
+    // PlaceRecessedWallDevice's own original single-tile form - any qualifying free half, not a
+    // specific caller-chosen one - expressed in terms of IsRecessedMountable above so both call sites
+    // share one true definition of "recess-mountable."
+    private bool IsRecessedMountableAnySide(TileCoord coord, out TileSide mountSide)
+    {
+        if (CellAt(coord) is { Wall: TileWallKind.Solid, WallDeviceId: null, WallOpenSide: { } openSide })
+        {
+            mountSide = openSide.Opposite();
+            return true;
+        }
+        mountSide = default;
+        return false;
+    }
+
+    // Direct user request (confirmed geometry via 2 rounds of clarifying questions, doubly-confirmed -
+    // this feature had already been implemented twice before and rejected twice) - Helm/Navigation are
+    // ordinary rotatable FLOOR-STANDING furniture (same shape as Bed/StorageRack), but their real
+    // collision/reservation is genuinely 1.5 tiles wide (or tall, when Rotated), not a full 2 - this is
+    // the ONE tile of a Helm/Navigation footprint that's only half-claimed (the other, "full" tile of
+    // the pair goes through ordinary PlaceDevice, unchanged). `openSide` names the half of THIS tile
+    // the device's own body occupies - always the side facing the footprint's other ("full") tile
+    // (TileCell.DeviceOpenSide's own doc comment has the exact convention), so the two halves sit
+    // directly against each other with no gap and read as one continuous 1.5-tile object (direct user
+    // bug report - "они должны быть вплотную" - an earlier version of this put the occupied half on
+    // the FAR side instead, leaving a walkable sliver, and a visible seam, between the two pieces).
+    //
+    // Two placement shapes are accepted, replacing the old CanPlaceFootprintWithHalfBlockWallLeniency/
+    // PlaceDeviceWithHalfBlockWallLeniency (deleted - that mechanism was confirmed WRONG: it destroyed
+    // a real half-block wall's own Wall/WallOpenSide/WallHp to make room, direct user rejection,
+    // "стена остаётся, консоль просто использует её открытую половину"):
+    //  - Standalone: `coord` is ordinary bare floor (Wall:None, no device yet) - same precondition
+    //    PlaceDevice already has for every other kind.
+    //  - Wall-adjacent: `coord` is ALREADY a half-block wall tile (Wall:Solid, WallHp>0) on the SAME
+    //    AXIS as `openSide` (both East/West, or both North/South) - direct user bug report ("почему я
+    //    не могу вот так вот поставить прибор", a real hand-authored hull's own boundary wall had
+    //    WallOpenSide=West while the console needed East there). An EARLIER version of this required
+    //    the exact same TileSide value, not just the same axis - but that's stricter than the actual
+    //    geometry needs: whichever of the wall's own two halves is solid, the device's rendered body
+    //    (ShipRenderer.Devices.cs's own HalfSide-driven shift, independent of the wall entirely) either
+    //    lands on top of it (same value - the wall's own solid material, covered by the console's art)
+    //    or beside it, in the wall's own already-open half (opposite value, same axis - "the console
+    //    uses the wall's own open half", the ORIGINAL design intent, "стена остаётся, консоль просто
+    //    использует её открытую половину") - both read as a perfectly ordinary, un-broken visual, and
+    //    TileGrid.IsWalkable's own combined truth table blocks the WHOLE tile either way once a
+    //    DeviceId coexists with a Solid+WallOpenSide wall, regardless of which specific side matched.
+    //    Only a genuinely DIFFERENT axis (a North/South wall under an East/West console, or vice
+    //    versa) is rejected below - that combination really would carve the tile up inconsistently.
+    //    Wall/WallHp/WallOpenSide/WallMaterial are NEVER touched in this case - the wall stays
+    //    completely intact, coexisting with the new DeviceId/DeviceOpenSide on the very same TileCell.
+    public bool CanPlaceHalfWidthDevice(TileCoord coord, TileSide openSide)
+    {
+        if (CellAt(coord) is not { DeviceId: null } cell)
+            return false;
+        if (cell.Wall == TileWallKind.None)
+            // Standalone case only - needs genuine bare floor, same precondition PlaceDevice already has.
+            return cell.HasFloor;
+        // Wall-adjacent case - direct user bug report ("почему я не могу вот так вот поставить прибор",
+        // a hand-authored hull's own boundary half-block wall has HasFloor:false, since it was never
+        // interior floor a player painted - it's still a perfectly intact half-block wall (IsWalkable's
+        // own combined truth table above never looks at HasFloor either, only Wall/WallOpenSide/
+        // WallHp/DeviceId), so requiring HasFloor here too only ever blocked coexistence with a
+        // hand-authored/procedural wall, never a player-drawn one, for no actual collision reason.
+        if (cell.Wall != TileWallKind.Solid || cell.WallHp <= 0 || cell.WallDeviceId is not null || cell.WallOpenSide is not { } wallOpenSide)
+            return false;
+        var isHorizontal = openSide is TileSide.East or TileSide.West;
+        var wallIsHorizontal = wallOpenSide is TileSide.East or TileSide.West;
+        return isHorizontal == wallIsHorizontal;
+    }
+
+    public void PlaceHalfWidthDevice(TileCoord coord, TileSide openSide, string deviceId)
+    {
+        if (!CanPlaceHalfWidthDevice(coord, openSide))
+            throw new InvalidOperationException($"Cannot place a half-width device at {coord} facing {openSide} - needs bare floor or a matching half-block wall there.");
+        var cell = Cells[coord];
+        cell.DeviceId = deviceId;
+        cell.DeviceOpenSide = openSide;
     }
 
     private IEnumerable<TileCoord> Neighbors(TileCoord coord)

@@ -6,6 +6,9 @@ namespace Anabiosis.Shared.Networking;
 public interface IServerConnection
 {
     void Send(WorldSnapshot snapshot);
+    // Sent instead of Send(WorldSnapshot) while GameServer's own SessionPhase is Lobby - see
+    // LobbySnapshot's own doc comment.
+    void SendLobby(LobbySnapshot lobby);
     IReadOnlyList<ClientCommand> ReceiveCommands();
 
     // A socket can go away under the server; an in-process transport never does, which is why this
@@ -19,4 +22,7 @@ public interface IClientConnection
 {
     void Send(ClientCommand command);
     WorldSnapshot? ReceiveLatestSnapshot();
+    // Mirrors ReceiveLatestSnapshot (latest-only, never a backlog) for the Lobby phase - null once
+    // the round has actually started and only ordinary WorldSnapshots arrive from then on.
+    LobbySnapshot? ReceiveLatestLobby();
 }

@@ -9,10 +9,22 @@ namespace Anabiosis.Shared.Protocol;
 public sealed record WorldSnapshot(
     long Tick,
     IReadOnlyList<Room> Rooms,
-    IReadOnlyList<Door> Doors,
-    IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors,
+    // A vacuum-facing door (Door.LeadsToVacuum) lives in this SAME list now - no separate
+    // AirlockOuterDoors field any more (humble-soaring-cat.md, "убрать AirlockOuterDoor как
+    // отдельный тип").
+    // Direct user request (architecture idea - "WorldSnapshot целиком каждый тик") - proof of
+    // concept for sending ship LAYOUT only once per connection instead of every tick: Doors/Turrets
+    // are session-static (only the ship editor changes them, and that always starts a brand new
+    // session) - GameServer.cs's own send loop sends the real list only on a given connection's very
+    // first tick, null every tick after. Nullable ONLY at the wire level - GameClient.PollSnapshots
+    // merges with whatever it already cached, so every other reader in this project keeps seeing
+    // GameClient.LatestSnapshot.Doors/Turrets as always-populated, same as before this existed.
+    // World.CreateSnapshot() itself is UNCHANGED - always populates both fully; the omission only
+    // happens later, per-connection, in GameServer.cs's own Tick().
+    IReadOnlyList<Door>? Doors,
     IReadOnlyList<DoorState> DoorStates,
-    IReadOnlyList<Turret> Turrets,
+    // Same proof-of-concept as Doors above - see its own doc comment.
+    IReadOnlyList<Turret>? Turrets,
     IReadOnlyList<TurretState> TurretStates,
     IReadOnlyList<AmmoStorage> AmmoStorages,
     IReadOnlyList<AmmoStorageState> AmmoStorageStates,
@@ -196,7 +208,7 @@ public sealed record WorldSnapshot(
     // Ship Editor-built hull's own post-rasterization corrections (Ship.SupplementalWallTiles/
     // ForcedFloorTiles/WallOpenSideOverrides, TileShipBuilder.BuildDefinition's steps 3.5/3.6) used
     // to only ever reach the SERVER's own Tiles grid - the client re-rasterizes its OWN copy purely
-    // from Rooms/Doors/AirlockOuterDoors (ShipRenderer.GetLiveShipTiles), which can never represent
+    // from Rooms/Doors (ShipRenderer.GetLiveShipTiles), which can never represent
     // these corrections on its own (that's exactly why they exist as separate bolt-on lists rather
     // than folded into Room.Rects), so the client's rendering silently reverted to the wrong, naive
     // geometry the server had already corrected past. Null/empty for every hand-authored hull.
@@ -231,4 +243,22 @@ public sealed record WorldSnapshot(
     // Direct user request ("уберём возможность управлять кораблём игроку... автопилот") -
     // World.Autopilot.cs's own current course, so the client can draw a destination marker/line.
     // Appended last, same reasoning as every other field above.
-    AutopilotState? Autopilot = null);
+    AutopilotState? Autopilot = null,
+    // Direct user bug report ("некоторые устройства в игре не отображаются а в редакторе они
+    // видны") - every remaining placeable CustomDeviceKind with no dedicated mechanic (Decorative
+    // Device.Kinds), same shape as JunctionBoxes above. Appended last, same reasoning as every other
+    // field above.
+    IReadOnlyList<DecorativeDevice>? DecorativeDevices = null,
+    // Direct user request ("у тебя есть проблема что всех этих 4 устройств на корабле может быть
+    // только по одному") - genuinely many independent instances, empty when this hull never placed
+    // any. Appended last, same reasoning as every other field above.
+    IReadOnlyList<ShipStatusMonitor>? ShipStatusMonitors = null,
+    IReadOnlyList<CommsConsole>? CommsConsoles = null,
+    // Same request - Helm/Navigation's own pre-existing "extra" consoles (Ship.cs's own
+    // ExtraHelmConsoles/ExtraNavigationConsoles) used to be purely cosmetic bonus-count fodder,
+    // never sent to the client at all (RecomputeDeviceBonuses read them server-side only) - now
+    // real, independently rendered/interactable physical consoles too, so the client needs to know
+    // where they are. NavigationConsole/HelmConsole above stay the SAME single required fields
+    // (every hull always has exactly one primary) - these two are only ever the 2nd, 3rd, ... one.
+    IReadOnlyList<NavigationConsole>? ExtraNavigationConsoles = null,
+    IReadOnlyList<HelmConsole>? ExtraHelmConsoles = null);

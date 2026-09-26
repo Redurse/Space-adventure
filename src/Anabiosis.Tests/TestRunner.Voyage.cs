@@ -73,6 +73,15 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
+        // FireBowTurretUntilEnemyDefeated's own real-time combat can open a wide enough hull
+        // breach in whatever room the character happens to be standing in to trigger the same
+        // "unsuited in a passable breach dies in 3 seconds" fast ramp an EVA character already
+        // risks (World.Eva.cs's IsFullyExposedToVacuum) - unrelated to door state itself, but this
+        // fight only started actually running its combat loop to completion once BoardEnemyShip's
+        // sibling door-default fallout (TestRunner.Boarding.cs) stopped it from dying to something
+        // else first, so this risk is only now actually exercised. Same defensive suit-up already
+        // used by World_Station_HostileStandingTriggersDefensiveSquadronOnApproach for the same reason.
+        EquipSuit(world, 1); // survives any breaches the fight opens up
 
         // Keep the reactor under real load throughout so there's fuel left to refill. Issued
         // after EnterBattle, not before it - EnterBattle's own DockPressed command (a fresh

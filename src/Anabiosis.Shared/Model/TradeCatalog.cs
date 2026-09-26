@@ -25,6 +25,27 @@ public static class TradeCatalog
         // generic sell flow (World.Trade.cs) is what turns mined ore into credits at the station
         // (game_design.md Phase 3, M18), rather than a separate quest-turn-in mechanism.
         new TradeGood(ItemType.Mineral, BuyPrice: 999, SellPrice: 35),
+        // Direct user request ("добавим множество предметов материалов") - mined ores (OreDeposit.
+        // OreType, World.Cutting.cs), same "not really for sale" BuyPrice convention as Mineral above -
+        // priced by rarity, roughest first.
+        new TradeGood(ItemType.IronOre, BuyPrice: 999, SellPrice: 15),
+        new TradeGood(ItemType.CopperOre, BuyPrice: 999, SellPrice: 18),
+        new TradeGood(ItemType.AluminumOre, BuyPrice: 999, SellPrice: 18),
+        new TradeGood(ItemType.Carbon, BuyPrice: 999, SellPrice: 16),
+        new TradeGood(ItemType.ZincOre, BuyPrice: 999, SellPrice: 20),
+        new TradeGood(ItemType.Silicon, BuyPrice: 999, SellPrice: 20),
+        new TradeGood(ItemType.NickelOre, BuyPrice: 999, SellPrice: 22),
+        new TradeGood(ItemType.TitaniumOre, BuyPrice: 999, SellPrice: 30),
+        new TradeGood(ItemType.PlastalloyOre, BuyPrice: 999, SellPrice: 35),
+        new TradeGood(ItemType.UraniumOre, BuyPrice: 999, SellPrice: 45),
+        // FabricatorCatalog.cs's own recipe outputs - crafted, not bought (same convention as the
+        // ores above), priced above the sum of their own ingredients so crafting-to-sell is a real,
+        // modestly profitable activity rather than a wash.
+        new TradeGood(ItemType.CopperCable, BuyPrice: 999, SellPrice: 45),
+        new TradeGood(ItemType.SteelPlate, BuyPrice: 999, SellPrice: 60),
+        new TradeGood(ItemType.Plastic, BuyPrice: 999, SellPrice: 65),
+        new TradeGood(ItemType.Plastalloy, BuyPrice: 999, SellPrice: 110),
+        new TradeGood(ItemType.TitaniumPlate, BuyPrice: 999, SellPrice: 150),
         // Purchasable wiring components (ComponentKind, World.ComponentMounts.cs, M23) - priced by
         // complexity, all comfortably under Spacesuit's 150 (small modular parts, not major gear).
         new TradeGood(ItemType.GateNot, BuyPrice: 25, SellPrice: 10),

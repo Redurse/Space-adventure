@@ -44,9 +44,8 @@ public sealed partial class World
         if (dropped is null)
             return;
 
-        var (position, roomId) = character.IsOutside
-            ? (GetEvaWorldPosition(character), (string?)null)
-            : (character.Position, character.RoomId);
+        var position = GetCharacterWorldPosition(character);
+        var roomId = character.IsOutside ? null : character.RoomId;
 
         if (dropped.RoomId != roomId)
             return;

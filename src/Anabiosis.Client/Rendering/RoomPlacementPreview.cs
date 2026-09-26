@@ -14,7 +14,7 @@ namespace Anabiosis.Client.Rendering;
 //
 // Deliberately skips CustomShipValidator's own airlock-adjacency rule (an existing room's airlock
 // can't now border the new room) - reconstructing which side of which room has an airlock from the
-// snapshot's own AirlockOuterDoor positions is real work for a rare edge case, and the server
+// snapshot's own vacuum-facing door positions is real work for a rare edge case, and the server
 // silently refusing that one specific spot (same "no charge, nothing happens" outcome every other
 // refused build already has) is an acceptable gap for a purely cosmetic preview.
 public static class RoomPlacementPreview

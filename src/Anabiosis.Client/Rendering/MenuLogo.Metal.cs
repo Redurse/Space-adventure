@@ -16,14 +16,27 @@ namespace Anabiosis.Client.Rendering;
 // plateau down the middle of every stroke for the surface texture to live on.
 public static partial class MenuLogo
 {
-    private static readonly Color SteelBright = new(226, 236, 232);
-    private static readonly Color SteelMid = new(132, 150, 150);
-    private static readonly Color SteelDark = new(58, 72, 76);
-    private static readonly Color SteelShadow = new(26, 34, 38);
-    private static readonly Color Corrosion = new(78, 88, 68);
-    private static readonly Color Rust = new(96, 74, 48);
-    private static readonly Color Rim = new(214, 168, 82);
-    private static readonly Color Outline = new(6, 9, 11);
+    // Direct user request ("переходы схожих цветов... почти идентично баротравме") - the plate used
+    // to run grey steel with a warm gold rim (a cool/warm split). Retuned to a single teal-cyan
+    // family instead, the same deep-sea-submarine palette Barotrauma's own wordmark uses (and the
+    // same hue this menu's own rule/ticker glow already picks, new Color(90, 220, 195) a few lines
+    // up in Game1.Menu.cs) - every step from the darkest shadow to the brightest highlight is a
+    // shade of the same teal rather than a jump to a different color family, which is what makes a
+    // gradient read as "one surface catching light" instead of "two materials stitched together".
+    // Rust stays warm on purpose: real corrosion is always warm regardless of the base metal's own
+    // color, and Barotrauma's own UI keeps that same cool-plate/warm-rust contrast too.
+    // Direct user request ("сохрани этот цвет, но сделай яркие выраженные элементы") - the teal hue
+    // stays, but pushed to more saturated extremes at both ends (a punchier near-white highlight, a
+    // deeper shadow) for more contrast across the bevel, plus the rim glow and rust wear below both
+    // widened/brightened into genuinely eye-catching accents rather than a subtle one-pixel edge.
+    private static readonly Color SteelBright = new(222, 255, 250);
+    private static readonly Color SteelMid = new(58, 150, 148);
+    private static readonly Color SteelDark = new(18, 70, 74);
+    private static readonly Color SteelShadow = new(6, 28, 32);
+    private static readonly Color Corrosion = new(40, 78, 64);
+    private static readonly Color Rust = new(158, 96, 46);
+    private static readonly Color Rim = new(150, 255, 236);
+    private static readonly Color Outline = new(4, 12, 14);
 
     // How far the chamfer runs in from the edge. Roughly a third of the stroke, which is what makes
     // a letter look milled out of plate instead of cut out of paper.
@@ -129,11 +142,13 @@ public static partial class MenuLogo
                 c.Px(x, y, Outline, MathF.Max(0f, 1f - (d - 1f) / 4.2f) * lean);
 
             // Then the rim over the top of it. Laid second on purpose: the other way round, the
-            // shadow eats the gold and it survives only in the corners.
-            if (d <= 1.5f)
-                c.Px(x, y, Rim, 0.95f);
-            else if (d <= 2.2f)
-                c.Px(x, y, Rim, 0.34f);
+            // shadow eats the glow and it survives only in the corners. Widened and pushed brighter
+            // (direct user request, "яркие выраженные элементы") into a real glow halo instead of a
+            // thin one-pixel edge - the kind of thing that actually reads from across a menu screen.
+            if (d <= 2.0f)
+                c.Px(x, y, Rim, 1f);
+            else if (d <= 3.4f)
+                c.Px(x, y, Rim, 0.55f * (1f - (d - 2.0f) / 1.4f));
         }
     }
 

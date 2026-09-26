@@ -2,9 +2,9 @@ namespace Anabiosis.Shared.Model;
 
 // The enemy ship as a physical, boardable structure (game_design.md section 12, Phase 3 -
 // "абордаж: пробоина/вражеский корабль как путь внутрь, бой отсек за отсеком"). Same shape as
-// Station: its own Rooms/Doors plus one AirlockOuterDoor-style hatch that crosses in from EVA,
-// walked with the shared RoomLayout collision. It has no power grid and no repairable systems -
-// only crew to fight and, since the hull it was breached through leaks, air to lose.
+// Station: its own Rooms/Doors plus a couple of locked hatches that cross in from EVA, walked with
+// the shared RoomLayout collision. It has no power grid and no repairable systems - only crew to
+// fight and, since the hull it was breached through leaks, air to lose.
 //
 // Which hull you board depends on the ship (EnemyShipClass, laid out in EnemyShipLayout.Classes.cs)
 // rather than there being one plan for every enemy in the game.
@@ -15,13 +15,17 @@ public sealed partial class EnemyShipLayout
     public IReadOnlyList<Room> Rooms { get; }
     public IReadOnlyList<Door> Doors { get; }
     // Two locked hatches, same "one side is a real room, the other is outside this structure" shape
-    // as Ship.AirlockOuterDoors - closed by default, same as a real airlock, not a standing-open
-    // hole. Getting in means cutting one open (World.Cutting.cs) or cutting straight through a
-    // WallBlock instead; either way, the compartment behind whichever one gave way is in vacuum and
-    // stays that way.
-    public IReadOnlyList<AirlockOuterDoor> AirlockOuterDoors { get; }
+    // (a Door whose RoomBId is null) every other vacuum-facing door in the game now uses
+    // (humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный тип") - closed by default,
+    // same as a real airlock, not a standing-open hole. Kept as its own list, NOT folded into
+    // Doors: a hatch is never entered in World.cs's door-state dictionary as toggleable
+    // (World.ShipState.cs), only cuttable (World.Cutting.cs/World.Boarding.cs) - a genuinely
+    // different runtime model from an ordinary Door, not just "one more vacuum-facing door".
+    // Getting in means cutting one open or cutting straight through a WallBlock instead; either
+    // way, the compartment behind whichever one gave way is in vacuum and stays that way.
+    public IReadOnlyList<Door> OuterHatches { get; }
     public IReadOnlyList<EnemyCrewSpawn> CrewSpawns { get; }
-    // Which compartment a boarding party is nominally headed for - AirlockOuterDoors[0]'s own room.
+    // Which compartment a boarding party is nominally headed for - OuterHatches[0]'s own room.
     // With two real hatches (plus any wall panel) there's no single fixed way in any more; this only
     // still matters for generic tests/atmosphere checks that just need *a* valid interior room.
     public string BoardingRoomId { get; }
@@ -40,19 +44,20 @@ public sealed partial class EnemyShipLayout
     public TileGrid Tiles { get; }
 
     public EnemyShipLayout(EnemyShipClass kind, string name, IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors,
-        IReadOnlyList<AirlockOuterDoor> airlockOuterDoors, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId,
+        IReadOnlyList<Door> outerHatches, IReadOnlyList<EnemyCrewSpawn> crewSpawns, string boardingRoomId,
         IReadOnlyList<TurretWeaponType>? weaponLoadout = null)
     {
         Kind = kind;
         Name = name;
         Rooms = rooms;
         Doors = doors;
-        AirlockOuterDoors = airlockOuterDoors;
+        OuterHatches = outerHatches;
         CrewSpawns = crewSpawns;
         BoardingRoomId = boardingRoomId;
         WeaponLoadout = weaponLoadout;
-        WallBlocks = Station.BuildWallBlocks(rooms, doors, airlockOuterDoors);
-        Tiles = TileGridRasterizer.FromRooms(rooms, doors, airlockOuterDoors);
+        var allDoors = doors.Concat(outerHatches).ToList();
+        WallBlocks = Station.BuildWallBlocks(rooms, allDoors);
+        Tiles = TileGridRasterizer.FromRooms(rooms, allDoors);
     }
 
     // Bounding box of the hull's own Rooms in its local frame - the same "centre + rotate" anchor

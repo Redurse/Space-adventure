@@ -26,7 +26,7 @@ namespace Anabiosis.Shared.Protocol;
 // comments there) since World.Autopilot.cs's StepAutopilot is the only thing that still needs to
 // know about them, and this record's own established convention is to append rather than insert.
 // DoorToggleId is edge-triggered like BuyItemType (null = no click that frame) — clicking
-// a door (interior Door or an AirlockOuterDoor to vacuum) flips it open/closed (game_design.md
+// a door (interior or vacuum-facing) flips it open/closed (game_design.md
 // Phase 3, M16). No proximity check server-side, same trusted-client reasoning as the other
 // click-driven fields above.
 // PushOffPressed is edge-triggered (Space, like FirePressed) — while EVA and attached, pushes off
@@ -298,4 +298,31 @@ public sealed record ClientCommand(
     // HERE deliberately means "no override" - releasing RMB is meant to hand facing straight back
     // to World.Autopilot.cs's own default (nose points along the direction of travel), not freeze
     // the last aimed bearing forever the way a held throttle would.
-    float? DesiredFacingDegrees = null);
+    float? DesiredFacingDegrees = null,
+    // Direct user request ("сделай меню фабрикатора как в баротравме") - the FabricatorCatalog.cs
+    // recipe id the "СОЗДАТЬ" button in the open Fabricator panel was clicked for, edge-triggered
+    // like TerminalInteractId/SuitLockerInteractId above - World.Fabricator.cs's own
+    // TryCraftAtFabricator re-checks the character is actually near a Ship.DecorativeDevices
+    // Fabricator and re-counts the ingredients server-side before consuming anything.
+    string? FabricatorCraftRecipeId = null,
+    // Direct user request ("сделай Деконструктор... получается его содержимое как если бы его
+    // скрафтили наоборот") - which item type to start reverse-crafting (FabricatorCatalog.
+    // FindByOutput); edge-triggered like FabricatorCraftRecipeId above.
+    ItemType? DeconstructItemType = null,
+    // Shared "Отмена" button for either panel - a character can only ever have one production job
+    // running (Character.ProductionActionRemaining), so this needs no id of its own.
+    bool ProductionCancelPressed = false,
+    // Barotrauma-style pre-game lobby (GameServer's own SessionPhase.Lobby) - sent continuously
+    // like PowerDirection (current state, not edge-triggered), the roster entry just mirrors
+    // whatever's currently set.
+    bool LobbyReady = false,
+    // Host-only (GameServer checks the sender against its own lobby host id - everyone else's copy
+    // is simply ignored): the fully client-resolved-and-validated custom hull the round will start
+    // with, same trust level DoorToggleId/BuildRoom already get from a client. Null keeps whatever
+    // was already selected (including "nothing yet", which falls back to the frozen default hull
+    // exactly like ShipKind.Custom with customShip: null already does outside the lobby).
+    CustomShipDefinition? LobbySelectCustomShip = null,
+    string? LobbySelectCustomShipName = null,
+    // Host-only, edge-triggered like DoorToggleId - the lobby's own start button. Ignored from
+    // anyone but the host (GameServer.ApplyLobbyCommand).
+    bool LobbyStartRoundPressed = false);

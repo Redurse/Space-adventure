@@ -2,7 +2,7 @@ using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Client.Rendering;
 
-public enum BlockKind { None, Reactor, Distribution, Battery, System, Navigation, Station, Rack, Connections, SuitLocker, Jukebox, CardTable, Terminal }
+public enum BlockKind { None, Reactor, Distribution, Battery, System, Navigation, Station, Rack, Connections, SuitLocker, Jukebox, CardTable, Terminal, Fabricator, Deconstructor }
 
 // Which block, if any, the player currently has "open" (game_design.md sections 1, 5, 10 — click
 // a block to walk up to its terminal). System carries which of the 5 power systems it is;
@@ -19,6 +19,12 @@ public readonly record struct ClickTarget(BlockKind Kind, PowerSystemId System =
     public static readonly ClickTarget Station = new(BlockKind.Station);
     public static readonly ClickTarget Jukebox = new(BlockKind.Jukebox);
     public static readonly ClickTarget CardTable = new(BlockKind.CardTable);
+    // Direct user request ("сделай меню фабрикатора") - a single global panel, no id needed: crafting
+    // is proximity-only and stateless (World.Fabricator.cs's own TryCraftAtFabricator re-checks
+    // distance to the nearest one server-side), so which physical Fabricator the player clicked
+    // doesn't matter once the panel is open, same as Jukebox above.
+    public static readonly ClickTarget Fabricator = new(BlockKind.Fabricator);
+    public static readonly ClickTarget Deconstructor = new(BlockKind.Deconstructor);
     public static ClickTarget ForSystem(PowerSystemId system) => new(BlockKind.System, system);
     public static ClickTarget ForConnections(string componentId) => new(BlockKind.Connections, TargetComponentId: componentId);
     public static ClickTarget ForRack(string rackId) => new(BlockKind.Rack, TargetComponentId: rackId);

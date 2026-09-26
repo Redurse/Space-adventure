@@ -64,4 +64,14 @@ public enum ItemType
     // voice needs no item at all. Direct user request, matching Barotrauma's own radio-as-item
     // model instead of a free always-available channel.
     Radio,
+    // Direct user request ("добавим множество предметов материалов") - raw ores, mined from
+    // OreDeposit.OreType (World.Cutting.cs), replacing the old one-size-fits-all Mineral drop
+    // (Mineral itself stays in the enum, still used by Station.Procedural.cs's own unrelated crate
+    // loot table, just no longer what mining actually yields). FabricatorCatalog.cs's own recipes
+    // turn a subset of these into the refined materials below.
+    IronOre, NickelOre, ZincOre, CopperOre, TitaniumOre, UraniumOre, Silicon, Carbon, AluminumOre, PlastalloyOre,
+    // Refined materials - each one a FabricatorCatalog.cs recipe's own output, craftable at the
+    // Фабрикатор (Fabricator) device once a character stands near it with the right ores/plates
+    // already in their own Inventory.
+    SteelPlate, TitaniumPlate, CopperCable, Plastic, Plastalloy,
 }

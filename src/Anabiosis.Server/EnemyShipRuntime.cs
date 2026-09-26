@@ -43,11 +43,13 @@ public sealed class EnemyShipRuntime
     // doesn't all sweep the same direction in lockstep.
     public float OrbitDirection { get; init; } = 1f;
 
-    // This hull's own exterior Hp, one entry per Layout.WallBlocks id, own instance per ship so two
-    // raiders of the same class don't share a wall's damage (World.Cutting.cs's
-    // FindAimedEnemyOuterCutTarget damages these once cut open, World.Eva.cs's
-    // StepEnemyShipAttachedWalk lets a boarder climb through a breached one same as the player's
-    // own hull).
+    // This hull's own exterior Hp, one entry per Layout.WallBlocks id OR per Layout.OuterHatches id
+    // (humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный тип" - a hatch used to get its
+    // own separate _airlockHp dictionary; folded in here since hatch ids never collide with wall-
+    // block ids and both default to the same WallBlockMaxHp, so the merge is behaviour-preserving).
+    // Own instance per ship so two raiders of the same class don't share a wall's/hatch's damage
+    // (World.Cutting.cs's FindAimedEnemyOuterCutTarget damages these once cut open, World.Eva.cs's
+    // StepMagnetizedWalk lets a boarder climb through a breached one same as the player's own hull).
     private readonly Dictionary<string, float> _wallBlockHp = new();
 
     public float GetWallBlockHp(string blockId) => _wallBlockHp.GetValueOrDefault(blockId, World.WallBlockMaxHp);
@@ -56,19 +58,6 @@ public sealed class EnemyShipRuntime
         _wallBlockHp[blockId] = Math.Max(0f, GetWallBlockHp(blockId) - amount);
     public void RepairWallBlock(string blockId, float amount) =>
         _wallBlockHp[blockId] = Math.Min(World.WallBlockMaxHp, GetWallBlockHp(blockId) + amount);
-
-    // Same per-instance split as _wallBlockHp above, for the hull's own two locked
-    // AirlockOuterDoors: each one is a real hatch you have to cut through, not a door you can just
-    // toggle open (there's no key or handle from outside), so it only ever tracked here, never in
-    // World's own shared _doorOpen dictionary.
-    private readonly Dictionary<string, float> _airlockHp = new();
-
-    public float GetAirlockHp(string airlockId) => _airlockHp.GetValueOrDefault(airlockId, World.WallBlockMaxHp);
-    public bool IsAirlockBreached(string airlockId) => GetAirlockHp(airlockId) <= 0f;
-    public void DamageAirlock(string airlockId, float amount) =>
-        _airlockHp[airlockId] = Math.Max(0f, GetAirlockHp(airlockId) - amount);
-    public void RepairAirlock(string airlockId, float amount) =>
-        _airlockHp[airlockId] = Math.Min(World.WallBlockMaxHp, GetAirlockHp(airlockId) + amount);
 
     public EnemyShipRuntime(string id, float maxHp, Vec2 position, EnemyShipLayout layout, IReadOnlyList<TurretWeaponType> weaponLoadout)
     {

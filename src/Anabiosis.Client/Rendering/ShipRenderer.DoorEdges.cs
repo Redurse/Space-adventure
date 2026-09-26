@@ -36,7 +36,7 @@ public sealed partial class ShipRenderer
     // length along the seam, a fraction of a tile thick across it - never widening into either
     // tile's own floor space, unlike a real footprint-based door.
     internal void DrawDoorEdge(SpriteBatch spriteBatch, TileCoord coord, TileSide side, bool isOpen,
-        bool destroyed, Vector2 origin, float totalSeconds = 0f)
+        bool destroyed, Vector2 origin, float totalSeconds = 0f, bool leadsToVacuum = false)
     {
         const float thicknessUnits = 0.22f;
         var thickness = Math.Max(4, (int)(thicknessUnits * PixelsPerUnit));
@@ -60,10 +60,12 @@ public sealed partial class ShipRenderer
 
         spriteBatch.Draw(_pixel, frame, destroyed ? DoorEdgeFrameDestroyed : DoorEdgeFrame);
 
+        // Same "leadsToVacuum only changes the OPEN color" rule DrawDoor's own leaf uses - a closed
+        // edge reads as sealed red regardless of what's behind it.
         var indicator = destroyed
             ? Color.OrangeRed * (0.6f + 0.4f * MathF.Sin(totalSeconds * 6f))
             : isOpen
-                ? new Color(90, 230, 120)
+                ? (leadsToVacuum ? new Color(190, 140, 255) : new Color(90, 230, 120))
                 : new Color(255, 90, 90);
         spriteBatch.Draw(_pixel, bar, indicator);
     }

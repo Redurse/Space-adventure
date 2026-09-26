@@ -9,8 +9,10 @@ public sealed class InProcessTransport : IServerConnection, IClientConnection
 {
     private readonly ConcurrentQueue<ClientCommand> _commandsToServer = new();
     private readonly ConcurrentQueue<WorldSnapshot> _snapshotsToClient = new();
+    private readonly ConcurrentQueue<LobbySnapshot> _lobbyToClient = new();
 
     void IServerConnection.Send(WorldSnapshot snapshot) => _snapshotsToClient.Enqueue(snapshot);
+    void IServerConnection.SendLobby(LobbySnapshot lobby) => _lobbyToClient.Enqueue(lobby);
 
     IReadOnlyList<ClientCommand> IServerConnection.ReceiveCommands()
     {
@@ -27,6 +29,14 @@ public sealed class InProcessTransport : IServerConnection, IClientConnection
         WorldSnapshot? latest = null;
         while (_snapshotsToClient.TryDequeue(out var snapshot))
             latest = snapshot;
+        return latest;
+    }
+
+    LobbySnapshot? IClientConnection.ReceiveLatestLobby()
+    {
+        LobbySnapshot? latest = null;
+        while (_lobbyToClient.TryDequeue(out var lobby))
+            latest = lobby;
         return latest;
     }
 }

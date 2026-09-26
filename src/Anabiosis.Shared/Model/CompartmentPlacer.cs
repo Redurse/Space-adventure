@@ -13,7 +13,16 @@ namespace Anabiosis.Shared.Model;
 // instance, actually lives). Rotated (M91 follow-up, Helm/Navigation's own 3x2 footprint) is
 // whether this specific placed instance's Width/Height ended up swapped from the catalog's own
 // authored orientation.
-public sealed record PlacedDevice(TileCoord Coord, CustomDeviceKind Kind, string DeviceId, bool IsCore, bool Rotated = false);
+// HalfSide (direct user request, "я хочу чтобы ты сделал отсек таким каким я его сохранил") - the
+// RESOLVED half side Stamp actually used for an IsHalfWidthKind device (authored, or the
+// CustomDeviceFootprint.ResolveHalfSide fallback when none was authored), null for every other
+// kind. The caller (Game1.ShipEditor.cs's own HandleCompartmentToolInput) needs this to populate
+// its own _editorDeviceHalfSides bookkeeping the same way the free-tile Device tool already does
+// for a hand-placed Helm/Navigation - without it, a compartment-placed half-width device's own
+// orientation silently reset to the East/South-by-Rotated fallback the moment the ship got
+// exported (TileShipBuilder.BuildDefinition's own deviceHalfSides lookup would simply never find
+// an entry for it).
+public sealed record PlacedDevice(TileCoord Coord, CustomDeviceKind Kind, string DeviceId, bool IsCore, bool Rotated = false, TileSide? HalfSide = null);
 
 // One engine assembly that ended up placed - TileGrid has no ShipEngine concept of its own (Control
 // is plain floor, Bulkhead is just a wall-ring tile, Nozzle is untouched open space), so this is the
@@ -51,10 +60,14 @@ public static class CompartmentPlacer
         int Width,
         int Height,
         IReadOnlyList<RectF> FootprintRects,
-        IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind, bool IsCore, TurretMountSide MountSide, bool Rotated)> Devices,
+        IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind, bool IsCore, TurretMountSide MountSide, bool Rotated, TileSide? HalfSide)> Devices,
         IReadOnlyList<(TileCoord Control, TileSide Facing, float MaxThrust, EngineRole Role)> Engines,
         (TileSide Side, TileCoord DoorPosition)? Airlock,
-        IReadOnlyList<(TileCoord Position, TileSide Side)> WallOpenSides);
+        IReadOnlyList<(TileCoord Position, TileSide Side)> WallOpenSides,
+        // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - see
+        // CompartmentExtraWallSpec/CompartmentWallDeviceSpec's own doc comments (CompartmentCatalog.cs).
+        IReadOnlyList<TileCoord> ExtraWalls,
+        IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind)> WallDevices);
 
     // Rotates a whole catalog entry (authored at 0 deg) by rotationSteps * 90 deg clockwise. Screen
     // convention (Y grows downward, same as everywhere else in this project - see TileSideExtensions.
@@ -68,7 +81,7 @@ public static class CompartmentPlacer
         var h = entry.Height;
 
         var devices = entry.Devices
-            .Select(d => (d.RelativePosition, d.Kind, d.IsCore, d.MountSide, d.Rotated))
+            .Select(d => (d.RelativePosition, d.Kind, d.IsCore, d.MountSide, d.Rotated, d.HalfSide))
             .ToList();
         var engines = entry.Engines
             .Select(e => (e.RelativeControl, e.Facing, e.MaxThrust, e.Role))
@@ -77,6 +90,8 @@ public static class CompartmentPlacer
         var wallOpenSides = entry.WallOpenSides
             .Select(o => (o.RelativePosition, o.Side))
             .ToList();
+        var extraWalls = entry.ExtraWalls.Select(w => w.RelativePosition).ToList();
+        var wallDevices = entry.WallDevices.Select(d => (d.RelativePosition, d.Kind)).ToList();
 
         TileCoord? airlockDoor = entry.Airlock is { } authoredAirlock
             ? RingCenter(authoredAirlock.Side, w, h)
@@ -102,7 +117,11 @@ public static class CompartmentPlacer
                 var (curWidth, curHeight) = devices[i].Rotated ? (baseHeight, baseWidth) : (baseWidth, baseHeight);
                 _ = curWidth; // only curHeight is needed for the anchor formula - kept for symmetry/clarity
                 var newPosition = RotateDeviceAnchorClockwise(devices[i].RelativePosition, curHeight, h);
-                devices[i] = (newPosition, devices[i].Kind, devices[i].IsCore, devices[i].MountSide, !devices[i].Rotated);
+                // HalfSide (direct user request, "сделал отсек таким каким я его сохранил") - rotates
+                // the same way a wall-open-side's own Side does just below; null (no authored half
+                // side, falls back to CustomDeviceFootprint.ResolveHalfSide at Stamp time) stays null.
+                var newHalfSide = devices[i].HalfSide is { } half ? RotateSideClockwise(half) : (TileSide?)null;
+                devices[i] = (newPosition, devices[i].Kind, devices[i].IsCore, devices[i].MountSide, !devices[i].Rotated, newHalfSide);
             }
 
             for (var i = 0; i < engines.Count; i++)
@@ -123,6 +142,15 @@ public static class CompartmentPlacer
             for (var i = 0; i < wallOpenSides.Count; i++)
                 wallOpenSides[i] = (RotatePointClockwise(wallOpenSides[i].RelativePosition, h), RotateSideClockwise(wallOpenSides[i].Side));
 
+            // Extra interior walls / recessed wall devices are both plain points too (an extra wall
+            // tile is exactly like a ring tile - always one tile; PlaceRecessedWallDevice computes
+            // its own mountSide from the wall's WallOpenSide, so there's no side on the spec itself
+            // to rotate) - same RotatePointClockwise formula as wallOpenSides just above.
+            for (var i = 0; i < extraWalls.Count; i++)
+                extraWalls[i] = RotatePointClockwise(extraWalls[i], h);
+            for (var i = 0; i < wallDevices.Count; i++)
+                wallDevices[i] = (RotatePointClockwise(wallDevices[i].RelativePosition, h), wallDevices[i].Kind);
+
             (w, h) = (h, w);
         }
 
@@ -130,7 +158,7 @@ public static class CompartmentPlacer
             ? (finalSide, finalDoor)
             : null;
 
-        return new RotatedCompartment(w, h, footprintRects, devices, engines, airlock, wallOpenSides);
+        return new RotatedCompartment(w, h, footprintRects, devices, engines, airlock, wallOpenSides, extraWalls, wallDevices);
     }
 
     private static TileCoord RotatePointClockwise(TileCoord point, int heightBeforeRotation) =>
@@ -288,6 +316,18 @@ public static class CompartmentPlacer
             grid.SetWall(coord, isAirlockDoor ? TileWallKind.Door : TileWallKind.Solid, fromCompartment: true);
         }
 
+        // 4a) Extra interior walls (direct user request, "я хочу чтобы ты сделал отсек таким каким
+        // я его сохранил") - a source blueprint's own hand-painted interior partition, beyond what
+        // IsRingTile above would ever wall on its own. Stamped the same Solid way as an ordinary
+        // ring tile, right alongside it, so a half-block override or a recessed wall device authored
+        // against the SAME position (steps 4.5/4.6 below) finds it already Solid, same as any ring
+        // tile would be. Every position here is already guaranteed to be a footprint (floored) tile
+        // by step 1's overlap check - CompartmentCatalog.cs's own doc comment on
+        // CompartmentExtraWallSpec puts the "never on the ring, never already a device" requirement
+        // on whoever authors the entry, same as every other position list here.
+        foreach (var local in rotated.ExtraWalls)
+            grid.SetWall(Abs(local), TileWallKind.Solid, fromCompartment: true);
+
         // 4.5) Half-block overrides - direct user bug report ("почему... в нём отсутствуют
         // полублоки стены, хотя в исходнике они есть?"). Applied strictly after the full-thickness
         // ring above, on top of it, same "paint the base geometry, patch in per-tile detail
@@ -298,6 +338,19 @@ public static class CompartmentPlacer
         foreach (var (position, side) in rotated.WallOpenSides)
             grid.SetWallOpenSide(Abs(position), side);
 
+        // 4.6) Recessed wall devices (Terminal/WallLamp) - direct user request, same reasoning as
+        // 4a above. Needs its own already-Solid, already-half-blocked wall tile to recess into
+        // (TileGrid.PlaceRecessedWallDevice's own precondition), which is exactly what 4/4a + 4.5
+        // just guaranteed for every position authored here (ring or extra wall alike - the method
+        // itself never distinguishes the two). MountSide is never picked here - PlaceRecessedWallDevice
+        // computes it from the wall's own WallOpenSide.
+        var wallDeviceIndex = 0;
+        foreach (var (position, kind) in rotated.WallDevices)
+        {
+            var deviceId = $"{instanceId}-walldevice-{wallDeviceIndex++}";
+            grid.PlaceRecessedWallDevice(Abs(position), kind, deviceId);
+        }
+
         // 5) Devices - every tile of the device's own REAL footprint (CustomDeviceFootprint.Size,
         // swapped when this instance is Rotated) gets the SAME deviceId, not just its anchor tile -
         // a multi-tile device (Reactor, or Helm/Navigation's own new 3x2) must actually occupy and
@@ -306,16 +359,42 @@ public static class CompartmentPlacer
         var placedDevices = new List<PlacedDevice>();
         var protectedTiles = new List<TileCoord>();
         var deviceIndex = 0;
-        foreach (var (position, kind, isCore, _, deviceRotated) in rotated.Devices)
+        foreach (var (position, kind, isCore, _, deviceRotated, halfSide) in rotated.Devices)
         {
             var deviceAnchor = Abs(position);
             var deviceId = $"{instanceId}-device-{deviceIndex++}";
             var (baseWidth, baseHeight) = CustomDeviceFootprint.Size(kind);
             var (deviceWidth, deviceHeight) = deviceRotated ? (baseHeight, baseWidth) : (baseWidth, baseHeight);
-            for (var dx = 0; dx < deviceWidth; dx++)
-                for (var dy = 0; dy < deviceHeight; dy++)
-                    grid.PlaceDevice(new TileCoord(deviceAnchor.X + dx, deviceAnchor.Y + dy), deviceId);
-            placedDevices.Add(new PlacedDevice(deviceAnchor, kind, deviceId, isCore, deviceRotated));
+            // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - an
+            // IsHalfWidthKind device's own "half" tile goes through PlaceHalfWidthDevice instead of
+            // the ordinary PlaceDevice every other tile (and every other kind) uses, the same split
+            // Game1.ShipEditor.cs's own PlaceDeviceFootprint already makes - letting that one tile
+            // coexist with an already-half-blocked ring/extra-wall tile (steps 4/4a/4.5 above) rather
+            // than requiring bare floor there. Falls back to CustomDeviceFootprint.ResolveHalfSide
+            // for an entry that never authored a HalfSide, same convention every other optional field
+            // here uses.
+            TileSide? resolvedHalfSide = null;
+            if (CustomDeviceFootprint.IsHalfWidthKind(kind))
+            {
+                resolvedHalfSide = halfSide ?? CustomDeviceFootprint.ResolveHalfSide(null, deviceRotated);
+                var openSide = CustomDeviceFootprint.HalfOpenSideForHalfWidthDevice(resolvedHalfSide.Value);
+                for (var dx = 0; dx < deviceWidth; dx++)
+                    for (var dy = 0; dy < deviceHeight; dy++)
+                    {
+                        var tile = new TileCoord(deviceAnchor.X + dx, deviceAnchor.Y + dy);
+                        if (CustomDeviceFootprint.IsHalfTileOfHalfWidthFootprint(tile, deviceAnchor, resolvedHalfSide.Value))
+                            grid.PlaceHalfWidthDevice(tile, openSide, deviceId);
+                        else
+                            grid.PlaceDevice(tile, deviceId);
+                    }
+            }
+            else
+            {
+                for (var dx = 0; dx < deviceWidth; dx++)
+                    for (var dy = 0; dy < deviceHeight; dy++)
+                        grid.PlaceDevice(new TileCoord(deviceAnchor.X + dx, deviceAnchor.Y + dy), deviceId);
+            }
+            placedDevices.Add(new PlacedDevice(deviceAnchor, kind, deviceId, isCore, deviceRotated, resolvedHalfSide));
             if (isCore)
                 protectedTiles.Add(deviceAnchor);
         }

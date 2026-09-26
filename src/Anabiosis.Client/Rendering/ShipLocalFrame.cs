@@ -60,4 +60,23 @@ public static class ShipLocalFrame
         var localOffset = new Vec2(worldOffset.X * cos + worldOffset.Y * sin, -worldOffset.X * sin + worldOffset.Y * cos);
         return hullCenter + localOffset;
     }
+
+    // Whether this character's X/Y are AsteroidField world coordinates rather than this scene's own
+    // ship-local ones. THE seam - World.cs's CreateSnapshot switches what CharacterState.X/Y mean
+    // the instant IsOutside flips, and every consumer on this side (camera, sight cone, hit-tests,
+    // suit lamp, both character draw passes) has to agree about it. Named once so it can't be
+    // spelled differently in two places and drift.
+    public static bool InFieldSpace(CharacterState character) => character.IsOutside;
+
+    // A character's position in the ONE frame this whole scene is drawn in: the ship's own local,
+    // unrotated frame. Indoors that is already what X/Y are; outside they are field coordinates -
+    // on a ship out in a sector they run to thousands - and have to come back through the hull's
+    // live position/rotation first (ToLocal above). Every site that used to skip this fold got the
+    // same bug wearing a different hat: the camera looking at empty space, a door click that never
+    // landed, an RCS plume eighty screens past the right-hand edge - this used to be a ternary
+    // repeated at every one of those call sites instead of a single named function.
+    public static Vec2 CharacterToLocal(CharacterState character, ShipFieldState shipField, Vec2 hullCenter) =>
+        InFieldSpace(character)
+            ? ToLocal(new Vec2(character.X, character.Y), shipField, hullCenter)
+            : new Vec2(character.X, character.Y);
 }

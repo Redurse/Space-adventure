@@ -109,8 +109,8 @@ public sealed partial class World
         var enemyTarget = FindAimedEnemyOuterTarget(character, WelderReachUnits, WelderSamples, WeldPointRadius);
         if (enemyTarget is not { } target)
             return;
-        if (target.AirlockId is { } airlockId)
-            target.Enemy.RepairAirlock(airlockId, WelderRepairPerSecond * (float)deltaSeconds);
+        if (target.HatchId is { } hatchId)
+            target.Enemy.RepairWallBlock(hatchId, WelderRepairPerSecond * (float)deltaSeconds);
         else if (target.WallBlockId is { } blockId)
             target.Enemy.RepairWallBlock(blockId, WelderRepairPerSecond * (float)deltaSeconds);
     }
@@ -122,8 +122,8 @@ public sealed partial class World
         if (BoardableEnemy is not { } enemy)
             return;
         var target = FindAimedEnemyIndoorTarget(character, WelderReachUnits, WelderSamples, WeldPointRadius);
-        if (target.AirlockId is { } airlockId)
-            enemy.RepairAirlock(airlockId, WelderRepairPerSecond * (float)deltaSeconds);
+        if (target.HatchId is { } hatchId)
+            enemy.RepairWallBlock(hatchId, WelderRepairPerSecond * (float)deltaSeconds);
         else if (target.WallBlockId is { } blockId)
             enemy.RepairWallBlock(blockId, WelderRepairPerSecond * (float)deltaSeconds);
         // Doors aboard an enemy hull aren't repaired by the welder (same as the player's own ship -

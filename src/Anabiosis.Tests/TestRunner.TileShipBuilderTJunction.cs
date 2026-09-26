@@ -81,7 +81,7 @@ internal static partial class TestRunner
         if (definition.Doors.Count > 0)
             return false; // setup problem - this shape should never need one
         var rooms = definition.Rooms.Select(r => new Room(r.Id, r.Name, r.Rects)).ToList();
-        var finalTiles = TileGridRasterizer.FromRooms(rooms, new List<Door>(), new List<AirlockOuterDoor>());
+        var finalTiles = TileGridRasterizer.FromRooms(rooms, new List<Door>());
         foreach (var coord in definition.SupplementalWallTiles)
         {
             finalTiles.SetFloor(coord, true);

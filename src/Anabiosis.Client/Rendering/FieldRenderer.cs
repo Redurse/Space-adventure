@@ -88,11 +88,7 @@ public sealed partial class FieldRenderer
     // content and is still drawn by Draw below, in its normal place after the ship.
     public void DrawCelestialBackground(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, Vec2 hullCenter)
     {
-        Vector2 WorldToScreen(Vec2 world)
-        {
-            var local = ShipLocalFrame.ToLocal(world, snapshot.ShipField, hullCenter);
-            return origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
-        }
+        Vector2 WorldToScreen(Vec2 world) => ShipRenderer.WorldToScreen(world, snapshot.ShipField, hullCenter, origin);
 
         if (snapshot.Voyage.LandedBodyId is { } landedBodyId)
             DrawPlanetSurfaceGround(spriteBatch, landedBodyId, snapshot, WorldToScreen);
@@ -107,11 +103,7 @@ public sealed partial class FieldRenderer
         Vector2 viewportOrigin, Vector2 viewportSize, float totalSeconds = 0f, IEnumerable<TransientEffect>? effects = null,
         bool seenFromOutside = false, ChatBubbleTracker? chatBubbles = null)
     {
-        Vector2 WorldToScreen(Vec2 world)
-        {
-            var local = ShipLocalFrame.ToLocal(world, snapshot.ShipField, hullCenter);
-            return origin + new Vector2((float)local.X, (float)local.Y) * ShipRenderer.PixelsPerUnit;
-        }
+        Vector2 WorldToScreen(Vec2 world) => ShipRenderer.WorldToScreen(world, snapshot.ShipField, hullCenter, origin);
 
         // The body's own disc/ground itself is drawn separately and earlier now - see
         // DrawCelestialBackground's own doc comment. Only the real, physical foreground content a
@@ -147,7 +139,7 @@ public sealed partial class FieldRenderer
 
         // The cutting flame, out of the character toward whatever they're aiming at - the tool's
         // whole feedback, since the ore's progress bar only moves while this is on it.
-        foreach (var character in snapshot.Characters.Where(c => c.Cutting && c.IsOutside))
+        foreach (var character in snapshot.Characters.Where(c => c.Cutting && ShipLocalFrame.InFieldSpace(c)))
         {
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
@@ -157,7 +149,7 @@ public sealed partial class FieldRenderer
             DrawCuttingFlame(spriteBatch, muzzle, direction, totalSeconds);
         }
 
-        foreach (var character in snapshot.Characters.Where(c => c.Welding && c.IsOutside))
+        foreach (var character in snapshot.Characters.Where(c => c.Welding && ShipLocalFrame.InFieldSpace(c)))
         {
             var aim = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);
@@ -174,7 +166,7 @@ public sealed partial class FieldRenderer
         // translucent preview of the ship's own hull at the autopilot's destination, split into its
         // own partial file (FieldRenderer.Autopilot.cs) same as GalaxyMapPanel's own topic split.
         if (snapshot.Autopilot is { IsActive: true, DestinationX: { } destX, DestinationY: { } destY })
-            DrawAutopilotGhost(spriteBatch, snapshot, hullCenter, new Vec2(destX, destY), WorldToScreen);
+            DrawAutopilotGhost(spriteBatch, snapshot, hullCenter, new Vec2(destX, destY), WorldToScreen, snapshot.Autopilot.PredictedFacingDegrees);
 
         // Only where a station actually exists in this system - many procedural systems have none
         // at all (GalaxyMap.cs), and the layout the World keeps around for docking is not a thing
@@ -287,7 +279,12 @@ public sealed partial class FieldRenderer
         // Outside, a character's facing is stored in field coordinates, but this whole scene is
         // drawn in the ship's frame - which swings as the ship turns. Drawn raw, the marker for
         // "which way am I looking" pointed somewhere else entirely whenever the hull wasn't level.
-        foreach (var character in snapshot.Characters.Where(c => c.IsOutside))
+        // Other half of THE character filter (ShipLocalFrame.InFieldSpace) - ShipRenderer.
+        // DrawCharacters/DrawCharacterLabels are the other half; between them every character is
+        // drawn exactly once (ShipRenderer.cs's own doc comment on DrawCharacters).
+        // Direct user request ("модель игрока полностью пропадала") - same dead-character skip
+        // ShipRenderer.DrawCharacters uses for the interior half of this same split.
+        foreach (var character in snapshot.Characters.Where(c => ShipLocalFrame.InFieldSpace(c) && c.Health > 0f))
         {
             var facing = ShipLocalFrame.ToLocalDirection(
                 new Vec2(character.FacingX, character.FacingY), snapshot.ShipField.RotationDegrees);

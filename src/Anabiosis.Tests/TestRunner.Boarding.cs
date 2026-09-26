@@ -19,6 +19,16 @@ internal static partial class TestRunner
     private static void BoardEnemyShip(World world, ItemType weapon, bool withCutter = false, bool withWelder = false)
     {
         EnterBattle(world);
+        // Every interior ship door now starts closed by default (direct user request, "сделай
+        // чтобы все двери на корабле изначально были закрыты") - opened up front, same as
+        // MoveCharacterTo already does for its own callers below (TakeFromRack/EquipSuit), so the
+        // walk to the weapon rack and suit locker isn't blocked by the new default. Safe to call
+        // this early and this often specifically because DebugOpenAllDoors now excludes the
+        // player's own airlock (see its own doc comment, World.Doors.cs) - EnterBattle undocks the
+        // ship, and opening the REAL vacuum door while undocked would otherwise bleed the whole
+        // ship's oxygen out for the rest of this setup, which none of these tests need at all
+        // (DebugPlaceEvaCharacter below teleports straight onto the enemy hull instead).
+        world.DebugOpenAllDoors();
 
         var slot = TakeFromRack(world, weapon);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: slot));
@@ -381,8 +391,18 @@ internal static partial class TestRunner
             if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health <= 0)
                 return false; // died boarding - not what this test is checking
 
-            WalkBoarderToMeleeRangeOfNearestDefender(world);
-            for (var i = 0; i < 3 * 30; i++)
+            // Direct fallout of the door-default change: BoardEnemyShip now actually gets the
+            // boarder aboard reliably (see its own comment), so this test's own combat loop runs
+            // for real for the first time - previously it always bailed out at the OnEnemyShip
+            // check above before ever reaching this far. Stop firing the instant the current
+            // target dies instead of blindly holding the trigger for the full 3 seconds regardless
+            // - standing exposed in melee range longer than necessary was costing enough
+            // accumulated counter-attack damage across all CrewSpawns.Count rounds to kill the
+            // boarder before the last defender fell. FirstOrDefault, not First - a defender that's
+            // already gone (this ship destroyed underneath them, EnemyShipLayout rotating to the
+            // next squadron member) reads the same as "target down", not a crash.
+            var targetId = WalkBoarderToMeleeRangeOfNearestDefender(world);
+            for (var i = 0; i < 3 * 30 && (world.CreateSnapshot().EnemyShip.Crew.FirstOrDefault(c => c.Id == targetId)?.Alive ?? false); i++)
             {
                 world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
                 world.Step(RealtimeStep);
@@ -402,7 +422,7 @@ internal static partial class TestRunner
             return false;
 
         var roomIds = layouts.SelectMany(l => l.Rooms.Select(r => r.Id)).ToList();
-        var doorIds = layouts.SelectMany(l => l.Doors.Select(d => d.Id).Concat(l.AirlockOuterDoors.Select(d => d.Id))).ToList();
+        var doorIds = layouts.SelectMany(l => l.Doors.Select(d => d.Id).Concat(l.OuterHatches.Select(d => d.Id))).ToList();
         var crewIds = layouts.SelectMany(l => l.CrewSpawns.Select(c => c.Id)).ToList();
 
         // Every class also has to be walkable end to end: a breach compartment that is actually one

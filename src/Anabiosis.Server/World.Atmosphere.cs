@@ -31,41 +31,40 @@ public sealed partial class World
         // processed in doesn't bias the result toward one side of the ship. A closed door blocks
         // this entirely (game_design.md Phase 3, M16 - airtight compartments).
         var deltas = new Dictionary<string, float>();
+        // One shared local function for both Ship.Doors and Ship.DoorEdges below (humble-soaring-
+        // cat.md, "убрать AirlockOuterDoor как отдельный тип") - used to be 3 near-identical loops
+        // (interior Door, vacuum-facing AirlockOuterDoor, DoorEdge branching internally to
+        // reproduce the AirlockOuterDoor formula). A null far side pins the flow at "leak straight
+        // out to vacuum" instead of "equalize with a real neighbor" - UNLESS the ship is docked, in
+        // which case that same opening leads onto the station's own pressurized dock chamber
+        // instead of space (World.StationDocking.cs), so an ordinary walk ashore must not vent the
+        // ship. That guard is scoped to just the vacuum branch, not the whole function - an
+        // interior door/edge (both rooms real) still has to keep diffusing while docked.
+        void Diffuse(string id, string? roomA, string? roomB)
+        {
+            if (!IsDoorOpen(id))
+                return;
+            if (roomA is null || roomB is null)
+            {
+                if (IsDocked)
+                    return;
+                if ((roomA ?? roomB) is not { } vacuumRoomId)
+                    return;
+                var leak = OxygenDiffusionRatePerSecond * _roomOxygen[vacuumRoomId] * (float)deltaSeconds;
+                deltas[vacuumRoomId] = deltas.GetValueOrDefault(vacuumRoomId) - leak;
+                return;
+            }
+            var flow = OxygenDiffusionRatePerSecond * (_roomOxygen[roomA] - _roomOxygen[roomB]) * (float)deltaSeconds;
+            deltas[roomA] = deltas.GetValueOrDefault(roomA) - flow;
+            deltas[roomB] = deltas.GetValueOrDefault(roomB) + flow;
+        }
         foreach (var door in Ship.Doors)
-        {
-            if (!IsDoorOpen(door.Id))
-                continue;
-            var flow = OxygenDiffusionRatePerSecond * (_roomOxygen[door.RoomAId] - _roomOxygen[door.RoomBId]) * (float)deltaSeconds;
-            deltas[door.RoomAId] = deltas.GetValueOrDefault(door.RoomAId) - flow;
-            deltas[door.RoomBId] = deltas.GetValueOrDefault(door.RoomBId) + flow;
-        }
+            Diffuse(door.Id, door.RoomAId, door.RoomBId);
 
-        // An open AirlockOuterDoor exposes its chamber directly to vacuum - same diffusion
-        // formula as an interior door, just with the far side pinned at 0 instead of another
-        // room's level. A door standing wide open to space drains far faster than any single
-        // hull breach, which is exactly the point of it being a deliberate, undoable choice.
-        // ...unless the ship is docked, in which case that same door opens onto the station's own
-        // pressurized dock chamber rather than onto space (World.StationDocking.cs) - walking
-        // ashore is a normal thing to do and must not vent the ship on the way.
-        foreach (var outerDoor in Ship.AirlockOuterDoors)
-        {
-            if (!IsDoorOpen(outerDoor.Id) || IsDocked)
-                continue;
-            var flow = OxygenDiffusionRatePerSecond * _roomOxygen[outerDoor.RoomId] * (float)deltaSeconds;
-            deltas[outerDoor.RoomId] = deltas.GetValueOrDefault(outerDoor.RoomId) - flow;
-        }
-
-        // M-doors-as-edges - identical formula to the interior-door loop above, just against
-        // Ship.DoorEdges' own RoomAId/RoomBId (looked up once in Ship.Custom.cs) instead of Doors'.
+        // M-doors-as-edges - same Diffuse function above, just against Ship.DoorEdges' own
+        // RoomAId/RoomBId (looked up once in Ship.Custom.cs) instead of Doors'.
         foreach (var edge in Ship.DoorEdges)
-        {
-            if (!IsDoorOpen(edge.Id))
-                continue;
-            var flow = OxygenDiffusionRatePerSecond * (_roomOxygen[edge.RoomAId] - _roomOxygen[edge.RoomBId]) * (float)deltaSeconds;
-            deltas[edge.RoomAId] = deltas.GetValueOrDefault(edge.RoomAId) - flow;
-            deltas[edge.RoomBId] = deltas.GetValueOrDefault(edge.RoomBId) + flow;
-        }
-
+            Diffuse(edge.Id, edge.RoomAId, edge.RoomBId);
         foreach (var (roomId, delta) in deltas)
             _roomOxygen[roomId] += delta;
 
@@ -103,8 +102,14 @@ public sealed partial class World
         {
             // Station and enemy-ship rooms aren't part of _roomOxygen at all (no atmosphere/breach
             // simulation in either structure) - and a boarding party is necessarily suited anyway,
-            // since it crossed vacuum to get there.
-            if (character.SuitSealed || character.OnStation || character.OnEnemyShip)
+            // since it crossed vacuum to get there. IsFullyExposedToVacuum (World.Eva.cs) covers its
+            // own, separate, much faster ramp for a character who is outside or in a room with an
+            // opening big enough to be full vacuum - this loop is deliberately excluded from those
+            // cases now (humble-soaring-cat.md direct user request), both to avoid double-applying
+            // damage on top of StepUnsuitedExposure and because an outside character's own RoomId is
+            // stale (World.Eva.cs's own doc comment on the field) and was never a safe key into
+            // _roomOxygen to begin with.
+            if (character.SuitSealed || character.OnStation || character.OnEnemyShip || IsFullyExposedToVacuum(character))
                 continue;
 
             var oxygen = _roomOxygen[character.RoomId];

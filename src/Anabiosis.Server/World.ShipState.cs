@@ -30,25 +30,22 @@ public sealed partial class World
         foreach (var room in Ship.Rooms)
             _roomOxygen[room.Id] = FullOxygen;
 
+        // Direct user request ("сделай чтобы все двери на корабле изначально были закрыты") - every
+        // door starts closed now, vacuum-facing or interior alike; a freshly built hull never starts
+        // with anything already standing open, on this ship or in a freshly appended room.
         foreach (var door in Ship.Doors)
         {
-            _doorOpen[door.Id] = true; // preserves the pre-M16 always-passable behavior
+            _doorOpen[door.Id] = false;
             _doorHp[door.Id] = DoorMaxHp;
         }
-        foreach (var outerDoor in Ship.AirlockOuterDoors)
-        {
-            _doorOpen[outerDoor.Id] = false; // opening to vacuum is always a deliberate choice
-            _doorHp[outerDoor.Id] = DoorMaxHp;
-        }
 
-        // M-doors-as-edges - the direct replacement for the old narrow interior Door, so it keeps
-        // that same "preserves the pre-M16 always-passable behavior" default (open), not the
-        // airlock's deliberate-choice default. Same "never cleared across a hull swap" convention
-        // as _doorOpen/_doorHp just above (stale ids from a previous hull are simply never read
-        // again, since every lookup here goes through this hull's own Ship.DoorEdges).
+        // M-doors-as-edges - the direct replacement for the old narrow interior Door, same "always
+        // closed on a fresh hull" default as Ship.Doors above. Same "never cleared across a hull
+        // swap" convention as _doorOpen/_doorHp just above (stale ids from a previous hull are simply
+        // never read again, since every lookup here goes through this hull's own Ship.DoorEdges).
         foreach (var edge in Ship.DoorEdges)
         {
-            _doorEdgeOpen[edge.Id] = true;
+            _doorEdgeOpen[edge.Id] = false;
             _doorEdgeHp[edge.Id] = DoorMaxHp;
         }
 

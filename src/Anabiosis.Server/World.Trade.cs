@@ -69,7 +69,7 @@ public sealed partial class World
         // Sell prices move the same way as buy prices - an ally's station pays out better, a
         // hostile one lowballs you (the multiplier is inverted here, since a low multiplier means
         // "cheap for the player" on the buy side but "stingy" on the sell side).
-        var oreBonus = item == ItemType.Mineral && DockedStationKind == StationKind.Mining ? MiningStationOreSellBonus : 1f;
+        var oreBonus = ItemDefinitions.IsRawOre(item) && DockedStationKind == StationKind.Mining ? MiningStationOreSellBonus : 1f;
         Credits += (int)MathF.Round(good.SellPrice / LocalPriceMultiplier * oreBonus);
     }
 }

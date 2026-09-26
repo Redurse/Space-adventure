@@ -35,13 +35,18 @@ public sealed record CustomShipTileCanvas(
     // property); BuildEditorTileCanvas always sets it true on any save going forward, since only the
     // new manual toggle can produce a WallOpenSide today. ApplyEditorTileCanvas strips every
     // WallOpenSide on load when this is false, rather than trusting them.
-    bool ManualHalfBlockWalls = false)
+    bool ManualHalfBlockWalls = false,
+    // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - see
+    // CompartmentInstanceRecord's own doc comment. Null/empty for every save from before the
+    // Compartment tool tracked its own placed instances this way.
+    IReadOnlyList<CustomShipTileCanvas.CompartmentInstanceRecord>? CompartmentInstancesRaw = null)
 {
     // Defaulted/nullable (same convention CustomShipDefinition.EnginesRaw/Engines already uses) so a
     // save file from before the real ShipEngine editor tool existed - which has no "EnginesRaw"
     // property at all - deserializes to an empty list instead of null/crashing.
     public IReadOnlyList<EngineRecord> Engines { get; init; } = EnginesRaw ?? new List<EngineRecord>();
     public IReadOnlyList<DoorEdgeRecord> DoorEdges { get; init; } = DoorEdgesRaw ?? new List<DoorEdgeRecord>();
+    public IReadOnlyList<CompartmentInstanceRecord> CompartmentInstances { get; init; } = CompartmentInstancesRaw ?? new List<CompartmentInstanceRecord>();
 
     // One entry per tile the player ever painted (TileGrid.Cells only ever holds cells with
     // HasFloor true - SetFloor(false) removes the dictionary entry entirely - so this always is,
@@ -72,7 +77,12 @@ public sealed record CustomShipTileCanvas(
     // DeviceFootprintTiles), so a multi-tile device's other occupied cells don't need their own
     // separate record. Rotated defaults to false for every save from before non-square devices could
     // be rotated (StorageRack/LargeStorage/Helm/Navigation) - unrotated, exactly what it already was.
-    public sealed record DeviceRecord(int X, int Y, CustomDeviceKind Kind, bool Rotated = false);
+    // HalfSide (direct user bug report, "не поворачиваются на все 4 стороны") - null for every save
+    // from before a CustomDeviceFootprint.IsHalfWidthKind device (Helm/Navigation originally,
+    // Fabricator/Deconstructor too) could face all 4 sides; Game1.ShipEditor.TileSave.cs's own load
+    // path falls back to Rotated's old East/South-only mapping (CustomDeviceFootprint.ResolveHalfSide)
+    // for those, same convention CustomDeviceDef.HalfWidthSide uses on the exported-ship side.
+    public sealed record DeviceRecord(int X, int Y, CustomDeviceKind Kind, bool Rotated = false, TileSide? HalfSide = null);
 
     // A real ShipEngine (ShipEngine.cs) placed via the Engine editor tool - only the Control tile's
     // own anchor and facing; EngineFootprintTiles(anchor, Facing) recomputes the Bulkhead/Nozzle tiles
@@ -89,4 +99,15 @@ public sealed record CustomShipTileCanvas(
     public sealed record ZoneRecord(string Name, IReadOnlyList<TilePos> Tiles, ShipZoneKind? Kind = null);
 
     public readonly record struct TilePos(int X, int Y);
+
+    // A placed CompartmentCatalog instance (direct user request, "я хочу чтобы ты сделал отсек
+    // таким каким я его сохранил") - EntryId + Anchor + RotationSteps is everything
+    // CompartmentPlacer.Rotate needs to reconstruct this instance's own exact FootprintRects again
+    // on load (Game1.ShipEditor.cs's own _editorCompartmentRects/_editorCompartmentTiles/
+    // _editorCompartmentAt/_editorCompartmentProtected bookkeeping - none of it survived a save/
+    // reload before this existed, a pre-existing gap this closes as a side effect). Not the tiles
+    // themselves (those are already exactly TileRecord's own job) - just enough to re-derive the
+    // same geometry CompartmentPlacer.Stamp originally computed, without re-stamping onto the
+    // already-loaded grid.
+    public sealed record CompartmentInstanceRecord(string InstanceId, string EntryId, int AnchorX, int AnchorY, int RotationSteps);
 }

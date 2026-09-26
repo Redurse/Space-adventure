@@ -29,6 +29,9 @@ public partial class Game1
         Controls,
         Interface,
         Misc,
+        // Direct user request ("в новом разделе настроек... достижения можно было листать как в
+        // Стиме") - browse-only, nothing here to stage/apply (Game1.Settings.Achievements.cs).
+        Achievements,
     }
 
     private static readonly (SettingsTab Tab, string Label)[] SettingsTabs =
@@ -38,6 +41,7 @@ public partial class Game1
         (SettingsTab.Controls, "Управление"),
         (SettingsTab.Interface, "Интерфейс"),
         (SettingsTab.Misc, "Прочее"),
+        (SettingsTab.Achievements, "Достижения"),
     };
 
     private static readonly (int Width, int Height)[] ResolutionOptions =
@@ -226,6 +230,8 @@ public partial class Game1
         _stagedEnemyHealthBarsEnabled = _graphicsSettings.EnemyHealthBarsEnabled;
 
         _settingsTab = SettingsTab.Graphics;
+        _achievementsScrollOffset = 0f;
+        _achievementsThumbDragLastMouseY = null;
         _settingsPanelOpenEase = 0f;
         _settingsTabForTransition = SettingsTab.Graphics;
         _settingsTabSwitchEase = 1f;
@@ -593,6 +599,12 @@ public partial class Game1
             }
         }
 
+        // Not gated by `held` above - the achievements list only ever scrolls (drag-a-thumb, same
+        // convention ChangelogPanel already uses), and HandleAchievementsTabInput needs to see the
+        // "button just let go" frame too (clears drag state), not just the frames it's held down.
+        if (_settingsTab == SettingsTab.Achievements)
+            HandleAchievementsTabInput(SettingsContentOrigin(origin), point, held, clicked);
+
         _prevMenuLeftMouseButton = mouse.LeftButton;
     }
 
@@ -769,6 +781,9 @@ public partial class Game1
             case SettingsTab.Misc:
                 DrawMiscTab(content);
                 break;
+            case SettingsTab.Achievements:
+                DrawAchievementsTab(content);
+                break;
         }
 
         // Masks the tab-switch slide's own sharp start with a quick fade rather than letting the
@@ -847,6 +862,15 @@ public partial class Game1
             case SettingsTab.Misc: // a small diamond
                 _spriteBatch.Draw(_pixel, new Rectangle((int)center.X - 1, (int)center.Y - 9, 2, 18), color);
                 _spriteBatch.Draw(_pixel, new Rectangle((int)center.X - 9, (int)center.Y - 1, 18, 2), color);
+                break;
+            case SettingsTab.Achievements: // a small star/badge
+                for (var i = 0; i < 5; i++)
+                {
+                    var angle = -MathHelper.PiOver2 + i * MathHelper.TwoPi / 5f;
+                    var point = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * 9f;
+                    _spriteBatch.Draw(_pixel, new Rectangle((int)point.X - 1, (int)point.Y - 1, 3, 3), color);
+                }
+                HudIcons.FillCircle(_spriteBatch, _pixel, center, 4f, color);
                 break;
         }
     }

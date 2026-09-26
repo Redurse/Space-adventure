@@ -8,7 +8,11 @@ namespace Anabiosis.Shared.Model;
 // OWN, unrelated "junction box" concept (World.Wiring.cs's per-power-system trunk breaker,
 // WorldSnapshot.JunctionStates), which is entirely auto-derived from SystemDevices/DistributionBlock
 // and has nothing to do with where the player happened to paint this cosmetic fixture.
-public sealed record JunctionBox(string Id, string RoomId, float X, float Y)
+// Rotated/HalfSide (direct user request, "занимал размер полтора на 1 блок, как делались все новые
+// блоки") - same half-width console convention Helm/Navigation/ShipStatusMonitor/CommsConsole
+// already carry, added here once Junction became one of CustomDeviceFootprint.IsHalfWidthKind's
+// kinds too.
+public sealed record JunctionBox(string Id, string RoomId, float X, float Y, bool Rotated = false, TileSide HalfSide = TileSide.East)
 {
     public Vec2 Position => new(X, Y);
 }

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -11,6 +12,7 @@ using Anabiosis.Client.Rendering;
 using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
+using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Client;
 
@@ -30,6 +32,18 @@ public partial class Game1
         ShipEditor,
         Credits,
         Settings,
+        // Direct user request (screenshots of a Barotrauma-style "Создать сервер" screen) - name/
+        // player-cap feed StartHostedLobby's own real GameServer lobby constructor; password/
+        // language/server-executable/checkboxes are shown but inert (direct user confirmation,
+        // "показать визуально, но неактивно") - this game has none of the backing mechanics
+        // (password auth, a public server list, karma) those Barotrauma controls represent.
+        CreateServer,
+        // Direct user request (screenshot 3 of the Barotrauma reference set) - a real pre-game
+        // waiting room: everyone connected sees the live player list/roles/ready state, only the
+        // host can pick the ship and press "НАЧАТЬ", and the round only actually begins once that
+        // command reaches GameServer (its own SessionPhase.Lobby). Reached from CreateServer's own
+        // "НАЧАТЬ" (hosting) or from Join (joining someone else's lobby) alike.
+        Lobby,
     }
 
     private static readonly CrewRole[] RoleChoices = { CrewRole.Captain, CrewRole.Engineer, CrewRole.Mechanic, CrewRole.Security, CrewRole.Scientist };
@@ -69,6 +83,36 @@ public partial class Game1
     private bool _openToNetwork;
     private string _joinAddress = "127.0.0.1";
     private string? _joinError;
+
+    // Direct user request (screenshots of a Barotrauma-style "Создать сервер" screen) - Название
+    // сервера/Макс. игроков are the only 2 fields here with anything real behind them (a display
+    // name shown next to the host's own port on ShipSelect, and a real cap enforced by
+    // NetworkHost/GameServer.PlayerCount via ServerMessageKind.Rejected); every other
+    // control on the screen (password, language, server executable, the 3 checkboxes) is drawn but
+    // inert, direct user confirmation ("показать визуально, но неактивно") - this game has none of
+    // Barotrauma's own backing mechanics (password auth, a public server browser, karma) for them.
+    private string _createServerName = "Сервер";
+    private const int DefaultCreateServerMaxPlayers = 4;
+    private const int MinCreateServerMaxPlayers = 1;
+    private const int MaxCreateServerMaxPlayers = 8;
+    private int _createServerMaxPlayers = DefaultCreateServerMaxPlayers;
+    private int _hostMaxPlayers = int.MaxValue;
+    // Barotrauma-style pre-game lobby (MenuScreen.Lobby) - a background SoloSession(lobbyServerName,
+    // maxPlayers, port) construction in flight, same "poll every frame, don't block Update" shape
+    // _pendingSession already uses for the non-lobby path. A SEPARATE field (not reused) so the two
+    // paths can never be confused with each other and FinishPendingSessionIfReady stays completely
+    // untouched.
+    private System.Threading.Tasks.Task<SoloSession>? _pendingLobbySession;
+    // This client's own ready toggle while sitting in a lobby - reset every time a new lobby is
+    // entered (hosting or joining). The server's own LobbyPlayerState.IsReady is the source of
+    // truth once a snapshot arrives; this is only what the very next click should flip it to.
+    private bool _lobbyReady;
+    // Host-only, purely for highlighting which row is picked - GameServer's own LobbySnapshot.
+    // CustomShipName already carries the authoritative answer once it arrives.
+    private string? _lobbySelectedShipName;
+    // Purely cosmetic - cycles a couple of canned blurbs under the carousel's own arrows, the same
+    // "Игровой стиль" flavor text the reference screen shows, never read by anything else.
+    private int _createServerStyleIndex;
     // The join handshake talks to a machine that may not answer; running it on the game thread would
     // freeze the window for the whole timeout, so the menu keeps drawing while this is in flight.
     private Task<NetworkSession>? _joinTask;
@@ -143,6 +187,19 @@ public partial class Game1
             return;
         }
 
+        if (_menuScreen == MenuScreen.CreateServer)
+        {
+            if (e.Character == '\b')
+            {
+                if (_createServerName.Length > 0)
+                    _createServerName = _createServerName[..^1];
+                return;
+            }
+            if (!char.IsControl(e.Character) && _createServerName.Length < 30)
+                _createServerName += e.Character;
+            return;
+        }
+
         if (_menuScreen != MenuScreen.Join)
             return;
 
@@ -175,6 +232,10 @@ public partial class Game1
             HandleMainMenuClick();
         else if (_menuScreen == MenuScreen.ShipSelect)
             HandleShipSelect(keyboard);
+        else if (_menuScreen == MenuScreen.CreateServer)
+            HandleCreateServerScreen(keyboard);
+        else if (_menuScreen == MenuScreen.Lobby)
+            HandleLobbyScreen();
         else if (_menuScreen == MenuScreen.Prologue)
             HandlePrologueScreen(keyboard, deltaSeconds);
         else if (_menuScreen == MenuScreen.ShipEditor)
@@ -267,6 +328,20 @@ public partial class Game1
             _menuScreen = MenuScreen.Main;
             return true;
         }
+        if (_menuScreen == MenuScreen.CreateServer)
+        {
+            _menuScreen = MenuScreen.Main;
+            return true;
+        }
+        if (_menuScreen == MenuScreen.Lobby)
+        {
+            // Leaving a lobby (hosted or joined) tears the connection down the same way the pause
+            // menu's own "ГЛАВНОЕ МЕНЮ" already does mid-round - there's no lighter-weight "just
+            // disconnect" path anywhere in this project, and building one only for this one screen
+            // isn't worth it when the heavier one already does the right thing here too.
+            ReturnToMainMenu();
+            return true;
+        }
         if (_menuScreen == MenuScreen.Role)
         {
             _prologuePendingShipKind = null;
@@ -319,6 +394,7 @@ public partial class Game1
         Exit,
         Placeholder,
         Tutorial,
+        CreateServer,
     }
 
     // Same small glyph vocabulary the old grouped sections showed before each header - restored
@@ -337,7 +413,7 @@ public partial class Game1
         ("ПРОДОЛЖИТЬ", new Rectangle(144, 64, 160, 24), MainMenuAction.Continue, MainMenuIcon.Play),
         ("НОВАЯ ИГРА", new Rectangle(144, 96, 160, 24), MainMenuAction.NewGame, MainMenuIcon.Ship),
         ("ОБУЧЕНИЕ", new Rectangle(144, 32, 160, 26), MainMenuAction.Tutorial, MainMenuIcon.Flag),
-        ("СОЗДАТЬ СЕРВЕР", new Rectangle(76, 168, 160, 26), MainMenuAction.Placeholder, MainMenuIcon.Signal),
+        ("СОЗДАТЬ СЕРВЕР", new Rectangle(76, 168, 160, 26), MainMenuAction.CreateServer, MainMenuIcon.Signal),
         ("ПРИСОЕДИНИТЬСЯ", new Rectangle(76, 200, 160, 24), MainMenuAction.Join, MainMenuIcon.Plug),
         ("РЕДАКТОР КОРАБЛЯ", new Rectangle(144, 316, 160, 24), MainMenuAction.ShipEditor, MainMenuIcon.Wrench),
         ("СМЕНИТЬ НИК", new Rectangle(144, 348, 160, 24), MainMenuAction.ChangeNick, MainMenuIcon.Person),
@@ -381,6 +457,49 @@ public partial class Game1
         _ => staticLabel,
     };
 
+    // Direct user request ("в главном меню около версии маленькую кнопку... расписаны вкратце все
+    // изменения... новый список начинается когда будет новая версия"; later "во всех новых больших
+    // патчах в менюшке изменения пиши новые изменения") - kept brief on purpose (ChangelogPanel's
+    // own 2-column layout only fits so much even at half-screen); everything since GameVersionText/
+    // the version footer itself first appeared (bee4d7b), including this whole session's own still-
+    // uncommitted work - resets to a fresh, empty list the day GameVersionText's own literal changes
+    // to a new number. STANDING INSTRUCTION: append one short line here for every subsequent big
+    // patch/feature landed this version, rather than waiting to be asked again.
+    private static readonly string[] ChangelogEntries =
+    {
+        "Автопилот: клик — курс, зажатая ПКМ — наведение носом, облёт астероидов",
+        "Двигатели включаются, только когда реально толкают в нужную сторону",
+        "HP по отсекам — пробитый отсек теряет герметичность",
+        "Двери на корабле теперь изначально закрыты",
+        "Убраны фиксированные корпуса — только гибкий «Custom»",
+        "Новый звуковой движок: выбор устройств, микрофон, направленный голос",
+        "Редактор корабля: составные комнаты, отсеки, полублочные стены, повороты",
+        "Новые устройства: Монитор состояния корабля, Консоль связи",
+        "Штурвал/Навигация/Монитор/Связь/Щитки — теперь можно ставить по несколько",
+        "Новые отсеки: Кокпит 4, Реакторный отсек 2, Щитовая 3",
+        "Щиток: новая текстура и размер 1.5×1",
+        "Турели: настоящая узкая форма крепления вместо квадрата 3×3",
+        "Ускорена подсветка корабля у крупных станций",
+        "Панорамирование карты у края экрана при управлении кораблём",
+        "Кнопка «Изменения» рядом с версией в главном меню (эта менюшка)",
+        "Смерть и режим наблюдения: полная видимость без тумана войны",
+        "Наблюдатель: зум колёсиком (от 1/3× до 3×) и панорамирование у края экрана",
+        "Скорость камеры наблюдателя зависит от зума — медленнее вблизи, быстрее издали",
+        "Чит-панель (Ё): кнопка входа в режим наблюдателя без смерти",
+        "При смерти модель пропадает, через 10 секунд возрождение в кокпите с таймером",
+        "ESC-меню теперь работает в режиме наблюдателя, даже умерев за штурвалом/турелью",
+        "Список кораблей для новой игры показывает только те, на которых реально можно играть",
+        "Новый экран «Создать сервер»: название, макс. игроков, игровой стиль",
+        "Лимит игроков на сервере теперь работает по-настоящему — лишним отказывает при входе",
+        "Подключение к серверу: маленькое окошко «Подключение…» вместо строки в адресе",
+        "Настоящее лобби перед стартом: список игроков, роли, готовность, выбор корабля хостом",
+        "Редактор корабля: понятное сообщение, если устройство некуда поставить (вместо тишины)",
+        "Голосовой чат: убраны помехи/треск от захвата микрофона в режиме опроса",
+        "Призрак автопилота (вид снаружи) больше не вращается вместе с кораблём",
+        "Автопилот (корабли с боковыми двигателями): курс прибытия фиксируется один раз, а не плывёт по пути",
+        "Система достижений: 20 достижений, всплывающее окно при получении, вкладка «Достижения» в настройках",
+    };
+
     // The main menu's own click targets - mouse-driven (unlike the keyboard-shortcut screens either
     // side of it). Iterates the same MainMenuButtons list DrawMainMenuScreen draws, so a click can
     // never land on a rect the drawing doesn't actually show (or vice versa).
@@ -388,11 +507,50 @@ public partial class Game1
     {
         var mouse = Mouse.GetState();
         var clicked = mouse.LeftButton == ButtonState.Pressed && _prevMenuLeftMouseButton == ButtonState.Released;
+        var held = mouse.LeftButton == ButtonState.Pressed;
         _prevMenuLeftMouseButton = mouse.LeftButton;
-        if (!clicked)
-            return;
 
         var point = _designMouse;
+
+        // The changelog popup (Game1.cs's own DrawVersionFooter/ChangelogPanel) - modal while open,
+        // the same "only its own close button/scrollbar does anything" shape ShipStatusMonitor/
+        // CommsConsole's full-screen overlays already use, just for a small popup instead of the
+        // whole screen. Runs BEFORE the `!clicked` early-return below (unlike every other button
+        // here) - direct user request ("прямоугольничек... тянешь его вниз... листается список") -
+        // dragging the scrollbar thumb needs to keep tracking every frame the button stays held,
+        // not just the one frame it was first pressed.
+        if (_changelogOpen)
+        {
+            if (!held)
+                _changelogThumbDragLastMouseY = null;
+            else if (_changelogThumbDragLastMouseY is { } lastY)
+            {
+                _changelogScrollOffset = Math.Clamp(_changelogScrollOffset + (mouse.Position.Y - lastY),
+                    0f, ChangelogPanel.MaxScroll(ChangelogEntries.Length));
+                _changelogThumbDragLastMouseY = mouse.Position.Y;
+            }
+            else if (clicked && ChangelogPanel.GetScrollThumbRect(ChangelogPanelOrigin, ChangelogEntries.Length, _changelogScrollOffset)
+                     is { } thumbRect && thumbRect.Contains(point))
+            {
+                _changelogThumbDragLastMouseY = mouse.Position.Y;
+            }
+            else if (clicked && ChangelogPanel.GetCloseButtonRect(ChangelogPanelOrigin).Contains(point))
+            {
+                PlayUiClick();
+                _changelogOpen = false;
+            }
+            return;
+        }
+
+        if (!clicked)
+            return;
+        if (ChangelogButtonRect(new Vector2(8, DesignHeight - 16)).Contains(point))
+        {
+            PlayUiClick();
+            _changelogOpen = true;
+            _changelogScrollOffset = 0f;
+            return;
+        }
         foreach (var (_, rect, action, _) in MainMenuButtons)
         {
             if (!IsMainMenuButtonVisible(action) || !IsMainMenuButtonEnabled(action) || !rect.Contains(point))
@@ -432,6 +590,15 @@ public partial class Game1
                     break;
                 case MainMenuAction.ChangeNick:
                     _menuScreen = MenuScreen.Nickname;
+                    break;
+                case MainMenuAction.CreateServer:
+                    // Defaults refreshed every time this screen is entered, same "start clean, not
+                    // wherever a previous visit left it" convention the ship-overview camera uses -
+                    // a stale server name from a prior session reads as a bug, not a remembered
+                    // preference.
+                    _createServerName = $"{_nickname} — сервер";
+                    _createServerMaxPlayers = DefaultCreateServerMaxPlayers;
+                    _menuScreen = MenuScreen.CreateServer;
                     break;
                 case MainMenuAction.Exit:
                     Exit();
@@ -484,11 +651,14 @@ public partial class Game1
     // no error message, exactly like a disabled "Играть" button in the editor itself.
     private void HandleShipSelectCustomShipClick(Point point)
     {
-        var names = CustomShipStore.ListShips();
+        var names = PlayableCustomShipNames();
         for (var i = 0; i < names.Count; i++)
         {
             if (!GetShipSelectCustomRowRect(i).Contains(point))
                 continue;
+            // Re-loaded rather than trusting the filter's own moment-ago result - the file could in
+            // principle have been deleted/broken out from under this list between the two (hand-
+            // editing the JSON, or another process touching the same save folder).
             if (CustomShipStore.LoadShip(names[i]) is not { } definition || CustomShipValidator.Validate(definition).Count > 0)
                 return;
             SaveStore.Delete();
@@ -497,7 +667,200 @@ public partial class Game1
         }
     }
 
+    // Direct user request ("отображались только те, на которых реально можно поиграть") - a saved
+    // design that never finished (missing a required system, CustomShipValidator's own list)
+    // doesn't even appear here any more, rather than showing up dimmed/disabled the way it used to -
+    // the SAME filtered list DrawShipSelectCustomShipList/HandleShipSelectCustomShipClick both read,
+    // so a click can never land on a row the drawing doesn't actually show as playable (or vice
+    // versa), the same "one true list" shape MainMenuButtons already established.
+    private static IReadOnlyList<string> PlayableCustomShipNames() =>
+        CustomShipStore.ListShips()
+            .Where(name => CustomShipStore.LoadShip(name) is { } definition && CustomShipValidator.Validate(definition).Count == 0)
+            .ToList();
+
     private static Rectangle GetShipSelectCustomRowRect(int index) => new(650, 110 + index * 30, 300, 26);
+
+    // ---- "Создать сервер" (screenshots of Barotrauma's own server-config screen) ----
+    private const int CreateServerPanelWidth = 820;
+    private const int CreateServerPanelHeight = 520;
+    private const int CreateServerHeaderHeight = 40;
+
+    private static Vector2 CreateServerPanelOrigin =>
+        new((DesignWidth - CreateServerPanelWidth) / 2f, (DesignHeight - CreateServerPanelHeight) / 2f);
+    private static Vector2 CreateServerContentOrigin(Vector2 panelOrigin) => panelOrigin + new Vector2(28, CreateServerHeaderHeight + 20);
+
+    private static Rectangle GetCreateServerNameFieldRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X, (int)p.Y + 18, 560, 28); }
+    private static Rectangle GetCreateServerMaxPlayersMinusRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X, (int)p.Y + 78, 26, 26); }
+    private static Rectangle GetCreateServerMaxPlayersPlusRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X + 90, (int)p.Y + 78, 26, 26); }
+    private static Rectangle GetCreateServerStylePrevRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X, (int)p.Y + 140, 26, 26); }
+    private static Rectangle GetCreateServerStyleNextRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X + 300, (int)p.Y + 140, 26, 26); }
+    // Decorative only (direct user confirmation, "показать визуально, но неактивно") - drawn but
+    // deliberately never hit-tested by HandleCreateServerScreen below, so a click here is a no-op
+    // rather than silently flipping a field nothing else in the game ever reads.
+    private static Rectangle GetCreateServerPasswordFieldRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X, (int)p.Y + 262, 260, 26); }
+    private static Rectangle GetCreateServerPublicCheckboxRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X, (int)p.Y + 346, 20, 20); }
+    private static Rectangle GetCreateServerLockCheckboxRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X, (int)p.Y + 380, 20, 20); }
+    private static Rectangle GetCreateServerKarmaCheckboxRect(Vector2 panelOrigin)
+    { var p = CreateServerContentOrigin(panelOrigin); return new Rectangle((int)p.X, (int)p.Y + 414, 20, 20); }
+
+    private static Rectangle GetCreateServerStartButtonRect(Vector2 panelOrigin) =>
+        new((int)panelOrigin.X + CreateServerPanelWidth / 2 - 220, (int)panelOrigin.Y + CreateServerPanelHeight - 52, 200, 36);
+    private static Rectangle GetCreateServerBackButtonRect(Vector2 panelOrigin) =>
+        new((int)panelOrigin.X + CreateServerPanelWidth / 2 + 20, (int)panelOrigin.Y + CreateServerPanelHeight - 52, 200, 36);
+
+    // Purely cosmetic flavor text under the carousel's own arrows (_createServerStyleIndex) - this
+    // game has exactly one real game mode (the co-op campaign), so "cycling" here never changes
+    // anything about the session that actually starts; it only mirrors the reference screenshot's
+    // own carousel row.
+    private static readonly (string Name, string Description)[] CreateServerStyles =
+    {
+        ("Кооператив", "Экипаж вместе чинит корабль, летает по системам и выполняет задания."),
+    };
+
+    private void HandleCreateServerScreen(KeyboardState keyboard)
+    {
+        var mouse = Mouse.GetState();
+        var clicked = mouse.LeftButton == ButtonState.Pressed && _prevMenuLeftMouseButton == ButtonState.Released;
+        _prevMenuLeftMouseButton = mouse.LeftButton;
+        if (!clicked)
+            return;
+
+        PlayUiClick();
+        var origin = CreateServerPanelOrigin;
+        var point = _designMouse;
+
+        if (GetCreateServerMaxPlayersMinusRect(origin).Contains(point))
+            _createServerMaxPlayers = Math.Max(MinCreateServerMaxPlayers, _createServerMaxPlayers - 1);
+        else if (GetCreateServerMaxPlayersPlusRect(origin).Contains(point))
+            _createServerMaxPlayers = Math.Min(MaxCreateServerMaxPlayers, _createServerMaxPlayers + 1);
+        else if (CreateServerStyles.Length > 1 && GetCreateServerStylePrevRect(origin).Contains(point))
+            _createServerStyleIndex = (_createServerStyleIndex - 1 + CreateServerStyles.Length) % CreateServerStyles.Length;
+        else if (CreateServerStyles.Length > 1 && GetCreateServerStyleNextRect(origin).Contains(point))
+            _createServerStyleIndex = (_createServerStyleIndex + 1) % CreateServerStyles.Length;
+        else if (GetCreateServerStartButtonRect(origin).Contains(point))
+        {
+            // The real Barotrauma-style lobby (screenshot 3) - StartHostedLobby builds a GameServer
+            // that stays in SessionPhase.Lobby until this host later presses "НАЧАТЬ" a second time,
+            // from inside the lobby screen itself.
+            StartHostedLobby();
+        }
+        else if (GetCreateServerBackButtonRect(origin).Contains(point))
+            _menuScreen = MenuScreen.Main;
+        // Пароль/Язык/Исполняемый файл/3 чекбокса - no hit-test at all, by design (see the rect
+        // helpers' own doc comment above).
+    }
+
+    private void DrawCreateServerScreen()
+    {
+        var origin = CreateServerPanelOrigin;
+        var panelRect = new Rectangle((int)origin.X, (int)origin.Y, CreateServerPanelWidth, CreateServerPanelHeight);
+
+        DrawVerticalGradient(panelRect, SettingsPanelTop, SettingsPanelBottom);
+        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, panelRect, SettingsBorderSteel, 2);
+        var trimRect = new Rectangle(panelRect.X + 4, panelRect.Y + 4, panelRect.Width - 8, panelRect.Height - 8);
+        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, trimRect, SettingsBorderGold * 0.55f, 1);
+        ShipRenderer.DrawRivets(_spriteBatch, _pixel, panelRect);
+
+        var headerRect = new Rectangle(panelRect.X, panelRect.Y, panelRect.Width, CreateServerHeaderHeight);
+        DrawVerticalGradient(headerRect, SettingsHeaderTop, SettingsHeaderBottom);
+        _spriteBatch.Draw(_pixel, new Rectangle(headerRect.X, headerRect.Bottom - 2, headerRect.Width, 2), SettingsBorderGold);
+        _spriteBatch.DrawString(_font, "Создать сервер", origin + new Vector2(17, 11), Color.Black * 0.5f, 0f, Vector2.Zero, 0.85f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, "Создать сервер", origin + new Vector2(16, 10), SettingsAccentGold, 0f, Vector2.Zero, 0.85f, SpriteEffects.None, 0f);
+
+        var content = CreateServerContentOrigin(origin);
+
+        _spriteBatch.DrawString(_font, "Название сервера", content, SettingsTextDim, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        var nameRect = GetCreateServerNameFieldRect(origin);
+        _spriteBatch.Draw(_pixel, nameRect, new Color(10, 12, 16) * 0.85f);
+        DrawBevel(nameRect, raised: false);
+        _spriteBatch.DrawString(_font, _createServerName + "_", new Vector2(nameRect.X + 8, nameRect.Y + 6), SettingsAccentTeal, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        _spriteBatch.DrawString(_font, "Макс. игроков", content + new Vector2(0, 62), SettingsTextDim, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        var minusRect = GetCreateServerMaxPlayersMinusRect(origin);
+        var plusRect = GetCreateServerMaxPlayersPlusRect(origin);
+        DrawCreateServerStepperButton(minusRect, "-");
+        DrawCreateServerStepperButton(plusRect, "+");
+        var countSize = _font.MeasureString(_createServerMaxPlayers.ToString()) * 0.7f;
+        _spriteBatch.DrawString(_font, _createServerMaxPlayers.ToString(),
+            new Vector2(minusRect.Right + (plusRect.X - minusRect.Right) / 2f - countSize.X / 2f, minusRect.Y + 2),
+            SettingsTextPrimary, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+
+        _spriteBatch.DrawString(_font, "Игровой стиль", content + new Vector2(0, 124), SettingsTextDim, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        var stylePrev = GetCreateServerStylePrevRect(origin);
+        var styleNext = GetCreateServerStyleNextRect(origin);
+        DrawCreateServerStepperButton(stylePrev, "<");
+        DrawCreateServerStepperButton(styleNext, ">");
+        var style = CreateServerStyles[_createServerStyleIndex];
+        var styleLabelSize = _font.MeasureString(style.Name) * 0.65f;
+        _spriteBatch.DrawString(_font, style.Name,
+            new Vector2(stylePrev.Right + (styleNext.X - stylePrev.Right) / 2f - styleLabelSize.X / 2f, stylePrev.Y + 2),
+            SettingsAccentGold, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, style.Description, content + new Vector2(0, 172), SettingsTextDim, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+
+        // Everything below this line is drawn but permanently inert (direct user confirmation,
+        // "показать визуально, но неактивно") - this game has no password auth, no public server
+        // list, no karma system and no locale files, so none of these could be wired to anything
+        // real without building those systems first, which is out of scope for this screen.
+        _spriteBatch.DrawString(_font, "Параметры сервера (пока недоступны)", content + new Vector2(0, 216), SettingsAccentRed * 0.85f, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        var dimLabel = SettingsTextDim * 0.7f;
+        _spriteBatch.DrawString(_font, "Пароль", content + new Vector2(0, 244), dimLabel, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        var pwRect = GetCreateServerPasswordFieldRect(origin);
+        _spriteBatch.Draw(_pixel, pwRect, new Color(10, 12, 16) * 0.5f);
+        DrawBevel(pwRect, raised: false, strength: 0.4f);
+        _spriteBatch.DrawString(_font, "--------", new Vector2(pwRect.X + 8, pwRect.Y + 6), dimLabel, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        _spriteBatch.DrawString(_font, "Язык: Русский", content + new Vector2(300, 244), dimLabel, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, "Исполняемый файл: Anabiosis.Server.exe", content + new Vector2(0, 306), dimLabel, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        DrawCreateServerInertCheckbox(GetCreateServerPublicCheckboxRect(origin), "Публичный сервер", dimLabel);
+        DrawCreateServerInertCheckbox(GetCreateServerLockCheckboxRect(origin), "Блокировка новых участников", dimLabel);
+        DrawCreateServerInertCheckbox(GetCreateServerKarmaCheckboxRect(origin), "Карма", dimLabel);
+
+        var startRect = GetCreateServerStartButtonRect(origin);
+        var startHover = SettingsHoverEase("createserver:start", startRect.Contains(_designMouse));
+        DrawVerticalGradient(startRect, Color.Lerp(SettingsAccentGold, Color.White, 0.15f * startHover), SettingsAccentGold * 0.75f);
+        DrawBevel(startRect, raised: true);
+        var startLabelSize = _font.MeasureString("НАЧАТЬ") * 0.7f;
+        _spriteBatch.DrawString(_font, "НАЧАТЬ",
+            new Vector2(startRect.Center.X - startLabelSize.X / 2f, startRect.Center.Y - startLabelSize.Y / 2f),
+            new Color(30, 24, 10), 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+
+        var backRect = GetCreateServerBackButtonRect(origin);
+        var backHover = SettingsHoverEase("createserver:back", backRect.Contains(_designMouse));
+        _spriteBatch.Draw(_pixel, backRect, Color.Lerp(new Color(40, 44, 52), new Color(60, 64, 74), backHover));
+        DrawBevel(backRect, raised: backHover > 0.05f);
+        var backLabelSize = _font.MeasureString("НАЗАД") * 0.7f;
+        _spriteBatch.DrawString(_font, "НАЗАД",
+            new Vector2(backRect.Center.X - backLabelSize.X / 2f, backRect.Center.Y - backLabelSize.Y / 2f),
+            SettingsTextPrimary, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+    }
+
+    private void DrawCreateServerStepperButton(Rectangle rect, string glyph)
+    {
+        var hover = SettingsHoverEase($"createserver:step:{rect.X}:{rect.Y}", rect.Contains(_designMouse));
+        _spriteBatch.Draw(_pixel, rect, Color.Lerp(new Color(34, 40, 50), new Color(52, 60, 72), hover));
+        DrawBevel(rect, raised: true, strength: 0.7f + hover * 0.3f);
+        var size = _font.MeasureString(glyph) * 0.6f;
+        _spriteBatch.DrawString(_font, glyph, new Vector2(rect.Center.X - size.X / 2f, rect.Center.Y - size.Y / 2f), SettingsTextPrimary, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+    }
+
+    // Drawn checked-looking but dimmed, and never hit-tested by HandleCreateServerScreen - see that
+    // method's own doc comment for why (no backing mechanic exists for any of the 3 callers).
+    private void DrawCreateServerInertCheckbox(Rectangle rect, string label, Color dimLabel)
+    {
+        _spriteBatch.Draw(_pixel, rect, new Color(20, 22, 26) * 0.6f);
+        DrawBevel(rect, raised: false, strength: 0.35f);
+        _spriteBatch.DrawString(_font, label, new Vector2(rect.Right + 8, rect.Y + 1), dimLabel, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+    }
 
     private void HandleJoinScreen(KeyboardState keyboard)
     {
@@ -519,10 +882,17 @@ public partial class Game1
             var session = _joinTask.Result;
             _session = session;
             _client = new GameClient(session.Connection, session.PlayerId);
-            _sessionStarted = true;
-            // Rides the same _pendingSetOwnRoleTo the in-game crew panel's own click handler uses
-            // (Game1.Input.cs) - picked up on the very next Update, exactly like a manual click.
-            _pendingSetOwnRoleTo = _selectedRole;
+            _lobbyReady = false;
+            _lobbySelectedShipName = null;
+            // Routes through the lobby screen rather than setting _sessionStarted straight away -
+            // this joiner has no way to know in advance whether the host is still waiting in their
+            // own lobby (GameServer's SessionPhase.Lobby) or the round is already running (every
+            // OTHER way to host - solo's own [H]-toggle, tutorial, editor "Играть" - never has a
+            // lobby at all). HandleLobbyScreen's own per-frame poll notices a real WorldSnapshot
+            // arrive either way and flips _sessionStarted itself; for an already-running host that
+            // happens within a tick or two, an imperceptible flash rather than a real wait.
+            _client.Send(new ClientCommand(_client.PlayerId, Nickname: _nickname, SetOwnRoleTo: _selectedRole));
+            _menuScreen = MenuScreen.Lobby;
         }
         else
         {
@@ -567,8 +937,9 @@ public partial class Game1
     {
         _sessionStartedFromEditor = fromShipEditor;
         var openToNetwork = _openToNetwork;
+        var maxPlayers = _hostMaxPlayers;
         _pendingSession = Task.Run(() => new SoloSession(shipKind, loadFrom,
-            openToNetwork ? Anabiosis.Shared.Networking.Wire.DefaultPort : null, customShip, isTutorial));
+            openToNetwork ? Anabiosis.Shared.Networking.Wire.DefaultPort : null, customShip, isTutorial, maxPlayers));
     }
 
     // Polled every frame from Update while _pendingSession is running (Game1.cs) - finishes the
@@ -598,6 +969,209 @@ public partial class Game1
         _pendingSetOwnRoleTo = _selectedRole;
     }
 
+    // "Создать сервер"'s own "НАЧАТЬ" - same background-Task shape as StartHostedSession above
+    // (GameServer's lobby constructor is cheap, no GalaxyMap/World work happens until the round
+    // actually starts, but running it off the game thread anyway keeps this one code path rather
+    // than a second, only-sometimes-needed synchronous variant).
+    private void StartHostedLobby()
+    {
+        var serverName = _createServerName;
+        var maxPlayers = _createServerMaxPlayers;
+        _pendingLobbySession = Task.Run(() => new SoloSession(serverName, maxPlayers, Anabiosis.Shared.Networking.Wire.DefaultPort));
+    }
+
+    // Polled every frame from Update while _pendingLobbySession is running (Game1.cs) - unlike
+    // FinishPendingSessionIfReady, this does NOT set _sessionStarted: the round hasn't begun, only
+    // the waiting room has. HandleLobbyScreen's own per-frame poll is what actually flips
+    // _sessionStarted, once a real WorldSnapshot shows this host pressed the lobby's own "НАЧАТЬ".
+    private void FinishPendingLobbySessionIfReady()
+    {
+        if (_pendingLobbySession is not { IsCompleted: true } task)
+            return;
+        _pendingLobbySession = null;
+
+        if (task.IsFaulted)
+            return; // same silent fall-back-to-menu reasoning as FinishPendingSessionIfReady above
+
+        var session = task.Result;
+        _session = session;
+        _client = new GameClient(session.Connection, session.PlayerId);
+        _lobbyReady = false;
+        _lobbySelectedShipName = null;
+        _menuScreen = MenuScreen.Lobby;
+        // Own nickname/role reach the roster as an ordinary lobby command right away, rather than
+        // waiting for the client's regular per-tick resend to eventually get around to it - the
+        // host would otherwise see their own row blank for the first several ticks.
+        _client.Send(new ClientCommand(_client.PlayerId, Nickname: _nickname, SetOwnRoleTo: _selectedRole));
+    }
+    // ---- Barotrauma-style lobby (screenshot 3) - player list, own role/ready, host-only ship pick
+    // and start button ----
+    private const int LobbyPanelWidth = 900;
+    private const int LobbyPanelHeight = 520;
+    private static Vector2 LobbyPanelOrigin => new((DesignWidth - LobbyPanelWidth) / 2f, (DesignHeight - LobbyPanelHeight) / 2f);
+    private static Vector2 LobbyContentOrigin(Vector2 origin) => origin + new Vector2(28, 76);
+    private const int LobbyRowHeight = 30;
+
+    private static Rectangle GetLobbyPlayerRowRect(Vector2 origin, int index)
+    { var p = LobbyContentOrigin(origin); return new Rectangle((int)p.X, (int)p.Y + index * LobbyRowHeight, 360, 26); }
+    private static Rectangle GetLobbyOwnRoleRect(Vector2 origin)
+    { var p = LobbyContentOrigin(origin); return new Rectangle((int)p.X, (int)p.Y - 42, 220, 28); }
+    private static Rectangle GetLobbyReadyButtonRect(Vector2 origin) =>
+        new((int)origin.X + LobbyPanelWidth - 220, (int)origin.Y + LobbyPanelHeight - 52, 190, 36);
+    private static Rectangle GetLobbyStartButtonRect(Vector2 origin) =>
+        new((int)origin.X + 20, (int)origin.Y + LobbyPanelHeight - 52, 190, 36);
+    private static Rectangle GetLobbyShipRowRect(Vector2 origin, int index)
+    { var p = LobbyContentOrigin(origin); return new Rectangle((int)p.X + 420, (int)p.Y + index * 26, 420, 22); }
+
+    private void HandleLobbyScreen()
+    {
+        _client?.PollSnapshots();
+
+        // The round actually began - either this host just pressed the lobby's own start button,
+        // or (every non-lobby way to end up here - joining an already-running old-style host) a
+        // real WorldSnapshot was always going to arrive within a tick or two regardless. Either
+        // way, gameplay takes over exactly like it always has for every other entry point.
+        if (_client?.LatestSnapshot is not null)
+        {
+            _sessionStarted = true;
+            _pendingSetOwnRoleTo = _selectedRole;
+            return;
+        }
+
+        var mouse = Mouse.GetState();
+        var clicked = mouse.LeftButton == ButtonState.Pressed && _prevMenuLeftMouseButton == ButtonState.Released;
+        _prevMenuLeftMouseButton = mouse.LeftButton;
+        if (!clicked || _client is not { LatestLobby: { } lobby })
+            return;
+
+        PlayUiClick();
+        var origin = LobbyPanelOrigin;
+        var point = _designMouse;
+        var isHost = lobby.Players.FirstOrDefault(p => p.PlayerId == _client.PlayerId)?.IsHost ?? false;
+
+        if (GetLobbyReadyButtonRect(origin).Contains(point))
+        {
+            _lobbyReady = !_lobbyReady;
+            _client.Send(new ClientCommand(_client.PlayerId, LobbyReady: _lobbyReady));
+        }
+        else if (GetLobbyOwnRoleRect(origin).Contains(point))
+        {
+            var currentIndex = Array.IndexOf(RoleChoices, _selectedRole ?? RoleChoices[0]);
+            var nextRole = RoleChoices[(currentIndex + 1) % RoleChoices.Length];
+            _selectedRole = nextRole;
+            PlayerSettingsStore.SaveRole(nextRole);
+            _client.Send(new ClientCommand(_client.PlayerId, SetOwnRoleTo: nextRole));
+        }
+        else if (isHost && GetLobbyStartButtonRect(origin).Contains(point))
+        {
+            _client.Send(new ClientCommand(_client.PlayerId, LobbyStartRoundPressed: true));
+        }
+        else if (isHost)
+        {
+            var names = PlayableCustomShipNames();
+            for (var i = 0; i < names.Count; i++)
+            {
+                if (!GetLobbyShipRowRect(origin, i).Contains(point))
+                    continue;
+                // Re-loaded rather than trusting the filter's own moment-ago result, same defensive
+                // re-check HandleShipSelectCustomShipClick already does - the file could in
+                // principle have been deleted/broken out from under this list in the meantime.
+                if (CustomShipStore.LoadShip(names[i]) is not { } definition || CustomShipValidator.Validate(definition).Count > 0)
+                    return;
+                _lobbySelectedShipName = names[i];
+                _client.Send(new ClientCommand(_client.PlayerId, LobbySelectCustomShip: definition, LobbySelectCustomShipName: names[i]));
+                return;
+            }
+        }
+    }
+
+    private void DrawLobbyScreen()
+    {
+        var origin = LobbyPanelOrigin;
+        var panelRect = new Rectangle((int)origin.X, (int)origin.Y, LobbyPanelWidth, LobbyPanelHeight);
+
+        DrawVerticalGradient(panelRect, SettingsPanelTop, SettingsPanelBottom);
+        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, panelRect, SettingsBorderSteel, 2);
+        ShipRenderer.DrawRivets(_spriteBatch, _pixel, panelRect);
+
+        var lobby = _client?.LatestLobby;
+        var title = lobby?.ServerName ?? "Ожидание ответа хоста...";
+        _spriteBatch.DrawString(_font, title, origin + new Vector2(16, 10), SettingsAccentGold, 0f, Vector2.Zero, 0.85f, SpriteEffects.None, 0f);
+
+        if (lobby is null)
+            return;
+
+        var isHost = lobby.Players.FirstOrDefault(p => p.PlayerId == _client!.PlayerId)?.IsHost ?? false;
+
+        var ownRoleRect = GetLobbyOwnRoleRect(origin);
+        _spriteBatch.Draw(_pixel, ownRoleRect, new Color(30, 37, 46) * 0.9f);
+        DrawBevel(ownRoleRect, raised: true, strength: 0.6f);
+        var ownRoleLabel = "Роль: " + (_selectedRole is { } r ? CrewRoles.Name(r) : "не выбрана");
+        _spriteBatch.DrawString(_font, ownRoleLabel, new Vector2(ownRoleRect.X + 8, ownRoleRect.Y + 6), SettingsTextPrimary, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        _spriteBatch.DrawString(_font, $"Игроки ({lobby.Players.Count}/{lobby.MaxPlayers})", LobbyContentOrigin(origin) + new Vector2(0, -20),
+            SettingsTextDim, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+
+        for (var i = 0; i < lobby.Players.Count; i++)
+        {
+            var player = lobby.Players[i];
+            var rowRect = GetLobbyPlayerRowRect(origin, i);
+            _spriteBatch.Draw(_pixel, rowRect, new Color(24, 28, 34) * 0.8f);
+            DrawBevel(rowRect, raised: false, strength: 0.35f);
+
+            var name = (player.Nickname ?? "...") + (player.IsHost ? " (хост)" : "");
+            _spriteBatch.DrawString(_font, name, new Vector2(rowRect.X + 8, rowRect.Y + 5), player.IsHost ? SettingsAccentGold : SettingsTextPrimary,
+                0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+            var roleLabel = player.Role is { } role ? CrewRoles.Name(role) : "-";
+            _spriteBatch.DrawString(_font, roleLabel, new Vector2(rowRect.X + 200, rowRect.Y + 5), SettingsTextDim, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            _spriteBatch.DrawString(_font, player.IsReady ? "ГОТОВ" : "...", new Vector2(rowRect.Right - 60, rowRect.Y + 5),
+                player.IsReady ? SettingsAccentTeal : SettingsTextDim, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        }
+
+        if (isHost)
+        {
+            _spriteBatch.DrawString(_font, "Корабль (выбирает хост):", LobbyContentOrigin(origin) + new Vector2(420, -20),
+                SettingsTextDim, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+            var names = PlayableCustomShipNames();
+            if (lobby.CustomShipName is null)
+                _spriteBatch.DrawString(_font, "По умолчанию (выбрано)", LobbyContentOrigin(origin) + new Vector2(420, 4),
+                    SettingsAccentTeal, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            for (var i = 0; i < names.Count; i++)
+            {
+                var rowRect = GetLobbyShipRowRect(origin, i);
+                var selected = lobby.CustomShipName == names[i];
+                _spriteBatch.Draw(_pixel, rowRect, (selected ? SettingsAccentGold : new Color(24, 28, 34)) * (selected ? 0.4f : 0.7f));
+                _spriteBatch.DrawString(_font, names[i], new Vector2(rowRect.X + 6, rowRect.Y + 3),
+                    selected ? SettingsAccentGold : SettingsTextPrimary, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            }
+
+            var startRect = GetLobbyStartButtonRect(origin);
+            var startHover = SettingsHoverEase("lobby:start", startRect.Contains(_designMouse));
+            DrawVerticalGradient(startRect, Color.Lerp(SettingsAccentGold, Color.White, 0.15f * startHover), SettingsAccentGold * 0.75f);
+            DrawBevel(startRect, raised: true);
+            var startLabelSize = _font.MeasureString("НАЧАТЬ") * 0.7f;
+            _spriteBatch.DrawString(_font, "НАЧАТЬ", new Vector2(startRect.Center.X - startLabelSize.X / 2f, startRect.Center.Y - startLabelSize.Y / 2f),
+                new Color(30, 24, 10), 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        }
+        else
+        {
+            var startRect = GetLobbyStartButtonRect(origin);
+            _spriteBatch.DrawString(_font, "Ожидание хоста...", new Vector2(startRect.X, startRect.Y + 8), SettingsTextDim, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        }
+
+        var readyRect = GetLobbyReadyButtonRect(origin);
+        var readyHover = SettingsHoverEase("lobby:ready", readyRect.Contains(_designMouse));
+        _spriteBatch.Draw(_pixel, readyRect, Color.Lerp(_lobbyReady ? SettingsAccentTeal * 0.6f : new Color(40, 44, 52), _lobbyReady ? SettingsAccentTeal : new Color(60, 64, 74), readyHover));
+        DrawBevel(readyRect, raised: true);
+        var readyLabel = _lobbyReady ? "ГОТОВ" : "НЕ ГОТОВ";
+        var readyLabelSize = _font.MeasureString(readyLabel) * 0.6f;
+        _spriteBatch.DrawString(_font, readyLabel, new Vector2(readyRect.Center.X - readyLabelSize.X / 2f, readyRect.Center.Y - readyLabelSize.Y / 2f),
+            SettingsTextPrimary, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        _spriteBatch.DrawString(_font, "[Esc] выйти из лобби - нажмите на свою строку, чтобы сменить роль",
+            origin + new Vector2(16, LobbyPanelHeight - 18), SettingsTextDim * 0.8f, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+    }
+
     // The pause menu's "ГЛАВНОЕ МЕНЮ" - the one path back to this screen that doesn't close the
     // whole process (unlike Escape/"ЗАКОНЧИТЬ РАУНД" at the ship-select stage, which do). Tears
     // down the live session exactly like the window-close path already does (UnloadContent's
@@ -619,6 +1193,7 @@ public partial class Game1
         _shipEditorOpen = false;
         _talkingToNpcId = null;
         _sessionStartedFromEditor = false;
+        _spectatorMode = false;
 
         _menuScreen = MenuScreen.Main;
     }
@@ -647,6 +1222,7 @@ public partial class Game1
         _shipEditorOpen = false;
         _talkingToNpcId = null;
         _sessionStartedFromEditor = false;
+        _spectatorMode = false;
 
         _menuScreen = MenuScreen.ShipEditor;
     }
@@ -710,6 +1286,10 @@ public partial class Game1
             DrawMainMenuScreen(totalSeconds);
         else if (_menuScreen == MenuScreen.ShipSelect)
             DrawShipSelectScreen();
+        else if (_menuScreen == MenuScreen.CreateServer)
+            DrawCreateServerScreen();
+        else if (_menuScreen == MenuScreen.Lobby)
+            DrawLobbyScreen();
         else if (_menuScreen == MenuScreen.Prologue)
             DrawPrologueScreen(totalSeconds);
         else if (_menuScreen == MenuScreen.ShipEditor)
@@ -1127,8 +1707,6 @@ public partial class Game1
         if (_menuBackdrop is null)
             MenuPlanetScene.Draw(_spriteBatch, _pixel, pane, totalSeconds);
 
-        const string tagline = "СВОЙ КОРАБЛЬ. СВОЙ ЭКИПАЖ. ГЛУБОКИЙ КОСМОС.";
-        const float taglineScale = 0.65f;
         var glow = new Color(90, 220, 195);
 
         // The wordmark, drawn rather than typed. It used to be the debug spritefont at scale 1.7
@@ -1146,21 +1724,23 @@ public partial class Game1
         // Anchored by the letters, not by the texture: the pupa on the seam overruns the cap line
         // and the baseline, so the image is taller than the word and lining the two up by their
         // tops would hang the whole mark too low.
-        var lettersTop = pane.Bottom - 122;
+        // Direct user request ("сдвинь голубую линию и название игры ниже") - the tagline that used
+        // to sit right under the rule is gone now, so both the logo and rule shift down by that same
+        // gap to fill the space instead of leaving it empty above the ticker.
+        const int loweredByRemovedTagline = 18;
+        var lettersTop = pane.Bottom - 122 + loweredByRemovedTagline;
         var logoTop = lettersTop - (int)(MenuLogo.LetterInset * (logoWidth / (float)logo.Width));
         _spriteBatch.Draw(logo, new Rectangle((int)blockLeft, logoTop, logoWidth, logoHeight), Color.White);
 
         // A riveted rule under the title, same corner-rivet dressing every device housing already
         // wears (ShipRenderer.DrawRivets) - ties the front screen to the game it opens into.
-        var ruleY = (float)(pane.Bottom - 46);
+        var ruleY = (float)(pane.Bottom - 46 + loweredByRemovedTagline);
         var ruleRect = new Rectangle((int)blockLeft, (int)ruleY, pane.Right - (int)blockLeft - 20, 2);
         _spriteBatch.Draw(_pixel, ruleRect, glow * 0.6f);
         for (var x = ruleRect.X + 6; x < ruleRect.Right; x += 24)
             HudIcons.FillCircle(_spriteBatch, _pixel, new Vector2(x, ruleY + 1), 1.4f, new Color(20, 24, 22));
 
         DrawTrafficTicker(pane, totalSeconds);
-
-        _spriteBatch.DrawString(_font, tagline, new Vector2(blockLeft + 2, ruleY + 8), new Color(190, 220, 215), 0f, Vector2.Zero, taglineScale, SpriteEffects.None, 0f);
     }
 
     // Docking chatter crawling along the bottom edge. Nothing here is interactive and none of it
@@ -1389,8 +1969,12 @@ public partial class Game1
                 new Vector2(80, 164), Color.Gray, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
         }
 
+        // The player cap only shows up here when it's actually enforced (Начать on "Создать
+        // сервер" set _hostMaxPlayers for real) - the quick [H]-toggle path below it never sets
+        // it, so showing a stale "4 мест" while hosting is genuinely uncapped would be a lie.
+        var capSuffix = _hostMaxPlayers < int.MaxValue ? $" — «{_createServerName}» ({_hostMaxPlayers} мест)" : "";
         var hostLine = _openToNetwork
-            ? $"[H] Кооп: ОТКРЫТ, порт {Anabiosis.Shared.Networking.Wire.DefaultPort} — друзья вводят {LocalAddresses()}"
+            ? $"[H] Кооп: ОТКРЫТ{capSuffix}, порт {Anabiosis.Shared.Networking.Wire.DefaultPort} — друзья вводят {LocalAddresses()}"
             : "[H] Кооп: закрыт (игра только для вас)";
         _spriteBatch.DrawString(_font, hostLine, new Vector2(60, 198),
             _openToNetwork ? Color.LightGreen : Color.LightGray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
@@ -1407,7 +1991,10 @@ public partial class Game1
     {
         _spriteBatch.DrawString(_font, "Ваши корабли:", new Vector2(650, 80), Color.White, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
 
-        var names = CustomShipStore.ListShips();
+        // Direct user request ("отображались только те, на которых реально можно поиграть") - an
+        // unfinished/broken design (CustomShipValidator.Validate finds at least one missing
+        // required system) is filtered out entirely rather than shown dimmed and unclickable.
+        var names = PlayableCustomShipNames();
         if (names.Count == 0)
         {
             _spriteBatch.DrawString(_font, "(соберите свой в редакторе корабля)", new Vector2(650, 110), Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
@@ -1417,12 +2004,10 @@ public partial class Game1
         for (var i = 0; i < names.Count; i++)
         {
             var rect = GetShipSelectCustomRowRect(i);
-            var definition = CustomShipStore.LoadShip(names[i]);
-            var valid = definition is not null && CustomShipValidator.Validate(definition).Count == 0;
-            var hovered = valid && rect.Contains(_designMouse);
-            _spriteBatch.Draw(_pixel, rect, hovered ? new Color(120, 92, 30) : Color.DimGray * (valid ? 0.5f : 0.25f));
+            var hovered = rect.Contains(_designMouse);
+            _spriteBatch.Draw(_pixel, rect, hovered ? new Color(120, 92, 30) : Color.DimGray * 0.5f);
             _spriteBatch.DrawString(_font, names[i], new Vector2(rect.X + 8, rect.Y + 4),
-                valid ? Color.Gold : Color.Gray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+                Color.Gold, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
         }
     }
 
@@ -1430,11 +2015,7 @@ public partial class Game1
     {
         _spriteBatch.DrawString(_font, "Подключение к кораблю", new Vector2(60, 60), Color.White, 0f, Vector2.Zero, 1.4f, SpriteEffects.None, 0f);
         _spriteBatch.DrawString(_font, "Адрес хоста (можно адрес:порт):", new Vector2(60, 140), Color.LightGray, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
-
-        // A caret while idle, "подключение…" while the handshake is in flight - the only two states
-        // this screen has.
-        var text = _joinTask is null ? _joinAddress + "_" : $"{_joinAddress} — подключение…";
-        _spriteBatch.DrawString(_font, text, new Vector2(60, 178), Color.Gold, 0f, Vector2.Zero, 1.2f, SpriteEffects.None, 0f);
+        _spriteBatch.DrawString(_font, _joinAddress + "_", new Vector2(60, 178), Color.Gold, 0f, Vector2.Zero, 1.2f, SpriteEffects.None, 0f);
 
         _spriteBatch.DrawString(_font, "[Enter] подключиться    [Esc] назад", new Vector2(60, 250), Color.LightSteelBlue, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
         _spriteBatch.DrawString(_font, $"Хост должен включить кооп ([H] в меню) и открыть порт {Anabiosis.Shared.Networking.Wire.DefaultPort}.",
@@ -1442,5 +2023,37 @@ public partial class Game1
 
         if (_joinError is { } error)
             _spriteBatch.DrawString(_font, $"Не удалось: {error}", new Vector2(60, 330), Color.OrangeRed, 0f, Vector2.Zero, 0.75f, SpriteEffects.None, 0f);
+
+        // Direct user request (2nd of the 8 reference screenshots) - a small centered modal while
+        // the handshake is in flight, instead of the address line above just growing "— подключение…"
+        // text onto itself in place.
+        if (_joinTask is not null)
+            DrawJoinConnectingPopup();
+    }
+
+    private static Rectangle GetJoinConnectingPopupRect()
+    {
+        const int width = 380, height = 130;
+        return new Rectangle((DesignWidth - width) / 2, (DesignHeight - height) / 2, width, height);
+    }
+
+    private void DrawJoinConnectingPopup()
+    {
+        var rect = GetJoinConnectingPopupRect();
+        _spriteBatch.Draw(_pixel, new Rectangle(rect.X - 6, rect.Y - 6, rect.Width + 12, rect.Height + 12), Color.Black * 0.5f);
+        DrawVerticalGradient(rect, SettingsPanelTop, SettingsPanelBottom);
+        ShipRenderer.DrawRectOutline(_spriteBatch, _pixel, rect, SettingsBorderGold * 0.7f, 2);
+
+        var titleSize = _font.MeasureString("Подключение") * 0.75f;
+        _spriteBatch.DrawString(_font, "Подключение", new Vector2(rect.Center.X - titleSize.X / 2f, rect.Y + 22),
+            SettingsAccentGold, 0f, Vector2.Zero, 0.75f, SpriteEffects.None, 0f);
+
+        var addressSize = _font.MeasureString(_joinAddress) * 0.6f;
+        _spriteBatch.DrawString(_font, _joinAddress, new Vector2(rect.Center.X - addressSize.X / 2f, rect.Y + 58),
+            SettingsTextPrimary, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+
+        var waitSize = _font.MeasureString("Ожидание ответа хоста…") * 0.5f;
+        _spriteBatch.DrawString(_font, "Ожидание ответа хоста…", new Vector2(rect.Center.X - waitSize.X / 2f, rect.Y + 90),
+            SettingsTextDim, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
 }

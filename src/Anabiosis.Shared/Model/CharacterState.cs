@@ -93,4 +93,15 @@ public sealed record CharacterState(
     // A voice chunk from this player arrived within the last "recently speaking" window
     // (World.Voice.cs) - direct user request, a speaking indicator every other client can see over
     // this character's own head, not just the speaker's own local HUD label.
-    bool IsSpeaking = false);
+    bool IsSpeaking = false,
+    // Direct user request ("процесс сборки и разборки... 2 секунды... зелёная зарисовка") - the
+    // Fabricator/Deconstructor panel's own progress bar (FabricatorPanel.cs/DeconstructorPanel.cs)
+    // reads these to show the fill and to swap its own button between "СОЗДАТЬ"/"РАЗОБРАТЬ" and
+    // "ОТМЕНА". 0 means idle. Same "just a personal timer, echoed back" shape as SuitActionRemaining.
+    float ProductionActionRemaining = 0f,
+    string? ProductionRecipeId = null,
+    bool ProductionIsDeconstruct = false,
+    // Direct user request ("через 10 секунд... в игре сверху пишется таймер... уменьшения до
+    // спавна игрока") - 0 while alive, counting down to 0 while dead (World.Respawn.cs's own
+    // StepRespawn). The death screen/HUD reads this to show the countdown.
+    float RespawnSecondsRemaining = 0f);

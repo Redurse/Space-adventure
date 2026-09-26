@@ -22,7 +22,8 @@ public partial class Game1
             .ToList();
         var devices = _editorDeviceKinds
             .Select(kv => new CustomShipTileCanvas.DeviceRecord(kv.Key.X, kv.Key.Y, kv.Value,
-                _editorDeviceRotation.TryGetValue(kv.Key, out var rotated) && rotated))
+                _editorDeviceRotation.TryGetValue(kv.Key, out var rotated) && rotated,
+                _editorDeviceHalfSides.TryGetValue(kv.Key, out var halfSide) ? halfSide : null))
             .ToList();
         var zones = _editorZones
             .Select(z => new CustomShipTileCanvas.ZoneRecord(
@@ -31,13 +32,32 @@ public partial class Game1
         var engines = _editorEngineFacing
             .Select(kv => new CustomShipTileCanvas.EngineRecord(kv.Key.X, kv.Key.Y, kv.Value))
             .ToList();
+        // Direct user request ("двойной двигатель... общая клетка в основании") - saved as TWO plain
+        // EngineRecords sharing the same (X,Y), same "no format change needed" property TileShipBuilder's
+        // own export already relies on (ShipEngine.cs's Bulkhead/Nozzle are computed from Facing, never
+        // stored) - ApplyEditorTileCanvas below groups by (X,Y) on load to tell a single engine (group of
+        // 1) apart from a double engine (group of 2).
+        foreach (var kv in _editorDoubleEngineFacings)
+        {
+            engines.Add(new CustomShipTileCanvas.EngineRecord(kv.Key.X, kv.Key.Y, kv.Value.First));
+            engines.Add(new CustomShipTileCanvas.EngineRecord(kv.Key.X, kv.Key.Y, kv.Value.Second));
+        }
         var doorEdges = _editorTiles.DoorEdges
             .Select(kv => new CustomShipTileCanvas.DoorEdgeRecord(kv.Key.Coord.X, kv.Key.Coord.Y, kv.Key.Side, kv.Value.Id))
             .ToList();
         // Any WallOpenSide on _editorTiles right now only ever got there via the new Wall tool's
         // own half-block toggle (HandleWallToolInput) - the old always-on auto-inference that used
         // to write it on the player's behalf is gone - so this save's flags are always deliberate.
-        return new CustomShipTileCanvas(tiles, devices, zones, engines, ManualHalfBlockWalls: true, DoorEdgesRaw: doorEdges);
+        // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - every
+        // placed compartment instance, by EntryId+Anchor+RotationSteps (CustomShipTileCanvas.
+        // CompartmentInstanceRecord's own doc comment on why that's enough to restore on load).
+        var compartmentInstances = _editorCompartmentPlacement
+            .Where(kv => _editorCompartmentEntryId.ContainsKey(kv.Key))
+            .Select(kv => new CustomShipTileCanvas.CompartmentInstanceRecord(
+                kv.Key, _editorCompartmentEntryId[kv.Key], kv.Value.Anchor.X, kv.Value.Anchor.Y, kv.Value.RotationSteps))
+            .ToList();
+        return new CustomShipTileCanvas(tiles, devices, zones, engines, ManualHalfBlockWalls: true, DoorEdgesRaw: doorEdges,
+            CompartmentInstancesRaw: compartmentInstances);
     }
 
     // Replays the saved data through the SAME TileGrid mutators the editor's own tools use (floors
@@ -51,15 +71,16 @@ public partial class Game1
         _editorDeviceKinds.Clear();
         _editorDeviceFootprint.Clear();
         _editorDeviceRotation.Clear();
+        _editorDeviceHalfSides.Clear();
         _editorZones.Clear();
         _editorEngineFacing.Clear();
+        _editorDoubleEngineFacings.Clear();
         _editorEngineFootprint.Clear();
-        // M81 - compartment placement bookkeeping doesn't round-trip through the save format yet (a
-        // later milestone's concern); cleared here so a freshly-loaded canvas at least never confuses
-        // a previous session's own instance ids/protected-tile sets with tiles this load didn't place.
         _editorCompartmentAt.Clear();
         _editorCompartmentTiles.Clear();
         _editorCompartmentProtected.Clear();
+        _editorCompartmentEntryId.Clear();
+        _editorCompartmentPlacement.Clear();
 
         foreach (var t in canvas.Tiles)
             _editorTiles.SetFloor(new TileCoord(t.X, t.Y), true);
@@ -108,24 +129,52 @@ public partial class Game1
             var anchor = new TileCoord(d.X, d.Y);
             var deviceId = $"device-{d.X}-{d.Y}";
             var (width, height) = DeviceFootprintSize(d.Kind, d.Rotated);
-            foreach (var occupied in DeviceFootprintTiles(anchor, width, height))
-            {
-                _editorTiles.PlaceDevice(occupied, deviceId);
+            var footprint = DeviceFootprintTiles(anchor, width, height).ToList();
+            // Helm/Navigation's own half tile (PlaceDeviceFootprint, shared with fresh placement in
+            // Game1.ShipEditor.cs's HandleDeviceToolInput) - a save from a wall-adjacent placement
+            // replays its wall tile first (the Tiles loop above already ran), so the exact same
+            // half-block-wall-coexistence check that allowed the original placement still passes here.
+            // d.HalfSide falls back to d.Rotated's old East/South-only mapping for a save from before
+            // the 4-way HalfSide field existed (CustomDeviceFootprint.ResolveHalfSide).
+            var halfSide = CustomDeviceFootprint.ResolveHalfSide(d.HalfSide, d.Rotated);
+            PlaceDeviceFootprint(d.Kind, footprint, anchor, halfSide, deviceId);
+            foreach (var occupied in footprint)
                 _editorDeviceFootprint[occupied] = anchor;
-            }
             _editorDeviceKinds[anchor] = d.Kind;
             if (d.Rotated)
                 _editorDeviceRotation[anchor] = true;
+            if (CustomDeviceFootprint.IsHalfWidthKind(d.Kind))
+                _editorDeviceHalfSides[anchor] = halfSide;
         }
-        foreach (var e in canvas.Engines)
+        // Grouped by (X,Y) rather than replayed one record at a time - a double engine save (above)
+        // put TWO EngineRecords at the same coordinate on purpose, and only grouping first tells that
+        // apart from two entirely unrelated single engines that happen to load in the same pass.
+        foreach (var group in canvas.Engines.GroupBy(e => new TileCoord(e.X, e.Y)))
         {
-            var control = new TileCoord(e.X, e.Y);
-            var deviceId = $"engine-{e.X}-{e.Y}";
-            _editorTiles.PlaceDevice(control, deviceId);
-            _editorEngineFacing[control] = e.Facing;
-            foreach (var occupied in EngineFootprintTiles(control, e.Facing))
-                _editorEngineFootprint[occupied] = control;
+            var control = group.Key;
+            var facings = group.Select(e => e.Facing).ToList();
+            if (facings.Count == 2)
+            {
+                var deviceId = $"doubleengine-{control.X}-{control.Y}";
+                _editorTiles.PlaceDevice(control, deviceId);
+                _editorDoubleEngineFacings[control] = (facings[0], facings[1]);
+                foreach (var occupied in DoubleEngineFootprintTiles(control, facings[0], facings[1]))
+                    _editorEngineFootprint[occupied] = control;
+            }
+            else
+            {
+                var facing = facings[0];
+                var deviceId = $"engine-{control.X}-{control.Y}";
+                _editorTiles.PlaceDevice(control, deviceId);
+                _editorEngineFacing[control] = facing;
+                foreach (var occupied in EngineFootprintTiles(control, facing))
+                    _editorEngineFootprint[occupied] = control;
+            }
         }
+        // Replayed via RestoreWallDevice rather than PlaceWallDevice/PlaceRecessedWallDevice: this is
+        // a RELOAD of previously-valid data (already checked once at placement time), not a fresh
+        // placement. Only Terminal/WallLamp ever reach WallDeviceId at all - Helm/Navigation are
+        // ordinary devices, replayed by the canvas.Devices loop above instead.
         foreach (var t in canvas.Tiles)
         {
             if (t.WallDeviceId is not { } deviceId)
@@ -134,12 +183,48 @@ public partial class Game1
             // A save from before WallLamp existed never had a WallDeviceKind at all - Terminal was
             // the only wall-mountable kind back then, so that's the safe fallback here.
             var kind = t.WallDeviceKind ?? CustomDeviceKind.Terminal;
-            if (t.WallDeviceRecessed)
-                _editorTiles.PlaceRecessedWallDevice(coord, kind, deviceId);
-            else if (t.WallDeviceMountSide is { } side)
-                _editorTiles.PlaceWallDevice(coord, side, kind, deviceId);
+            var mountSide = t.WallDeviceMountSide ?? TileSide.North;
+            _editorTiles.RestoreWallDevice(coord, kind, deviceId, mountSide, t.WallDeviceRecessed);
         }
         foreach (var z in canvas.Zones)
             _editorZones.Add(new EditorZone(z.Name, z.Tiles.Select(p => new TileCoord(p.X, p.Y)).ToHashSet(), z.Kind));
+
+        // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - restores
+        // _editorCompartmentAt/Tiles/Protected the same way HandleCompartmentToolInput's own
+        // placement-time bookkeeping does, WITHOUT re-stamping onto this already-loaded grid (every
+        // tile/device this compartment ever placed already replayed above, from the ordinary
+        // Tiles/Devices lists) - stamps a THROWAWAY scratch grid purely to recover ProtectedTiles
+        // the same real Stamp call would have produced, reusing that logic instead of duplicating
+        // it. Skipped (not failed) for a stale/corrupted instance record - CompartmentCatalog.Find
+        // returning null (a since-removed catalog entry) or a doomed Stamp on the scratch grid both
+        // just leave that one instance's bookkeeping absent, same "annoying, not fatal" tolerance
+        // every other loader here already has for bad data.
+        foreach (var instance in canvas.CompartmentInstances)
+        {
+            if (CompartmentCatalog.Find(instance.EntryId) is not { } entry)
+                continue;
+            var anchor = new TileCoord(instance.AnchorX, instance.AnchorY);
+            var scratch = new TileGrid();
+            var result = CompartmentPlacer.Stamp(scratch, entry, anchor, instance.RotationSteps, instance.InstanceId);
+            if (!result.Success)
+                continue;
+
+            var rotated = CompartmentPlacer.Rotate(entry, instance.RotationSteps);
+            var allTiles = new HashSet<TileCoord>();
+            foreach (var footprintRect in rotated.FootprintRects)
+                for (var x = (int)footprintRect.X; x < (int)footprintRect.Right; x++)
+                    for (var y = (int)footprintRect.Y; y < (int)footprintRect.Bottom; y++)
+                        allTiles.Add(new TileCoord(anchor.X + x, anchor.Y + y));
+
+            foreach (var t in allTiles)
+                _editorCompartmentAt[t] = instance.InstanceId;
+            _editorCompartmentTiles[instance.InstanceId] = allTiles;
+            _editorCompartmentProtected[instance.InstanceId] = new HashSet<TileCoord>(result.ProtectedTiles);
+            _editorCompartmentEntryId[instance.InstanceId] = instance.EntryId;
+            _editorCompartmentPlacement[instance.InstanceId] = (anchor, instance.RotationSteps);
+
+            if (int.TryParse(instance.InstanceId.Replace("compartment-", ""), out var n) && n >= _editorNextCompartmentInstance)
+                _editorNextCompartmentInstance = n + 1;
+        }
     }
 }

@@ -8,8 +8,8 @@ namespace Anabiosis.Client.Rendering;
 
 // M75 (humble-soaring-cat.md) - the client has no direct WorldSnapshot field carrying Ship.Tiles
 // (never added - see Ship.cs's own doc comment on Tiles, "nobody reads this yet outside tests"), but
-// it doesn't need one: TileGridRasterizer.FromRooms is a pure, deterministic function of Rooms/Doors/
-// AirlockOuterDoors, which the snapshot already carries every tick. Rebuilding it here reconstructs
+// it doesn't need one: TileGridRasterizer.FromRooms is a pure, deterministic function of Rooms/Doors,
+// which the snapshot already carries every tick. Rebuilding it here reconstructs
 // the EXACT same tile shape the server's own Ship.Tiles has, with zero protocol change.
 //
 // Bug fix (M78 follow-up, humble-soaring-cat.md) - this USED to deliberately skip overlaying live
@@ -39,13 +39,13 @@ public static class ClientTileGrid
 {
     public static TileGrid Build(WorldSnapshot snapshot)
     {
-        var tiles = TileGridRasterizer.FromRooms(snapshot.Rooms, snapshot.Doors, snapshot.AirlockOuterDoors);
+        var tiles = TileGridRasterizer.FromRooms(snapshot.Rooms, snapshot.Doors);
         ApplySupplementalTiles(tiles, snapshot.SupplementalWallTiles ?? Array.Empty<TileCoord>(),
             snapshot.ForcedFloorTiles ?? Array.Empty<TileCoord>(), snapshot.WallOpenSideOverrides ?? Array.Empty<CustomWallOpenSideDef>(),
             snapshot.WallMaterialOverrides ?? Array.Empty<CustomWallMaterialDef>());
         ApplyWallOpenSides(tiles, snapshot.Rooms, snapshot.WallBlocks);
         ApplyWallMaterials(tiles, snapshot.Rooms, snapshot.WallBlocks);
-        ApplyLiveDoorState(tiles, snapshot.Rooms, snapshot.Doors, snapshot.AirlockOuterDoors, snapshot.DoorStates);
+        ApplyLiveDoorState(tiles, snapshot.Rooms, snapshot.Doors, snapshot.DoorStates);
         ApplyDoorEdges(tiles, snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>());
         ApplyLiveDoorEdgeState(tiles, snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>(), snapshot.DoorEdgeStates ?? Array.Empty<DoorEdgeState>());
         return tiles;
@@ -79,8 +79,9 @@ public static class ClientTileGrid
 
     // Mirrors World.TileSync.cs's SyncDoorTile server-side - same DoorTileCoords lookup, same
     // DoorStates source, same open-by-default conventions Game1.Lighting.cs already uses when
-    // building SightGaps (a regular Door defaults to open/`true` if no explicit state exists yet, an
-    // AirlockOuterDoor defaults to closed/`false`) so this can never disagree with the gaps.
+    // building SightGaps (a regular door defaults to open/`true` if no explicit state exists yet, a
+    // vacuum-facing one - Door.LeadsToVacuum - defaults to closed/`false`) so this can never disagree
+    // with the gaps.
     //
     // Public (not private) - Build above only ever rasterizes the PLAYER'S OWN ship (snapshot.Rooms/
     // Doors), but Game1.Lighting.cs's docked case also rasterizes the station's own layout via a
@@ -92,20 +93,21 @@ public static class ClientTileGrid
     // bug this file was written to fix, just on the other structure. Exposed here so Game1.Lighting.cs
     // can call it a second time rather than duplicating the overlay logic.
     public static void ApplyLiveDoorState(TileGrid tiles, IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors,
-        IReadOnlyList<AirlockOuterDoor> airlocks, IReadOnlyList<DoorState> doorStates)
+        IReadOnlyList<DoorState> doorStates)
     {
         foreach (var door in doors)
         {
-            var open = doorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? true;
-            SetDoorOpenState(tiles, TileGridRasterizer.DoorTileCoords(rooms, door.X, door.Y, door.Width, door.Height), open);
-        }
-        foreach (var airlock in airlocks)
-        {
-            var room = rooms.FirstOrDefault(r => r.Id == airlock.RoomId);
-            if (room is null)
-                continue; // stale/mismatched snapshot - skip rather than throw, same defensiveness TileGridRasterizer itself uses
-            var open = doorStates.FirstOrDefault(s => s.DoorId == airlock.Id)?.IsOpen ?? false;
-            SetDoorOpenState(tiles, TileGridRasterizer.DoorTileCoords(new[] { room }, airlock.X, airlock.Y, airlock.Width, airlock.Height), open);
+            // Stale/mismatched snapshot guard - skip rather than throw, same defensiveness
+            // TileGridRasterizer itself doesn't need (server-authoritative data, room always exists
+            // by construction) but this client-side rendering path does (a mid-flight resnapshot the
+            // client hasn't fully caught up to yet). Only the vacuum-facing branch can ever hit this -
+            // RoomsForDoor's own single-room lookup is the one that would throw, an interior door's
+            // DoorTileCoords call against the full room list never does.
+            if (door.LeadsToVacuum && rooms.All(r => r.Id != door.RoomAId))
+                continue;
+            var open = doorStates.FirstOrDefault(s => s.DoorId == door.Id)?.IsOpen ?? !door.LeadsToVacuum;
+            var doorRooms = TileGridRasterizer.RoomsForDoor(rooms, door);
+            SetDoorOpenState(tiles, TileGridRasterizer.DoorTileCoords(doorRooms, door.X, door.Y, door.Width, door.Height), open);
         }
     }
 
@@ -157,7 +159,7 @@ public static class ClientTileGrid
     }
 
     // Direct user bug report ("стены отображаются не на своих местах, а коллизии там же") - the
-    // client's own re-rasterization (TileGridRasterizer.FromRooms on Rooms/Doors/AirlockOuterDoors
+    // client's own re-rasterization (TileGridRasterizer.FromRooms on Rooms/Doors
     // alone) is the exact same "naive" projection Ship.Custom.cs's own post-processing corrects on
     // the SERVER's Tiles - a T-junction's residual wall (step 3.6) or a half-block notch sitting at
     // a region's own edge (step 3.5's own sibling-subrect guard) can never be represented by Room.
@@ -190,14 +192,14 @@ public static class ClientTileGrid
     // and it was being paid two or three times over EVERY drawn frame (once each for the sight/room-
     // lighting mask, the wall-drawing pass, and the voice-muffling check - Game1.Lighting.cs,
     // ShipRenderer.Rooms.cs, Game1.cs respectively), even though the ship's actual layout (Rooms/
-    // Doors/AirlockOuterDoors) changes only on the rare tick a compartment is actually built/removed -
+    // Doors) changes only on the rare tick a compartment is actually built/removed -
     // door OPEN/CLOSED state changes far more often, but that's already a separate, much cheaper
     // overlay (ApplyLiveDoorState) applied on top. This fingerprint is what a caller-side cache (see
     // ShipRenderer's own GetLiveShipTiles, and Game1.Lighting.cs's station-tiles field) compares
     // frame to frame to know whether the expensive rasterization actually needs to run again, or
     // whether last frame's already-built TileGrid (with door state freshly re-overlaid) is still
     // correct. Deliberately excludes door open/closed state - only the STRUCTURAL shape.
-    public static int ComputeStructuralFingerprint(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, IReadOnlyList<AirlockOuterDoor> airlocks)
+    public static int ComputeStructuralFingerprint(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors)
     {
         var hash = new HashCode();
         hash.Add(rooms.Count);
@@ -211,9 +213,6 @@ public static class ClientTileGrid
         hash.Add(doors.Count);
         foreach (var door in doors)
             hash.Add(HashCode.Combine(door.Id, door.RoomAId, door.RoomBId, door.X, door.Y, door.Width, door.Height, door.Vertical));
-        hash.Add(airlocks.Count);
-        foreach (var airlock in airlocks)
-            hash.Add(HashCode.Combine(airlock.Id, airlock.RoomId, airlock.X, airlock.Y, airlock.Width, airlock.Height));
         return hash.ToHashCode();
     }
 }

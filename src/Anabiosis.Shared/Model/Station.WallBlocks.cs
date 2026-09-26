@@ -4,18 +4,19 @@ namespace Anabiosis.Shared.Model;
 // the exact same rule Ship.Custom.cs's BuildWallBlocks/IsUnitCovered applies to a player-drawn
 // hull, just re-derived here against Room instead of CustomRoomDef (the two share every field but
 // aren't the same type, so the loop can't be shared directly without a generic rewrite - not worth
-// it for one extra caller). Any block that lands on a Door or the ShipConnector's own footprint is
-// dropped afterward, same as Ship.cs's constructor does for its own wall blocks.
+// it for one extra caller). Any block that lands on a door's own footprint is dropped afterward,
+// same as Ship.cs's constructor does for its own wall blocks - `doors` includes the ShipConnector
+// (humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный тип"), the caller appends it.
 public sealed partial class Station
 {
     // internal rather than private: EnemyShipLayout.cs reuses this verbatim for its own hull's
     // cuttable wall blocks - same "derive purely from room geometry" rule, just a different
-    // structure's Rooms/Doors/connectors triple.
+    // structure's Rooms/Doors pair.
     // Generalized (humble-soaring-cat.md M90) to walk each room's own subrects independently -
     // byte-identical to the old per-room walk whenever every room has exactly one rect (every
     // station/enemy hull today, since neither builds multi-rect rooms yet) since room.Rects then
     // has exactly one element equal to the bbox.
-    internal static List<WallBlock> BuildWallBlocks(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors, IReadOnlyList<AirlockOuterDoor> shipConnectors)
+    internal static List<WallBlock> BuildWallBlocks(IReadOnlyList<Room> rooms, IReadOnlyList<Door> doors)
     {
         var blocks = new List<WallBlock>();
         foreach (var room in rooms)
@@ -38,7 +39,7 @@ public sealed partial class Station
             }
         }
         return blocks
-            .Where(b => !doors.Any(d => d.Contains(b.Position)) && !shipConnectors.Any(c => c.Contains(b.Position)))
+            .Where(b => !doors.Any(d => d.Contains(b.Position)))
             .ToList();
     }
 

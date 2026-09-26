@@ -73,12 +73,25 @@ public partial class Game1
     // Direct user request ("сделай чтобы терминал в редакторе был в 1 вкладке управления
     // корабля") - Terminal moved here from FurnitureItems; still the same wall-mounting tool
     // (EditorTool.Terminal), just listed under this tab now.
+    // Helm/Navigation are ordinary rotatable floor-standing devices (confirmed geometry, direct user
+    // request - see TileGrid.PlaceHalfWidthDevice's own doc comment for the real 1.5-tile footprint) -
+    // plain DeviceItem entries through the generic Device tool, same as Bed or StorageRack, not a
+    // dedicated placement tool of their own.
     private static readonly PaletteItem[] ShipControlItems =
     {
-        DeviceItem(CustomDeviceKind.Helm), DeviceItem(CustomDeviceKind.Navigation),
+        DeviceItem(CustomDeviceKind.Helm),
+        DeviceItem(CustomDeviceKind.Navigation),
         new("Двигатель", EditorTool.Engine),
+        // Direct user request ("двойной двигатель... 2 наложенных друг на друга двигателя с общим
+        // началом") - an L-shaped 5-tile pair of ordinary marching engines sharing one Control tile,
+        // placed/rotated as a single unit (HandleDoubleEngineToolInput, Game1.ShipEditor.cs).
+        new("Двойной двигатель", EditorTool.DoubleEngine),
         DeviceItem(CustomDeviceKind.Camera),
         new("Терминал", EditorTool.Terminal, CustomDeviceKind.Terminal),
+        // Direct user request ("монитор состояния корабля... консоль связи") - same rotatable
+        // floor-standing device shape as Helm/Navigation above.
+        DeviceItem(CustomDeviceKind.ShipStatusMonitor),
+        DeviceItem(CustomDeviceKind.CommsConsole),
     };
 
     // "Шлюз" itself reuses the Door tool (an airlock is just a door on the outer hull, inferred by
@@ -449,6 +462,7 @@ public partial class Game1
         {
             EditorTool.Terminal => new Color(100, 180, 190),
             EditorTool.Engine => new Color(90, 160, 220),
+            EditorTool.DoubleEngine => new Color(130, 110, 220),
             EditorTool.Compartment => new Color(160, 140, 200),
             _ => Color.Gray,
         };
@@ -486,6 +500,8 @@ public partial class Game1
             or CustomDeviceKind.FuelRodStorage or CustomDeviceKind.Morgue or CustomDeviceKind.AmmoStorage => DeviceSkin.Face.Rack,
         CustomDeviceKind.Navigation => DeviceSkin.Face.Navigation,
         CustomDeviceKind.Helm => DeviceSkin.Face.Helm,
+        CustomDeviceKind.ShipStatusMonitor => DeviceSkin.Face.ShipStatusMonitor,
+        CustomDeviceKind.CommsConsole => DeviceSkin.Face.CommsConsole,
         CustomDeviceKind.SuitLocker => DeviceSkin.Face.Locker,
         CustomDeviceKind.Jukebox => DeviceSkin.Face.Jukebox,
         // Direct user request - the "производство" tab's 4 workbenches, previously all Generic.
@@ -498,6 +514,9 @@ public partial class Game1
         CustomDeviceKind.ShuttleHangar => DeviceSkin.Face.ShuttleHangar,
         // Direct user request - "тройная дверь", themed to look like the real in-game door.
         CustomDeviceKind.TripleDoor => DeviceSkin.Face.TripleDoor,
+        // Direct user request ("сделай щитку свою собственную текстуру") - "Щиток", previously
+        // Generic like every other not-yet-fitted kind.
+        CustomDeviceKind.Junction => DeviceSkin.Face.Junction,
         _ => DeviceSkin.Face.Generic,
     };
 

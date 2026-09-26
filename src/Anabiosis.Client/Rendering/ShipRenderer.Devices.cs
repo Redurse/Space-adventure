@@ -181,7 +181,25 @@ public sealed partial class ShipRenderer
     // for the hull plate there - Face.Engine unlit, painted the same steel as everything else on the
     // deck until it's actually damaged). Nozzle is deliberately NOT drawn here - see DrawEngineNozzles
     // below, and its own doc comment, for why.
-    private void DrawShipEngine(SpriteBatch spriteBatch, EngineState engine, Vector2 origin, float totalSeconds)
+    // Rotating a texture with an explicit origin (EngineArtRotation below, same convention
+    // ShipRenderer.Rooms.cs's wall corner/T-junction/end-cap rotations already use) needs a
+    // CENTER-anchored destination rect: this SpriteBatch.Draw overload maps `origin` (given in
+    // SOURCE-texture pixels) onto the destination rect's own X/Y, not its top-left corner - a plain
+    // top-left rect (GetBlockRect's own convention, correct for hitboxes/outlines/scorch/labels)
+    // puts the texture's own center where its corner belongs, drawing the art shifted up-left by
+    // half its own size. Direct user bug report ("текстура двигателя съезжает на пол клетки") -
+    // this recenters just the destination handed to a rotated Draw call; the original rect (used
+    // for everything else - outline, scorch, hitbox) is untouched.
+    private static Rectangle CenterAnchored(Rectangle rect) => new(rect.Center.X, rect.Center.Y, rect.Width, rect.Height);
+
+    // `drawControl` skips the shared Control box entirely - direct user request ("двойной
+    // двигатель... 2 наложенных друг на друга двигателя с общим началом") - a double engine is TWO
+    // EngineStates sharing one (X,Y), and drawing the Control box (and its "!"/label) once per
+    // EngineState there would paint it twice at the identical rect, showing conflicting broken/intact
+    // tints if only one twin were damaged. The caller (the loop below) draws the Control box once per
+    // shared position using an "either broken" tint, then calls this per-engine only for its own
+    // Bulkhead (which differs by Facing and is already fine per-engine).
+    private void DrawShipEngine(SpriteBatch spriteBatch, EngineState engine, Vector2 origin, float totalSeconds, bool drawControl = true)
     {
         var step = EngineFacingStep(engine.Facing);
         var controlPos = new Vec2(engine.X, engine.Y);
@@ -194,7 +212,7 @@ public sealed partial class ShipRenderer
         var bulkheadRect = GetBlockRect(bulkheadPos, (int)PixelsPerUnit, origin);
         if (_engineBulkheadTexture is { } bulkheadTex)
         {
-            spriteBatch.Draw(bulkheadTex, bulkheadRect, null, engine.BulkheadBroken ? new Color(255, 130, 130) : Color.White,
+            spriteBatch.Draw(bulkheadTex, CenterAnchored(bulkheadRect), null, engine.BulkheadBroken ? new Color(255, 130, 130) : Color.White,
                 EngineArtRotation(engine.Facing), new Vector2(bulkheadTex.Width / 2f, bulkheadTex.Height / 2f), SpriteEffects.None, 0f);
             DrawRectOutline(spriteBatch, bulkheadRect, engine.BulkheadBroken ? Color.Red : new Color(150, 155, 165), engine.BulkheadBroken ? 3 : 2);
         }
@@ -209,11 +227,14 @@ public sealed partial class ShipRenderer
             DrawHazardStripes(spriteBatch, new Rectangle(bulkheadRect.X, bulkheadRect.Bottom - 4, bulkheadRect.Width, 4), horizontal: true);
         }
 
+        if (!drawControl)
+            return;
+
         // Control - same size/style as any other system-device box (DrawSystemDevice).
         var controlRect = GetBlockRect(controlPos, BigBlockSize, origin);
         if (_engineControlTexture is { } controlTex)
         {
-            spriteBatch.Draw(controlTex, controlRect, null, engine.ControlBroken ? new Color(255, 130, 130) : Color.White,
+            spriteBatch.Draw(controlTex, CenterAnchored(controlRect), null, engine.ControlBroken ? new Color(255, 130, 130) : Color.White,
                 EngineArtRotation(engine.Facing), new Vector2(controlTex.Width / 2f, controlTex.Height / 2f), SpriteEffects.None, 0f);
             DrawRectOutline(spriteBatch, controlRect, engine.ControlBroken ? Color.Red : Color.LightSteelBlue, engine.ControlBroken ? 3 : 2);
         }
@@ -230,6 +251,36 @@ public sealed partial class ShipRenderer
                 Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
         }
         DrawDeviceLabel(spriteBatch, controlRect, "Двигатель");
+    }
+
+    // Draws ONLY the shared Control box for a double engine's pair - same visuals as the single-
+    // engine branch above, just tinted "broken" if EITHER twin's own Control half is broken (from the
+    // player's perspective there is exactly one physical control panel there, however many independent
+    // HP pools the server tracks behind it - World.Engines.cs's own doc comment on repairing "one at a
+    // time from the same spot").
+    private void DrawSharedEngineControl(SpriteBatch spriteBatch, EngineState anyTwin, bool eitherControlBroken, Vector2 origin)
+    {
+        var controlPos = new Vec2(anyTwin.X, anyTwin.Y);
+        var controlRect = GetBlockRect(controlPos, BigBlockSize, origin);
+        if (_engineControlTexture is { } controlTex)
+        {
+            spriteBatch.Draw(controlTex, CenterAnchored(controlRect), null, eitherControlBroken ? new Color(255, 130, 130) : Color.White,
+                EngineArtRotation(anyTwin.Facing), new Vector2(controlTex.Width / 2f, controlTex.Height / 2f), SpriteEffects.None, 0f);
+            DrawRectOutline(spriteBatch, controlRect, eitherControlBroken ? Color.Red : Color.LightSteelBlue, eitherControlBroken ? 3 : 2);
+        }
+        else
+        {
+            DrawDeviceFace(spriteBatch, controlRect, DeviceSkin.Face.Helm, !eitherControlBroken,
+                eitherControlBroken ? Color.Red : Color.LightSteelBlue, eitherControlBroken ? 3 : 2);
+        }
+        if (eitherControlBroken)
+        {
+            DrawScorch(spriteBatch, controlRect);
+            DrawHazardStripes(spriteBatch, new Rectangle(controlRect.X, controlRect.Bottom - 3, controlRect.Width, 3), horizontal: true);
+            spriteBatch.DrawString(_font, "!", new Vector2(controlRect.Center.X + BigBlockSize / 2f - 2, controlRect.Center.Y - BigBlockSize),
+                Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+        }
+        DrawDeviceLabel(spriteBatch, controlRect, "Двойной двигатель");
     }
 
     // A sustained rocket exhaust, not a torch - widens AWAY from the nozzle rather than narrowing to
@@ -281,7 +332,7 @@ public sealed partial class ShipRenderer
             if (_engineNozzleTexture is { } nozzleTex)
             {
                 var tint = engine.NozzleBroken ? new Color(255, 130, 130) : engine.IsThrusting ? Color.White : new Color(160, 160, 160);
-                spriteBatch.Draw(nozzleTex, nozzleRect, null, tint, EngineArtRotation(engine.Facing),
+                spriteBatch.Draw(nozzleTex, CenterAnchored(nozzleRect), null, tint, EngineArtRotation(engine.Facing),
                     new Vector2(nozzleTex.Width / 2f, nozzleTex.Height / 2f), SpriteEffects.None, 0f);
                 DrawRectOutline(spriteBatch, nozzleRect, engine.NozzleBroken ? Color.Red : new Color(230, 140, 70), engine.NozzleBroken ? 3 : 2);
             }
@@ -574,23 +625,75 @@ public sealed partial class ShipRenderer
     // Bridge console (game_design.md section 5) — click it to bring up the galaxy map.
     private void DrawNavigationConsole(SpriteBatch spriteBatch, NavigationConsole console, bool isOpen, Vector2 origin, bool powered)
     {
-        var (navWidth, navHeight) = FootprintPixelSize(CustomDeviceKind.Navigation, console.Rotated);
-        var rect = GetBlockRect(console.Position, navWidth, navHeight, origin);
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Navigation, powered, isOpen ? Color.Gold : Color.LightSeaGreen, isOpen ? 3 : 2);
-        DrawHood(spriteBatch, rect);
-        DrawDeviceLabel(spriteBatch, rect, "Сканер");
+        DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.Navigation,
+            DeviceSkin.Face.Navigation, powered, isOpen ? Color.Gold : Color.LightSeaGreen, isOpen ? 3 : 2, "Сканер", origin);
     }
-
 
     // Pilot's console (game_design.md Phase 3, M15) — click it to man it and bring up the helm's
     // joystick panel instead of the ship view.
     private void DrawHelmConsole(SpriteBatch spriteBatch, HelmConsole console, bool isOpen, Vector2 origin, bool powered)
     {
-        var (helmWidth, helmHeight) = FootprintPixelSize(CustomDeviceKind.Helm, console.Rotated);
-        var rect = GetBlockRect(console.Position, helmWidth, helmHeight, origin);
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Helm, powered, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2);
+        DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.Helm,
+            DeviceSkin.Face.Helm, powered, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2, "Навигационная панель", origin);
+    }
+
+    // Direct user request ("монитор состояния корабля... консоль связи... свои уникальные
+    // текстуры") - same physical console footprint as Navigation/Helm above
+    // (DrawHelmOrNavigationConsole is generic despite its name), each with its own bespoke
+    // DeviceSkin face now (DeviceSkin.cs's own ShipStatusMonitor/CommsConsole).
+    private void DrawShipStatusMonitor(SpriteBatch spriteBatch, ShipStatusMonitor console, bool isOpen, Vector2 origin, bool powered)
+    {
+        DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.ShipStatusMonitor,
+            DeviceSkin.Face.ShipStatusMonitor, powered, isOpen ? Color.Gold : new Color(120, 220, 150), isOpen ? 3 : 2, "Монитор состояния", origin);
+    }
+
+    private void DrawCommsConsole(SpriteBatch spriteBatch, CommsConsole console, bool isOpen, Vector2 origin, bool powered)
+    {
+        DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.CommsConsole,
+            DeviceSkin.Face.CommsConsole, powered, isOpen ? Color.Gold : new Color(220, 170, 90), isOpen ? 3 : 2, "Связь", origin);
+    }
+
+    // Direct user bug report ("они должны быть вплотную это раз, а во вторых само устройство должно
+    // быть таких размеров а не состоять из двух элементов") - a prior version of this drew the "full"
+    // tile with the real device face art and the "half" tile as a SEPARATE flat half-block swatch,
+    // with a visible seam (and, before the matching fix in HalfWidthDeviceRect below, a walkable gap)
+    // between them. Now ONE seamless rect, spanning continuously from the full tile's own far edge to
+    // the half tile's own midpoint (1.5 units along the halved axis, 2 along the other - exactly
+    // TileGrid.IsWalkable's real combined blocked area, not a cosmetic approximation of it) - the
+    // console's face art, hood and label are all drawn once into that single rect, same as any other
+    // device kind.
+    private void DrawHelmOrNavigationConsole(SpriteBatch spriteBatch, Vec2 position, TileSide halfSide, CustomDeviceKind kind,
+        DeviceSkin.Face face, bool powered, Color glow, float glowThickness, string label, Vector2 origin)
+    {
+        var rect = HalfWidthDeviceRect(position, halfSide, otherAxisTiles: 2, origin);
+
+        DrawDeviceFace(spriteBatch, rect, face, powered, glow, glowThickness);
         DrawHood(spriteBatch, rect);
-        DrawDeviceLabel(spriteBatch, rect, "Навигационная панель");
+        DrawDeviceLabel(spriteBatch, rect, label);
+    }
+
+    // Shared by DrawHelmOrNavigationConsole and DrawDecorativeDevice (Fabricator/Deconstructor,
+    // direct user request "по аналогии... полтора на 3") - any CustomDeviceFootprint.IsHalfWidthKind
+    // device's real combined rect: 1.5 units wide/tall along the halved axis (whichever axis
+    // `halfSide` names), `otherAxisTiles` units along the other - 2 for Helm/Navigation, 3 for
+    // Fabricator/Deconstructor. `position` is the CENTER of the old full anchor box
+    // (TileShipBuilder/Ship.Custom.cs's own anchor+footprintSize/2f export, unchanged regardless of
+    // halfSide - both mirror states of a pair share the same box, just flipped, see
+    // CustomDeviceDef.HalfWidthSide's own doc comment) - the 0.25-unit shift away from `position`
+    // flips sign between the "near" (West/North, half tile AT the anchor) and "far" (East/South, half
+    // tile PAST the anchor) mirror of the halved axis; the un-halved axis needs no shift at all.
+    private Rectangle HalfWidthDeviceRect(Vec2 position, TileSide halfSide, int otherAxisTiles, Vector2 origin)
+    {
+        var unit = (int)PixelsPerUnit;
+        var half = (int)(1.5f * unit);
+        var otherAxisPixels = otherAxisTiles * unit;
+        return halfSide switch
+        {
+            TileSide.East => GetBlockRect(new Vec2(position.X - 0.25, position.Y), half, otherAxisPixels, origin),
+            TileSide.West => GetBlockRect(new Vec2(position.X + 0.25, position.Y), half, otherAxisPixels, origin),
+            TileSide.South => GetBlockRect(new Vec2(position.X, position.Y - 0.25), otherAxisPixels, half, origin),
+            _ => GetBlockRect(new Vec2(position.X, position.Y + 0.25), otherAxisPixels, half, origin), // North
+        };
     }
 
     // A quiet card table - not clickable, just a felt surface bolted to the deck; two crew
@@ -628,20 +731,64 @@ public sealed partial class ShipRenderer
     // половину блока и визуально выглядел в соответствии с полублоком") - recessed-in-a-half-thick-
     // wall or protruding-from-an-ordinary-wall alike, FacingSide already carries which side to draw
     // on directly (Ship.cs's own TileShipBuilder export sets it), no per-frame tile lookup needed.
-    // Direct user bug report ("щитки отображались в игре а не была просто пустота") - JunctionBox
-    // is purely decorative (no on/off, no interaction), so this reuses the EXACT same "no dedicated
-    // Face yet" fallback look the Ship Editor's own palette/canvas already draws it as (Game1.
-    // ShipEditor.Draw.cs's own 1x1-device fallback: an 18px tinted box, black outline, centered
-    // glyph) - the real game and the editor preview now show the identical fixture, not a
-    // placeholder in one and empty floor in the other.
-    private const int JunctionBoxSize = 18;
-
-    private void DrawJunctionBox(SpriteBatch spriteBatch, JunctionBox box, Vector2 origin)
+    // Direct user request ("сделай щитку свою собственную текстуру и сделай чтобы он занимал размер
+    // полтора на 1 блок, как делались все новые блоки") - JunctionBox used to be purely decorative,
+    // drawn as an 18px flat tinted swatch with a centered glyph (the same "no dedicated Face yet"
+    // fallback look the Ship Editor's own canvas used too - Game1.ShipEditor.Draw.cs's own 1x1-device
+    // fallback). Now a real half-width console footprint (CustomDeviceFootprint.IsHalfWidthKind, same
+    // HalfWidthDeviceRect mechanic Helm/Navigation/ShipStatusMonitor/CommsConsole already use, just 1
+    // tile tall instead of 2) with its own bespoke DeviceSkin face (DeviceSkin.cs's own Junction).
+    // `isOpen` glows gold the same way ShipStatusMonitor/CommsConsole's shared full-screen overlay
+    // does - one client-only screen shared by every instance, not per-fixture data.
+    private void DrawJunctionBox(SpriteBatch spriteBatch, JunctionBox box, bool isOpen, Vector2 origin, bool powered)
     {
-        var rect = GetBlockRect(box.Position, JunctionBoxSize, origin);
-        spriteBatch.Draw(_pixel, rect, CustomDeviceCatalog.Tint(CustomDeviceKind.Junction));
+        var otherAxisTiles = CustomDeviceFootprint.Size(CustomDeviceKind.Junction).Height;
+        var rect = HalfWidthDeviceRect(box.Position, box.HalfSide, otherAxisTiles, origin);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Junction, powered, isOpen ? Color.Gold : new Color(210, 200, 80), isOpen ? 3 : 2);
+    }
+
+    // Direct user bug report ("некоторые устройства в игре не отображаются а в редакторе они
+    // видны") - DecorativeDevice.Kinds, drawn generically at the same footprint the Ship Editor
+    // already places them at (CustomDeviceFootprint.Size via FootprintPixelSize). A handful of these
+    // kinds already had real DeviceSkin art baked for them (ConstructionBench/Fabricator/
+    // Deconstructor/WeaponWorkbench/Bed/ShuttleHangar/TripleDoor - built for exactly this device, but
+    // never actually reachable before now since no Ship-side object ever carried a position for
+    // them) - used here when it matches; everything else falls back to DrawJunctionBox's own
+    // established "no dedicated Face yet" look, so the game and the editor's own canvas agree.
+    private static readonly Dictionary<CustomDeviceKind, DeviceSkin.Face> DecorativeDeviceFaces = new()
+    {
+        [CustomDeviceKind.ConstructionBench] = DeviceSkin.Face.ConstructionBench,
+        [CustomDeviceKind.Fabricator] = DeviceSkin.Face.Fabricator,
+        [CustomDeviceKind.Deconstructor] = DeviceSkin.Face.Deconstructor,
+        [CustomDeviceKind.WeaponWorkbench] = DeviceSkin.Face.WeaponWorkbench,
+        [CustomDeviceKind.Bed] = DeviceSkin.Face.Bed,
+        [CustomDeviceKind.ShuttleHangar] = DeviceSkin.Face.ShuttleHangar,
+        [CustomDeviceKind.TripleDoor] = DeviceSkin.Face.TripleDoor,
+    };
+
+    private void DrawDecorativeDevice(SpriteBatch spriteBatch, DecorativeDevice device, Vector2 origin)
+    {
+        // Direct user request ("сделай по аналогии фабрикатор и деконструктор, только чтобы они
+        // занимали полтора на 3 клетки") - same half-width mechanic DrawHelmOrNavigationConsole
+        // already uses, just with a 3-tall other axis instead of 2 (CustomDeviceFootprint.Size's own
+        // Height component names it per kind) - everything else (StorageRack, Bed, etc.) keeps the
+        // ordinary full-footprint rect, unchanged.
+        Rectangle rect;
+        if (CustomDeviceFootprint.IsHalfWidthKind(device.Kind))
+            rect = HalfWidthDeviceRect(device.Position, device.HalfSide, CustomDeviceFootprint.Size(device.Kind).Height, origin);
+        else
+        {
+            var (width, height) = FootprintPixelSize(device.Kind, device.Rotated);
+            rect = GetBlockRect(device.Position, width, height, origin);
+        }
+        if (DecorativeDeviceFaces.TryGetValue(device.Kind, out var face))
+        {
+            DrawDeviceFace(spriteBatch, rect, face, lit: true, CustomDeviceCatalog.Tint(device.Kind), 2);
+            return;
+        }
+        spriteBatch.Draw(_pixel, rect, CustomDeviceCatalog.Tint(device.Kind));
         DrawRectOutline(spriteBatch, rect, Color.Black, 1);
-        var glyph = CustomDeviceCatalog.ShortGlyph(CustomDeviceKind.Junction);
+        var glyph = CustomDeviceCatalog.ShortGlyph(device.Kind);
         var glyphSize = _font.MeasureString(glyph) * 0.5f;
         spriteBatch.DrawString(_font, glyph, new Vector2(rect.Center.X - glyphSize.X / 2f, rect.Center.Y - glyphSize.Y / 2f),
             Color.Black, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);

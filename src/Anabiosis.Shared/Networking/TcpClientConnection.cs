@@ -20,6 +20,7 @@ public sealed class TcpClientConnection : IClientConnection, IDisposable
     private readonly ConcurrentQueue<ClientCommand> _outgoing = new();
     private readonly AutoResetEvent _outgoingReady = new(false);
     private WorldSnapshot? _latest;
+    private LobbySnapshot? _latestLobby;
     private volatile bool _closed;
 
     public int PlayerId { get; }
@@ -49,6 +50,8 @@ public sealed class TcpClientConnection : IClientConnection, IDisposable
             stream.ReadTimeout = (int)timeout.TotalMilliseconds;
             var welcome = Wire.ReadFrame<ServerMessage>(stream)
                 ?? throw new IOException("сервер закрыл соединение до приветствия");
+            if (welcome.Kind == ServerMessageKind.Rejected)
+                throw new IOException(welcome.Reason ?? "сервер отклонил подключение");
             if (welcome.Kind != ServerMessageKind.Welcome)
                 throw new IOException($"вместо приветствия пришло {welcome.Kind}");
             stream.ReadTimeout = Timeout.Infinite; // a quiet server is a paused one, not a dead one
@@ -71,6 +74,7 @@ public sealed class TcpClientConnection : IClientConnection, IDisposable
     }
 
     WorldSnapshot? IClientConnection.ReceiveLatestSnapshot() => Interlocked.Exchange(ref _latest, null);
+    LobbySnapshot? IClientConnection.ReceiveLatestLobby() => Interlocked.Exchange(ref _latestLobby, null);
 
     private void ReadLoop()
     {
@@ -83,6 +87,8 @@ public sealed class TcpClientConnection : IClientConnection, IDisposable
                     break;
                 if (message.Kind == ServerMessageKind.Snapshot && message.Snapshot is { } snapshot)
                     Volatile.Write(ref _latest, snapshot);
+                else if (message.Kind == ServerMessageKind.Lobby && message.Lobby is { } lobby)
+                    Volatile.Write(ref _latestLobby, lobby);
             }
         }
         catch (Exception)

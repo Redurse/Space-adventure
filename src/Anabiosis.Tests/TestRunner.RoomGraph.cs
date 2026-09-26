@@ -16,10 +16,13 @@ internal static partial class TestRunner
                 adjacency[roomId] = edges = new List<(Door, string)>();
             edges.Add((door, otherRoomId));
         }
+        // Never actually null here - every caller passes a structure's own interior Doors list
+        // (Station.Doors deliberately excludes ShipConnector, humble-soaring-cat.md "убрать
+        // AirlockOuterDoor как отдельный тип"), never a vacuum-facing door.
         foreach (var door in doors)
         {
-            AddEdge(door.RoomAId, door, door.RoomBId);
-            AddEdge(door.RoomBId, door, door.RoomAId);
+            AddEdge(door.RoomAId, door, door.RoomBId!);
+            AddEdge(door.RoomBId!, door, door.RoomAId);
         }
         return adjacency;
     }

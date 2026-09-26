@@ -37,7 +37,7 @@ public static partial class HullSkin
     private static readonly Color Seam = new(30, 36, 45);
 
     public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, Texture2D[] hullPlates, IReadOnlyList<Room> rooms,
-        IReadOnlyList<AirlockOuterDoor> ports, IReadOnlyList<ShipSystemDevice> devices, Vector2 origin,
+        IReadOnlyList<Door> ports, IReadOnlyList<ShipSystemDevice> devices, Vector2 origin,
         float forwardDegrees, ShipKind shipKind = ShipKind.Custom, float totalSeconds = 0f,
         IReadOnlyList<ShipSystemState>? systemStates = null)
     {

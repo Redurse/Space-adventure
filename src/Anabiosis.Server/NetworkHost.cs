@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using Anabiosis.Shared.Networking;
+using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
 
@@ -13,13 +14,18 @@ public sealed class NetworkHost : IDisposable
     private readonly GameServer _server;
     private readonly TcpListener _listener;
     private readonly Thread _acceptThread;
+    private readonly int _maxPlayers;
     private volatile bool _running = true;
 
     public int Port { get; }
 
-    public NetworkHost(GameServer server, int port = Wire.DefaultPort)
+    // maxPlayers counts the host's own seat too (GameServer.PlayerCount does) - the "Создать
+    // сервер" screen's own default of 4 means the host plus 3 joiners, matching what the stepper
+    // there actually reads as ("Макс. игроков"), not "3 more on top of the host".
+    public NetworkHost(GameServer server, int port = Wire.DefaultPort, int maxPlayers = int.MaxValue)
     {
         _server = server;
+        _maxPlayers = maxPlayers;
         _listener = new TcpListener(IPAddress.Any, port);
         _listener.Start();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -44,6 +50,22 @@ public sealed class NetworkHost : IDisposable
 
             try
             {
+                if (_server.PlayerCount >= _maxPlayers)
+                {
+                    // Rejected before Connect ever runs - no player id is handed out and no seat is
+                    // reserved, so a refused joiner costs the server nothing. Shutdown(Send) before
+                    // disposing (rather than an abrupt close right after Write) makes the already-
+                    // flushed Rejected frame's delivery a guarantee instead of a race against the
+                    // socket tearing down - a real flake under the test suite's own parallel load
+                    // (Coop_NetworkHost_RejectsJoinerPastMaxPlayers) traced back to exactly this.
+                    var rejectStream = client.GetStream();
+                    Wire.WriteFrame(rejectStream, new ServerMessage(ServerMessageKind.Rejected, Reason: "сервер заполнен"));
+                    client.Client.Shutdown(SocketShutdown.Send);
+                    rejectStream.Dispose();
+                    client.Dispose();
+                    continue;
+                }
+
                 var connection = new TcpServerConnection(client);
                 // Connect first, Start second: the welcome frame carries the id Connect hands out.
                 connection.Start(_server.Connect(connection));
