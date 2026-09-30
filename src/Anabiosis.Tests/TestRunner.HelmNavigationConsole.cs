@@ -106,6 +106,19 @@ internal static partial class TestRunner
         return !TileGrid.IsWalkable(cell, coord, new Vec2(1.5, 1.25)) && !TileGrid.IsWalkable(cell, coord, new Vec2(1.5, 1.75));
     }
 
+    // (g) - two independent half-width devices sharing one tile from opposite sides (DeviceId2's own
+    // doc comment) blocks the WHOLE tile too, just like (f) above - both halves genuinely have
+    // furniture in them now, nothing left unclaimed for a character to stand in.
+    private static bool TileGrid_IsWalkable_TwoCoLocatedHalfWidthDevices_BlockWholeTile()
+    {
+        var tiles = BuildFourByFourOpenFloor();
+        var coord = new TileCoord(1, 1);
+        tiles.PlaceHalfWidthDevice(coord, TileSide.West, "junction-a");
+        tiles.PlaceHalfWidthDevice(coord, TileSide.East, "junction-b");
+        var cell = tiles.CellAt(coord)!;
+        return !TileGrid.IsWalkable(cell, coord, new Vec2(1.25, 1.5)) && !TileGrid.IsWalkable(cell, coord, new Vec2(1.75, 1.5));
+    }
+
     // Real-movement regression for (c) above, mirroring TestRunner.HalfThickWalls.cs's own style -
     // not just the position-aware IsWalkable unit test, the actual TileMovement.MoveAlongAxis path
     // every character in the game moves through.
@@ -219,20 +232,73 @@ internal static partial class TestRunner
     // (1,1) is genuinely fully claimed here (one neighbor's own "full" tile is at (0,1), its "half"
     // is (1,1)), even though only the WEST portion of (1,1) ever gets that neighbor's own baked icon
     // drawn over it (DrawEditorDeviceAt) - the east portion stays walkable and undrawn, reading as
-    // bare floor. CanPlaceHalfWidthDevice's own very first check (DeviceId: null) already refuses a
-    // second device trying to claim ANY part of that same tile, regardless of which side it asks
-    // for - this pins that down explicitly, since CustomDeviceFootprint.cs's own rulebook doc
-    // comment calls this out as the one gap the rest of this file's tests don't cover on their own.
-    private static bool TileGrid_CanPlaceHalfWidthDevice_RejectsTileAlreadyClaimedByNeighborsHalf()
+    // bare floor. The SAME side is still refused (junction-a already owns it), and so is a
+    // perpendicular side (North/South would overlap junction-a's own claimed corner) - only the
+    // exact opposite side (East) is now allowed, by a second, later test below.
+    private static bool TileGrid_CanPlaceHalfWidthDevice_RejectsSameOrPerpendicularSideOfNeighborsHalf()
     {
         var tiles = BuildFourByFourOpenFloor();
         tiles.PlaceDevice(new TileCoord(0, 1), "junction-a"); // the neighbor's own "full" tile
         tiles.PlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.West, "junction-a"); // its own claimed half
 
-        // A second half-width device trying to use that SAME tile as its own half must be refused,
-        // regardless of which side it asks for - the tile already belongs to junction-a.
-        return !tiles.CanPlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.East)
+        return !tiles.CanPlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.West)
+            && !tiles.CanPlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.North)
+            && !tiles.CanPlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.South);
+    }
+
+    // Direct user request (screenshot - two mirrored device racks each reaching a half tile into one
+    // shared middle column) - the exact OPPOSITE side of an already-half-claimed tile is genuinely
+    // free (junction-a only ever occupies its own West half; the East half is untouched), so a
+    // second, independent half-width device is now allowed to claim it - TileCell.DeviceId2's own
+    // doc comment has the full geometry/reasoning.
+    private static bool TileGrid_CanPlaceHalfWidthDevice_AllowsOppositeSideOfNeighborsHalf()
+    {
+        var tiles = BuildFourByFourOpenFloor();
+        tiles.PlaceDevice(new TileCoord(0, 1), "junction-a");
+        tiles.PlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.West, "junction-a");
+
+        if (!tiles.CanPlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.East))
+            return false;
+        tiles.PlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.East, "junction-b");
+
+        var cell = tiles.CellAt(new TileCoord(1, 1));
+        // A third device could never fit now - both sides of this one tile are spoken for.
+        return cell is { DeviceId: "junction-a", DeviceOpenSide: TileSide.West, DeviceId2: "junction-b", DeviceOpenSide2: TileSide.East }
+            && !tiles.CanPlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.East)
             && !tiles.CanPlaceHalfWidthDevice(new TileCoord(1, 1), TileSide.West);
+    }
+
+    // Removing whichever of the two co-located devices was placed FIRST (junction-a, in the primary
+    // slot) must promote junction-b's own claim into that slot, leaving it completely intact and
+    // still independently removable afterwards - the two devices never disturb each other.
+    private static bool TileGrid_RemoveDevice_RemovingFirstOfTwoCoLocatedHalves_PromotesTheSecond()
+    {
+        var tiles = BuildFourByFourOpenFloor();
+        var coord = new TileCoord(1, 1);
+        tiles.PlaceDevice(new TileCoord(0, 1), "junction-a");
+        tiles.PlaceHalfWidthDevice(coord, TileSide.West, "junction-a");
+        tiles.PlaceHalfWidthDevice(coord, TileSide.East, "junction-b");
+
+        tiles.RemoveDevice(coord, TileSide.West); // junction-a's own claimed side
+        if (tiles.CellAt(coord) is not { DeviceId: "junction-b", DeviceOpenSide: TileSide.East, DeviceId2: null, DeviceOpenSide2: null })
+            return false;
+
+        tiles.RemoveDevice(coord, TileSide.East); // junction-b's own claimed side, now promoted to primary
+        return tiles.CellAt(coord) is { DeviceId: null, DeviceOpenSide: null };
+    }
+
+    // Same as above, but removing the SECOND device (junction-b) first - the primary (junction-a)
+    // must be left completely untouched, no promotion needed since nothing was in its own slot.
+    private static bool TileGrid_RemoveDevice_RemovingSecondOfTwoCoLocatedHalves_LeavesTheFirstUntouched()
+    {
+        var tiles = BuildFourByFourOpenFloor();
+        var coord = new TileCoord(1, 1);
+        tiles.PlaceDevice(new TileCoord(0, 1), "junction-a");
+        tiles.PlaceHalfWidthDevice(coord, TileSide.West, "junction-a");
+        tiles.PlaceHalfWidthDevice(coord, TileSide.East, "junction-b");
+
+        tiles.RemoveDevice(coord, TileSide.East); // junction-b's own claimed side
+        return tiles.CellAt(coord) is { DeviceId: "junction-a", DeviceOpenSide: TileSide.West, DeviceId2: null, DeviceOpenSide2: null };
     }
 
     // (k) - removal clears DeviceOpenSide too, and never disturbs a wall that was coexisting there -

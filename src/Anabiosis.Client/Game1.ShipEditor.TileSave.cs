@@ -70,6 +70,7 @@ public partial class Game1
         _editorTiles = new TileGrid();
         _editorDeviceKinds.Clear();
         _editorDeviceFootprint.Clear();
+        _editorDeviceFootprintSecondary.Clear();
         _editorDeviceRotation.Clear();
         _editorDeviceHalfSides.Clear();
         _editorZones.Clear();
@@ -139,7 +140,7 @@ public partial class Game1
             var halfSide = CustomDeviceFootprint.ResolveHalfSide(d.HalfSide, d.Rotated);
             PlaceDeviceFootprint(d.Kind, footprint, anchor, halfSide, deviceId);
             foreach (var occupied in footprint)
-                _editorDeviceFootprint[occupied] = anchor;
+                RecordDeviceFootprintTile(occupied, anchor);
             _editorDeviceKinds[anchor] = d.Kind;
             if (d.Rotated)
                 _editorDeviceRotation[anchor] = true;

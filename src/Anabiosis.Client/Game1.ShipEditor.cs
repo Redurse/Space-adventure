@@ -149,6 +149,16 @@ public partial class Game1
     // _editorDeviceKinds only ever holds ONE entry per device, keyed by that same anchor, so drawing/
     // export/removal all look the device up by anchor and its full occupied-tile set via this map.
     private readonly Dictionary<TileCoord, TileCoord> _editorDeviceFootprint = new();
+    // Direct user request (screenshot - two mirrored device racks each reaching a half tile into one
+    // shared middle column) - the rare second occupant of an already-half-claimed tile
+    // (TileCell.DeviceId2's own doc comment has the actual collision geometry). Keyed the same way as
+    // _editorDeviceFootprint above, just for whichever device DIDN'T get there first on a given
+    // shared tile - every ordinary tile (the overwhelming majority) never has an entry here at all.
+    // RecordDeviceFootprintTile/ForgetDeviceFootprintTile are the one true place that decide which of
+    // the two dictionaries a given (tile, anchor) pair belongs in, shared by fresh placement
+    // (HandleDeviceToolInput) and canvas reload (Game1.ShipEditor.TileSave.cs's ApplyEditorTileCanvas)
+    // so both always agree.
+    private readonly Dictionary<TileCoord, TileCoord> _editorDeviceFootprintSecondary = new();
     // Direct user request ("стеллаж... можно поворачивать") - true for a placed non-square device
     // (StorageRack/LargeStorage/Helm/Navigation) whose own authored Width/Height got swapped before
     // stamping, keyed by the SAME anchor _editorDeviceKinds/_editorDeviceFootprint already use. A
@@ -309,6 +319,7 @@ public partial class Game1
             _editorTiles = new TileGrid();
             _editorDeviceKinds.Clear();
             _editorDeviceFootprint.Clear();
+            _editorDeviceFootprintSecondary.Clear();
             _editorZones.Clear();
             _editorEngineFacing.Clear();
             _editorEngineFootprint.Clear();
@@ -1064,11 +1075,19 @@ public partial class Game1
                     return;
                 var wasRotated = _editorDeviceRotation.TryGetValue(anchor, out var rotatedFlag) && rotatedFlag;
                 var removedKind = _editorDeviceKinds[anchor];
+                var removedHalfSide = _editorDeviceHalfSides.TryGetValue(anchor, out var removedHs) ? removedHs : (TileSide?)null;
                 var (removeWidth, removeHeight) = DeviceFootprintSize(removedKind, wasRotated);
                 foreach (var occupied in DeviceFootprintTiles(anchor, removeWidth, removeHeight))
                 {
-                    _editorTiles.RemoveDevice(occupied);
-                    _editorDeviceFootprint.Remove(occupied);
+                    // Only this device's own half tile (if any) needs an openSide - every other tile
+                    // of its footprint is exclusively its own (CanPlaceDeviceFootprint's own
+                    // precondition), so passing null there matches TileGrid.RemoveDevice's own
+                    // "unspecified means the one and only occupant" default.
+                    var openSideHere = removedHalfSide is { } hSide && IsHalfTileOfHalfWidthFootprint(occupied, anchor, hSide)
+                        ? HalfOpenSideForHalfWidthDevice(hSide)
+                        : (TileSide?)null;
+                    _editorTiles.RemoveDevice(occupied, openSideHere);
+                    ForgetDeviceFootprintTile(occupied, anchor);
                 }
                 _editorDeviceKinds.Remove(anchor);
                 _editorDeviceRotation.Remove(anchor);
@@ -1104,7 +1123,7 @@ public partial class Game1
         var deviceId = $"device-{placeAnchor.X}-{placeAnchor.Y}";
         PlaceDeviceFootprint(_editorSelectedDeviceKind, footprint, placeAnchor, halfSide, deviceId);
         foreach (var occupied in footprint)
-            _editorDeviceFootprint[occupied] = placeAnchor;
+            RecordDeviceFootprintTile(occupied, placeAnchor);
         _editorDeviceKinds[placeAnchor] = _editorSelectedDeviceKind;
         if (pendingRotated)
             _editorDeviceRotation[placeAnchor] = true;
@@ -1231,6 +1250,43 @@ public partial class Game1
                 _editorTiles.PlaceHalfWidthDevice(coord, halfOpenSide, deviceId);
             else
                 _editorTiles.PlaceDevice(coord, deviceId);
+        }
+    }
+
+    // Records `anchor` as owning `occupied` - the secondary dictionary is used instead of
+    // overwriting the primary when a DIFFERENT anchor already claims that same tile, which is only
+    // ever possible for the one shared half tile of two coexisting half-width devices
+    // (CanPlaceHalfWidthDevice already guaranteed every OTHER tile of this footprint was exclusively
+    // free before this is ever called, so an existing different-anchor entry here can only mean the
+    // opposite-side coexistence case). Shared by fresh placement (HandleDeviceToolInput) and canvas
+    // reload (Game1.ShipEditor.TileSave.cs's ApplyEditorTileCanvas) so both always agree.
+    private void RecordDeviceFootprintTile(TileCoord occupied, TileCoord anchor)
+    {
+        if (_editorDeviceFootprint.TryGetValue(occupied, out var existing) && existing != anchor)
+            _editorDeviceFootprintSecondary[occupied] = anchor;
+        else
+            _editorDeviceFootprint[occupied] = anchor;
+    }
+
+    // The removal-side mirror of RecordDeviceFootprintTile above - forgets `anchor`'s own claim on
+    // `occupied`, without disturbing whichever OTHER device might also be sharing that same tile.
+    // Promotes the secondary occupant (if any) into the primary slot when the primary is the one
+    // being removed, mirroring TileGrid.RemoveDevice's own promotion so both bookkeeping systems
+    // (this dictionary pair and TileCell.DeviceId/DeviceId2) always stay in agreement.
+    private void ForgetDeviceFootprintTile(TileCoord occupied, TileCoord anchor)
+    {
+        if (_editorDeviceFootprint.TryGetValue(occupied, out var primaryAnchor) && primaryAnchor == anchor)
+        {
+            _editorDeviceFootprint.Remove(occupied);
+            if (_editorDeviceFootprintSecondary.TryGetValue(occupied, out var secondaryAnchor))
+            {
+                _editorDeviceFootprint[occupied] = secondaryAnchor;
+                _editorDeviceFootprintSecondary.Remove(occupied);
+            }
+        }
+        else
+        {
+            _editorDeviceFootprintSecondary.Remove(occupied);
         }
     }
 
@@ -1679,6 +1735,7 @@ public partial class Game1
         _editorTiles = new TileGrid();
         _editorDeviceKinds.Clear();
         _editorDeviceFootprint.Clear();
+        _editorDeviceFootprintSecondary.Clear();
         _editorZones.Clear();
         _editorEngineFacing.Clear();
         _editorEngineFootprint.Clear();

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
@@ -23,8 +24,38 @@ public sealed class VoiceCapture
 {
     private WasapiCapture? _capture;
     private bool _isRadio;
-    private byte[]? _pendingChunk;
+    // Direct user report ("до сих пор в мультиплеере ничего не разобрать") - this used to be a
+    // single byte[]? slot that OnDataAvailable simply OVERWROTE on every ~100ms capture buffer,
+    // with TakePendingChunk (called once per game Update() frame from Game1.cs, to build that
+    // frame's own ClientCommand) reading and clearing it. That's fine as long as at most one capture
+    // buffer arrives between two consecutive frames - but any frame hitch (a GC pause, a render/
+    // network stall, all more frequent in multiplayer than solo, matching the report) that runs
+    // longer than ~100ms lets a SECOND buffer arrive before the first was ever picked up, silently
+    // overwriting and losing it - a real gap in the transmitted speech, not just added latency. A
+    // growing list instead: every buffer is appended, never dropped, and TakePendingChunk hands back
+    // (and clears) everything accumulated since the last call, however many capture buffers that
+    // spans - the receiving side's BufferedWaveProvider (VoicePlayback.cs) plays back whatever
+    // continuous stretch of PCM it gets exactly the same either way.
+    // Direct user report ("до сих пор очень сильные помехи", equally on both local AND radio -
+    // pinning this down to something shared, upstream of RadioVoiceFilter's own intentional radio-
+    // only static) - THIS was the actual remaining cause: OnDataAvailable fires on NAudio's own
+    // background capture thread, while TakePendingChunk is called from the main thread (Game1.cs's
+    // Update loop). List<byte> is not thread-safe - AddRange below racing against TakePendingChunk's
+    // own ToArray()+Clear() on another thread can corrupt the list's internal storage (a resize
+    // mid-copy, a torn read) or simply mis-order writes, and CORRUPTED bytes reinterpreted as PCM
+    // samples is exactly what "static/interference" sounds like - worse than the plain-overwrite bug
+    // this replaced, and just as present on local voice as on radio, matching the report. The single
+    // byte[]? this used to be (a plain reference swap) never had this problem - reference assignment
+    // is atomic - so the lock below is what a mutable, appendable buffer needs to keep that same
+    // safety.
+    private readonly object _pendingLock = new();
+    private readonly List<byte> _pendingChunk = new();
     private int _pendingSampleRate;
+    // The most recent individual capture buffer's own RMS - CurrentLevel's own live meter reads this
+    // rather than the (now potentially multi-buffer, stale-averaging) accumulated _pendingChunk.
+    // A plain float read/write is already atomic on every platform this game targets, so this one
+    // doesn't need the lock above.
+    private float _currentLevel;
 
     // Set from Settings (Game1.ApplyGraphicsSettings) each time it changes - read by OnDataAvailable
     // to decide whether a quiet buffer should still be sent (push-to-talk: yes, the key already
@@ -157,11 +188,17 @@ public sealed class VoiceCapture
         if (MicGainMultiplier != 1f)
             ApplyGain(chunk, MicGainMultiplier);
 
+        // Computed unconditionally (before the voice-activation gate below can return early) so the
+        // Settings screen's own live level meter always tracks the real mic input, even while
+        // quieter than the activation threshold - the whole point of that meter is calibrating
+        // where to set the threshold in the first place.
+        _currentLevel = Rms16(chunk);
+
         // Voice activation only ever gates the LOCAL channel - radio got here by holding R, which
         // is already the deliberate action voice activation exists to replace for V.
         if (!_isRadio && VoiceActivationMode)
         {
-            var loudEnough = Rms16(chunk) >= VoiceActivationThreshold;
+            var loudEnough = _currentLevel >= VoiceActivationThreshold;
             var nowMs = Environment.TickCount64;
             if (loudEnough)
                 _lastLoudAt = nowMs;
@@ -170,8 +207,15 @@ public sealed class VoiceCapture
                 return; // stay silent rather than uploading empty-ish background noise
         }
 
-        _pendingChunk = chunk;
-        _pendingSampleRate = _capture.WaveFormat.SampleRate;
+        // Appended, never overwritten (see _pendingChunk's own doc comment) - a frame hitch between
+        // two TakePendingChunk calls just means the next one hands back more bytes, not that some of
+        // them quietly vanished. Locked against TakePendingChunk's own concurrent access from the
+        // main thread (_pendingLock's own doc comment).
+        lock (_pendingLock)
+        {
+            _pendingChunk.AddRange(chunk);
+            _pendingSampleRate = _capture.WaveFormat.SampleRate;
+        }
     }
 
     // WASAPI shared-mode capture hands back whatever the device's own native mix format is (commonly
@@ -257,16 +301,21 @@ public sealed class VoiceCapture
     /// <summary>Current input level, 0..1 - drives the settings screen's live level indicator over
     /// the noise-threshold slider (direct user request, matches the reference screenshot's own
     /// running orange bar). Just re-reads the last captured buffer's own RMS, no separate polling.</summary>
-    public float CurrentLevel => _pendingChunk is { } chunk ? Rms16(chunk) : 0f;
+    public float CurrentLevel => _currentLevel;
 
-    // Consumes whatever chunk has accumulated since the last call - matches the project's own
-    // "capture, send once, clear" outgoing-field lifecycle (same shape as _pendingChatMessage).
+    // Consumes whatever's accumulated since the last call - possibly several ~100ms capture buffers'
+    // worth if a frame hitch delayed this call (_pendingChunk's own doc comment), never just the
+    // latest one at the cost of losing the rest. Matches the project's own "capture, send once,
+    // clear" outgoing-field lifecycle (same shape as _pendingChatMessage).
     public VoiceChunkPayload? TakePendingChunk()
     {
-        if (_pendingChunk is null)
-            return null;
-        var payload = new VoiceChunkPayload(_pendingChunk, _pendingSampleRate, _isRadio);
-        _pendingChunk = null;
-        return payload;
+        lock (_pendingLock)
+        {
+            if (_pendingChunk.Count == 0)
+                return null;
+            var payload = new VoiceChunkPayload(_pendingChunk.ToArray(), _pendingSampleRate, _isRadio);
+            _pendingChunk.Clear();
+            return payload;
+        }
     }
 }

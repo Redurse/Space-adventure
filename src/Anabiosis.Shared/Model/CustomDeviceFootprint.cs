@@ -28,15 +28,19 @@ namespace Anabiosis.Shared.Model;
 //     per-FOOTPRINT (both tiles at once) wrapper around the two points above - not separately unit
 //     tested (a Game1 instance needs a real GraphicsDevice), but thin enough that the TileGrid-level
 //     tests above are the real coverage for its own logic.
-//   - The one gap those tile-level tests can't see on their own: TWO half-width devices placed near
-//     each other, where the second one's own half would land on a tile the FIRST one already claims
-//     (TestRunner.HelmNavigationConsole.cs's own TileGrid_CanPlaceHalfWidthDevice_
-//     RejectsTileAlreadyClaimedByNeighborsHalf) - CanPlaceHalfWidthDevice's own very first check
-//     (DeviceId: null) already refuses this correctly, but the VISUAL result is easy to misread as a
-//     bug: only the neighbor's own BLOCKED half gets its baked icon drawn over it
-//     (DrawEditorDeviceAt/ShipRenderer.Devices.cs), so the neighbor's WALKABLE half looks like plain
-//     bare floor even though its own TileCell is fully claimed - see
-//     spaceadventure-halfwidth-device-collision-ux (project memory) for the real bug report this
+//   - TWO half-width devices placed near each other, where the second one's own half would land on a
+//     tile the FIRST one already claims (TestRunner.HelmNavigationConsole.cs's own TileGrid_
+//     CanPlaceHalfWidthDevice_RejectsTileAlreadyClaimedByNeighborsHalf/_AllowsOppositeSide/
+//     _RejectsPerpendicularSide) - CanPlaceHalfWidthDevice's second branch (below the `cell.DeviceId
+//     is null` split) allows a SECOND device to claim this same tile's remaining half, but ONLY the
+//     exact opposite side of the same axis (TileCell.DeviceId2's own doc comment has the geometry:
+//     a perpendicular pairing would overlap in one shared corner and is still refused, same as the
+//     same-side case always was). Direct user request (screenshot - two mirrored device racks each
+//     reaching a half tile into one shared middle column). The VISUAL result before this existed was
+//     easy to misread as a bug even for the still-refused cases: only the neighbor's own BLOCKED
+//     half gets its baked icon drawn over it (DrawEditorDeviceAt/ShipRenderer.Devices.cs), so the
+//     neighbor's WALKABLE half looks like plain bare floor even though its own TileCell is claimed -
+//     see spaceadventure-halfwidth-device-collision-ux (project memory) for the real bug report this
 //     traces back to, and Game1.ShipEditor.cs's DeviceRejectionToastMessage for the player-facing
 //     fix (a clear reason on a rejected click, replacing what used to be silence).
 public static class CustomDeviceFootprint
