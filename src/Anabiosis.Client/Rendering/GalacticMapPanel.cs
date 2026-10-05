@@ -130,10 +130,16 @@ public sealed class GalacticMapPanel
             if (!isCurrent && !isReachable && zoom < LabelZoomThreshold)
                 continue; // a distant system's name only earns screen space once zoomed in on it
 
+            var cost = isReachable && current is not null ? GalaxyMap.HyperiumCostForDistance(Distance(system, current)) : 0;
+            var hasFuel = snapshot.HyperiumAboard >= cost;
             var label = isCurrent ? $"{system.Name} (здесь)"
-                : isReachable ? (snapshot.CanWarpNow ? $"[Клик] Прыжок: {system.Name}" : $"{system.Name} (долетите до границы своей системы)")
+                : isReachable ? (!snapshot.CanWarpNow ? $"{system.Name} (долетите до границы своей системы)"
+                    : hasFuel ? $"[Клик] Прыжок: {system.Name} (гиперий {cost})"
+                    : $"{system.Name} (нужно гиперия: {cost}, есть {snapshot.HyperiumAboard})")
                 : system.Name;
-            var labelColor = isCurrent ? Color.LimeGreen : isReachable ? (snapshot.CanWarpNow ? Color.Yellow : Color.Gray) : Color.LightGray;
+            var labelColor = isCurrent ? Color.LimeGreen
+                : isReachable ? (snapshot.CanWarpNow ? (hasFuel ? Color.Yellow : Color.OrangeRed) : Color.Gray)
+                : Color.LightGray;
             var textSize = _font.MeasureString(label) * 0.5f;
             var labelPos = new Vector2(center.X - textSize.X / 2f, center.Y + NodeRadius + 6);
             var labelRect = new Rectangle((int)labelPos.X, (int)labelPos.Y, (int)textSize.X, (int)textSize.Y);

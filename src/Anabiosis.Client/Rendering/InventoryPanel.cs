@@ -317,6 +317,7 @@ public sealed class InventoryPanel
         ItemType.MedKit => Color.Crimson,
         ItemType.BeltBag => Color.SaddleBrown,
         ItemType.IdCard => Color.SteelBlue,
+        ItemType.Magazine => Color.DarkGoldenrod,
         _ => Color.DarkKhaki, // Wrench, Screwdriver, WeldingTool, Cutter
     };
 

@@ -27,6 +27,20 @@ public sealed class GalaxyMap
     // other systems such a jump could reach.
     public const float WarpJumpRadius = 220f;
 
+    // Cosmoteer-style fuel price of a jump: one Hyperium per HyperiumDistancePerUnit of galactic
+    // distance, rounded up - the nearest neighbours cost 1-2, a full-radius hop costs 3.
+    public const float HyperiumDistancePerUnit = 75f;
+
+    public static int HyperiumCostForDistance(float galacticDistance) =>
+        Math.Max(1, (int)MathF.Ceiling(galacticDistance / HyperiumDistancePerUnit));
+
+    public int HyperiumCost(string fromSystemId, string toSystemId)
+    {
+        var a = GetSystem(fromSystemId);
+        var b = GetSystem(toSystemId);
+        return HyperiumCostForDistance(Distance(a.GalaxyX, a.GalaxyY, b.GalaxyX, b.GalaxyY));
+    }
+
     // How far (in a system's own LOCAL field-space units, AsteroidField.Center-relative) the ship
     // has to fly from the field's centre before a jump is possible at all - the "edge of the solar
     // system", a plain ring around the whole system rather than one specific point to hunt down and

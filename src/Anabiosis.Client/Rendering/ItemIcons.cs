@@ -40,7 +40,7 @@ public static partial class ItemIcons
     public static bool HasIcon(ItemType type) => type is ItemType.Wrench or ItemType.Screwdriver
         or ItemType.WeldingTool or ItemType.Cutter or ItemType.OxygenTank or ItemType.WeldingTank
         or ItemType.AmmoCrate or ItemType.Spacesuit or ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle
-        or ItemType.FuelRod or ItemType.MedKit or ItemType.WireSpool or ItemType.Mineral
+        or ItemType.FuelRod or ItemType.MedKit or ItemType.WireSpool or ItemType.Mineral or ItemType.Magazine
         or ItemType.GateAnd or ItemType.GateOr or ItemType.GateNot or ItemType.GateXor
         or ItemType.Timer or ItemType.Memory or ItemType.Relay
         or ItemType.OxygenSensor or ItemType.BreachSensor or ItemType.PowerLossSensor or ItemType.MotionSensor
@@ -95,6 +95,7 @@ public static partial class ItemIcons
             case ItemType.FuelRod: DrawFuelRod(spriteBatch, pixel, rect); break;
             case ItemType.MedKit: DrawMedKit(spriteBatch, pixel, rect); break;
             case ItemType.WireSpool: DrawWireSpool(spriteBatch, pixel, rect); break;
+            case ItemType.Magazine: DrawMagazine(spriteBatch, pixel, rect); break;
             case ItemType.Mineral: DrawMineral(spriteBatch, pixel, rect); break;
             case ItemType.BeltBag: DrawBeltBag(spriteBatch, pixel, rect); break;
             case ItemType.IdCard: DrawIdCard(spriteBatch, pixel, rect); break;

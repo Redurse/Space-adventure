@@ -5,6 +5,8 @@ namespace Anabiosis.Server;
 public sealed partial class World
 {
     private const float MoveSpeed = 3f; // units/sec
+    // Walking with Shift held (ClientCommand.Sprint). Only the on-foot walk is affected, not the EVA jetpack.
+    public const float SprintSpeedMultiplier = 1.25f;
 
     // Resolves X and Y separately so sliding along a wall in one axis still works while the
     // other axis is blocked (classic axis-separated AABB collision).
@@ -67,7 +69,8 @@ public sealed partial class World
             if (!hasInput)
                 continue;
 
-            var delta = character.FacingDirection * MoveSpeed * (float)deltaSeconds;
+            var sprinting = _sprintInput.TryGetValue(character.PlayerId, out var sprint) && sprint;
+            var delta = character.FacingDirection * MoveSpeed * (sprinting ? SprintSpeedMultiplier : 1f) * (float)deltaSeconds;
 
             if (TryCrossIntoVacuum(character, delta))
                 continue;

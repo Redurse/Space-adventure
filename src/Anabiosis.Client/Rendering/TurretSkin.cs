@@ -31,7 +31,7 @@ public sealed class TurretSkin : IDisposable
     private const int GunHeight = 36;
     private const int PivotX = 20;
     private static readonly int MuzzleX =
-        PivotX + (int)(TurretMount.BarrelLength * ShipRenderer.PixelsPerUnit);
+        PivotX + (int)(TurretMount.BakedBarrelLength * ShipRenderer.PixelsPerUnit);
 
     private const int BaseSize = 48;
 

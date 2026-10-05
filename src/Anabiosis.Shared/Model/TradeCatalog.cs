@@ -38,6 +38,10 @@ public static class TradeCatalog
         new TradeGood(ItemType.TitaniumOre, BuyPrice: 999, SellPrice: 30),
         new TradeGood(ItemType.PlastalloyOre, BuyPrice: 999, SellPrice: 35),
         new TradeGood(ItemType.UraniumOre, BuyPrice: 999, SellPrice: 45),
+        // Jump fuel (World.StarSystems.cs) - the one raw material a trader actually stocks, so a crew
+        // that ran dry can still buy its way out of a system.
+        new TradeGood(ItemType.Hyperium, BuyPrice: 80, SellPrice: 40),
+        new TradeGood(ItemType.Magazine, BuyPrice: 30, SellPrice: 12),
         // FabricatorCatalog.cs's own recipe outputs - crafted, not bought (same convention as the
         // ores above), priced above the sum of their own ingredients so crafting-to-sell is a real,
         // modestly profitable activity rather than a wash.

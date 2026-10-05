@@ -181,7 +181,7 @@ public sealed partial class World
         {
             var point = origin + aim * (CutterReachUnits * i / CutterSamples);
             var block = AsteroidField.OreDeposits.FirstOrDefault(d =>
-                _oreDepositHp.GetValueOrDefault(d.Id) > 0f && d.DistanceFrom(point) <= 0f);
+                OreHp(d) > 0f && d.DistanceFrom(point) <= 0f);
             if (block is not null)
                 return block;
         }
@@ -193,7 +193,7 @@ public sealed partial class World
         var block = FindAimedOreDeposit(character);
         if (block is not null)
         {
-            var hp = _oreDepositHp[block.Id] - CutterDamagePerSecond * (float)deltaSeconds;
+            var hp = OreHp(block) - CutterDamagePerSecond * (float)deltaSeconds;
             _oreDepositHp[block.Id] = Math.Max(0f, hp);
             if (hp <= 0f)
                 _droppedItems.Add(new DroppedItem($"drop-{_nextDroppedItemId++}", block.OreType, block.X, block.Y));
@@ -266,6 +266,11 @@ public sealed partial class World
 
     private IReadOnlyList<OreDepositState> CreateOreDepositStates() =>
         AsteroidField.OreDeposits
-            .Select(d => new OreDepositState(d.Id, _oreDepositHp.GetValueOrDefault(d.Id), d.MaxHp))
+            .Select(d => new OreDepositState(d.Id, OreHp(d), d.MaxHp))
             .ToArray();
+
+    // A deposit nobody has touched has no entry yet: only the starting system is seeded up front
+    // (World.cs), every other system's generated ore starts full the first time it is looked at.
+    private float OreHp(OreDeposit deposit) =>
+        _oreDepositHp.TryGetValue(deposit.Id, out var hp) ? hp : deposit.MaxHp;
 }

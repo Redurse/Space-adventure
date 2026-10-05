@@ -32,16 +32,7 @@ public sealed class GameClient
     {
         var snapshot = _connection.ReceiveLatestSnapshot();
         if (snapshot is not null)
-        {
-            // Architecture proof-of-concept (WorldSnapshot.Doors/Turrets's own doc comment) - null
-            // here means "unchanged since your very first snapshot, GameServer.cs didn't resend it
-            // this tick", not "the ship has none". Merging here, once, is what lets every OTHER
-            // reader in this project keep treating LatestSnapshot.Doors/Turrets as always-populated,
-            // completely unaware this optimization exists.
-            var doors = snapshot.Doors ?? LatestSnapshot?.Doors ?? Array.Empty<Door>();
-            var turrets = snapshot.Turrets ?? LatestSnapshot?.Turrets ?? Array.Empty<Turret>();
-            LatestSnapshot = snapshot with { Doors = doors, Turrets = turrets };
-        }
+            LatestSnapshot = snapshot;
         var lobby = _connection.ReceiveLatestLobby();
         if (lobby is not null)
             LatestLobby = lobby;

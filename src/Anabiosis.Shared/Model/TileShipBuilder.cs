@@ -265,17 +265,20 @@ public static class TileShipBuilder
                     supplementalWallTiles.Add(coord);
         }
 
-        // 4) Devices - a device tile always sits on open floor (TileGrid.PlaceDevice's own
-        // precondition), so it's always a member of exactly one region/room. `deviceKinds` is keyed
-        // by each device's own anchor (top-left) tile only - exporting the CENTER of its full
-        // footprint (not the anchor corner) keeps a multi-tile device like the Reactor positioned
-        // where CustomDeviceDef's point-containment check (Ship.Custom.cs's RoomIdAt) expects it -
-        // still well inside its own room's rectangle either way.
+        // 4) Devices - `deviceKinds` is keyed by each device's own anchor (top-left) tile only -
+        // exporting the CENTER of its full footprint (not the anchor corner) keeps a multi-tile
+        // device like the Reactor positioned where CustomDeviceDef's point-containment check
+        // (Ship.Custom.cs's RoomIdAt) expects it - still well inside its own room's rectangle either
+        // way. Iterates `deviceKinds` directly now (used to gate on `tiles.Cells` having a DeviceId
+        // at that SAME coord - a redundant check for every ordinary rectangular footprint, since its
+        // anchor is always part of its own footprint, but WRONG for a shaped footprint kind whose
+        // anchor can be a deliberately empty corner of the shape, e.g. the turret kinds'
+        // (4, 3) shape - CustomDeviceFootprint.ShapedFootprint's own doc comment. That silently
+        // dropped the device from the export entirely - direct user bug report, "они вообще никак
+        // не отображаются ни в редакторе ни в игре" after the shaped-footprint change shipped).
         var devices = new List<CustomDeviceDef>();
-        foreach (var (coord, cell) in tiles.Cells)
+        foreach (var (coord, kind) in deviceKinds)
         {
-            if (cell.DeviceId is null || !deviceKinds.TryGetValue(coord, out var kind))
-                continue;
             var (footprintWidth, footprintHeight) = CustomDeviceFootprint.Size(kind);
             var isRotated = deviceRotations.TryGetValue(coord, out var rotatedFlag) && rotatedFlag;
             if (isRotated)

@@ -63,6 +63,8 @@ public sealed partial class World
 
     private void StepPersonalShots(double deltaSeconds)
     {
+        StepBursts(deltaSeconds);
+        StepLaserBeams(deltaSeconds);
         for (var i = _personalShots.Count - 1; i >= 0; i--)
         {
             var shot = _personalShots[i];
@@ -141,7 +143,7 @@ public sealed partial class World
 
     private IReadOnlyList<PersonalShotState> CreatePersonalShotStates() =>
         _personalShots
-            .Select(s => new PersonalShotState(s.Id, (float)s.Position.X, (float)s.Position.Y, s.FromEnemy, s.Scene, s.Weapon))
+            .Select(s => new PersonalShotState(s.Id, (float)s.Position.X, (float)s.Position.Y, s.FromEnemy, s.Scene, s.Weapon, (float)s.Velocity.X, (float)s.Velocity.Y))
             .ToArray();
 }
 

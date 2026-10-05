@@ -1,3 +1,4 @@
+using Anabiosis.Shared.Model;
 using System.Collections.Concurrent;
 using Anabiosis.Shared.Protocol;
 
@@ -27,8 +28,22 @@ public sealed class InProcessTransport : IServerConnection, IClientConnection
     WorldSnapshot? IClientConnection.ReceiveLatestSnapshot()
     {
         WorldSnapshot? latest = null;
+        List<VoiceChunkMessage>? droppedVoice = null;
         while (_snapshotsToClient.TryDequeue(out var snapshot))
+        {
+            // Voice chunks ride in exactly one tick's snapshot (World.Voice.cs read-and-clear), so a
+            // skipped snapshot must hand its chunks on to the one that replaces it - otherwise
+            // every client frame hitch swallows a slice of speech.
+            if (latest?.VoiceChunks is { Count: > 0 } skipped)
+                (droppedVoice ??= new List<VoiceChunkMessage>()).AddRange(skipped);
             latest = snapshot;
+        }
+        if (droppedVoice is not null && latest is not null)
+        {
+            if (latest.VoiceChunks is { Count: > 0 } own)
+                droppedVoice.AddRange(own);
+            latest = latest with { VoiceChunks = droppedVoice };
+        }
         return latest;
     }
 

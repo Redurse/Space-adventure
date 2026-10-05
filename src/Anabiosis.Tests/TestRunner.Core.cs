@@ -345,7 +345,9 @@ internal static partial class TestRunner
         return world.CreateSnapshot().TurretStates.Any(t => t.MannedByPlayerId == 1);
     }
 
-    private static bool World_TurretAim_ClampsToDefinitionLimits()
+    // Direct user request: the gun turns a full 360 degrees - it is no longer clamped to the old
+    // +-45 arc, and the aim angle wraps around instead.
+    private static bool World_TurretAim_TraversesFull360AndWraps()
     {
         var world = new World();
         world.SpawnCharacter(1);
@@ -353,11 +355,28 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
 
         world.ApplyCommand(1, new ClientCommand(1, TurretAimDirection: 1f));
-        for (var i = 0; i < 60; i++) // 2s — far more than enough to hit the 45-degree limit
+        for (var i = 0; i < 60; i++) // 2s at 60 deg/s = 120 degrees, well past the old 45-degree limit
             world.Step(RealtimeStep);
+        var afterTwoSeconds = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").AimDegrees;
 
-        var state = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow");
-        return Math.Abs(state.AimDegrees - 45f) < 0.5f;
+        for (var i = 0; i < 120; i++) // 4s more = 360 degrees total in all, which must have wrapped
+            world.Step(RealtimeStep);
+        var wrapped = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").AimDegrees;
+
+        return afterTwoSeconds > 100f && wrapped > -180f && wrapped <= 180f;
+    }
+
+    // The gun sits directly above its own turret device, not out on the hull plating.
+    private static bool TurretMount_SitsAboveTheTurretDevice()
+    {
+        var world = new World();
+        foreach (var turret in world.Ship.Turrets)
+        {
+            var mount = TurretMount.For(world.Ship.Rooms, world.Ship.Turrets, turret);
+            if (Math.Abs(mount.Position.X - turret.PeriscopeX) > 0.001 || Math.Abs(mount.Position.Y - turret.PeriscopeY) > 0.001)
+                return false;
+        }
+        return world.Ship.Turrets.Count > 0;
     }
 
     // Walks the character to the helm console (the same two-leg route every test in this project

@@ -12,19 +12,23 @@ public sealed record WorldSnapshot(
     // A vacuum-facing door (Door.LeadsToVacuum) lives in this SAME list now - no separate
     // AirlockOuterDoors field any more (humble-soaring-cat.md, "убрать AirlockOuterDoor как
     // отдельный тип").
-    // Direct user request (architecture idea - "WorldSnapshot целиком каждый тик") - proof of
-    // concept for sending ship LAYOUT only once per connection instead of every tick: Doors/Turrets
-    // are session-static (only the ship editor changes them, and that always starts a brand new
-    // session) - GameServer.cs's own send loop sends the real list only on a given connection's very
-    // first tick, null every tick after. Nullable ONLY at the wire level - GameClient.PollSnapshots
-    // merges with whatever it already cached, so every other reader in this project keeps seeing
-    // GameClient.LatestSnapshot.Doors/Turrets as always-populated, same as before this existed.
-    // World.CreateSnapshot() itself is UNCHANGED - always populates both fully; the omission only
-    // happens later, per-connection, in GameServer.cs's own Tick().
-    IReadOnlyList<Door>? Doors,
+    // REVERTED (direct user bug report, "не вижу устройство в игре" - a turret placed via the ship
+    // editor never showed up in a real running session) - this used to be nullable, a proof-of-
+    // concept for sending ship LAYOUT only once per connection instead of every tick (Doors/Turrets
+    // are session-static). That relied on EVERY tick's snapshot eventually reaching the client at
+    // least once - but both IClientConnection implementations (InProcessTransport here, and
+    // TcpClientConnection's own _latest field) are "latest tick wins" mailboxes that silently
+    // discard older, undelivered snapshots whenever the server ticks faster than the client polls.
+    // If the connection's very first tick (the ONLY one ever carrying the real, non-null list -
+    // GameServer.cs's own _layoutSentToPlayerIds, since removed, only ever sent it once per
+    // connection for the connection's whole lifetime) got discarded that way before the client's
+    // first PollSnapshots() call - confirmed via a TEMP-DIAG live session, Turrets came back empty
+    // while TurretStates (sent every tick, unaffected) did not - the client would never see the real
+    // layout again for the rest of the session, permanently. Always non-null again now; see
+    // spaceadventure-worldsnapshot-turrets-loss-regression (project memory) for the full story.
+    IReadOnlyList<Door> Doors,
     IReadOnlyList<DoorState> DoorStates,
-    // Same proof-of-concept as Doors above - see its own doc comment.
-    IReadOnlyList<Turret>? Turrets,
+    IReadOnlyList<Turret> Turrets,
     IReadOnlyList<TurretState> TurretStates,
     IReadOnlyList<AmmoStorage> AmmoStorages,
     IReadOnlyList<AmmoStorageState> AmmoStorageStates,
@@ -261,4 +265,14 @@ public sealed record WorldSnapshot(
     // where they are. NavigationConsole/HelmConsole above stay the SAME single required fields
     // (every hull always has exactly one primary) - these two are only ever the 2nd, 3rd, ... one.
     IReadOnlyList<NavigationConsole>? ExtraNavigationConsoles = null,
-    IReadOnlyList<HelmConsole>? ExtraHelmConsoles = null);
+    IReadOnlyList<HelmConsole>? ExtraHelmConsoles = null,
+    // Jump fuel (World.StarSystems.cs): how much Hyperium the crew is carrying in total (rack plus
+    // every character's pockets) - the galactic map prices each jump against it. Appended last,
+    // same reasoning as every other field above.
+    int HyperiumAboard = 0,
+    // Looted storage pods / wrecks (World.Salvage.cs): ids to hide, plus the pickup message shown
+    // for a few seconds. Appended last, same reasoning as every other field above.
+    IReadOnlyList<string>? SalvagedPointIds = null,
+    string? SalvageNotice = null,
+    // Laser rifle beams still on screen (World.PersonalShots.cs). Appended last, same reasoning as every other field above.
+    IReadOnlyList<LaserBeamState>? LaserBeams = null);

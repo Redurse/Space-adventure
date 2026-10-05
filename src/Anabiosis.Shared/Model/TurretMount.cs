@@ -1,63 +1,44 @@
 namespace Anabiosis.Shared.Model;
 
-// Where a turret's gun actually sits: outside the hull, with the barrel pointing away from the
-// ship. The periscope (Turret.PeriscopePosition) is the crew station *inside* a room - the thing
-// you walk up to and man - and the two are deliberately different places, which is what lets a
-// shot leave the ship through a muzzle instead of materialising out of a console.
+// Where a turret's gun actually sits: on top of the ship, directly above the turret device it is
+// crewed from (direct user request - the gun is drawn over the hull at the device's own spot and
+// turns a full 360 degrees; it is only ever seen from outside the ship, never from inside a
+// compartment). The periscope (Turret.PeriscopePosition) is the crew station *inside* a room - the
+// thing you walk up to and man - and the gun is the visual/muzzle half that sits right above it.
 //
-// Every gun sits on the aft plating, spread evenly across it. That's the quarter this hull fights
-// over: raiders close from astern (World.EnemyFleet.cs) and the airlock that puts a boarding party
-// outside is back there too, so the guns, the enemy and the way out all face the same way. A
-// +-45 arc anywhere else would spend the fight pointing at empty space.
-//
-// Derived from the hull's own bounds rather than stored per turret, so a new ship class gets its
-// mounts for free and they can't drift out of sync with a layout change (game_design.md section 2).
+// MountSide no longer picks a plating position or limits a firing arc; it only says which way the
+// barrel rests (aim 0) before anyone has swung it. Aim is relative to that rest direction and wraps
+// around instead of clamping.
 public readonly record struct TurretMount(Vec2 Position, float OutwardDegrees)
 {
-    public const float BarrelLength = 1.3f;
-    private const float HullStandoff = 0.5f; // how far off the plating the mount ring sits
+    // How much bigger the gun is drawn than its baked sprite (TurretSkin) - it has to read as a gun
+    // sitting on a 4x3-tile device, not as a marker. The barrel length scales with it so the shell
+    // leaves the drawn muzzle.
+    public const float VisualScale = 1.6f;
+    public const float BakedBarrelLength = 1.3f;
+    public const float BarrelLength = BakedBarrelLength * VisualScale;
 
-    public static TurretMount For(IReadOnlyList<Room> rooms, IReadOnlyList<Turret> allTurrets, Turret turret)
-    {
-        // Flank guns sit on the wall of the room they're crewed from, so a broadside comes out of
-        // the gun deck's own plating rather than from somewhere else along the hull. Fore/aft guns
-        // use the hull's end plating and share it, spread evenly, since several of them face the
-        // same way down a hull that's mostly one long row.
-        var room = rooms.FirstOrDefault(r => r.Contains(turret.PeriscopePosition)) ?? rooms[0];
-
-        switch (turret.MountSide)
+    public static TurretMount For(IReadOnlyList<Room> rooms, IReadOnlyList<Turret> allTurrets, Turret turret) =>
+        new(turret.PeriscopePosition, turret.MountSide switch
         {
-            case TurretMountSide.Port:
-                return new TurretMount(new Vec2(room.Left - HullStandoff, turret.PeriscopeY), 180f);
-            case TurretMountSide.Starboard:
-                return new TurretMount(new Vec2(room.Right + HullStandoff, turret.PeriscopeY), 0f);
-        }
+            TurretMountSide.Fore or TurretMountSide.Port => 180f,
+            _ => 0f,
+        });
 
-        var minY = rooms.Min(r => r.Top);
-        var maxY = rooms.Max(r => r.Bottom);
-        var sharingTheFace = allTurrets.Where(t => t.MountSide == turret.MountSide).ToList();
-        var slot = sharingTheFace.FindIndex(t => t.Id == turret.Id);
-        if (slot < 0)
-            slot = 0;
-
-        // Evenly spaced across the plating: one gun sits dead centre, two sit at a third and two
-        // thirds of the way down, and so on.
-        var y = minY + (maxY - minY) * (slot + 1f) / (sharingTheFace.Count + 1f);
-
-        return turret.MountSide == TurretMountSide.Fore
-            ? new TurretMount(new Vec2(rooms.Min(r => r.Left) - HullStandoff, y), 180f)
-            : new TurretMount(new Vec2(rooms.Max(r => r.Right) + HullStandoff, y), 0f);
-    }
-
-    // Aim is relative to straight out of the mount, so the same -45..+45 arc means "45 degrees off
-    // the plating's normal" on every ship regardless of which end the gun ended up on.
+    // Aim is relative to the rest direction (OutwardDegrees) and wraps: any angle is reachable.
     public float FireDegrees(float aimDegrees) => OutwardDegrees + aimDegrees;
 
     public Vec2 FireDirection(float aimDegrees) => FromDegrees(FireDegrees(aimDegrees));
 
-    // Where the shell leaves the barrel - clear of the plating, so a shot never spawns inside the
-    // ship that fired it.
+    // Where the shell leaves the barrel - the tip of the drawn barrel, ahead of the turret centre.
     public Vec2 Muzzle(float aimDegrees) => Position + FireDirection(aimDegrees) * BarrelLength;
+
+    // Wraps any angle into (-180, 180].
+    public static float WrapDegrees(float degrees)
+    {
+        var wrapped = ((degrees + 180f) % 360f + 360f) % 360f - 180f;
+        return wrapped == -180f ? 180f : wrapped;
+    }
 
     public static Vec2 FromDegrees(float degrees)
     {

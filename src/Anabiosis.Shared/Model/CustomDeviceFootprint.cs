@@ -43,6 +43,14 @@ namespace Anabiosis.Shared.Model;
 //     see spaceadventure-halfwidth-device-collision-ux (project memory) for the real bug report this
 //     traces back to, and Game1.ShipEditor.cs's DeviceRejectionToastMessage for the player-facing
 //     fix (a clear reason on a rejected click, replacing what used to be silence).
+//
+// SEPARATE mechanic, same underlying per-tile primitive: IsShapedFootprintKind/ShapedFootprint/
+// RotateShapedFootprint below describe a device (so far just the 4 turret kinds) whose real
+// footprint is a whole per-tile SHAPE (some tiles full, some half on a specific side, some not part
+// of the footprint at all) rather than one uniform rectangle with at most one shared half axis -
+// still built entirely from the SAME TileGrid.PlaceDevice/PlaceHalfWidthDevice primitives above,
+// just driven by a per-tile plan (Game1.ShipEditor.cs's own BuildFootprintPlan) instead of a single
+// footprint+halfSide pair.
 public static class CustomDeviceFootprint
 {
     public static (int Width, int Height) Size(CustomDeviceKind kind) => kind switch
@@ -87,10 +95,15 @@ public static class CustomDeviceFootprint
         // (TurretMountSkirt.cs's own doc comment) is built from real wall tiles, not folded into this
         // Size itself - Size only ever describes the DEVICE's own claimed tiles, same as every other
         // kind here.
-        CustomDeviceKind.TurretBallistic => (1, 3),
-        CustomDeviceKind.TurretLaser => (1, 3),
-        CustomDeviceKind.TurretMachineGun => (1, 3),
-        CustomDeviceKind.DefensiveTurret => (1, 3),
+        // Direct user request (exact shape decoded from their own legend: 0 empty, 1 half-right,
+        // 2 half-top, 3 half-left, 4 half-bottom, 5 full) - was (1, 3) (a bare 1-wide gun column,
+        // with a separate wall-tile "skirt" flanking it, TurretMountSkirt.cs, since deleted). The
+        // skirt is folded directly into the device's own footprint now - see IsShapedFootprintKind/
+        // ShapedFootprint below for the actual per-tile shape this (4, 3) bounding box only outlines.
+        CustomDeviceKind.TurretBallistic => (4, 3),
+        CustomDeviceKind.TurretLaser => (4, 3),
+        CustomDeviceKind.TurretMachineGun => (4, 3),
+        CustomDeviceKind.DefensiveTurret => (4, 3),
         // Direct user request - a bed reads as furniture you lie down IN, not a single tile.
         CustomDeviceKind.Bed => (1, 2),
         // Direct user request - a shuttle hangar is a genuinely large bay.
@@ -145,4 +158,97 @@ public static class CustomDeviceFootprint
     // the art) between the two halves instead of one flush object. The full tile is always the side
     // OPPOSITE the half tile, regardless of which of the 4 it is.
     public static TileSide HalfOpenSideForHalfWidthDevice(TileSide halfSide) => halfSide.Opposite();
+
+    // Direct user request (turret kinds' new (4, 3) footprint, decoded from their own legend: 0
+    // empty, 1 half-right(East), 2 half-top(North), 3 half-left(West), 4 half-bottom(South), 5
+    // full) - a SHAPED footprint has its own per-tile reservation instead of one uniform rectangle:
+    // Offset is anchor-relative (matching Size(kind)'s own unrotated Width/Height), HalfSide null
+    // means the tile is fully reserved (ordinary TileGrid.PlaceDevice), a HalfSide value means only
+    // that side of the tile is reserved (TileGrid.PlaceHalfWidthDevice/CanPlaceHalfWidthDevice - the
+    // SAME per-tile mechanism two independently-placed half-width DEVICES already share, see
+    // TileCell.DeviceId2's own doc comment - nothing new needed there for this). Distinct from
+    // IsHalfWidthKind (which only ever describes ONE shared half-tile axis for the whole device,
+    // e.g. Helm/Navigation) - a shaped kind can have any number of independently-sided half tiles,
+    // and tiles the shape omits entirely (the old rectangle's corners) aren't part of the footprint
+    // at ALL - nothing is reserved there, exactly like open floor.
+    public readonly record struct ShapedFootprintTile(TileCoord Offset, TileSide? HalfSide);
+
+    // Replaces the former (1, 3) gun column + a separately-stamped wall-tile "skirt" flanking it
+    // (TurretMountSkirt.cs, deleted) - the skirt is now simply part of this one footprint instead of
+    // a second, independently-placed/removed set of tiles. Kept to a single hand-authored list (the
+    // UNROTATED orientation only) - RotateShapedFootprint below derives the rotated version from
+    // this alone, so there is exactly one copy of the actual shape to keep in sync when it changes.
+    public static bool IsShapedFootprintKind(CustomDeviceKind kind) => kind is
+        CustomDeviceKind.TurretBallistic or CustomDeviceKind.TurretLaser
+        or CustomDeviceKind.TurretMachineGun or CustomDeviceKind.DefensiveTurret;
+
+    private static readonly ShapedFootprintTile[] TurretShape =
+    {
+        new(new TileCoord(1, 0), TileSide.South),
+        new(new TileCoord(2, 0), TileSide.South),
+        new(new TileCoord(0, 1), TileSide.East),
+        new(new TileCoord(1, 1), null),
+        new(new TileCoord(2, 1), null),
+        new(new TileCoord(3, 1), TileSide.West),
+        new(new TileCoord(0, 2), TileSide.East),
+        new(new TileCoord(3, 2), TileSide.West),
+    };
+
+    // The UNROTATED shape for `kind` - null for every kind IsShapedFootprintKind doesn't cover, so a
+    // caller can use this alone to decide which footprint model applies (shaped if non-null, the
+    // ordinary rectangle/IsHalfWidthKind model otherwise).
+    public static IReadOnlyList<ShapedFootprintTile>? ShapedFootprint(CustomDeviceKind kind) =>
+        IsShapedFootprintKind(kind) ? TurretShape : null;
+
+    // Rotates a shaped footprint 90 degrees, matching DeviceFootprintSize's own convention for every
+    // OTHER rotatable kind (Size().Height/Width swap) - transposes each offset (dx, dy) -> (dy, dx)
+    // and relabels each HalfSide the same way a compass direction's own (x, y) unit vector would
+    // transpose (West=(-1,0)->(0,-1)=North, East=(1,0)->(0,1)=South, and the reverse for North/
+    // South) - the exact transform TurretMountSkirt.cs's own former hand-written rotated branch
+    // already established for this same device family, just expressed generically here instead of
+    // as a second hand-authored list that could drift out of sync with the unrotated one.
+    // A shaped footprint's orientation as the direction its authored top points: North is the shape exactly
+    // as written (the narrow barrel side up), East/South/West are that shape turned 90/180/270 degrees
+    // clockwise. A save that only knows the older two-state Rotated flag means North or, rotated, West
+    // (the transpose RotateShapedFootprint below, which for the mirror-symmetric turret shape is the same
+    // picture as a quarter turn counter-clockwise).
+    public static TileSide ShapedFacing(bool rotated, TileSide? stored) => stored ?? (rotated ? TileSide.West : TileSide.North);
+
+    public static IReadOnlyList<ShapedFootprintTile>? ShapedFootprint(CustomDeviceKind kind, TileSide facing)
+    {
+        if (ShapedFootprint(kind) is not { } shape)
+            return null;
+        var steps = facing switch { TileSide.East => 1, TileSide.South => 2, TileSide.West => 3, _ => 0 };
+        var (width, height) = Size(kind);
+        var current = shape;
+        for (var i = 0; i < steps; i++)
+        {
+            // 90 degrees clockwise in a width x height box: (x, y) -> (height - 1 - y, x); the box becomes height x width.
+            current = current.Select(t => new ShapedFootprintTile(
+                new TileCoord(height - 1 - t.Offset.Y, t.Offset.X),
+                t.HalfSide switch
+                {
+                    TileSide.North => TileSide.East,
+                    TileSide.East => TileSide.South,
+                    TileSide.South => TileSide.West,
+                    TileSide.West => TileSide.North,
+                    _ => (TileSide?)null,
+                })).ToList();
+            (width, height) = (height, width);
+        }
+        return current;
+    }
+
+    public static IReadOnlyList<ShapedFootprintTile> RotateShapedFootprint(IReadOnlyList<ShapedFootprintTile> shape) =>
+        shape.Select(t => new ShapedFootprintTile(
+            new TileCoord(t.Offset.Y, t.Offset.X),
+            t.HalfSide switch
+            {
+                TileSide.West => TileSide.North,
+                TileSide.East => TileSide.South,
+                TileSide.North => TileSide.West,
+                TileSide.South => TileSide.East,
+                null => null,
+                _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+            })).ToList();
 }

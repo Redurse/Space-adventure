@@ -233,7 +233,20 @@ public sealed partial class World
         else
         {
             var maxSpeed = _landedBodyId is not null ? SurfaceMaxSpeed : ShipMaxSpeed;
-            _shipVelocity += _shipThrust * thrustAccelerationPerSecond * enginePowerScale * dt;
+            // Direct user bug report ("рабочий корабль очень быстро летает и летает неправильно") -
+            // this flat nose-direction thrust is the OLD, pre-fixture propulsion model (every hand-
+            // authored hull with no real Ship.Engines fixtures still needs it - ComputeEngineForces
+            // below is correctly zero for those, so this is their ONLY source of thrust). But it used
+            // to apply UNCONDITIONALLY, even for a hull that has real Ship.Engines - stacking a full
+            // extra ShipThrustForcePerSecond (16, same order of magnitude as 2 marching engines'
+            // combined MaxThrust) on top of ComputeEngineForces' own real per-engine sum below,
+            // roughly doubling net thrust for any ship built from the new fixture system (confirmed:
+            // рабочий корабль's 2 active engines alone already sum to 16, same as the flat term).
+            // Gated the same way World.Autopilot.cs's own hasRealEngines already distinguishes "has
+            // adopted the new per-engine model" from "still on the flat legacy one" - a hull with real
+            // engines gets ALL its thrust from them now, never both.
+            if (Ship.Engines.Count == 0)
+                _shipVelocity += _shipThrust * thrustAccelerationPerSecond * enginePowerScale * dt;
             // Not scaled by enginePowerScale, unlike the flat bonus above - that scale comes from
             // GetEffectivePower(PowerSystemId.Engine), which only counts the OLD flat-bonus
             // CustomDeviceKind.Engine system-devices (WireGraphFactory never gives Ship.Engines'

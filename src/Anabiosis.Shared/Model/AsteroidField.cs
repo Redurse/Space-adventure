@@ -175,8 +175,10 @@ public sealed class AsteroidField
         // real planetary belts are layered in on top, exactly the same way any other system's are
         // - this hand-placed cluster just keeps existing alongside them rather than being replaced.
         var belts = GenerateBeltAsteroids("sol");
+        var (hotRocks, hotOre) = AsteroidOre.HotAsteroids("sol");
         return new AsteroidField(width: SolFieldSize, height: SolFieldSize,
-            asteroids.Concat(belts).ToArray(), onTheSurface);
+            asteroids.Concat(belts).Concat(hotRocks).ToArray(),
+            onTheSurface.Concat(AsteroidOre.DepositsFor("sol", belts)).Concat(hotOre).ToArray());
     }
 
     // Every OTHER system (the 5 hand-authored stubs and the 194 procedural ones, GalaxyMap.cs) -
@@ -186,7 +188,10 @@ public sealed class AsteroidField
     public static AsteroidField CreateForSystem(string systemId)
     {
         var size = CelestialBodyGenerator.FieldSize(CelestialBodyGenerator.Generate(systemId));
-        return new AsteroidField(width: size, height: size, GenerateBeltAsteroids(systemId).ToArray(), Array.Empty<OreDeposit>());
+        var belts = GenerateBeltAsteroids(systemId);
+        var (hotRocks, hotOre) = AsteroidOre.HotAsteroids(systemId);
+        return new AsteroidField(width: size, height: size, belts.Concat(hotRocks).ToArray(),
+            AsteroidOre.DepositsFor(systemId, belts).Concat(hotOre).ToArray());
     }
 
     // M48 - "с шансом в 25 процентов между любыми 2 орбитами спанвился пояс астероидов... очень

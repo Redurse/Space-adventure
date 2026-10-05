@@ -129,6 +129,41 @@ public static partial class ItemIcons
         Bar(spriteBatch, pixel, origin, a, scale, 0f, 0f, 0.12f, 0.42f, red); // cross, vertical arm
     }
 
+    // A rifle magazine seen side-on: a dark stamped-steel box, brass cartridge tips poking out of the feed lips,
+    // ribs down the side and a floor plate.
+    private static void DrawMagazine(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
+    {
+        var origin = new Vector2(rect.Center.X, rect.Center.Y);
+        var scale = MathF.Min(rect.Width, rect.Height);
+        // Bar() never draws a bar shorter than it is thick, so a tall thin part has to be built in a frame
+        // turned a quarter-turn: "along" runs down the magazine, "across" runs to its left. The small extra
+        // lean keeps it from standing as a rigid box.
+        var a = MathF.PI / 2f - 0.3f;
+        const float flat = -MathF.PI / 2f; // extra turn that lays a bar back across the magazine
+        var steel = new Color(64, 70, 82);
+        var edge = new Color(30, 34, 42);
+        var rib = new Color(132, 140, 156);
+        var brass = new Color(226, 178, 66);
+        var brassLight = new Color(255, 226, 140);
+
+
+        // Body: three slabs, each nudged sideways, so the whole magazine curves the way a rifle's does.
+        (float Along, float Across, float Length)[] slabs = { (-0.2f, 0.05f, 0.34f), (0.06f, 0f, 0.34f), (0.3f, -0.06f, 0.30f) };
+        foreach (var (along, across, length) in slabs)
+            Bar(spriteBatch, pixel, origin, a, scale, along, across, length + 0.04f, 0.34f, edge);
+        foreach (var (along, across, length) in slabs)
+            Bar(spriteBatch, pixel, origin, a, scale, along, across, length, 0.28f, steel);
+        Bar(spriteBatch, pixel, origin, a, scale, 0.04f, 0.13f, 0.74f, 0.04f, rib);                 // lit edge down the left
+        for (var i = 0; i < 3; i++)
+            Bar(spriteBatch, pixel, origin, a, scale, -0.12f + i * 0.2f, 0.02f - i * 0.03f, 0.24f, 0.04f, rib, flat); // ribs across
+        // Two brass cartridges standing in the feed lips, bullet tips up.
+        Bar(spriteBatch, pixel, origin, a, scale, -0.45f, 0.09f, 0.14f, 0.11f, brass);
+        Bar(spriteBatch, pixel, origin, a, scale, -0.45f, -0.07f, 0.14f, 0.11f, brass);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.54f, 0.09f, 0.06f, brassLight);
+        Circle(spriteBatch, pixel, origin, a, scale, -0.54f, -0.07f, 0.06f, brassLight);
+        Bar(spriteBatch, pixel, origin, a, scale, 0.5f, -0.06f, 0.44f, 0.08f, edge, flat);          // floor plate
+    }
+
     private static void DrawWireSpool(SpriteBatch spriteBatch, Texture2D pixel, Rectangle rect)
     {
         var origin = new Vector2(rect.Center.X, rect.Center.Y);

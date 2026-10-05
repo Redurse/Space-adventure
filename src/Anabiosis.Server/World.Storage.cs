@@ -36,6 +36,8 @@ public sealed partial class World
         ItemType.Knife, ItemType.Knife,
         ItemType.Rifle, ItemType.Rifle,
         ItemType.LaserRifle, ItemType.LaserRifle,
+        // Magazines for the two rifles (TankSockets) - an empty rifle does not fire, so the kit must come with some.
+        ItemType.Magazine, ItemType.Magazine, ItemType.Magazine, ItemType.Magazine,
         ItemType.BeltBag, ItemType.BeltBag,
         ItemType.IdCard, ItemType.IdCard,
         // Direct user request - radio voice needs a worn item now (ItemType.Radio's own doc

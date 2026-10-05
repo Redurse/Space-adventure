@@ -160,6 +160,10 @@ public sealed partial class FieldRenderer
                 direction, totalSeconds);
         }
 
+        if (landedBodyId is null)
+            DrawSalvagePoints(spriteBatch, snapshot, WorldToScreen, viewportOrigin, viewportSize);
+        DrawSalvageNotice(spriteBatch, snapshot, viewportOrigin, viewportSize);
+
         DrawEngines(spriteBatch, snapshot, origin, hullCenter, totalSeconds);
 
         // Direct user request ("то, как корабль должен повернуться и прийти к концу пути") - a
@@ -367,6 +371,11 @@ public sealed partial class FieldRenderer
                 HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen, radiusPx, color);
                 HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen + new Vector2(radiusPx * 0.18f, radiusPx * 0.18f), radiusPx * 0.92f, color * 0.8f);
                 HudIcons.DrawRingArc(spriteBatch, _pixel, screen, radiusPx, 0f, 360f, Color.Black * 0.35f, 96, 2f);
+                // The heat ring (World.SunZone.cs) - a red outline plus a faint wash, like Cosmoteer's
+                // "red zone", so the danger edge is visible before the hull starts cooking.
+                var zonePx = CelestialBodyGenerator.SunZoneRadius(body) * ShipRenderer.PixelsPerUnit;
+                HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen, zonePx, new Color(255, 60, 30) * 0.12f);
+                HudIcons.DrawRingArc(spriteBatch, _pixel, screen, zonePx, 0f, 360f, new Color(255, 70, 40) * 0.7f, 128, 2f);
                 continue;
             }
 
@@ -378,7 +387,32 @@ public sealed partial class FieldRenderer
             var rotation = MathF.Atan2(axis.Y, axis.X);
             DrawPlanetSkin(spriteBatch, body, screen, radiusPx, color, rotation);
         }
+
+        DrawBeltBoundaries(spriteBatch, snapshot, worldToScreen(fieldCenter));
     }
+
+    // Cosmoteer-style dashed white outline of each asteroid belt (inner and outer edge).
+    private void DrawBeltBoundaries(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 starScreen)
+    {
+        if (_cachedBeltBandsSystemId != snapshot.CurrentSystemId)
+        {
+            _cachedBeltBandsSystemId = snapshot.CurrentSystemId;
+            _cachedBeltBands = CelestialBodyGenerator.BeltBands(snapshot.CurrentSystemId);
+        }
+
+        const float dashDegrees = 3f;
+        const float stepDegrees = 8f;
+        foreach (var (inner, outer) in _cachedBeltBands)
+        foreach (var radius in new[] { inner, outer })
+        {
+            var radiusPx = radius * ShipRenderer.PixelsPerUnit;
+            for (var angle = 0f; angle < 360f; angle += stepDegrees)
+                HudIcons.DrawRingArc(spriteBatch, _pixel, starScreen, radiusPx, angle, angle + dashDegrees, Color.White * 0.35f, 2, 1.5f);
+        }
+    }
+
+    private string? _cachedBeltBandsSystemId;
+    private IReadOnlyList<(float Inner, float Outer)> _cachedBeltBands = Array.Empty<(float, float)>();
 
     // M55 follow-up - "почему на месте планет пустота": a real baked surface (PlanetTexture)
     // instead of the flat shaded circle, baked once per body id on a background task exactly like
@@ -978,9 +1012,7 @@ public sealed partial class FieldRenderer
     // item) - a smaller, steadier glow than a live deposit so the two don't read as the same thing.
     private void DrawDroppedItem(SpriteBatch spriteBatch, DroppedItem dropped, Vector2 screenCenter, float totalSeconds)
     {
-        var pulse = 0.8f + 0.2f * MathF.Sin(totalSeconds * 4f + screenCenter.X);
-        DrawGlowDiamond(spriteBatch, screenCenter, 7, Color.LightGoldenrodYellow * pulse);
-        spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(dropped.Item), screenCenter + new Vector2(6, -6), Color.LightGoldenrodYellow, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+        ItemIcons.DrawInWorld(spriteBatch, _pixel, _font, dropped.Item, screenCenter, totalSeconds);
     }
 
     // A 45-degree-rotated square reads as a crystal/gem facet - built from the same 1x1 pixel
@@ -1068,13 +1100,15 @@ public sealed partial class FieldRenderer
             facing.Normalize();
         else
             facing = new Vector2(1f, 0f);
-        _crewSkin.Draw(spriteBatch, new Vector2(screenCenter.X, screenCenter.Y + size * 0.30f),
-            ShipRenderer.CharacterHeight * ShipRenderer.PixelsPerUnit,
-            new Color(196, 78, 44), new Color(226, 186, 70), true, facing);
+        var held = ShipRenderer.HeldItemTypes(character.Inventory);
+        _crewSkin.Draw(spriteBatch, screenCenter, ShipRenderer.PixelsPerUnit, character.PlayerId,
+            new Vector2((float)character.X, (float)character.Y),
+            CrewSkin.UniformFor(character.Role, character.IsBot), CrewSkin.AccentFor(character.IsBot), true, facing,
+            armsForward: held.Count > 0);
 
         // Same held-item chip as indoors (ShipRenderer.DrawHeldItems) - a suited EVA crewmate holding
         // a cutter still reads as holding something, not just glowing from an invisible tool.
-        ShipRenderer.DrawHeldItems(spriteBatch, _pixel, _font, ShipRenderer.HeldItemTypes(character.Inventory), screenCenter, facing);
+        ShipRenderer.DrawHeldItems(spriteBatch, _pixel, _font, held, screenCenter, facing);
 
         // Same always-on nameplate as indoors (ShipRenderer.DrawCharacter) - a suited EVA crewmate
         // is still someone specific, not just an anonymous orange square drifting past.

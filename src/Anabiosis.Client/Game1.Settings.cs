@@ -53,6 +53,9 @@ public partial class Game1
     private int _stagedResolutionIndex;
     private WindowMode _stagedWindowMode;
     private bool _stagedVSync;
+    private int _stagedFrameLimit;
+    // 0 = uncapped. 60 is what the game has always run at (MonoGame's default fixed time step).
+    private static readonly int[] FrameLimitOptions = { 30, 60, 90, 120, 144, 0 };
     private float _stagedBloomStrength;
     private int _stagedMaxParticles;
     private bool _stagedShadersEnabled;
@@ -200,6 +203,7 @@ public partial class Game1
         _stagedResolutionIndex = FindResolutionIndex(_graphicsSettings.ResolutionWidth, _graphicsSettings.ResolutionHeight);
         _stagedWindowMode = _graphicsSettings.WindowMode;
         _stagedVSync = _graphicsSettings.VSync;
+        _stagedFrameLimit = _graphicsSettings.FrameLimit;
         _stagedBloomStrength = _graphicsSettings.BloomStrength;
         _stagedMaxParticles = _graphicsSettings.MaxParticles;
         _stagedShadersEnabled = _graphicsSettings.ShadersEnabled;
@@ -315,6 +319,19 @@ public partial class Game1
     // the custom-shader path (room lighting's per-pixel glow, the whole post-processing chain, the
     // main menu's planet). Sits right under VSync, same left column.
     private static Rectangle GetShadersEnabledCheckboxRect(Vector2 panelOrigin) => new((int)SettingsContentOrigin(panelOrigin).X, (int)SettingsContentOrigin(panelOrigin).Y + 168, 20, 20);
+
+    private static Rectangle GetFrameLimitPrevRect(Vector2 panelOrigin) => new((int)SettingsContentOrigin(panelOrigin).X, (int)SettingsContentOrigin(panelOrigin).Y + 238, 24, 24);
+    private static Rectangle GetFrameLimitNextRect(Vector2 panelOrigin) => new((int)SettingsContentOrigin(panelOrigin).X + 220, (int)SettingsContentOrigin(panelOrigin).Y + 238, 24, 24);
+
+    private static int CycleFrameLimit(int current, int direction)
+    {
+        var index = Array.IndexOf(FrameLimitOptions, current);
+        if (index < 0)
+            index = Array.IndexOf(FrameLimitOptions, 60);
+        return FrameLimitOptions[(index + direction + FrameLimitOptions.Length) % FrameLimitOptions.Length];
+    }
+
+    private static string FrameLimitLabel(int limit) => limit <= 0 ? "Без ограничения" : $"{limit} кадров/с";
 
     private static Rectangle GetBloomSliderRect(Vector2 panelOrigin)
     {
@@ -466,6 +483,10 @@ public partial class Game1
                     _stagedVSync = !_stagedVSync;
                 else if (GetShadersEnabledCheckboxRect(origin).Contains(point))
                     _stagedShadersEnabled = !_stagedShadersEnabled;
+                else if (GetFrameLimitPrevRect(origin).Contains(point))
+                    _stagedFrameLimit = CycleFrameLimit(_stagedFrameLimit, -1);
+                else if (GetFrameLimitNextRect(origin).Contains(point))
+                    _stagedFrameLimit = CycleFrameLimit(_stagedFrameLimit, 1);
             }
             else if (_settingsTab == SettingsTab.Audio)
             {
@@ -543,6 +564,7 @@ public partial class Game1
                     _stagedResolutionIndex = FindResolutionIndex(null, null);
                     _stagedWindowMode = defaults.WindowMode;
                     _stagedVSync = defaults.VSync;
+                    _stagedFrameLimit = defaults.FrameLimit;
                     _stagedBloomStrength = defaults.BloomStrength;
                     _stagedMaxParticles = defaults.MaxParticles;
                     _stagedSoundVolume = defaults.SoundVolume;
@@ -638,7 +660,8 @@ public partial class Game1
             _stagedMicGain, _stagedDisconnectPreventionMs,
             _stagedShadersEnabled,
             _stagedKeyBindings.ToSettingsString(), _stagedLanguage,
-            _stagedTooltipsEnabled, _stagedChatBubblesEnabled, _stagedEnemyHealthBarsEnabled);
+            _stagedTooltipsEnabled, _stagedChatBubblesEnabled, _stagedEnemyHealthBarsEnabled,
+            _stagedFrameLimit);
         ApplyGraphicsSettings(settings);
         PlayerSettingsStore.SaveGraphicsSettings(settings);
         // Direct user request - "Применить" used to kick back to the main menu, same as "Отмена".
@@ -884,6 +907,8 @@ public partial class Game1
 
         DrawCheckboxRow(GetVSyncCheckboxRect(SettingsPanelOrigin), "Вертикальная синхронизация", _stagedVSync);
         DrawCheckboxRow(GetShadersEnabledCheckboxRect(SettingsPanelOrigin), "Отключить шейдеры и эффекты", !_stagedShadersEnabled);
+        DrawLabeledStepper(content + new Vector2(0, 220), "ЛИМИТ КАДРОВ", FrameLimitLabel(_stagedFrameLimit),
+            GetFrameLimitPrevRect(SettingsPanelOrigin), GetFrameLimitNextRect(SettingsPanelOrigin));
 
         var right = new Vector2(SettingsRightColumnX(content), content.Y);
         DrawLabeledSlider(right, "СВЕЧЕНИЕ (BLOOM)", $"{_stagedBloomStrength * 50f:0}%", GetBloomSliderRect(SettingsPanelOrigin), _stagedBloomStrength / 2f);

@@ -212,6 +212,8 @@ public sealed class VisibilityMask : IDisposable
                 new Vector3(origin + sample.WorldPoint * ShipRenderer.PixelsPerUnit, 0f), sample.Color);
         }
 
+        ApplyCornerShadowFades(eye, baseVertex, rayCount, full);
+
         for (var i = 1; i <= edgeCount; i++)
         {
             _indices[_indexCount++] = (short)baseVertex;
@@ -241,6 +243,74 @@ public sealed class VisibilityMask : IDisposable
     // so it can never gap or overlap it, while still asking for the same fixed set of angles every
     // frame (only the bracketing PAIR and the interpolation fraction drift smoothly as the player
     // moves, never a discontinuous jump). Zero extra Cast calls - the interpolation is real cheap.
+    // Direct user report (screenshot - a hard black wedge with no gradual fade at all, right where a
+    // wall corner creates a sharp near/far jump in the base fan's own rim) - WallBleedDepth/
+    // BuildFringe only soften a ray's OWN wall-hit edge RADIALLY (a small fade past where THAT ray
+    // stopped); neither ever touches the ANGULAR jump between two adjacent rays straddling a corner
+    // (ShadowCast.AddCorner's own ±CornerNudge pair). That jump is a genuine shadow boundary (real
+    // floor/wall that's correctly hidden behind the corner, not a rendering gap - confirmed via a
+    // geometry-only scratch probe: the raw corner-nudge angular gap itself is a small fraction of a
+    // degree, far too thin to be the visible wedge on its own) that never got ANY softening,
+    // reading as a razor-sharp polygon edge sitting right next to full brightness.
+    //
+    // Fix: detect the corner-nudge pattern directly in the already-built _raySamples/_offsets (zero
+    // extra Cast calls - this only reads what BuildTriangles' own sample loop just computed), and dim
+    // the ONE sample flanking each side of the jump. The GPU's own per-triangle color interpolation
+    // then draws a real, several-degree-wide gradient from that dimmed sample out to its next
+    // (regular-arc, full-brightness) neighbour on either side, entirely for free - no extra
+    // vertices/triangles beyond the base fan that already exists. Not a physically accurate penumbra
+    // (true soft shadows need an area light, not this single eye point - VisibilityMask is a point
+    // light throughout, by design, see this file's own top comment), just a deliberate approximation
+    // in the same "soften what would otherwise be a hard edge" spirit as EdgeFalloff/WallBleedDepth.
+    // Bounded the same way FringeArcCap already is (that constant's own doc comment has the full
+    // reasoning: a dense cluster of corners just has some go unsoftened, rather than let a cosmetic
+    // touch's cost scale with corner count).
+    private const float CornerShadowGapThreshold = 0.01f; // rad - above CornerNudge*2 (0.0016), below the regular arc-sample spacing
+    private const float CornerShadowDistanceJumpThreshold = 0.75f; // world units
+    private const float CornerShadowDim = 0.2f; // how dark the one flanking sample on each side gets, 0..1
+    private const int CornerShadowFadeCap = 48;
+
+    private void ApplyCornerShadowFades(Vector2 eye, int baseVertex, int rayCount, bool full)
+    {
+        if (rayCount < 2)
+            return;
+        var edgeCount = full ? rayCount : rayCount - 1;
+        var applied = 0;
+        for (var i = 0; i < edgeCount && applied < CornerShadowFadeCap; i++)
+        {
+            var j = (i + 1) % rayCount;
+            if (j == 0)
+                continue; // the wrap-around seam closing a full circle is never a corner-nudge pair in practice - skip it rather than risk a false positive there
+
+            var angleGap = _offsets[j] - _offsets[i];
+            if (angleGap <= 0f || angleGap > CornerShadowGapThreshold)
+                continue;
+
+            var distanceA = (_raySamples[i].WorldPoint - eye).Length();
+            var distanceB = (_raySamples[j].WorldPoint - eye).Length();
+            if (MathF.Abs(distanceB - distanceA) < CornerShadowDistanceJumpThreshold)
+                continue;
+
+            // Whichever side is the NEARER one is the lit room approaching the shadow it's about to
+            // be cut off by; the farther one is whatever just became visible past the corner, which
+            // should also ease in rather than pop at full brightness. Both get dimmed the same way.
+            DimSample(i, baseVertex);
+            DimSample(j, baseVertex);
+            applied++;
+        }
+    }
+
+    private void DimSample(int index, int baseVertex)
+    {
+        var dimmed = new Color(
+            (byte)(_raySamples[index].Color.R * CornerShadowDim),
+            (byte)(_raySamples[index].Color.G * CornerShadowDim),
+            (byte)(_raySamples[index].Color.B * CornerShadowDim),
+            _raySamples[index].Color.A);
+        _raySamples[index] = new RaySample(_raySamples[index].WorldPoint, dimmed);
+        _vertices[baseVertex + 1 + index].Color = dimmed;
+    }
+
     private void BuildFringe(Vector2 eye, float span, float radius, Vector2 origin, bool full)
     {
         var sampleCount = full ? FringeArcCap : FringeArcCap + 1;

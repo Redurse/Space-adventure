@@ -84,8 +84,8 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 1.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man the bow turret
 
-        // Traverse the barrel to the edge of its arc, then fire: the shell leaves the muzzle along
-        // the barrel and sails past the enemy sitting dead astern.
+        // Traverse the barrel well away from the enemy (the traverse is a full 360 degrees now), then
+        // fire: the shell leaves the muzzle along the barrel and sails past the enemy sitting dead astern.
         for (var i = 0; i < 60; i++)
         {
             world.ApplyCommand(1, new ClientCommand(1, TurretAimDirection: 1f));
@@ -96,7 +96,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, FirePressed: true, TurretAimDirection: 0f));
         StepFor(world, 90);
 
-        return Math.Abs(aim - 45f) < 0.5f && Math.Abs(world.CreateSnapshot().Enemy.Hp - 100f) < 0.01f;
+        return aim > 100f && Math.Abs(world.CreateSnapshot().Enemy.Hp - 100f) < 0.01f;
     }
 
     private static bool World_Fire_DamagesEnemyAndRespectsCooldown()

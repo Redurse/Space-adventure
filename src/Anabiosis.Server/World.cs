@@ -157,6 +157,7 @@ public sealed partial class World
 
     private readonly Dictionary<int, Character> _characters = new();
     private readonly Dictionary<int, Vec2> _moveInput = new();
+    private readonly Dictionary<int, bool> _sprintInput = new();
     private readonly Dictionary<string, TurretRuntime> _turretRuntimes;
     private readonly Dictionary<string, float> _turretAimInput = new();
 
@@ -227,7 +228,15 @@ public sealed partial class World
         RegenerateRecruitRoster();
     }
 
-    public void SpawnCharacter(int playerId) => _characters[playerId] = new Character(playerId, Ship.SpawnPoint, Ship.SpawnRoomId);
+    // Every player starts with a radio headset already worn (direct user request) - radio voice
+    // needs one in EquipSlot.Headset (World.Voice.cs), and nobody should have to dig it out of the
+    // rack before the first call. Recruited bots are built separately and don't get one.
+    public void SpawnCharacter(int playerId)
+    {
+        var character = new Character(playerId, Ship.SpawnPoint, Ship.SpawnRoomId);
+        character.Inventory.Equipped[EquipSlot.Headset] = ItemType.Radio;
+        _characters[playerId] = character;
+    }
 
     // Test-only precondition setter, same convention as every other Debug* helper here (e.g.
     // World.WallBlocks.cs's DebugBreachWallBlockById) - a test that just needs "this character is
@@ -241,6 +250,7 @@ public sealed partial class World
     {
         _characters.Remove(playerId);
         _moveInput.Remove(playerId);
+        _sprintInput.Remove(playerId);
         _cutInput.Remove(playerId);
         _weldInput.Remove(playerId);
         _weaponCooldowns.Remove(playerId);
@@ -272,6 +282,7 @@ public sealed partial class World
             return;
 
         _moveInput[playerId] = new Vec2(command.MoveX, command.MoveY);
+        _sprintInput[playerId] = command.Sprint;
         character.LookDirection = new Vec2(command.LookX, command.LookY);
         PowerGrid.ApplyInput(playerId, command.PowerSystemIndex, command.PowerDirection);
 
@@ -503,7 +514,7 @@ public sealed partial class World
         // never both, since the two are mutually exclusive places to be (World.Boarding.cs).
         // Anywhere on foot: aboard your own ship there is nothing to hit, but a weapon that only
         // works in someone else’s hull is one you can never practise with.
-        if (command.FirePressed && !character.IsOutside && character.ManningTurretId is null && !character.IsAtHelm)
+        if ((command.FirePressed || command.WeaponFireHeld) && !character.IsOutside && character.ManningTurretId is null && !character.IsAtHelm)
             TryFirePersonalWeapon(character);
 
         // LMB, not Space - the axe swings like the cutter/welder held-tool convention above, not
@@ -559,6 +570,8 @@ public sealed partial class World
         StepEnemyFleet(deltaSeconds);
         StepProjectiles(deltaSeconds);
         StepVoyage(deltaSeconds);
+        StepSunZone(deltaSeconds);
+        StepSalvage(deltaSeconds);
         // After voyage, so a fresh engagement (TryEngageHostileNpc) spawns its squadron against
         // this tick's already-updated ship position, same freshness UpdateNearestStation's own
         // station-defense check relies on.
@@ -762,5 +775,9 @@ public sealed partial class World
         Ship.ShipStatusMonitors,
         Ship.CommsConsoles,
         Ship.ExtraNavigationConsoles,
-        Ship.ExtraHelmConsoles);
+        Ship.ExtraHelmConsoles,
+        HyperiumAboard,
+        _salvagedPointIds.ToArray(),
+        SalvageNotice,
+        CreateLaserBeamStates());
 }

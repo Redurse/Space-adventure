@@ -290,7 +290,7 @@ internal static partial class TestRunner
         var toEnemy = enemyLocal - mount.Position;
         var bearingDegrees = MathF.Atan2((float)toEnemy.Y, (float)toEnemy.X) * (180f / MathF.PI);
         var shortest = ((bearingDegrees - mount.OutwardDegrees) % 360f + 540f) % 360f - 180f;
-        var wanted = Math.Clamp(shortest, turret.MinAimDegrees, turret.MaxAimDegrees);
-        return wanted - turretState.AimDegrees;
+        // Full 360 degree traverse - no arc to clamp to any more, just the shortest way round.
+        return ((shortest - turretState.AimDegrees) % 360f + 540f) % 360f - 180f;
     }
 }

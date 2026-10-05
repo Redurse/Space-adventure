@@ -47,7 +47,9 @@ public sealed record PlayerSettings(string? Nickname = null, CrewRole? Role = nu
     // a real, already-existing mechanic (item tooltips, chat speech bubbles, boarding health bars)
     // rather than being a fresh feature of its own; see DrawInterfaceTab's own doc comment for the
     // reference-screenshot items that were deliberately left out because nothing here backs them.
-    bool? TooltipsEnabled = null, bool? ChatBubblesEnabled = null, bool? EnemyHealthBarsEnabled = null);
+    bool? TooltipsEnabled = null, bool? ChatBubblesEnabled = null, bool? EnemyHealthBarsEnabled = null,
+    // Frame cap chosen in Settings (0 = uncapped). Null keeps the 60 FPS the game always ran at.
+    int? FrameLimit = null);
 
 public enum WindowMode
 {
@@ -130,7 +132,8 @@ public static class PlayerSettingsStore
             settings.MicGain ?? 1f, settings.DisconnectPreventionMs ?? 200f,
             settings.ShadersEnabled ?? true,
             settings.KeyBindings, settings.Language ?? "ru",
-            settings.TooltipsEnabled ?? true, settings.ChatBubblesEnabled ?? true, settings.EnemyHealthBarsEnabled ?? true);
+            settings.TooltipsEnabled ?? true, settings.ChatBubblesEnabled ?? true, settings.EnemyHealthBarsEnabled ?? true,
+            settings.FrameLimit ?? 60);
     }
 
     public static void SaveGraphicsSettings(GraphicsSettings graphics, string? path = null) =>
@@ -162,6 +165,7 @@ public static class PlayerSettingsStore
             TooltipsEnabled = graphics.TooltipsEnabled,
             ChatBubblesEnabled = graphics.ChatBubblesEnabled,
             EnemyHealthBarsEnabled = graphics.EnemyHealthBarsEnabled,
+            FrameLimit = graphics.FrameLimit,
         }, path);
 }
 
@@ -178,4 +182,5 @@ public readonly record struct GraphicsSettings(int? ResolutionWidth, int? Resolu
     float MicGain = 1f, float DisconnectPreventionMs = 200f,
     bool ShadersEnabled = true,
     string? KeyBindings = null, string Language = "ru",
-    bool TooltipsEnabled = true, bool ChatBubblesEnabled = true, bool EnemyHealthBarsEnabled = true);
+    bool TooltipsEnabled = true, bool ChatBubblesEnabled = true, bool EnemyHealthBarsEnabled = true,
+    int FrameLimit = 60);

@@ -148,7 +148,9 @@ internal static partial class TestRunner
         EnterAsteroidFieldAndManHelm(world);
 
         var field = world.AsteroidField;
-        var blocker = field.Asteroids.OrderBy(a => (a.Position - field.Center).Length()).First();
+        // Hand-placed cluster only ("asteroid-N"): generated belt/hot asteroids ("belt-..."/"hot-...")
+        // sit elsewhere, the hot ones right beside the star at the field's centre.
+        var blocker = field.Asteroids.Where(a => a.Id.StartsWith("asteroid-")).OrderBy(a => (a.Position - field.Center).Length()).First();
         var shipField = world.CreateSnapshot().ShipField;
         var shipPos = new Vec2(shipField.X, shipField.Y);
         // Straight past the rock's own centre, twice its own distance beyond it - a naive
@@ -284,7 +286,7 @@ internal static partial class TestRunner
         EnterAsteroidFieldAndManHelm(world);
 
         var field = world.AsteroidField;
-        var nearestAsteroid = field.Asteroids.OrderBy(a => (a.Position - field.Center).Length()).First();
+        var nearestAsteroid = field.Asteroids.Where(a => a.Id.StartsWith("asteroid-")).OrderBy(a => (a.Position - field.Center).Length()).First();
         var breached = false;
         for (var i = 0; i < 30 * 30 && !breached; i++)
         {

@@ -48,7 +48,9 @@ public sealed class StarSystem
         Name = name;
         // Stamped here rather than repeated on every GalaxyPoint literal - a point only ever
         // belongs to the system it was handed to.
-        Points = points.Select(p => p with { SystemId = id }).ToArray();
+        // Salvage points come after the hand-authored / generated ones: some callers rely on
+        // Points[0] being the system's main point of interest.
+        Points = points.Concat(SalvagePoints.For(id)).Select(p => p with { SystemId = id }).ToArray();
         Field = field;
         GalaxyX = galaxyX;
         GalaxyY = galaxyY;

@@ -130,21 +130,22 @@ public partial class Game1
             var anchor = new TileCoord(d.X, d.Y);
             var deviceId = $"device-{d.X}-{d.Y}";
             var (width, height) = DeviceFootprintSize(d.Kind, d.Rotated);
-            var footprint = DeviceFootprintTiles(anchor, width, height).ToList();
-            // Helm/Navigation's own half tile (PlaceDeviceFootprint, shared with fresh placement in
+            // Helm/Navigation's own half tile (BuildFootprintPlan, shared with fresh placement in
             // Game1.ShipEditor.cs's HandleDeviceToolInput) - a save from a wall-adjacent placement
             // replays its wall tile first (the Tiles loop above already ran), so the exact same
             // half-block-wall-coexistence check that allowed the original placement still passes here.
             // d.HalfSide falls back to d.Rotated's old East/South-only mapping for a save from before
-            // the 4-way HalfSide field existed (CustomDeviceFootprint.ResolveHalfSide).
-            var halfSide = CustomDeviceFootprint.ResolveHalfSide(d.HalfSide, d.Rotated);
-            PlaceDeviceFootprint(d.Kind, footprint, anchor, halfSide, deviceId);
-            foreach (var occupied in footprint)
+            // the 4-way HalfSide field existed (CustomDeviceFootprint.ResolveHalfSide) - irrelevant
+            // for a shaped kind (turrets), which ignores this parameter entirely.
+            var halfSide = PlanSideFor(d.Kind, d.HalfSide, d.Rotated);
+            var plan = BuildFootprintPlan(d.Kind, anchor, halfSide, width, height);
+            PlaceDeviceFootprint(plan, deviceId);
+            foreach (var (occupied, _) in plan)
                 RecordDeviceFootprintTile(occupied, anchor);
             _editorDeviceKinds[anchor] = d.Kind;
             if (d.Rotated)
                 _editorDeviceRotation[anchor] = true;
-            if (CustomDeviceFootprint.IsHalfWidthKind(d.Kind))
+            if (CustomDeviceFootprint.IsHalfWidthKind(d.Kind) || CustomDeviceFootprint.IsShapedFootprintKind(d.Kind))
                 _editorDeviceHalfSides[anchor] = halfSide;
         }
         // Grouped by (X,Y) rather than replayed one record at a time - a double engine save (above)

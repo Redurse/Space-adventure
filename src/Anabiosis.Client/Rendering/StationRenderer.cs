@@ -79,7 +79,7 @@ public sealed partial class StationRenderer
             if (npc.Kind == NpcKind.Security &&
                 !(snapshot.Station.Guards.FirstOrDefault(g => g.NpcId == npc.Id)?.Alive ?? true))
                 continue;
-            DrawNpc(spriteBatch, npc, origin, npc.Id == talkingToNpcId);
+            DrawNpc(spriteBatch, npc, origin, npc.Id == talkingToNpcId, NearestStationVisitor(snapshot, npc));
         }
 
         _shipRenderer.DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.Station.Rooms.Select(r => r.Id), origin, totalSeconds);
@@ -88,6 +88,9 @@ public sealed partial class StationRenderer
             _shipRenderer.DrawCharacter(spriteBatch, character, origin);
 
         // Shooting it out with station security uses the same travelling rounds as boarding does.
+        foreach (var beam in snapshot.LaserBeams?.Where(b => b.Scene == ShotScene.Station) ?? Enumerable.Empty<LaserBeamState>())
+            BoardingRenderer.DrawLaserBeam(spriteBatch, _pixel, beam, origin);
+
         foreach (var shot in snapshot.PersonalShots.Where(s => s.Scene == ShotScene.Station))
             BoardingRenderer.DrawShot(spriteBatch, _pixel, shot, origin);
 
@@ -128,14 +131,40 @@ public sealed partial class StationRenderer
         else
             spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(crate.Item), new Vector2(rect.Right + 3, rect.Y),
                 Color.Khaki, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        // What is inside, by name, so a crate on the deck is readable without walking up to it.
+        ItemIcons.DrawNameplate(spriteBatch, _pixel, _font, ItemIcons.WorldLabel(crate.Item),
+            new Vector2(rect.Center.X, rect.Bottom + 3), ItemIcons.CategoryColor(crate.Item));
     }
 
-    private void DrawNpc(SpriteBatch spriteBatch, StationNpc npc, Vector2 origin, bool talkingTo)
+    // Whichever of your crew is closest to a resident - who they turn to look at while standing still.
+    private static Vector2? NearestStationVisitor(WorldSnapshot snapshot, StationNpc npc)
+    {
+        Vector2? best = null;
+        var bestDistance = float.MaxValue;
+        foreach (var character in snapshot.Characters.Where(c => c.OnStation && c.Health > 0f))
+        {
+            var at = new Vector2((float)character.X, (float)character.Y);
+            var distance = Vector2.DistanceSquared(at, new Vector2(npc.X, npc.Y));
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = at;
+            }
+        }
+        return best;
+    }
+
+    private void DrawNpc(SpriteBatch spriteBatch, StationNpc npc, Vector2 origin, bool talkingTo, Vector2? lookToward)
     {
         var rect = GetNpcRect(npc, origin);
         var color = NpcColor(npc.Kind);
-        HudIcons.FillCircle(spriteBatch, _pixel, RectCenter(rect), rect.Width / 2f, color * 0.35f);
-        DrawNpcGlyph(spriteBatch, npc.Kind, rect, color);
+        var center = RectCenter(rect);
+        _shipRenderer.DrawStationResident(spriteBatch, npc, center, lookToward);
+        // The role icon that used to BE the marker now floats over the head, so a trader is still a trader
+        // at a glance.
+        var badge = new Rectangle((int)center.X - 9, (int)center.Y - 38, 18, 18);
+        HudIcons.FillCircle(spriteBatch, _pixel, RectCenter(badge), 11f, Color.Black * 0.45f);
+        DrawNpcGlyph(spriteBatch, npc.Kind, badge, color);
         if (talkingTo)
         {
             const int margin = 3;

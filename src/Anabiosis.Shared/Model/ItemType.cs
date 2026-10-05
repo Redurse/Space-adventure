@@ -74,4 +74,10 @@ public enum ItemType
     // Фабрикатор (Fabricator) device once a character stands near it with the right ores/plates
     // already in their own Inventory.
     SteelPlate, TitaniumPlate, CopperCable, Plastic, Plastalloy,
+    // Cosmoteer-style jump fuel: every hop to another star system burns some (World.StarSystems.cs).
+    // Appended last so saved games' numeric enum values stay valid.
+    Hyperium,
+    // The rifle's magazine: plugs into a Rifle like a tank into a cutter and is worn down by firing
+    // (MagazineDefinitions, World.PersonalShots.cs). Appended last so saved enum values stay valid.
+    Magazine,
 }

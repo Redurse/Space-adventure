@@ -1,378 +1,352 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Client.Rendering;
 
-/// <summary>A crew member, in the Space Station 13 idiom.</summary>
+/// <summary>A crew member seen from straight above, in the Cosmoteer idiom.</summary>
 ///
-/// Everything that made the previous sprite look the way it did is wrong for this style, so none of
-/// it survived:
+/// A small, smooth figure built from a handful of rounded shapes - boots, arms, shoulders, a round
+/// head - each with a thin dark outline and a soft highlight, all turned to face the way the
+/// character is heading. There is no front/side/back to draw: the camera looks down, so one figure
+/// rotated to the facing angle covers every direction. The walk is the limbs swinging against each
+/// other, driven by how far the character has actually moved.
 ///
-///   * a 32x32 logical grid, not 128. The art is small, and smallness is not a limitation here - it
-///     is the look. A figure with thirty rows has to say everything with shape;
-///   * flat fills, two or three tones per material, no gradients anywhere. Painterly shading is
-///     precisely what stops pixel art reading as pixel art;
-///   * hard pixels. Nothing is anti-aliased and the grid is enlarged by whole-number blocks, so a
-///     pixel stays a pixel instead of dissolving into a filter;
-///   * a dark outline, added by dilating the finished silhouette. That one ring is most of why the
-///     style reads crisply against any background;
-///   * a one-pixel gap between each limb and the body, left transparent so the outline pass fills
-///     it. Without those seams the whole figure reads as a single block - which is exactly how the
-///     first attempt at this came out.
-///
-/// Proportions are chunky on purpose: big head, short body, stubby legs. Real proportions at this
-/// size give a stick with a pinhead.
-///
-/// Still three drawings and four facings - front, back, and a side that mirrors.
+/// Everything is in world units relative to the figure's centre, facing +X and with +Y to the right
+/// of the facing direction, so the shapes can be tuned without touching a pixel. The whole figure is
+/// about 0.65 of a tile across - small on purpose, like a crew member in Cosmoteer.
+/// <summary>What a figure is wearing: ordinary crew clothes, a spacesuit, or the armour of a boarding
+/// raider / station guard (helmet, plates, coloured visor).</summary>
+public enum Outfit { Crew, Suit, Raider, Guard }
+
 public sealed class CrewSkin : IDisposable
 {
-    public enum View { Front, Side, Back }
+    private const int DiscSize = 48;
+    private static readonly Color OutlineTint = new(22, 22, 30);
+    private static readonly Color Boot = new(50, 52, 60);
+    private static readonly Color SuitShell = new(204, 208, 218);
+    private static readonly Color SuitPack = new(150, 156, 170);
+    private static readonly Color Visor = new(34, 84, 118);
+    private static readonly Color VisorGlint = new(170, 220, 240);
 
-    // 48 rather than 32.
-    //
-    // The chunkiness was never really a choice of style - it was the grid. Thirty rows will not hold
-    // a person: a head big enough to carry a face eats a third of the height and what is left is a
-    // torso and two stubs. Forty rows is a little over five heads, which is stylised but built like
-    // an adult rather than like a doll.
-    private const int G = 48;
-    // Dropped from 3 with the figure's own size, so the texture is not three times larger than it
-    // is ever drawn - a 120px bake shown at 60 throws two thirds of itself away in the filter.
-    private const int Block = 2;   // texels per art pixel
-    private const int TopRow = 4;
-    private const int FootRow = 44;
-    private const int Mid = 24;
-
-    // The row plan the whole figure hangs off.
-    private const int YHead = 4, YChin = 11;
-    private const int YSh = 13, YWaist = 21, YHip = 25, YAnkle = 41;
-
-    public const float FigureHeight = (FootRow - TopRow) * Block;
-
-    /// <summary>Feet, centre. A standing sprite hangs off this.</summary>
-    public static readonly Vector2 Origin = new(Mid * Block, FootRow * Block);
-
-    private readonly GraphicsDevice _graphics;
-    private readonly Dictionary<(uint Body, uint Accent, bool Suited, View View), Texture2D> _cache = new();
-
-    public CrewSkin(GraphicsDevice graphics) => _graphics = graphics;
-
-    public void Dispose()
+    // Skin and hair vary per person (picked from the player id) so a crew of four is four people.
+    private static readonly Color[] SkinTones =
     {
-        foreach (var texture in _cache.Values)
-            texture.Dispose();
-        _cache.Clear();
-    }
-
-    /// <summary>Draws a crewman standing at `feet`, turned to face `facing`.</summary>
-    public void Draw(SpriteBatch spriteBatch, Vector2 feet, float height, Color body, Color accent, bool suited,
-        Vector2 facing)
+        new(240, 200, 160), new(224, 172, 128), new(198, 140, 100), new(150, 100, 70), new(110, 72, 50),
+    };
+    private static readonly Color[] HairColors =
     {
-        // Sideways wins unless the character is clearly facing up or down the screen: a person
-        // walking at any angle reads best in profile, and snapping to front or back too eagerly
-        // makes them look like they are pivoting on the spot.
-        var view = MathF.Abs(facing.X) >= MathF.Abs(facing.Y) * 0.75f ? View.Side
-            : facing.Y >= 0f ? View.Front
-            : View.Back;
-        var flip = view == View.Side && facing.X < 0f ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
-
-        spriteBatch.Draw(Get(body, accent, suited, view), feet, null, Color.White, 0f, Origin,
-            height / FigureHeight, flip, 0f);
-    }
-
-    private Texture2D Get(Color body, Color accent, bool suited, View view)
-    {
-        var key = (body.PackedValue, accent.PackedValue, suited, view);
-        if (_cache.TryGetValue(key, out var cached))
-            return cached;
-        var baked = Bake(body, accent, suited, view);
-        _cache[key] = baked;
-        return baked;
-    }
-
-    // ---------------------------------------------------------------- palette
-
-    private const char Empty = ' ';
-
-    private static Color Darken(Color c, float t) =>
-        new((int)(c.R * (1f - t)), (int)(c.G * (1f - t)), (int)(c.B * (1f - t)));
-
-    private static Color Lighten(Color c, float t) => new(
-        (int)(c.R + (255 - c.R) * t), (int)(c.G + (255 - c.G) * t), (int)(c.B + (255 - c.B) * t));
-
-    private static Dictionary<char, Color> Palette(Color body, Color accent) => new()
-    {
-        ['o'] = new Color(26, 24, 30),
-        ['h'] = new Color(38, 34, 40), ['H'] = new Color(58, 54, 62),          // hair, highlight
-        ['s'] = new Color(238, 196, 152), ['S'] = new Color(198, 156, 118),    // skin, shadow
-        ['b'] = body, ['B'] = Darken(body, 0.26f), ['L'] = Lighten(body, 0.20f),
-        ['v'] = Darken(body, 0.42f), ['V'] = Darken(body, 0.55f),              // vest
-        ['t'] = Darken(body, 0.50f), ['T'] = Darken(body, 0.64f),              // trousers
-        ['f'] = new Color(206, 208, 214), ['F'] = new Color(150, 154, 162),    // boots
-        ['a'] = accent,
-        ['g'] = new Color(196, 200, 210), ['G'] = new Color(150, 156, 168),    // suit shell
-        ['w'] = new Color(46, 96, 126), ['W'] = new Color(150, 206, 232),      // visor, glint
-        ['p'] = new Color(28, 32, 38),                                         // panels
-        ['c'] = new Color(96, 232, 168),                                       // a lit indicator
+        new(40, 32, 30), new(78, 52, 34), new(122, 84, 44), new(190, 150, 80), new(150, 56, 40), new(210, 210, 214),
     };
 
-    // ---------------------------------------------------------------- the grid
+    private readonly Texture2D _disc;
 
-    private sealed class Grid
+    public CrewSkin(GraphicsDevice graphics) => _disc = BakeDisc(graphics);
+
+    public void Dispose() => _disc.Dispose();
+
+    /// <summary>The uniform colour for a role. Someone who has not picked one wears the default orange
+    /// (a hired hand without a role, the old blue).</summary>
+    public static Color UniformFor(CrewRole? role, bool isBot) => role switch
     {
-        public readonly char[,] Cells = new char[G, G];
+        CrewRole.Captain => new Color(48, 92, 168),
+        CrewRole.Engineer => new Color(220, 132, 34),
+        CrewRole.Mechanic => new Color(150, 100, 56),
+        CrewRole.Security => new Color(162, 50, 54),
+        CrewRole.Scientist => new Color(44, 152, 152),
+        _ => isBot ? new Color(70, 110, 150) : new Color(196, 78, 44),
+    };
 
-        public Grid()
-        {
-            for (var y = 0; y < G; y++)
-            for (var x = 0; x < G; x++)
-                Cells[y, x] = Empty;
-        }
+    public static Color AccentFor(bool isBot) => isBot ? new Color(150, 200, 235) : new Color(226, 186, 70);
 
-        public void Rect(int x0, int y0, int x1, int y1, char k)
-        {
-            for (var y = Math.Max(0, y0); y <= Math.Min(G - 1, y1); y++)
-            for (var x = Math.Max(0, x0); x <= Math.Min(G - 1, x1); x++)
-                Cells[y, x] = k;
-        }
+    // ------------------------------------------------------------------ walk state
 
-        /// <summary>Takes cells back out again. Corners come off this way rather than being
-        /// avoided while painting: it is far easier to build a shape square and then chamfer it than
-        /// to express every rounded edge as a run of rectangles.</summary>
-        public void Cut(params (int X, int Y)[] cells)
-        {
-            foreach (var (x, y) in cells)
-                if (x >= 0 && x < G && y >= 0 && y < G)
-                    Cells[y, x] = Empty;
-        }
-
-        public void Px(int x, int y, char k)
-        {
-            if (x >= 0 && x < G && y >= 0 && y < G)
-                Cells[y, x] = k;
-        }
-
-        /// <summary>Dilates the finished silhouette by one and paints the ring dark. Run last, so it
-        /// wraps whatever the figure turned out to be rather than being drawn round each part by
-        /// hand - and so it fills the deliberate gaps between the limbs and the body.</summary>
-        public void Outline()
-        {
-            var ring = new List<(int X, int Y)>();
-            for (var y = 0; y < G; y++)
-            for (var x = 0; x < G; x++)
-            {
-                if (Cells[y, x] != Empty)
-                    continue;
-                foreach (var (dx, dy) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
-                {
-                    int nx = x + dx, ny = y + dy;
-                    if (nx < 0 || ny < 0 || nx >= G || ny >= G)
-                        continue;
-                    if (Cells[ny, nx] is not Empty and not 'o')
-                    {
-                        ring.Add((x, y));
-                        break;
-                    }
-                }
-            }
-            foreach (var (x, y) in ring)
-                Cells[y, x] = 'o';
-        }
+    private sealed class Walk
+    {
+        public Vector2 Last;
+        public bool HasLast;
+        public long LastTick;
+        public float Speed;   // units per second, smoothed
+        public float Phase;   // radians, advances while moving
+        public Vector2 MoveDir; // last direction it actually travelled, unit length
+        public float Facing;    // current heading in radians, turned toward its target a little each frame
+        public bool HasFacing;
     }
 
-    // ---------------------------------------------------------------- the figure
+    private readonly Dictionary<int, Walk> _walks = new();
 
-    private Texture2D Bake(Color body, Color accent, bool suited, View view)
+    // Draw can be called more than once a frame for the same person (a second pass, a reflection);
+    // advancing the animation only when real time has passed keeps it from running at double speed.
+    private Walk Advance(int actorId, Vector2 worldPosition)
     {
-        var g = new Grid();
-        var side = view == View.Side;
-        var back = view == View.Back;
+        if (!_walks.TryGetValue(actorId, out var walk))
+            _walks[actorId] = walk = new Walk();
 
-        // Legs first, then boots. Sixteen rows against the torso's thirteen - roughly what an adult
-        // actually is, and the one thing the small grid could not afford.
-        if (side)
+        var now = Stopwatch.GetTimestamp();
+        var dt = (now - walk.LastTick) / (float)Stopwatch.Frequency;
+        if (walk.HasLast && dt < 0.004f)
+            return walk;
+
+        if (walk.HasLast)
         {
-            g.Rect(20, YHip, 27, YAnkle, 'T');
-            g.Rect(21, YHip, 26, YAnkle, 't');
-            g.Rect(19, YAnkle + 1, 29, FootRow, 'F');
-            g.Rect(20, YAnkle + 1, 28, FootRow - 1, 'f');
+            dt = Math.Min(dt, 0.1f);
+            var moved = Vector2.Distance(walk.Last, worldPosition);
+            // A jump of several units is a teleport (docking, respawn), not a very fast walk.
+            var speed = moved > 3f ? 0f : moved / dt;
+            if (moved is > 0.004f and <= 3f)
+                walk.MoveDir = (worldPosition - walk.Last) / moved;
+            walk.Speed += (speed - walk.Speed) * 0.2f;
+            if (walk.Speed > 0.15f)
+                walk.Phase += dt * (6f + 2f * walk.Speed);
         }
-        else
+        walk.Last = worldPosition;
+        walk.HasLast = true;
+        walk.LastTick = now;
+        return walk;
+    }
+
+    // ------------------------------------------------------------------ drawing
+
+    /// <summary>Draws a crewman centred on `center` (screen pixels), turned to face `facing`.</summary>
+    /// <param name="armsForward">Holding something: both arms reach out in front instead of swinging.</param>
+    public void Draw(SpriteBatch spriteBatch, Vector2 center, float pixelsPerUnit, int actorId, Vector2 worldPosition,
+        Color uniform, Color accent, bool suited, Vector2 facing, bool armsForward)
+    {
+        var walk = Advance(actorId, worldPosition);
+        var amp0 = MathHelper.Clamp(walk.Speed / 1.5f, 0f, 1f);
+        DrawPosed(spriteBatch, center, pixelsPerUnit, actorId, uniform, accent, suited ? Outfit.Suit : Outfit.Crew, facing, armsForward, MathF.Sin(walk.Phase) * amp0);
+    }
+
+    /// <summary>For people the snapshot gives no facing for (enemy crew, station residents): they turn the way
+    /// they are walking, and when standing still look toward `lookToward` (usually the nearest player).</summary>
+    public void DrawAuto(SpriteBatch spriteBatch, Vector2 center, float pixelsPerUnit, int actorId, Vector2 worldPosition,
+        Color uniform, Color accent, Outfit outfit, bool armsForward, Vector2? lookToward = null)
+    {
+        var walk = Advance(actorId, worldPosition);
+        var amp = MathHelper.Clamp(walk.Speed / 1.5f, 0f, 1f);
+
+        float? target = null;
+        if (walk.Speed > 0.4f && walk.MoveDir != Vector2.Zero)
+            target = MathF.Atan2(walk.MoveDir.Y, walk.MoveDir.X);
+        else if (lookToward is { } look && (look - worldPosition).LengthSquared() > 0.04f)
+            target = MathF.Atan2(look.Y - worldPosition.Y, look.X - worldPosition.X);
+
+        if (!walk.HasFacing)
         {
-            g.Rect(19, YHip, 23, YAnkle, 't');
-            g.Rect(25, YHip, 29, YAnkle, 'T');
-            g.Rect(18, YAnkle + 1, 23, FootRow, 'f');
-            g.Rect(25, YAnkle + 1, 30, FootRow, 'F');
+            walk.Facing = target ?? MathF.PI / 2f; // idle with nobody to watch: look down the screen
+            walk.HasFacing = true;
+        }
+        else if (target is { } wanted)
+        {
+            // Turn the short way round, at most ~0.25 rad a frame, so a change of heading is a turn, not a snap.
+            var delta = MathF.IEEERemainder(wanted - walk.Facing, MathF.PI * 2f);
+            walk.Facing += Math.Clamp(delta, -0.25f, 0.25f);
         }
 
-        // Arms, one pixel clear of the chest so the outline pass lays a seam between them.
-        if (side)
-        {
-            g.Rect(21, YSh + 1, 26, YHip - 1, 'B');
-            g.Rect(21, YHip, 26, YHip + 2, 'S');
-        }
-        else
-        {
-            g.Rect(12, YSh, 15, YHip - 1, 'b');
-            g.Rect(33, YSh, 36, YHip - 1, 'B');
-            g.Rect(12, YHip, 15, YHip + 2, 's');
-            g.Rect(33, YHip, 36, YHip + 2, 'S');
-        }
+        DrawPosed(spriteBatch, center, pixelsPerUnit, actorId, uniform, accent, outfit,
+            new Vector2(MathF.Cos(walk.Facing), MathF.Sin(walk.Facing)), armsForward, MathF.Sin(walk.Phase) * amp);
+    }
 
-        // Trunk: shoulders sloped in at the top, waist drawn in, hips back out.
-        var trunk = new (int X0, int X1)[13];
-        for (var i = 0; i < trunk.Length; i++)
-            trunk[i] = i == 0 ? (side ? (19, 29) : (18, 30))
-                : i <= 5 ? (side ? (18, 30) : (17, 31))
-                : i <= 9 ? (side ? (19, 29) : (19, 29))
-                : (side ? (18, 30) : (18, 30));
-        for (var i = 0; i < trunk.Length; i++)
-        {
-            var y = YSh + i;
-            if (y > YHip)
-                break;
-            var (x0, x1) = trunk[i];
-            g.Rect(x0, y, x1, y, 'b');
-            g.Rect(x1 - (side ? 1 : 2), y, x1, y, 'B');
-            if (!side)
-                g.Rect(x0, y, x0 + 1, y, 'L');
-        }
+    // The figure in an explicit walk pose: swing in [-1, 1] is how far the stride is through (0 standing,
+    // +/-1 at the extremes). Draw derives it from movement; the contact sheet calls this directly.
+    internal void DrawPosed(SpriteBatch spriteBatch, Vector2 center, float pixelsPerUnit, int actorId,
+        Color uniform, Color accent, Outfit outfit, Vector2 facing, bool armsForward, float swing)
+    {
+        if (facing.LengthSquared() < 1e-6f)
+            facing = new Vector2(1f, 0f);
+        var angle = MathF.Atan2(facing.Y, facing.X);
+        var suited = outfit == Outfit.Suit;
+        var armored = outfit is Outfit.Raider or Outfit.Guard;
+        var twist = swing * 0.07f;
+
+        var skin = SkinTones[(uint)(actorId * 2654435761u) % SkinTones.Length];
+        var hair = HairColors[(uint)(actorId * 40503u + 7u) % HairColors.Length];
+        var ctx = new Ctx(this, spriteBatch, center, pixelsPerUnit, angle);
+
+        // Ground shadow, so the figure sits on the floor instead of floating over it.
+        ctx.Shape(new Vector2(0.01f, 0.02f), 0.21f, 0.31f, 0f, Color.Black * 0.16f, outline: false, highlight: false);
+
+        // Boots, swinging fore and aft opposite each other. They start a little ahead of the body so
+        // the toes always show past the torso.
+        ctx.Shape(new Vector2(0.06f + swing * 0.15f, -0.09f), 0.125f, 0.075f, 0f, Boot);
+        ctx.Shape(new Vector2(0.06f - swing * 0.15f, 0.09f), 0.125f, 0.075f, 0f, Boot);
 
         if (suited)
         {
-            if (!back)
-            {
-                g.Rect(21, YSh + 3, 27, YSh + 8, 'p');
-                g.Px(23, YSh + 5, 'c');
-                if (!side)
-                    g.Px(26, YSh + 5, 'a');
-            }
-            if (back || side)
-            {
-                if (side)
-                {
-                    g.Rect(16, YSh + 1, 19, YHip - 2, 'V');
-                    g.Rect(16, YSh + 2, 16, YHip - 3, 'G');
-                }
-                else
-                {
-                    g.Rect(19, YSh + 1, 29, YHip - 2, 'V');
-                    g.Rect(21, YSh + 2, 22, YHip - 3, 'G');
-                    g.Rect(26, YSh + 2, 27, YHip - 3, 'G');
-                }
-            }
+            ctx.Shape(new Vector2(-0.205f, 0f), 0.10f, 0.17f, 0f, SuitPack);
+            ctx.Shape(new Vector2(-0.235f, -0.07f), 0.022f, 0.022f, 0f, new Color(96, 232, 168), outline: false, highlight: false);
+            ctx.Shape(new Vector2(-0.235f, 0.07f), 0.022f, 0.022f, 0f, accent, outline: false, highlight: false);
+        }
+
+        // Torso first, arms over its sides: the arms are a shade darker than the body so they read as
+        // separate limbs instead of merging into it.
+        var sleeve = suited ? SuitShell : uniform;
+        ctx.Shape(Vector2.Zero, 0.15f, 0.235f, twist, sleeve);
+        if (!suited)
+        {
+            // A darker vest panel down the back and the shoulder patches in the accent colour.
+            ctx.Shape(new Vector2(-0.04f, 0f), 0.065f, 0.15f, twist, Darken(uniform, 0.3f), outline: false, highlight: false);
+            if (armored) // a breastplate over the front and bigger shoulder pads below
+                ctx.Shape(new Vector2(0.05f, 0f), 0.07f, 0.16f, twist, Lighten(uniform, 0.22f), highlight: false);
         }
         else
         {
-            if (side)
+            ctx.Shape(new Vector2(0.06f, 0f), 0.055f, 0.12f, twist, Darken(SuitShell, 0.12f), outline: false, highlight: false);
+        }
+
+        var armColor = Darken(sleeve, suited ? 0.08f : 0.16f);
+        var hand = suited ? SuitPack : armored ? Boot : skin;
+        for (var side = -1; side <= 1; side += 2)
+        {
+            // Left arm (side -1) swings forward when the right boot does.
+            Vector2 armCentre, handAt;
+            float armRotation;
+            if (armsForward)
             {
-                g.Rect(20, YSh + 1, 28, YHip - 1, 'v');
-                g.Rect(27, YSh + 1, 28, YHip - 1, 'V');
+                armCentre = new Vector2(0.12f, side * 0.2f);
+                armRotation = -side * 0.55f;
+                handAt = new Vector2(0.245f, side * 0.115f);
             }
             else
             {
-                g.Rect(18, YSh + 1, 30, YHip - 1, 'v');
-                g.Rect(28, YSh + 1, 30, YHip - 1, 'V');
-                if (!back)
-                {
-                    g.Rect(23, YSh + 1, 25, YWaist - 2, 'b');
-                    g.Px(24, YWaist, 'a');
-                }
+                var reach = -side * swing * 0.09f;
+                var shoulder = Rotate(new Vector2(0f, side * 0.265f), twist);
+                armCentre = shoulder + new Vector2(reach * 0.5f + 0.02f, 0f);
+                armRotation = 0f;
+                handAt = shoulder + new Vector2(reach + 0.1f, -side * 0.012f);
             }
-            g.Rect(side ? 19 : 18, YHip - 1, side ? 28 : 30, YHip, 'T');
+            ctx.Shape(armCentre, 0.13f, 0.058f, armRotation, armColor);
+            ctx.Shape(handAt, 0.05f, 0.05f, 0f, hand);
         }
 
-        if (!side)
-        {
-            g.Px(13, YSh + 1, 'a');
-            if (!back)
-                g.Px(35, YSh + 1, 'a');
-            g.Cut((12, YSh), (36, YSh), (12, YHip + 2), (36, YHip + 2), (18, FootRow), (30, FootRow));
-        }
-        else
-        {
-            g.Cut((21, YSh + 1), (26, YSh + 1), (21, YHip + 2), (26, YHip + 2), (19, FootRow), (29, FootRow));
-        }
+        // Shoulder patches sit on top of the arms where they meet the torso.
+        for (var side = -1; side <= 1; side += 2)
+            ctx.Shape(Rotate(new Vector2(0.005f, side * 0.2f), twist), suited ? 0.045f : armored ? 0.075f : 0.055f, suited ? 0.035f : armored ? 0.062f : 0.045f, twist,
+                suited ? uniform : accent, outline: false);
 
-        Head(g, view, suited);
-        g.Outline();
-
-        // Blown up in whole blocks. Filtering a small sprite up to size is what turns pixel art into
-        // a smear; enlarging it here means the texture already carries hard edges.
-        var palette = Palette(body, accent);
-        var size = G * Block;
-        var data = new Color[size * size];
-        for (var y = 0; y < G; y++)
-        for (var x = 0; x < G; x++)
-        {
-            var k = g.Cells[y, x];
-            if (k == Empty)
-                continue;
-            var c = palette[k];
-            for (var by = 0; by < Block; by++)
-            for (var bx = 0; bx < Block; bx++)
-                data[(y * Block + by) * size + x * Block + bx] = c;
-        }
-
-        var texture = new Texture2D(_graphics, size, size);
-        texture.SetData(data);
-        return texture;
-    }
-
-    private static void Head(Grid g, View view, bool suited)
-    {
-        var side = view == View.Side;
-        var back = view == View.Back;
-
+        // Head.
         if (suited)
         {
-            g.Rect(19, YHead, 29, YChin + 1, 'g');
-            g.Cut((19, YHead), (29, YHead), (19, YChin + 1), (29, YChin + 1));
-            if (back)
-            {
-                g.Rect(21, YHead + 2, 27, YChin - 1, 'G');
-                return;
-            }
-            if (side)
-            {
-                g.Rect(19, YHead, 22, YHead + 1, 'G');
-                g.Rect(24, YHead + 2, 28, YHead + 6, 'w');
-                g.Rect(25, YHead + 3, 26, YHead + 3, 'W');
-                return;
-            }
-            g.Rect(20, YHead + 2, 28, YHead + 6, 'w');
-            g.Rect(21, YHead + 3, 22, YHead + 3, 'W');
-            return;
+            ctx.Shape(new Vector2(0.03f, 0f), 0.19f, 0.19f, 0f, SuitShell);
+            ctx.Shape(new Vector2(0.115f, 0f), 0.082f, 0.125f, 0f, Visor, highlight: false);
+            ctx.Shape(new Vector2(0.135f, -0.055f), 0.03f, 0.022f, -0.5f, VisorGlint, outline: false, highlight: false);
+            ctx.Shape(new Vector2(-0.075f, 0f), 0.06f, 0.1f, 0f, Darken(SuitShell, 0.18f), outline: false, highlight: false);
         }
-
-        if (back)
+        else if (armored)
         {
-            g.Rect(19, YHead, 29, YChin, 'h');
-            g.Rect(21, YHead + 1, 27, YChin - 1, 'H');
-        }
-        else if (side)
-        {
-            g.Rect(19, YHead, 29, YHead + 2, 'h');
-            g.Rect(19, YHead + 3, 22, YChin, 'h');       // hair down the back of the skull
-            g.Rect(23, YHead + 3, 28, YChin, 's');
-            g.Rect(29, YHead + 5, 29, YHead + 6, 's');   // the nose
-            g.Rect(23, YChin - 1, 27, YChin, 'S');
-            g.Px(26, YHead + 5, 'o');
+            // A closed combat helmet: dark shell, a glowing visor slit across the front (red for raiders,
+            // blue for station guards) and a crest ridge so it is not just a ball.
+            var visor = outfit == Outfit.Raider ? new Color(255, 70, 50) : new Color(90, 180, 240);
+            ctx.Shape(new Vector2(0.03f, 0f), 0.175f, 0.175f, 0f, Darken(uniform, 0.45f));
+            ctx.Shape(new Vector2(-0.02f, 0f), 0.11f, 0.03f, 0f, Lighten(uniform, 0.1f), outline: false, highlight: false);
+            ctx.Shape(new Vector2(0.11f, 0f), 0.05f, 0.125f, 0f, visor, highlight: false);
+            ctx.Shape(new Vector2(0.12f, -0.05f), 0.02f, 0.015f, -0.5f, Lighten(visor, 0.55f), outline: false, highlight: false);
         }
         else
         {
-            g.Rect(19, YHead, 29, YHead + 2, 'h');
-            g.Rect(19, YHead + 3, 19, YHead + 5, 'h');
-            g.Rect(29, YHead + 3, 29, YHead + 5, 'h');
-            g.Rect(20, YHead + 3, 28, YChin, 's');
-            g.Rect(27, YHead + 6, 28, YChin, 'S');
-            g.Px(22, YHead + 5, 'o');
-            g.Px(26, YHead + 5, 'o');
-            g.Rect(23, YHead + 7, 25, YHead + 7, 'S');
+            ctx.Shape(new Vector2(0.03f, 0.152f), 0.036f, 0.036f, 0f, Darken(skin, 0.1f), outline: false, highlight: false);   // ears
+            ctx.Shape(new Vector2(0.03f, -0.152f), 0.036f, 0.036f, 0f, Darken(skin, 0.1f), outline: false, highlight: false);
+            ctx.Shape(new Vector2(0.04f, 0f), 0.158f, 0.158f, 0f, skin);                                                       // face
+            ctx.Shape(new Vector2(-0.005f, 0f), 0.152f, 0.158f, 0f, hair, outline: false);                                    // hair, covering the back of the head
         }
-        // A square head is the single loudest thing telling the eye a sprite was made of rectangles.
-        g.Cut((19, YHead), (29, YHead), (19, YChin), (29, YChin));
-        g.Rect(22, YChin + 1, 26, YSh - 1, 'S');        // neck
+    }
+
+    private static Color Darken(Color c, float t) =>
+        new((int)(c.R * (1f - t)), (int)(c.G * (1f - t)), (int)(c.B * (1f - t)), c.A);
+
+    private static Color Lighten(Color c, float t) => new(
+        (int)(c.R + (255 - c.R) * t), (int)(c.G + (255 - c.G) * t), (int)(c.B + (255 - c.B) * t), c.A);
+
+    private static Vector2 Rotate(Vector2 v, float radians)
+    {
+        var cos = MathF.Cos(radians);
+        var sin = MathF.Sin(radians);
+        return new Vector2(v.X * cos - v.Y * sin, v.X * sin + v.Y * cos);
+    }
+
+    // Everything for one figure drawn through the same few numbers: where it stands, how big a unit
+    // is, and which way it faces. Local coordinates in, rotated screen sprites out.
+    private readonly struct Ctx
+    {
+        private readonly CrewSkin _skin;
+        private readonly SpriteBatch _batch;
+        private readonly Vector2 _center;
+        private readonly float _ppu;
+        private readonly float _angle;
+        private readonly float _cos, _sin;
+
+        public Ctx(CrewSkin skin, SpriteBatch batch, Vector2 center, float ppu, float angle)
+        {
+            _skin = skin;
+            _batch = batch;
+            _center = center;
+            _ppu = ppu;
+            _angle = angle;
+            _cos = MathF.Cos(angle);
+            _sin = MathF.Sin(angle);
+        }
+
+        private Vector2 ToScreen(Vector2 local) =>
+            _center + new Vector2(local.X * _cos - local.Y * _sin, local.X * _sin + local.Y * _cos) * _ppu;
+
+        /// <summary>One rounded part: a dark rim, the fill, and a soft lit patch toward the top-left of
+        /// the screen (the light never rotates with the figure, which is what makes it read as a solid).</summary>
+        public void Shape(Vector2 local, float radiusX, float radiusY, float rotation, Color fill,
+            bool outline = true, bool highlight = true)
+        {
+            var at = ToScreen(local);
+            var spin = _angle + rotation;
+            var px = radiusX * 2f * _ppu / DiscSize;
+            var py = radiusY * 2f * _ppu / DiscSize;
+            var origin = new Vector2(DiscSize / 2f);
+
+            if (outline)
+            {
+                const float rim = 1.5f; // pixels
+                var rx = px + rim * 2f / DiscSize;
+                var ry = py + rim * 2f / DiscSize;
+                _batch.Draw(_skin._disc, at, null, OutlineTint, spin, origin, new Vector2(rx, ry), SpriteEffects.None, 0f);
+            }
+
+            _batch.Draw(_skin._disc, at, null, fill, spin, origin, new Vector2(px, py), SpriteEffects.None, 0f);
+
+            if (highlight)
+            {
+                var lift = MathF.Min(radiusX, radiusY) * 0.28f * _ppu;
+                _batch.Draw(_skin._disc, at + new Vector2(-lift, -lift), null,
+                    Lighten(fill, 0.35f) * 0.55f, spin, origin, new Vector2(px * 0.55f, py * 0.55f), SpriteEffects.None, 0f);
+            }
+        }
+    }
+
+    // A filled disc with a one-pixel soft edge, supersampled so it stays smooth when it is scaled
+    // and turned. Premultiplied alpha, matching the default blend state.
+    private static Texture2D BakeDisc(GraphicsDevice graphics)
+    {
+        var data = new Color[DiscSize * DiscSize];
+        const int samples = 4;
+        var radius = DiscSize / 2f - 0.5f;
+        for (var y = 0; y < DiscSize; y++)
+        for (var x = 0; x < DiscSize; x++)
+        {
+            var covered = 0;
+            for (var sy = 0; sy < samples; sy++)
+            for (var sx = 0; sx < samples; sx++)
+            {
+                var dx = x + (sx + 0.5f) / samples - DiscSize / 2f;
+                var dy = y + (sy + 0.5f) / samples - DiscSize / 2f;
+                if (dx * dx + dy * dy <= radius * radius)
+                    covered++;
+            }
+            var a = covered / (float)(samples * samples);
+            var v = (byte)Math.Round(a * 255f);
+            data[y * DiscSize + x] = new Color(v, v, v, v);
+        }
+        var texture = new Texture2D(graphics, DiscSize, DiscSize);
+        texture.SetData(data);
+        return texture;
     }
 }

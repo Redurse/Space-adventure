@@ -120,7 +120,9 @@ public static class CompartmentPlacer
                 // HalfSide (direct user request, "сделал отсек таким каким я его сохранил") - rotates
                 // the same way a wall-open-side's own Side does just below; null (no authored half
                 // side, falls back to CustomDeviceFootprint.ResolveHalfSide at Stamp time) stays null.
-                var newHalfSide = devices[i].HalfSide is { } half ? RotateSideClockwise(half) : (TileSide?)null;
+                var newHalfSide = CustomDeviceFootprint.IsShapedFootprintKind(devices[i].Kind)
+                    ? RotateSideClockwise(CustomDeviceFootprint.ShapedFacing(devices[i].Rotated, devices[i].HalfSide))
+                    : devices[i].HalfSide is { } half ? RotateSideClockwise(half) : (TileSide?)null;
                 devices[i] = (newPosition, devices[i].Kind, devices[i].IsCore, devices[i].MountSide, !devices[i].Rotated, newHalfSide);
             }
 
@@ -374,7 +376,25 @@ public static class CompartmentPlacer
             // for an entry that never authored a HalfSide, same convention every other optional field
             // here uses.
             TileSide? resolvedHalfSide = null;
-            if (CustomDeviceFootprint.IsHalfWidthKind(kind))
+            var shapedFacing = CustomDeviceFootprint.ShapedFacing(deviceRotated, halfSide);
+            if (CustomDeviceFootprint.ShapedFootprint(kind, shapedFacing) is { } tiles)
+            {
+                // Direct user request (turret kinds' own new (4, 3) shaped footprint) - mirrors
+                // Game1.ShipEditor.cs's own BuildFootprintPlan exactly: `deviceRotated` here already
+                // means "width/height came out swapped from Size(kind)'s own unrotated order," the
+                // same fact that method detects by comparing widths, so it's just handed straight
+                // through instead of re-derived.
+                resolvedHalfSide = shapedFacing; // carried on PlacedDevice so the editor records which way it faces
+                foreach (var t in tiles)
+                {
+                    var tile = new TileCoord(deviceAnchor.X + t.Offset.X, deviceAnchor.Y + t.Offset.Y);
+                    if (t.HalfSide is { } side)
+                        grid.PlaceHalfWidthDevice(tile, side, deviceId);
+                    else
+                        grid.PlaceDevice(tile, deviceId);
+                }
+            }
+            else if (CustomDeviceFootprint.IsHalfWidthKind(kind))
             {
                 resolvedHalfSide = halfSide ?? CustomDeviceFootprint.ResolveHalfSide(null, deviceRotated);
                 var openSide = CustomDeviceFootprint.HalfOpenSideForHalfWidthDevice(resolvedHalfSide.Value);

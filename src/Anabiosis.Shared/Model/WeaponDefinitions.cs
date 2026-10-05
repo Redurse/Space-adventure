@@ -8,6 +8,13 @@ public static class WeaponDefinitions
 {
     public static bool IsWeapon(ItemType type) => DamagePerHit(type) > 0f;
 
+    // The rifle fires bursts: a stream of BurstRounds bullets, BurstIntervalSeconds apart, for one pull of the trigger.
+    public const int BurstRounds = 6;
+    public const float BurstIntervalSeconds = 0.06f;
+    public static bool IsAutomatic(ItemType type) => type == ItemType.Rifle;
+    // The laser rifle fires an instant beam rather than a bolt, and needs no magazine.
+    public static bool IsBeam(ItemType type) => type == ItemType.LaserRifle;
+
     public static float DamagePerHit(ItemType type) => type switch
     {
         ItemType.Knife => 18f,
@@ -27,7 +34,7 @@ public static class WeaponDefinitions
     public static float CooldownSeconds(ItemType type) => type switch
     {
         ItemType.Knife => 0.8f,
-        ItemType.Rifle => 0.5f,
+        ItemType.Rifle => BurstRounds * BurstIntervalSeconds + 0.25f, // one burst, then a short breath before the next
         ItemType.LaserRifle => 0.9f, // slowest but hardest hitting
         _ => 0f,
     };

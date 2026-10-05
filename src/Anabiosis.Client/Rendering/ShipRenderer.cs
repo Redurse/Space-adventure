@@ -20,7 +20,9 @@ public sealed partial class ShipRenderer
     // overlaps it by about fourteen pixels instead of clearing it. Purely a drawing matter - where
     // anyone can walk is unchanged - but if the overlap reads badly the fix is the collision
     // radius, not this number.
-    internal const float CharacterDiameter = 2.0f; // world units - the footprint labels sit against
+    // World units - how wide the drawn figure is, and what the nameplate and held tool sit against. Matches
+    // the collision footprint (RoomLayout.CharacterRadius * 2): a small, Cosmoteer-sized crew member.
+    internal const float CharacterDiameter = 0.7f;
 
     // How tall the drawn figure is, separate from the footprint above because the sprite is a person
     // standing up rather than a disc seen from overhead.
@@ -400,11 +402,14 @@ public sealed partial class ShipRenderer
         foreach (var turret in snapshot.Turrets)
         {
             var state = snapshot.TurretStates.FirstOrDefault(s => s.Id == turret.Id);
-            DrawTurret(spriteBatch, turret, state, snapshot.Rooms, snapshot.Turrets, origin, totalSeconds);
+            DrawTurret(spriteBatch, turret, state, origin, totalSeconds);
         }
 
         // A cutter works anywhere - there's just nothing to cut in here. The flame still lights, and
         // it still burns the tank, so "why is my bottle empty" has a visible cause.
+        foreach (var beam in snapshot.LaserBeams?.Where(b => b.Scene == ShotScene.Ship) ?? Enumerable.Empty<LaserBeamState>())
+            BoardingRenderer.DrawLaserBeam(spriteBatch, _pixel, beam, origin);
+
         foreach (var shot in snapshot.PersonalShots.Where(s => s.Scene == ShotScene.Ship))
             BoardingRenderer.DrawShot(spriteBatch, _pixel, shot, origin);
 

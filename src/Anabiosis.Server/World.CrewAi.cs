@@ -72,9 +72,7 @@ public sealed partial class World
             return;
 
         var bearingDegrees = MathF.Atan2((float)toEnemy.Y, (float)toEnemy.X) * (180f / MathF.PI);
-        var wanted = Math.Clamp(ShortestAngle(bearingDegrees - mount.OutwardDegrees),
-            turret.MinAimDegrees, turret.MaxAimDegrees);
-        var delta = wanted - runtime.AimDegrees;
+        var delta = ShortestAngle(bearingDegrees - mount.OutwardDegrees - runtime.AimDegrees); // full 360 degree traverse: shortest way round
 
         _turretAimInput[turretId] = MathF.Abs(delta) < 1f ? 0f : MathF.Sign(delta);
         if (MathF.Abs(delta) < BotTurretAimToleranceDegrees)

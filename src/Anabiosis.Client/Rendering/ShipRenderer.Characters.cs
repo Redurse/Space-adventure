@@ -35,7 +35,7 @@ public sealed partial class ShipRenderer
     // two-handed tool's "both hands" or two one-handed ones) sit side by side rather than stacked.
     // internal + static, pixel/font passed explicitly, so FieldRenderer's own (simpler) EVA
     // DrawCharacter draws the exact same icon for a suited crewmate holding a cutter outside.
-    private const int HeldIconSize = 30;
+    private const int HeldIconSize = 34;
 
     internal static void DrawHeldItems(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font,
         IReadOnlyList<ItemType> held, Vector2 center, Vector2 facing)
@@ -82,6 +82,7 @@ public sealed partial class ShipRenderer
 
     private static void DrawHeldItemIcon(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, ItemType item, Rectangle rect, float rotation)
     {
+        ItemIcons.DrawHeldBacking(spriteBatch, pixel, new Vector2(rect.Center.X, rect.Center.Y), HeldIconSize);
         // Every held item reads as the thing itself, in the character's hand, with nothing drawn
         // around it - no backdrop chip, no hand glyphs (those still make sense in the hotbar, an
         // abstract "this slot is equipped" square, but not once the item has its own recognizable
@@ -133,19 +134,18 @@ public sealed partial class ShipRenderer
         else
             facing = new Vector2(1f, 0f); // idle characters still need a direction to hold a tool toward
 
-        // Hired crew (World.Recruiting.cs) reads as a body of a different colour, not another
-        // anonymous crewmate - the point of hiring one is knowing it's there and doing its job.
-        var bodyColor = character.IsBot ? new Color(70, 110, 150) : new Color(196, 78, 44);
-        // The accent is the shoulder patch on a uniform - the one place a crewman carries a colour
-        // that is not the cloth itself.
-        var accent = character.IsBot ? new Color(150, 200, 235) : new Color(226, 186, 70);
-        // Standing, anchored at the feet, so the body goes up the screen from where the crewman
-        // actually is. The world stays top-down and the person does not - the same mix SS13 and
-        // Rimworld use, and the reason the figure finally has arms and legs you can see.
-        _crewSkin.Draw(spriteBatch, new Vector2(center.X, center.Y + size * 0.30f),
-            CharacterHeight * PixelsPerUnit, bodyColor, accent, character.WearingSuit, facing);
+        // The uniform colour follows the crew role (a hired hand without one keeps its old blue); the
+        // accent on the shoulders marks a hired bot against a human.
+        var bodyColor = CrewSkin.UniformFor(character.Role, character.IsBot);
+        var accent = CrewSkin.AccentFor(character.IsBot);
+        var held = HeldItemTypes(character.Inventory);
+        // Seen from straight above, like the rest of the ship: one small figure turned to face the
+        // way it is heading, arms reaching forward while it holds something.
+        _crewSkin.Draw(spriteBatch, center, PixelsPerUnit, character.PlayerId,
+            new Vector2((float)character.X, (float)character.Y), bodyColor, accent, character.WearingSuit, facing,
+            armsForward: held.Count > 0);
 
-        DrawHeldItems(spriteBatch, _pixel, _font, HeldItemTypes(character.Inventory), center, facing);
+        DrawHeldItems(spriteBatch, _pixel, _font, held, center, facing);
 
         if (character.CarryingAmmoCrate)
         {
@@ -158,6 +158,45 @@ public sealed partial class ShipRenderer
 
         if (chatBubble is { } bubble)
             DrawChatBubble(spriteBatch, bubble.Text, bubble.Alpha, new Vector2(center.X, rect.Y - 44));
+    }
+
+    // Ids of enemy crew and station residents are strings; the animation state is keyed by int, so they
+    // get a stable hash with the top bit set (player ids are small positive numbers and never collide).
+    private static int StableActorId(string id)
+    {
+        unchecked
+        {
+            var hash = 17;
+            foreach (var c in id)
+                hash = hash * 31 + c;
+            return hash | int.MinValue;
+        }
+    }
+
+    // A hostile boarder: dark armour and a red visor, the same top-down figure the player's crew uses so
+    // the two sides read as people of one world. It has no facing in the snapshot, so it walks the way
+    // it moves and otherwise watches the nearest of your crew.
+    internal void DrawEnemyCrewman(SpriteBatch spriteBatch, EnemyCrewState crew, Vector2 center, Vector2? lookToward) =>
+        _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(crew.Id), new Vector2(crew.X, crew.Y),
+            new Color(104, 34, 42), new Color(236, 120, 60), Outfit.Raider, armsForward: true, lookToward);
+
+    public static (Color Uniform, Color Accent, Outfit Outfit) NpcLook(NpcKind kind) => kind switch
+    {
+        NpcKind.Administrator => (new Color(62, 104, 156), new Color(236, 232, 218), Outfit.Crew),
+        NpcKind.Trader => (new Color(178, 136, 34), new Color(240, 236, 220), Outfit.Crew),
+        NpcKind.Mechanic => (new Color(98, 114, 62), new Color(236, 196, 70), Outfit.Crew),
+        NpcKind.Shipwright => (new Color(120, 84, 164), new Color(236, 232, 218), Outfit.Crew),
+        NpcKind.Security => (new Color(42, 54, 88), new Color(90, 180, 240), Outfit.Guard),
+        NpcKind.Recruiter => (new Color(84, 128, 124), new Color(236, 232, 218), Outfit.Crew),
+        NpcKind.Scientist => (new Color(58, 170, 150), new Color(240, 240, 240), Outfit.Crew),
+        _ => (new Color(120, 120, 124), new Color(236, 232, 218), Outfit.Crew),
+    };
+
+    internal void DrawStationResident(SpriteBatch spriteBatch, StationNpc npc, Vector2 center, Vector2? lookToward)
+    {
+        var (uniform, accent, outfit) = NpcLook(npc.Kind);
+        _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(npc.Id), new Vector2(npc.X, npc.Y),
+            uniform, accent, outfit, armsForward: outfit == Outfit.Guard, lookToward);
     }
 
     // Every crew nameplate, in one later pass over the whole snapshot - deliberately NOT part of

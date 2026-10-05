@@ -34,8 +34,20 @@ public sealed class WallGrid
     private int _epoch;
 
     // Called once per RoomLighting.Build (not once per lamp) - the whole point of this class.
+    // Remembers the wall list but defers the bucketing until a query actually needs it - when every
+    // lamp's ray fan is already cached (RoomLighting.GetFan) no query happens and the whole rebuild
+    // is skipped.
+    public void Reset(IReadOnlyList<WallSegment> walls)
+    {
+        _walls = walls;
+        _dirty = true;
+    }
+
+    private bool _dirty;
+
     public void Rebuild(IReadOnlyList<WallSegment> walls)
     {
+        _dirty = false;
         _walls = walls;
         foreach (var list in _cells.Values)
             list.Clear();
@@ -65,6 +77,8 @@ public sealed class WallGrid
     // to-segment test), just without touching every wall in the scene to get there.
     public void QueryNearby(List<WallSegment> into, Vector2 point, float radius)
     {
+        if (_dirty)
+            Rebuild(_walls);
         into.Clear();
         _epoch++;
         var radiusSquared = radius * radius;

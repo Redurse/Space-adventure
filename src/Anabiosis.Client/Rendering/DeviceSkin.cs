@@ -1212,7 +1212,7 @@ public sealed class DeviceSkin : IDisposable
         Disc(domeX, domeY, shortSize * 0.18f, lit ? new Color(230, 90, 70) : new Color(60, 48, 46), 0.95f);
 
         // The traverse ring/collar, centered at "along" 0.5 - roughly where the mount's own middle
-        // skirt row sits (TurretMountSkirt.cs), so the fixture's own widest point visually lines up
+        // skirt row sits (CustomDeviceFootprint.ShapedFootprint), so the fixture's own widest point visually lines up
         // with the half-block armor plates flanking it.
         var (ringX, ringY) = At(0.5f, 0.5f);
         Ring(ringX, ringY, shortSize * 0.46f, new Color(40, 38, 40), 0.9f, shortSize * 0.09f);

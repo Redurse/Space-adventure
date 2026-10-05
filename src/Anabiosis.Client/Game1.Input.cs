@@ -63,9 +63,7 @@ public partial class Game1
             return 0f;
 
         var cursorDegrees = MathF.Atan2(toCursor.Y, toCursor.X) * (180f / MathF.PI);
-        var wanted = Math.Clamp(ShortestAngle(cursorDegrees - mount.OutwardDegrees),
-            manned.Turret.MinAimDegrees, manned.Turret.MaxAimDegrees);
-        var delta = wanted - manned.State.AimDegrees;
+        var delta = ShortestAngle(cursorDegrees - mount.OutwardDegrees - manned.State.AimDegrees); // full 360 degree traverse: shortest way round
         return MathF.Abs(delta) < 1f ? 0f : MathF.Sign(delta);
     }
 
@@ -348,6 +346,10 @@ public partial class Game1
     private bool HoldingWelder() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
         && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] == ItemType.WeldingTool);
+
+    private bool HoldingFirearm() =>
+        _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
+        && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] is ItemType.Rifle or ItemType.LaserRifle);
 
     private bool HoldingAxe() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory

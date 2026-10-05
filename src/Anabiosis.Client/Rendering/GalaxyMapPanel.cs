@@ -163,6 +163,20 @@ public sealed partial class GalaxyMapPanel
         // Real asteroid presence is shown a different way now anyway (DrawLargestAsteroidMarkers).
         foreach (var point in snapshot.GalaxyPoints)
         {
+            if (SalvagePoints.IsSalvage(point.Kind))
+            {
+                if (snapshot.SalvagedPointIds?.Contains(point.Id) == true)
+                    continue;
+                var salvageScreen = FieldToScreen(mapOrigin, point.Position, zoom);
+                var salvageRect = new Rectangle((int)salvageScreen.X - PointMarkerSize / 2, (int)salvageScreen.Y - PointMarkerSize / 2, PointMarkerSize, PointMarkerSize);
+                if (!IsWithinRadarView(panelOrigin, new Vector2(salvageRect.Center.X, salvageRect.Center.Y), pilotView))
+                    continue;
+                DrawPointGlyph(spriteBatch, point.Kind, salvageRect, Color.Goldenrod, totalSeconds);
+                spriteBatch.DrawString(_font, point.Name, new Vector2(salvageRect.X - 10, salvageRect.Bottom + 2),
+                    Color.Goldenrod, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+                continue;
+            }
+
             if (point.Kind != GalaxyPointKind.Station)
                 continue;
 

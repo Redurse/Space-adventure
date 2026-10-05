@@ -62,6 +62,20 @@ internal static partial class TestRunner
 
                 foreach (var (position, kind, _, _, deviceRotated, halfSide) in rotated.Devices)
                 {
+                    // A shaped footprint (the turrets) is only the cells and half-cells of its own shape, not
+                    // its bounding box: every one of them must lie inside the compartment, and only a half-cell
+                    // may sit on the wall ring (it shares the tile with the wall's own half-block).
+                    if (CustomDeviceFootprint.ShapedFootprint(kind, CustomDeviceFootprint.ShapedFacing(deviceRotated, halfSide)) is { } cells)
+                    {
+                        foreach (var cell in cells)
+                        {
+                            var shapeTile = new TileCoord(position.X + cell.Offset.X, position.Y + cell.Offset.Y);
+                            if (!Inside(shapeTile) || (OnRing(shapeTile) && cell.HalfSide is null))
+                                return false;
+                        }
+                        continue;
+                    }
+
                     var (baseWidth, baseHeight) = CustomDeviceFootprint.Size(kind);
                     var (width, height) = deviceRotated ? (baseHeight, baseWidth) : (baseWidth, baseHeight);
                     // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его

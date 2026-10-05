@@ -725,7 +725,8 @@ internal static partial class TestRunner
         {
             ItemType.IronOre, ItemType.NickelOre, ItemType.ZincOre, ItemType.CopperOre,
             ItemType.TitaniumOre, ItemType.UraniumOre, ItemType.Silicon, ItemType.Carbon,
-            ItemType.AluminumOre, ItemType.PlastalloyOre, ItemType.SteelPlate, ItemType.TitaniumPlate,
+            ItemType.AluminumOre, ItemType.PlastalloyOre,
+            // The refined plates no longer fit on the starter shelves: the rifles' magazines took their slots.
         };
 
         return expectedTypes.All(t => snapshot.RackSlots.Count(s => s == t) == 2);

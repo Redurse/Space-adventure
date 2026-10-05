@@ -21,6 +21,21 @@ public sealed partial class GalaxyMapPanel
             case GalaxyPointKind.AsteroidField:
                 DrawAsteroidFieldGlyph(spriteBatch, rect, color);
                 break;
+            case GalaxyPointKind.StoragePod:
+                spriteBatch.Draw(_pixel, new Rectangle(rect.X + rect.Width / 5, rect.Y + rect.Height / 4, rect.Width * 3 / 5, rect.Height / 2), color);
+                spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - 1, rect.Y + rect.Height / 4, 2, rect.Height / 2), Color.Black * 0.6f);
+                break;
+            case GalaxyPointKind.AbandonedShip:
+            case GalaxyPointKind.ShipGraveyard:
+            {
+                var c = new Vector2(rect.Center.X, rect.Center.Y);
+                var r = rect.Width / 2f;
+                var wreck = new[] { c + new Vector2(r, 0), c + new Vector2(-r * 0.7f, -r * 0.6f), c + new Vector2(-r * 0.3f, 0), c + new Vector2(-r * 0.7f, r * 0.6f) };
+                Primitives.FillPolygon(spriteBatch, _pixel, c, wreck, color * 0.9f);
+                if (kind == GalaxyPointKind.ShipGraveyard)
+                    Primitives.StrokePolygon(spriteBatch, _pixel, wreck, Color.White * 0.6f, 1.5f);
+                break;
+            }
             default: // HostileSector
                 DrawHostileSectorGlyph(spriteBatch, rect, color, totalSeconds);
                 break;

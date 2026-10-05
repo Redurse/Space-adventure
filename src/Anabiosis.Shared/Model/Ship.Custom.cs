@@ -234,8 +234,8 @@ public sealed partial class Ship
         // massive real failure spike, 414/548 vs the known 532/547 baseline, TileGridRasterizer_
         // DefaultHull_OneRegionPerRoom itself now failing) - re-deriving a turret's own skirt from
         // its bare X/Y center HERE, for every ship build regardless of origin, assumed every turret
-        // position came from the tile editor's own coord+width/2f convention (TurretMountSkirt.
-        // AnchorFromCenter's own reverse math). A HAND-AUTHORED position (ShipDefaultHull.cs and
+        // position came from the tile editor's own coord+width/2f convention. A HAND-AUTHORED
+        // position (ShipDefaultHull.cs and
         // most test fixtures alike - plain literal floats, never placed through the editor at all)
         // never actually satisfies that convention, so the "recovered" anchor could land anywhere -
         // confirmed corrupting the frozen default hull's own room connectivity. Skirts now only ever

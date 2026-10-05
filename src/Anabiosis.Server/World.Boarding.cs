@@ -104,8 +104,8 @@ public sealed partial class World
         // reaches (World.PersonalShots.cs). Missing is now a thing that can happen, which is the
         // point - the old version picked the nearest defender in the room and could not miss.
         var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection : character.FacingDirection;
-        _weaponCooldowns[character.PlayerId] = WeaponDefinitions.CooldownSeconds(weapon);
-        FirePersonalShot(character, weapon, aim);
+        if (FireHeldWeapon(character, weapon, aim))
+            _weaponCooldowns[character.PlayerId] = WeaponDefinitions.CooldownSeconds(weapon);
     }
 
     private void StepBoarding(double deltaSeconds)

@@ -11,15 +11,17 @@ public static class TankSockets
     public static ItemType? AcceptedTank(ItemType ownerType) => ownerType switch
     {
         ItemType.Spacesuit or ItemType.Cutter => ItemType.OxygenTank,
+        ItemType.Rifle => ItemType.Magazine,
         ItemType.WeldingTool => ItemType.WeldingTank,
         _ => null,
     };
 
-    public static bool IsTank(ItemType type) => type is ItemType.OxygenTank or ItemType.WeldingTank;
+    public static bool IsTank(ItemType type) => type is ItemType.OxygenTank or ItemType.WeldingTank or ItemType.Magazine;
 
     public static float FullChargeOf(ItemType tankType) => tankType switch
     {
         ItemType.WeldingTank => WeldingTankDefinitions.FullCharge,
+        ItemType.Magazine => MagazineDefinitions.FullCharge,
         _ => OxygenTankDefinitions.FullCharge,
     };
 }

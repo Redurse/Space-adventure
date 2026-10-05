@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -91,10 +92,13 @@ public sealed class BoardingRenderer
                 Color.OrangeRed, 0f, Vector2.Zero, 0.8f, SpriteEffects.None, 0f);
 
         foreach (var crew in snapshot.EnemyShip.Crew.Where(c => c.Alive))
-            DrawCrew(spriteBatch, crew, origin);
+            DrawCrew(spriteBatch, crew, origin, NearestOnEnemyShip(snapshot, crew));
 
         foreach (var character in snapshot.Characters.Where(c => c.OnEnemyShip))
             _shipRenderer.DrawCharacter(spriteBatch, character, origin);
+
+        foreach (var beam in snapshot.LaserBeams?.Where(b => b.Scene == ShotScene.EnemyShip) ?? Enumerable.Empty<LaserBeamState>())
+            DrawLaserBeam(spriteBatch, _pixel, beam, origin);
 
         foreach (var shot in snapshot.PersonalShots.Where(s => s.Scene == ShotScene.EnemyShip))
             DrawShot(spriteBatch, _pixel, shot, origin);
@@ -132,19 +136,68 @@ public sealed class BoardingRenderer
             ? (shot.FromEnemy ? Color.MediumPurple : Color.Cyan)
             : (shot.FromEnemy ? Color.OrangeRed : Color.Gold);
 
+        // A rifle bullet is a tracer: a short bright streak lying along its flight, so a burst reads as a
+        // line of rounds rather than a row of dots. Anything without a known direction stays a round dot.
+        var velocity = new Vector2(shot.VelocityX, shot.VelocityY);
+        if (shot.Weapon == ItemType.Rifle && velocity.LengthSquared() > 0.01f)
+        {
+            var angle = MathF.Atan2(velocity.Y, velocity.X);
+            var origin1 = new Vector2(1f, 0.5f); // the tail end is the pivot, so the head sits on the shot's position
+            spriteBatch.Draw(pixel, center, null, color * 0.3f, angle, origin1, new Vector2(24f, 6f), SpriteEffects.None, 0f);
+            spriteBatch.Draw(pixel, center, null, color, angle, origin1, new Vector2(16f, 3f), SpriteEffects.None, 0f);
+            spriteBatch.Draw(pixel, center, null, Color.White, angle, origin1, new Vector2(6f, 3f), SpriteEffects.None, 0f);
+            return;
+        }
+
         spriteBatch.Draw(pixel, center, null, color * 0.35f, 0f, new Vector2(0.5f, 0.5f), new Vector2(10f, 10f), SpriteEffects.None, 0f);
         spriteBatch.Draw(pixel, center, null, color, 0f, new Vector2(0.5f, 0.5f), new Vector2(5f, 5f), SpriteEffects.None, 0f);
     }
 
-    private void DrawCrew(SpriteBatch spriteBatch, EnemyCrewState crew, Vector2 origin)
+    // The laser rifle's beam: a hot white core inside a red glow from the muzzle to wherever it stopped,
+    // fading out over its short life, with a bright flare where it ended against a wall or a body.
+    internal static void DrawLaserBeam(SpriteBatch spriteBatch, Texture2D pixel, LaserBeamState beam, Vector2 origin)
+    {
+        var start = origin + new Vector2(beam.StartX, beam.StartY) * ShipRenderer.PixelsPerUnit;
+        var end = origin + new Vector2(beam.EndX, beam.EndY) * ShipRenderer.PixelsPerUnit;
+        var delta = end - start;
+        var length = delta.Length();
+        if (length < 1f)
+            return;
+        var angle = MathF.Atan2(delta.Y, delta.X);
+        var life = MathHelper.Clamp(beam.Life, 0f, 1f);
+        var red = new Color(255, 40, 40);
+
+        spriteBatch.Draw(pixel, start, null, red * (0.22f * life), angle, new Vector2(0f, 0.5f), new Vector2(length, 18f), SpriteEffects.None, 0f);
+        spriteBatch.Draw(pixel, start, null, red * (0.55f * life), angle, new Vector2(0f, 0.5f), new Vector2(length, 9f), SpriteEffects.None, 0f);
+        spriteBatch.Draw(pixel, start, null, new Color(255, 190, 180) * life, angle, new Vector2(0f, 0.5f), new Vector2(length, 3f), SpriteEffects.None, 0f);
+
+        HudIcons.FillCircle(spriteBatch, pixel, end, 9f * life + 2f, red * (0.35f * life));
+        HudIcons.FillCircle(spriteBatch, pixel, end, 4f * life + 1f, new Color(255, 220, 210) * life);
+    }
+
+    // Whichever of your own crew standing on this enemy ship is closest - what a hostile defender faces
+    // while it stands still.
+    private static Vector2? NearestOnEnemyShip(WorldSnapshot snapshot, EnemyCrewState crew)
+    {
+        Vector2? best = null;
+        var bestDistance = float.MaxValue;
+        foreach (var character in snapshot.Characters.Where(c => c.OnEnemyShip && c.Health > 0f))
+        {
+            var at = new Vector2((float)character.X, (float)character.Y);
+            var distance = Vector2.DistanceSquared(at, new Vector2(crew.X, crew.Y));
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = at;
+            }
+        }
+        return best;
+    }
+
+    private void DrawCrew(SpriteBatch spriteBatch, EnemyCrewState crew, Vector2 origin, Vector2? lookToward)
     {
         var rect = ShipRenderer.GetBlockRect(new Vec2(crew.X, crew.Y), CrewMarkerSize, origin);
-        spriteBatch.Draw(_pixel, rect, Color.DarkRed * 0.9f);
-
-        // Visor-ish inner square, mirroring how ShipRenderer draws a person - reads as a hostile
-        // crew member rather than another piece of equipment.
-        const int visorSize = 9;
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - visorSize / 2, rect.Center.Y - visorSize / 2, visorSize, visorSize), Color.OrangeRed);
+        _shipRenderer.DrawEnemyCrewman(spriteBatch, crew, new Vector2(rect.Center.X, rect.Center.Y), lookToward);
 
         // Health bar above the head - the only readout that matters while clearing a room.
         if (ShowHealthBars)

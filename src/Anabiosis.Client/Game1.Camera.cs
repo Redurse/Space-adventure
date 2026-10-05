@@ -14,10 +14,9 @@ namespace Anabiosis.Client;
 // here beyond the fields declared below.
 public partial class Game1
 {
-    private const float PeriscopeViewLead = 6f;
-    // Half scale = twice the reach. A gunner has to see a raider holding station 22 units out and
+    // Quarter scale = four times the reach (twice what it was at half scale, direct user request). A gunner has to see a raider holding station 22 units out and
     // the shell crossing the gap to it; at the interior's own scale that all happens off-screen.
-    private const float TurretViewZoom = 0.5f;
+    private const float TurretViewZoom = 0.25f;
 
     // Barotrauma-style cursor lookahead: the camera doesn't center strictly on the character while
     // walking around - it eases partway toward wherever the mouse is pointing, so you see a bit
@@ -28,12 +27,11 @@ public partial class Game1
     private const float CameraLookAheadFactor = 0.25f;
     private const float CameraLookAheadMaxDistance = 3.5f; // ship-local units
     private const float CameraLookAheadSmoothingPerSecond = 8f;
-    // Manning a turret exaggerates the same effect (bigger factor, further cap): the periscope
-    // view is already zoomed out (TurretViewZoom) to show more of the field, so the cursor panning
-    // it further toward whatever's at the edge of that field reads as looking where you're about
-    // to shoot, the way swinging a real periscope would.
+    // Manning a turret exaggerates the same effect (bigger factor, further cap): the view is already
+    // zoomed out (TurretViewZoom), so panning toward whatever is at the edge of it reads as looking
+    // where you are about to shoot.
     private const float TurretLookAheadFactor = 0.5f;
-    private const float TurretLookAheadMaxDistance = 10f;
+    private const float TurretLookAheadMaxDistance = 20f;
     private Vec2 _cameraLookOffset = Vec2.Zero;
 
     // Applied to the whole scene batch, so one number moves the camera, the world and the hit
@@ -79,19 +77,10 @@ public partial class Game1
         return turret is null ? null : (turret, state);
     }
 
-    // Degrees to spin the whole scene batch by while manning a turret, so the barrel's own live
-    // facing (TurretMount.FireDegrees(AimDegrees), ship-local - outward normal plus however far
-    // it's currently traversed) reads as screen-up. This is what makes the view a real gun-cam:
-    // swinging the turret pans the whole scene the way looking down a swiveling barrel would,
-    // rather than the view staying pinned to the mount's fixed outward side. 0 everywhere else -
-    // the ship interior/field view is never rotated except behind a periscope.
-    private float TurretViewRotationDegrees(WorldSnapshot snapshot)
-    {
-        if (MannedTurret(snapshot) is not { } manned || _openBlock.Kind is BlockKind.Navigation || _infoPanelOpen)
-            return 0f;
-        var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
-        return -90f - mount.FireDegrees(manned.State.AimDegrees);
-    }
+    // Direct user request ("ÑÐ±ÐµÑÐ¸ Ð¿Ð¾Ð²Ð¾ÑÐ¾Ñ ÑÑÐµÐ½Ñ") - the scene is never rotated any more, not even while
+    // manning a turret: the camera just centres on the gun and only the barrel turns. Kept as a
+    // function (always 0) so the scene transform and the cursor aiming that undo it stay in one place.
+    private float TurretViewRotationDegrees(WorldSnapshot snapshot) => 0f;
 
     private (Vector2 Origin, Vec2 HullCenter, Vec2 Anchor) ComputeCamera(WorldSnapshot snapshot, CharacterState me)
     {
@@ -120,11 +109,9 @@ public partial class Game1
         else if (MannedTurret(snapshot) is { } manned)
         {
             var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
-            // Along the live aim direction, not the mount's fixed outward normal - the camera
-            // sits out past the muzzle looking whichever way the barrel is actually pointed right
-            // now, the same "camera near the barrel" TurretViewRotationDegrees rotates the view to
-            // match.
-            anchorLocal = mount.Position + mount.FireDirection(manned.State.AimDegrees) * PeriscopeViewLead;
+            // Centred on the gun itself (direct user request) - it sits above the turret device and
+            // turns on the spot, so the view stays put and only the barrel swings.
+            anchorLocal = mount.Position;
         }
         else
         {
@@ -167,9 +154,10 @@ public partial class Game1
         }
         else if (MannedTurret(snapshot) is { } manned)
         {
+            // Same cursor pan as walking around, just stronger (the view is zoomed out): the camera is
+            // anchored on the gun and eases toward wherever the mouse points.
             var mount = TurretMount.For(snapshot.Rooms, snapshot.Turrets, manned.Turret);
-            var baseAnchor = mount.Position + mount.FireDirection(manned.State.AimDegrees) * PeriscopeViewLead;
-            target = CursorLookAheadFrom(snapshot, baseAnchor, TurretLookAheadFactor, TurretLookAheadMaxDistance);
+            target = CursorLookAheadFrom(snapshot, mount.Position, TurretLookAheadFactor, TurretLookAheadMaxDistance);
         }
         else
         {

@@ -31,6 +31,49 @@ public sealed partial class World
         (_shipFieldPosition - GalaxyMap.GetSystem(_currentSystemId).Field.Center).Length() >= GalaxyMap.GetSystem(_currentSystemId).WarpZoneRadius &&
         _shipVelocity.Length() < WarpMaxSpeed;
 
+    // The ship's built-in fuel tank - a quiet ship-wide number, the same treatment HullPlatingStock
+    // gets, because the starter rack has no free slots left for physical fuel. Not persisted by saves.
+    public const int StarterHyperiumReserve = 8;
+    private int _hyperiumReserve = StarterHyperiumReserve;
+
+    // Hyperium also exists as a real item (mined, bought): it sits in the storage rack or in anyone's
+    // pockets / belt bag, and counts toward a jump alongside the built-in reserve.
+    public int HyperiumAboard =>
+        _hyperiumReserve +
+        _rackSlots.Count(s => s == ItemType.Hyperium) +
+        _characters.Values.Sum(c =>
+            c.Inventory.MainSlots.Count(s => s == ItemType.Hyperium) +
+            c.Inventory.BeltBagSlots.Count(s => s == ItemType.Hyperium));
+
+    // Burns `count` Hyperium: physical items first (rack, then belt bags and pockets), the built-in
+    // reserve last. Caller has already checked HyperiumAboard >= count.
+    private void ConsumeHyperium(int count)
+    {
+        for (var i = 0; i < _rackSlots.Length && count > 0; i++)
+        {
+            if (_rackSlots[i] != ItemType.Hyperium)
+                continue;
+            _rackSlots[i] = null;
+            count--;
+        }
+        foreach (var character in _characters.Values)
+        {
+            var inventory = character.Inventory;
+            for (var i = 0; i < inventory.BeltBagSlots.Length && count > 0; i++)
+            {
+                if (inventory.BeltBagSlots[i] != ItemType.Hyperium)
+                    continue;
+                inventory.BeltBagSlots[i] = null;
+                count--;
+            }
+            while (count > 0 && inventory.TryRemove(ItemType.Hyperium))
+                count--;
+        }
+        _hyperiumReserve -= count;
+    }
+
+    public void DebugSetHyperiumReserve(int amount) => _hyperiumReserve = amount;
+
     private void TryWarpTo(string? systemId)
     {
         if (!CanWarpNow || systemId is null || systemId == _currentSystemId)
@@ -38,6 +81,11 @@ public sealed partial class World
         GalaxyMap.EnsureGenerated(_currentSystemId, MinReachableNeighborsWhileExploring);
         if (!GalaxyMap.IsWithinWarpRange(_currentSystemId, systemId))
             return;
+
+        var cost = GalaxyMap.HyperiumCost(_currentSystemId, systemId);
+        if (HyperiumAboard < cost)
+            return;
+        ConsumeHyperium(cost);
 
         // Arrives on the same side of the new system's field (relative to its own centre) the ship
         // left the old one from, rather than some arbitrary fixed spot regardless of heading - a

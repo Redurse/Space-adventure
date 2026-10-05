@@ -20,13 +20,6 @@ public sealed class GameServer
     private World? _world;
     private readonly List<(IServerConnection Connection, int PlayerId)> _connections = new();
 
-    // Proof-of-concept for sending ship LAYOUT once per connection instead of every tick
-    // (WorldSnapshot.Doors/Turrets's own doc comment has the full reasoning) - which player ids have
-    // already received a non-null Doors/Turrets at least once. Never needs cleanup on disconnect: a
-    // reconnecting player gets a brand new id from Connect's own Interlocked.Increment, never a
-    // reused one, so this can only ever grow, harmlessly, for the lifetime of one GameServer.
-    private readonly HashSet<int> _layoutSentToPlayerIds = new();
-
     // Players join from whichever thread accepted their socket, never from the tick loop - so the
     // list above is only ever touched by the tick, and a join waits here until the next one.
     private readonly ConcurrentQueue<(IServerConnection Connection, int PlayerId)> _joining = new();
@@ -219,12 +212,11 @@ public sealed class GameServer
         var snapshotStopwatch = Stopwatch.StartNew(); // TEMP-DIAG
         var snapshot = _world.CreateSnapshot();
         LastSnapshotMs = snapshotStopwatch.Elapsed.TotalMilliseconds; // TEMP-DIAG
-        // Proof-of-concept - WorldSnapshot.Doors/Turrets's own doc comment has the full reasoning.
-        // HashSet.Add returns true only the FIRST time a given id is added, so this sends the real
-        // layout to a connection exactly once (its very first tick) and null every tick after.
-        var snapshotWithoutLayout = snapshot with { Doors = null, Turrets = null };
-        foreach (var (connection, playerId) in _connections)
-            connection.Send(_layoutSentToPlayerIds.Add(playerId) ? snapshot : snapshotWithoutLayout);
+        // REVERTED (WorldSnapshot.cs's own doc comment has the full story) - used to send Doors/
+        // Turrets only on a connection's first tick, relying on every tick's snapshot eventually
+        // reaching the client, which the "latest tick wins" connection types don't guarantee.
+        foreach (var (connection, _) in _connections)
+            connection.Send(snapshot);
 
         LastTickTotalMs = tickStopwatch.Elapsed.TotalMilliseconds; // TEMP-DIAG
     }

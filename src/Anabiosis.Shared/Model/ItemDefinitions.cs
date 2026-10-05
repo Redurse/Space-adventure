@@ -25,6 +25,8 @@ public static class ItemDefinitions
         ItemType.IronOre or ItemType.NickelOre or ItemType.ZincOre or ItemType.CopperOre or ItemType.TitaniumOre
             or ItemType.UraniumOre or ItemType.Silicon or ItemType.Carbon or ItemType.AluminumOre or ItemType.PlastalloyOre => 1,
         ItemType.SteelPlate or ItemType.TitaniumPlate or ItemType.CopperCable or ItemType.Plastic or ItemType.Plastalloy => 1,
+        ItemType.Hyperium => 1,
+        ItemType.Magazine => 1,
         _ when ComponentDefinitions.ComponentKindFor(type) is not null => 1, // small electronics box
         _ => 0, // AmmoCrate, Spacesuit
     };
@@ -37,7 +39,7 @@ public static class ItemDefinitions
     // outpost pays extra for raw ore, not for goods a Fabricator already added value to.
     public static bool IsRawOre(ItemType type) => type is ItemType.Mineral or ItemType.IronOre or ItemType.NickelOre
         or ItemType.ZincOre or ItemType.CopperOre or ItemType.TitaniumOre or ItemType.UraniumOre
-        or ItemType.Silicon or ItemType.Carbon or ItemType.AluminumOre or ItemType.PlastalloyOre;
+        or ItemType.Silicon or ItemType.Carbon or ItemType.AluminumOre or ItemType.PlastalloyOre or ItemType.Hyperium;
 
     // The 14 purchasable component items delegate to ComponentDefinitions - the ComponentKind
     // they install as (World.ComponentMounts.cs, M23) already owns the one true name/label for
@@ -82,6 +84,9 @@ public static class ItemDefinitions
         ItemType.CopperCable => "медный кабель",
         ItemType.Plastic => "пластик",
         ItemType.Plastalloy => "пласталь",
+        ItemType.Hyperium => "гиперий",
+        ItemType.HullPlating => "обшивка корпуса",
+        ItemType.Magazine => "обойма",
         _ => type.ToString(),
     };
 
@@ -126,6 +131,9 @@ public static class ItemDefinitions
         ItemType.CopperCable => "МК",
         ItemType.Plastic => "Пк",
         ItemType.Plastalloy => "Пл",
+        ItemType.Hyperium => "Hy",
+        ItemType.HullPlating => "Об",
+        ItemType.Magazine => "Ма",
         _ => "?",
     };
 }

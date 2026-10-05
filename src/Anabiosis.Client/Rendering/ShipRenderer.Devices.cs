@@ -66,7 +66,7 @@ public sealed partial class ShipRenderer
         spriteBatch.Draw(_pixel, new Rectangle((int)center.X - lightSize / 2, rect.Y + 3, lightSize, lightSize), lightColor);
     }
 
-    public const int DroppedItemHitSize = 20;
+    public const int DroppedItemHitSize = 48; // the pad ItemIcons.DrawInWorld draws, so a click anywhere on it picks the item up
 
     // Shared by Draw() and Game1's click-to-pick-up hit-testing, same "one function serves both"
     // convention GetBlockRect already establishes.
@@ -87,12 +87,7 @@ public sealed partial class ShipRenderer
                 continue;
 
             var center = origin + new Vector2((float)dropped.X, (float)dropped.Y) * PixelsPerUnit;
-            var pulse = 0.8f + 0.2f * MathF.Sin(totalSeconds * 4f + center.X);
-            const int size = 14;
-            var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
-            DrawPanel(spriteBatch, rect, Color.LightGoldenrodYellow * (0.55f * pulse), Color.LightGoldenrodYellow, 1);
-            spriteBatch.DrawString(_font, ItemDefinitions.ShortLabel(dropped.Item), center + new Vector2(9, -7),
-                Color.LightGoldenrodYellow, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
+            ItemIcons.DrawInWorld(spriteBatch, _pixel, _font, dropped.Item, center, totalSeconds);
         }
     }
 
@@ -831,59 +826,61 @@ public sealed partial class ShipRenderer
         _ => "?",
     };
 
-    // Two separate things in two separate places: the periscope inside the room, which is what the
-    // gunner walks up to and mans, and the gun itself out on the hull plating (TurretMount), whose
-    // barrel is what the shell actually leaves through. Drawing the aim line from the console used
-    // to imply the ship shot out of its own furniture.
-    private void DrawTurret(SpriteBatch spriteBatch, Turret turret, TurretState? state,
-        IReadOnlyList<Room> rooms, IReadOnlyList<Turret> allTurrets, Vector2 origin, float totalSeconds, bool showPeriscope = true)
+    // Two separate things: the periscope station inside the room, which is what the gunner walks up
+    // to and mans (drawn here, always), and the gun itself (DrawTurretGun), which sits ABOVE the ship
+    // on top of that device and is only ever drawn when the ship is seen from outside.
+    private void DrawTurret(SpriteBatch spriteBatch, Turret turret, TurretState? state, Vector2 origin, float totalSeconds)
     {
         var center = origin + new Vector2(turret.PeriscopeX, turret.PeriscopeY) * PixelsPerUnit;
-        var manned = state?.MannedByPlayerId is not null;
-        var damaged = state?.Damaged ?? false;
+        DrawPeriscopeStation(spriteBatch, center, state?.MannedByPlayerId is not null, state?.Damaged ?? false, totalSeconds);
+    }
 
-        // The crew station is inside the ship, so it goes with the rest of the interior when the
-        // hull is drawn closed up.
-        if (showPeriscope)
-            DrawPeriscopeStation(spriteBatch, center, manned, damaged, totalSeconds);
+    // The gun on top of the ship, over its turret device (direct user request): a full 360 degree
+    // traverse, drawn only while the ship is seen from outside (manning a gun, or out on a
+    // spacewalk), never from inside a compartment. Game1 calls this as its own pass right after Draw.
+    public void DrawTurretGuns(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
+    {
+        foreach (var turret in snapshot.Turrets)
+            if (snapshot.TurretStates.FirstOrDefault(s => s.Id == turret.Id) is { } state)
+                DrawTurretGun(spriteBatch, turret, state, snapshot.Rooms, snapshot.Turrets, origin);
+    }
 
-        if (state is null)
-            return;
+    private void DrawTurretGun(SpriteBatch spriteBatch, Turret turret, TurretState state,
+        IReadOnlyList<Room> rooms, IReadOnlyList<Turret> allTurrets, Vector2 origin)
+    {
+        var manned = state.MannedByPlayerId is not null;
+        var damaged = state.Damaged;
 
         var mount = TurretMount.For(rooms, allTurrets, turret);
         var mountPx = origin + new Vector2((float)mount.Position.X, (float)mount.Position.Y) * PixelsPerUnit;
         var rotation = mount.FireDegrees(state.AimDegrees) * (MathF.PI / 180f);
 
         // Two sprites, and only the second one turns: a barbette bolted through the plating, and the
-        // rotating mass sitting in it. Drawing those as one square with a stick out of it is most of
-        // why this used to read as a diagram of a gun rather than as a gun.
+        // rotating mass sitting in it. Both are drawn VisualScale times their baked size so the gun
+        // reads as a gun on a 4x3-tile device.
         //
         // Which one is manned is carried by the trim paint and a lit sight rather than by making the
-        // whole thing bigger and gold. It still has to be findable against the plating while you are
-        // steering it, and the aim arc and sight line below are what do that - they are drawn only
-        // for the gun you are actually behind.
+        // whole thing bigger and gold; the sight line below is drawn only for the gun you are behind.
         var look = damaged ? TurretSkin.Look.Damaged
             : manned ? TurretSkin.Look.Manned
             : TurretSkin.Look.Idle;
         spriteBatch.Draw(_turretSkin.Base(look), mountPx, null, Color.White, 0f,
-            TurretSkin.BaseOrigin, 1f, SpriteEffects.None, 0f);
+            TurretSkin.BaseOrigin, TurretMount.VisualScale, SpriteEffects.None, 0f);
         spriteBatch.Draw(_turretSkin.Gun(look), mountPx, null, Color.White, rotation,
-            TurretSkin.GunOrigin, 1f, SpriteEffects.None, 0f);
+            TurretSkin.GunOrigin, TurretMount.VisualScale, SpriteEffects.None, 0f);
 
         if (!manned)
             return;
 
-        // The gunner's aiming aids: the arc the barrel can actually cover, and a sight line running
-        // out of the muzzle so it's obvious where a shell would go.
-        DrawAimArcEdge(spriteBatch, mountPx, mount.FireDegrees(turret.MinAimDegrees));
-        DrawAimArcEdge(spriteBatch, mountPx, mount.FireDegrees(turret.MaxAimDegrees));
+        // The gunner's aiming aid: a sight line running out of the muzzle so it's obvious where a
+        // shell would go. There is no firing arc to draw any more - the traverse is a full 360 degrees.
 
         var muzzleLocal = mount.Muzzle(state.AimDegrees);
         var muzzle = origin + new Vector2((float)muzzleLocal.X, (float)muzzleLocal.Y) * PixelsPerUnit;
         spriteBatch.Draw(_pixel, muzzle, null, Color.Gold * 0.45f, rotation, new Vector2(0f, 0.5f), new Vector2(900f, 2f), SpriteEffects.None, 0f);
 
         var readout = $"{state.AimDegrees:0}°";
-        spriteBatch.DrawString(_font, readout, mountPx + new Vector2(-10, -30), Color.Gold, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, readout, mountPx + new Vector2(-10, -52), Color.Gold, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
 
         // Rounds left, as pips rather than a count. Mid-engagement what the gunner needs off the gun
         // itself is "nearly out" or "fine"; the exact number is already on the gunnery panel, and
@@ -894,7 +891,7 @@ public sealed partial class ShipRenderer
             var loaded = (int)MathF.Ceiling(pips * MathHelper.Clamp(
                 state.AmmoRemaining / (float)state.MagazineCapacity, 0f, 1f));
             for (var i = 0; i < pips; i++)
-                spriteBatch.Draw(_pixel, new Rectangle((int)mountPx.X - pips * 3 + i * 6, (int)mountPx.Y + 28, 4, 3),
+                spriteBatch.Draw(_pixel, new Rectangle((int)mountPx.X - pips * 3 + i * 6, (int)mountPx.Y + 46, 4, 3),
                     i < loaded ? new Color(232, 196, 96) : new Color(52, 56, 62));
         }
     }
@@ -997,11 +994,5 @@ public sealed partial class ShipRenderer
             points[i] = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
         }
         return points;
-    }
-
-    private void DrawAimArcEdge(SpriteBatch spriteBatch, Vector2 mountPx, float degrees)
-    {
-        var rotation = degrees * (MathF.PI / 180f);
-        spriteBatch.Draw(_pixel, mountPx, null, Color.Gold * 0.18f, rotation, new Vector2(0f, 0.5f), new Vector2(420f, 2f), SpriteEffects.None, 0f);
     }
 }

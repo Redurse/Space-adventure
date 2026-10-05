@@ -313,9 +313,17 @@ public partial class Game1
                 DrawEditorDoorTile(coord);
             if (cell.WallDeviceId is not null && cell.WallDeviceKind is { } wallDeviceKind && cell.WallDeviceMountSide is { } mountSide)
                 DrawEditorWallDeviceHalfBlock(coord, wallDeviceKind, mountSide);
-            if (cell.DeviceId is not null && _editorDeviceKinds.TryGetValue(coord, out var kind))
-                DrawEditorDeviceAt(coord, kind);
         }
+
+        // A separate pass, keyed by each device's own anchor directly - used to piggyback on the
+        // Cells loop above (only drawing when that SAME coord's cell.DeviceId was also set), which
+        // silently skipped any device whose anchor tile isn't itself part of its own footprint (a
+        // shaped-footprint kind's anchor can be a deliberately empty corner of its shape -
+        // CustomDeviceFootprint.ShapedFootprint's own doc comment - direct user bug report, "они
+        // вообще никак не отображаются ни в редакторе ни в игре"). Mirrors the engine loops right
+        // below, which already draw from their own anchor-keyed dictionary the same way.
+        foreach (var (anchor, kind) in _editorDeviceKinds)
+            DrawEditorDeviceAt(anchor, kind);
 
         foreach (var (control, facing) in _editorEngineFacing)
             DrawEditorEngineAt(control, facing);
@@ -645,12 +653,11 @@ public partial class Game1
             return;
         var hovered = new TileCoord(cell.X, cell.Y);
         var isHalfWidth = CustomDeviceFootprint.IsHalfWidthKind(_editorSelectedDeviceKind);
-        var halfSide = isHalfWidth ? _editorDevicePendingHalfSide : TileSide.East;
-        var pendingRotated = isHalfWidth ? halfSide is TileSide.South or TileSide.North : _editorDevicePendingRotated;
+        var (halfSide, pendingRotated) = PendingDeviceOrientation(_editorSelectedDeviceKind);
         var (width, height) = DeviceFootprintSize(_editorSelectedDeviceKind, pendingRotated);
         var anchor = FootprintAnchorFor(hovered, width, height);
-        var footprint = DeviceFootprintTiles(anchor, width, height).ToList();
-        var valid = CanPlaceDeviceFootprint(_editorSelectedDeviceKind, footprint, anchor, halfSide);
+        var plan = BuildFootprintPlan(_editorSelectedDeviceKind, anchor, halfSide, width, height);
+        var valid = CanPlaceDeviceFootprint(plan);
 
         // Direct user bug report ("не полтора на 2 а два на два исправь") - a half-width kind's ghost
         // used to always outline the full anchor box (every tile the footprint TOUCHES), not the
@@ -658,6 +665,17 @@ public partial class Game1
         // same rect DrawEditorDeviceAt itself draws the baked icon into once placed). Every other
         // kind still gets the full-footprint box, unchanged - only a half-width kind
         // (CustomDeviceFootprint.IsHalfWidthKind) has a fractional-tile shape.
+        // A shaped kind (the turrets) outlines only the cells and half-cells it really takes, not the
+        // empty corners of its bounding box.
+        if (CustomDeviceFootprint.IsShapedFootprintKind(_editorSelectedDeviceKind))
+        {
+            var pieces = ShapedFootprintRects(plan);
+            foreach (var piece in pieces)
+                _spriteBatch.Draw(_pixel, piece, (valid ? new Color(90, 160, 110) : new Color(160, 90, 90)) * 0.35f);
+            DrawShapeOutline(pieces, valid ? Color.LightGreen : Color.OrangeRed, 2);
+            return;
+        }
+
         var rect = isHalfWidth
             ? HalfWidthCombinedEditorRect(anchor, halfSide, CustomDeviceFootprint.Size(_editorSelectedDeviceKind).Height)
             : FullFootprintEditorRect(anchor, width, height);
@@ -667,6 +685,46 @@ public partial class Game1
         // shown via the same toast HandleCompartmentToolInput's own rejected-stamp case uses) -
         // merely hovering over an invalid spot only needs the red outline above, not a running wall
         // of text following the cursor every frame.
+    }
+
+    // The screen rectangle of the part of one tile a shaped footprint really occupies: the whole tile, or
+    // only the named half of it (East = the right half, and so on - same "named side is the blocked one"
+    // convention TileCell.DeviceOpenSide uses).
+    private Rectangle OccupiedPartOfTile(TileCoord coord, TileSide? halfSide)
+    {
+        var r = EditorTileRect(coord);
+        return halfSide switch
+        {
+            TileSide.East => new Rectangle(r.Center.X, r.Y, r.Right - r.Center.X, r.Height),
+            TileSide.West => new Rectangle(r.X, r.Y, r.Center.X - r.X, r.Height),
+            TileSide.South => new Rectangle(r.X, r.Center.Y, r.Width, r.Bottom - r.Center.Y),
+            TileSide.North => new Rectangle(r.X, r.Y, r.Width, r.Center.Y - r.Y),
+            _ => r,
+        };
+    }
+
+    private List<Rectangle> ShapedFootprintRects(IReadOnlyList<(TileCoord Coord, TileSide? HalfSide)> plan) =>
+        plan.Select(p => OccupiedPartOfTile(p.Coord, p.HalfSide)).ToList();
+
+    // Outlines only the outside of a shaped footprint: an edge shared with another piece of the same
+    // device (the seams between its own cells) is not drawn, so the result reads as ONE shape.
+    private void DrawShapeOutline(IReadOnlyList<Rectangle> pieces, Color color, int thickness)
+    {
+        bool Covered(int x, int y) => pieces.Any(p => p.Contains(x, y));
+        foreach (var p in pieces)
+        {
+            const int probe = 2;
+            var midX = p.Center.X;
+            var midY = p.Center.Y;
+            if (!Covered(midX, p.Y - probe))
+                _spriteBatch.Draw(_pixel, new Rectangle(p.X, p.Y, p.Width, thickness), color);
+            if (!Covered(midX, p.Bottom + probe))
+                _spriteBatch.Draw(_pixel, new Rectangle(p.X, p.Bottom - thickness, p.Width, thickness), color);
+            if (!Covered(p.X - probe, midY))
+                _spriteBatch.Draw(_pixel, new Rectangle(p.X, p.Y, thickness, p.Height), color);
+            if (!Covered(p.Right + probe, midY))
+                _spriteBatch.Draw(_pixel, new Rectangle(p.Right - thickness, p.Y, thickness, p.Height), color);
+        }
     }
 
     private Rectangle FullFootprintEditorRect(TileCoord anchor, int width, int height)
@@ -883,6 +941,40 @@ public partial class Game1
         }
 
         var face = FaceForKind(kind);
+
+        // A shaped kind (the turrets): the icon is baked at the bounding box and then drawn piece by
+        // piece, one slice per occupied cell or half-cell, so the empty corners stay empty floor and
+        // the half-cells show only their half.
+        if (CustomDeviceFootprint.IsShapedFootprintKind(kind))
+        {
+            var plan = BuildFootprintPlan(kind, anchor, PlanSideFor(kind, _editorDeviceHalfSides.TryGetValue(anchor, out var storedFacing) ? storedFacing : null, rotated), width, height);
+            var pieces = ShapedFootprintRects(plan);
+            var shapeBox = FullFootprintRect();
+            if (face != DeviceSkin.Face.Generic)
+            {
+                var baked = DeviceIconSkin.Get(face, shapeBox.Width, shapeBox.Height, lit: true);
+                var sx = baked.Width / (float)shapeBox.Width;
+                var sy = baked.Height / (float)shapeBox.Height;
+                foreach (var piece in pieces)
+                {
+                    var source = new Rectangle((int)((piece.X - shapeBox.X) * sx), (int)((piece.Y - shapeBox.Y) * sy),
+                        Math.Max(1, (int)(piece.Width * sx)), Math.Max(1, (int)(piece.Height * sy)));
+                    _spriteBatch.Draw(baked, piece, source, Color.White);
+                }
+            }
+            else
+            {
+                foreach (var piece in pieces)
+                    _spriteBatch.Draw(_pixel, piece, CustomDeviceCatalog.Tint(kind) * 0.55f);
+                var shapeGlyph = CustomDeviceCatalog.ShortGlyph(kind);
+                var shapeGlyphSize = _font.MeasureString(shapeGlyph) * 0.7f;
+                var mid = pieces.OrderByDescending(p => p.Width * p.Height).First();
+                _spriteBatch.DrawString(_font, shapeGlyph, new Vector2(mid.Center.X - shapeGlyphSize.X / 2f, mid.Center.Y - shapeGlyphSize.Y / 2f),
+                    Color.White, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+            }
+            DrawShapeOutline(pieces, Color.Black, 1);
+            return;
+        }
 
         // Direct user bug report ("они должны быть вплотную это раз, а во вторых само устройство
         // должно быть таких размеров а не состоять из двух элементов") - ONE seamless baked icon

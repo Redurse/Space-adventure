@@ -186,6 +186,8 @@ public partial class Game1
     // 2-state _editorDevicePendingRotated above only ever reached East or South, never the West/North
     // mirror.
     private TileSide _editorDevicePendingHalfSide = TileSide.East;
+    // A shaped kind (the turrets) cycles all four facings with R, starting from the shape as authored (North).
+    private TileSide _editorShapedPendingFacing = TileSide.North;
     private bool _prevDeviceRotateKeyDown;
     // Kind (direct user request - all 4 described zone types, not just one) is set by picking one of
     // the 4 quick-select buttons in the naming prompt instead of typing a name; null means the player
@@ -1051,6 +1053,14 @@ public partial class Game1
                     TileSide.West => TileSide.North,
                     _ => TileSide.East,
                 };
+            else if (CustomDeviceFootprint.IsShapedFootprintKind(_editorSelectedDeviceKind))
+                _editorShapedPendingFacing = _editorShapedPendingFacing switch
+                {
+                    TileSide.North => TileSide.East,
+                    TileSide.East => TileSide.South,
+                    TileSide.South => TileSide.West,
+                    _ => TileSide.North,
+                };
             else
                 _editorDevicePendingRotated = !_editorDevicePendingRotated;
         }
@@ -1077,35 +1087,30 @@ public partial class Game1
                 var removedKind = _editorDeviceKinds[anchor];
                 var removedHalfSide = _editorDeviceHalfSides.TryGetValue(anchor, out var removedHs) ? removedHs : (TileSide?)null;
                 var (removeWidth, removeHeight) = DeviceFootprintSize(removedKind, wasRotated);
-                foreach (var occupied in DeviceFootprintTiles(anchor, removeWidth, removeHeight))
+                var removalPlan = BuildFootprintPlan(removedKind, anchor, PlanSideFor(removedKind, removedHalfSide, wasRotated), removeWidth, removeHeight);
+                foreach (var (occupied, openSideHere) in removalPlan)
                 {
-                    // Only this device's own half tile (if any) needs an openSide - every other tile
-                    // of its footprint is exclusively its own (CanPlaceDeviceFootprint's own
-                    // precondition), so passing null there matches TileGrid.RemoveDevice's own
-                    // "unspecified means the one and only occupant" default.
-                    var openSideHere = removedHalfSide is { } hSide && IsHalfTileOfHalfWidthFootprint(occupied, anchor, hSide)
-                        ? HalfOpenSideForHalfWidthDevice(hSide)
-                        : (TileSide?)null;
+                    // Only a half tile (if any) needs an openSide - every other tile of this
+                    // footprint is exclusively its own (CanPlaceDeviceFootprint's own precondition),
+                    // so passing null there matches TileGrid.RemoveDevice's own "unspecified means
+                    // the one and only occupant" default.
                     _editorTiles.RemoveDevice(occupied, openSideHere);
                     ForgetDeviceFootprintTile(occupied, anchor);
                 }
                 _editorDeviceKinds.Remove(anchor);
                 _editorDeviceRotation.Remove(anchor);
                 _editorDeviceHalfSides.Remove(anchor);
-                if (IsTurretKind(removedKind))
-                    ClearTurretMountSkirt(anchor, wasRotated);
             }
             return;
         }
         if (!leftClicked)
             return;
         var isHalfWidth = CustomDeviceFootprint.IsHalfWidthKind(_editorSelectedDeviceKind);
-        var halfSide = isHalfWidth ? _editorDevicePendingHalfSide : TileSide.East;
-        var pendingRotated = isHalfWidth ? halfSide is TileSide.South or TileSide.North : _editorDevicePendingRotated;
+        var (halfSide, pendingRotated) = PendingDeviceOrientation(_editorSelectedDeviceKind);
         var (width, height) = DeviceFootprintSize(_editorSelectedDeviceKind, pendingRotated);
         var placeAnchor = FootprintAnchorFor(coord, width, height);
-        var footprint = DeviceFootprintTiles(placeAnchor, width, height).ToList();
-        if (!CanPlaceDeviceFootprint(_editorSelectedDeviceKind, footprint, placeAnchor, halfSide))
+        var plan = BuildFootprintPlan(_editorSelectedDeviceKind, placeAnchor, halfSide, width, height);
+        if (!CanPlaceDeviceFootprint(plan))
         {
             // Direct user bug report (screenshot - a half-width kind refused to place on a spot that
             // LOOKS like open floor) - the ghost preview's red outline already says "not here", but
@@ -1116,50 +1121,21 @@ public partial class Game1
             // HandleCompartmentToolInput's own rejected-stamp case already uses, replacing what used
             // to be a silent no-op plus a TEMP-DIAG debug overlay (removed - this is its permanent
             // replacement).
-            _editorToastMessage = DeviceRejectionToastMessage(footprint, placeAnchor, halfSide);
+            _editorToastMessage = DeviceRejectionToastMessage(plan);
             _editorToastUntilTicks = Environment.TickCount64 + EditorToastMilliseconds;
             return;
         }
         var deviceId = $"device-{placeAnchor.X}-{placeAnchor.Y}";
-        PlaceDeviceFootprint(_editorSelectedDeviceKind, footprint, placeAnchor, halfSide, deviceId);
-        foreach (var occupied in footprint)
+        PlaceDeviceFootprint(plan, deviceId);
+        foreach (var (occupied, _) in plan)
             RecordDeviceFootprintTile(occupied, placeAnchor);
         _editorDeviceKinds[placeAnchor] = _editorSelectedDeviceKind;
         if (pendingRotated)
             _editorDeviceRotation[placeAnchor] = true;
-        if (isHalfWidth)
+        if (isHalfWidth || CustomDeviceFootprint.IsShapedFootprintKind(_editorSelectedDeviceKind))
             _editorDeviceHalfSides[placeAnchor] = halfSide;
-        foreach (var occupied in footprint)
+        foreach (var (occupied, _) in plan)
             EvictTerminalsAtJunctions(occupied);
-        // Direct user request (screenshot of a turret mount built out of wall tiles - "реальные
-        // такие границы... при установке в редакторе") - stamped immediately so the border is
-        // visible while designing, not just after a build (Ship.Custom.cs derives the same shape
-        // again at build time regardless, TurretMountSkirt.cs's own doc comment explains why).
-        if (IsTurretKind(_editorSelectedDeviceKind))
-            StampTurretMountSkirt(placeAnchor, pendingRotated);
-    }
-
-    private static bool IsTurretKind(CustomDeviceKind kind) => kind is CustomDeviceKind.TurretBallistic
-        or CustomDeviceKind.TurretLaser or CustomDeviceKind.TurretMachineGun or CustomDeviceKind.DefensiveTurret;
-
-    private void StampTurretMountSkirt(TileCoord anchor, bool rotated)
-    {
-        foreach (var skirt in TurretMountSkirt.SkirtTiles(anchor, rotated))
-        {
-            if (_editorTiles.CellAt(skirt.Position) is { DeviceId: not null })
-                continue;
-            _editorTiles.SetFloor(skirt.Position, true);
-            _editorTiles.SetWall(skirt.Position, TileWallKind.Solid);
-            if (skirt.OpenSide is { } side)
-                _editorTiles.SetWallOpenSide(skirt.Position, side);
-        }
-    }
-
-    private void ClearTurretMountSkirt(TileCoord anchor, bool rotated)
-    {
-        foreach (var skirt in TurretMountSkirt.SkirtTiles(anchor, rotated))
-            if (_editorTiles.CellAt(skirt.Position) is { Wall: TileWallKind.Solid, DeviceId: null })
-                _editorTiles.SetWall(skirt.Position, TileWallKind.None);
     }
 
     // Direct user request ("стеллаж... можно поворачивать") - a non-square device (StorageRack/
@@ -1172,27 +1148,59 @@ public partial class Game1
         return rotated ? (height, width) : (width, height);
     }
 
-    // Every Device-tool kind needs bare floor on EVERY tile of its footprint (TileGrid.PlaceDevice's
-    // own precondition) - EXCEPT Helm/Navigation, whose SECOND (half) tile along the halved axis only
-    // needs TileGrid.CanPlaceHalfWidthDevice (bare floor, OR an already-matching half-block wall to
-    // coexist with - see that method's own doc comment). No other kind gets this - it's specific to
-    // these two consoles' own genuine 1.5-tile footprint, not a general placement rule change.
-    private bool CanPlaceDeviceFootprint(CustomDeviceKind kind, IReadOnlyList<TileCoord> footprint, TileCoord anchor, TileSide halfSide)
+    // Direct user request (turret kinds' own new shaped footprint - CustomDeviceFootprint.
+    // ShapedFootprint) - the single per-tile plan CanPlaceDeviceFootprint/PlaceDeviceFootprint/
+    // DeviceRejectionToastMessage all now share: every tile this footprint touches, paired with
+    // null (ordinary full reservation, TileGrid.PlaceDevice) or the specific side its own half-claim
+    // needs (TileGrid.PlaceHalfWidthDevice). A shaped kind (IsShapedFootprintKind) gets its per-tile
+    // plan straight from CustomDeviceFootprint.ShapedFootprint/RotateShapedFootprint; an
+    // IsHalfWidthKind (Helm/Navigation/...) still produces exactly its old one-tile-special-cased
+    // plan, just expressed in this same unified shape; every other kind is plain full reservation
+    // throughout. `rotated` is detected by comparing `width` against Size(kind)'s own unrotated
+    // Width - the same fact DeviceFootprintSize itself was given to compute width/height from.
+    private static IReadOnlyList<(TileCoord Coord, TileSide? HalfSide)> BuildFootprintPlan(
+        CustomDeviceKind kind, TileCoord anchor, TileSide halfSide, int width, int height)
     {
+        // For a shaped kind the side parameter is its facing (North = the shape as authored).
+        if (CustomDeviceFootprint.ShapedFootprint(kind, halfSide) is { } tiles)
+            return tiles.Select(t => (new TileCoord(anchor.X + t.Offset.X, anchor.Y + t.Offset.Y), t.HalfSide)).ToList();
+
+        var footprint = DeviceFootprintTiles(anchor, width, height).ToList();
         if (!CustomDeviceFootprint.IsHalfWidthKind(kind))
-            return footprint.All(t => _editorTiles.CellAt(t) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null });
+            return footprint.Select(c => (c, (TileSide?)null)).ToList();
 
         var halfOpenSide = HalfOpenSideForHalfWidthDevice(halfSide);
-        foreach (var coord in footprint)
-        {
-            var ok = IsHalfTileOfHalfWidthFootprint(coord, anchor, halfSide)
-                ? _editorTiles.CanPlaceHalfWidthDevice(coord, halfOpenSide)
-                : _editorTiles.CellAt(coord) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
-            if (!ok)
-                return false;
-        }
-        return true;
+        return footprint.Select(c =>
+            (c, IsHalfTileOfHalfWidthFootprint(c, anchor, halfSide) ? halfOpenSide : (TileSide?)null)).ToList();
     }
+
+    // The side argument BuildFootprintPlan wants for a device already in the editor: a half-width kind's
+    // half side, a shaped kind's facing (a save that only knows the old Rotated flag means North or West),
+    // unused for anything else.
+    private static TileSide PlanSideFor(CustomDeviceKind kind, TileSide? stored, bool rotated) =>
+        CustomDeviceFootprint.IsShapedFootprintKind(kind)
+            ? CustomDeviceFootprint.ShapedFacing(rotated, stored)
+            : CustomDeviceFootprint.ResolveHalfSide(stored, rotated);
+
+    // What the next placement of `kind` would use, from the R-key state: the side argument and whether the
+    // footprint comes out turned (width and height swapped).
+    private (TileSide Side, bool Rotated) PendingDeviceOrientation(CustomDeviceKind kind)
+    {
+        if (CustomDeviceFootprint.IsHalfWidthKind(kind))
+            return (_editorDevicePendingHalfSide, _editorDevicePendingHalfSide is TileSide.South or TileSide.North);
+        if (CustomDeviceFootprint.IsShapedFootprintKind(kind))
+            return (_editorShapedPendingFacing, _editorShapedPendingFacing is TileSide.East or TileSide.West);
+        return (TileSide.East, _editorDevicePendingRotated);
+    }
+
+    // Every Device-tool kind needs bare floor on EVERY tile of its footprint (TileGrid.PlaceDevice's
+    // own precondition) - a half-claim tile (BuildFootprintPlan's own HalfSide, non-null) only needs
+    // TileGrid.CanPlaceHalfWidthDevice (bare floor, OR an already-matching half-block wall/device to
+    // coexist with - see that method's own doc comment) instead.
+    private bool CanPlaceDeviceFootprint(IReadOnlyList<(TileCoord Coord, TileSide? HalfSide)> plan) =>
+        plan.All(t => t.HalfSide is { } side
+            ? _editorTiles.CanPlaceHalfWidthDevice(t.Coord, side)
+            : _editorTiles.CellAt(t.Coord) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null });
 
     // Direct user bug report (screenshot - trying to place a Щиток/Junction next to an existing one
     // refused with no visible reason) - a short, translated toast (HandleCompartmentToolInput's own
@@ -1202,22 +1210,19 @@ public partial class Game1
     // report - a second Щиток's half tile landing on the first one's already-claimed half) reads as
     // plain bare floor to the eye, since only the BLOCKED half of that tile gets the neighbor's own
     // baked icon drawn over it (DrawEditorDeviceAt) - the other half stays walkable and undrawn.
-    private string DeviceRejectionToastMessage(IReadOnlyList<TileCoord> footprint, TileCoord anchor, TileSide halfSide)
+    private string DeviceRejectionToastMessage(IReadOnlyList<(TileCoord Coord, TileSide? HalfSide)> plan)
     {
-        var isHalfWidth = CustomDeviceFootprint.IsHalfWidthKind(_editorSelectedDeviceKind);
-        var requiredOpenSide = HalfOpenSideForHalfWidthDevice(halfSide);
-        foreach (var coord in footprint)
+        foreach (var (coord, halfSide) in plan)
         {
-            var isHalf = isHalfWidth && IsHalfTileOfHalfWidthFootprint(coord, anchor, halfSide);
-            var ok = isHalf
-                ? _editorTiles.CanPlaceHalfWidthDevice(coord, requiredOpenSide)
+            var ok = halfSide is { } side
+                ? _editorTiles.CanPlaceHalfWidthDevice(coord, side)
                 : _editorTiles.CellAt(coord) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
             if (ok)
                 continue;
             var c = _editorTiles.CellAt(coord);
             if (c is null)
                 return "Нельзя разместить устройство - здесь нет тайла корабля.";
-            if (!isHalf && !c.HasFloor)
+            if (halfSide is null && !c.HasFloor)
                 return "Нельзя разместить устройство - здесь нет пола.";
             if (c.DeviceId is not null)
                 return "Нельзя разместить устройство - место уже занято другим устройством (например, половиной соседнего прибора).";
@@ -1228,26 +1233,17 @@ public partial class Game1
         return "Нельзя разместить устройство.";
     }
 
-    // Commits a footprint already validated by CanPlaceDeviceFootprint above - Helm/Navigation's
-    // "half" tile goes through PlaceHalfWidthDevice (bare floor OR a matching half-block wall it then
-    // coexists with, never destroyed), every other tile of every kind through ordinary PlaceDevice,
-    // unchanged. Shared by fresh placement (HandleDeviceToolInput) and canvas reload
-    // (Game1.ShipEditor.TileSave.cs's ApplyEditorTileCanvas) so both always agree on which tile of a
-    // Helm/Navigation footprint is the half one.
-    private void PlaceDeviceFootprint(CustomDeviceKind kind, IReadOnlyList<TileCoord> footprint, TileCoord anchor, TileSide halfSide, string deviceId)
+    // Commits a plan already validated by CanPlaceDeviceFootprint above - a half-claim tile goes
+    // through PlaceHalfWidthDevice (bare floor OR a matching half-block wall/device it then coexists
+    // with, never destroyed), every ordinary (null HalfSide) tile through plain PlaceDevice. Shared
+    // by fresh placement (HandleDeviceToolInput) and canvas reload (Game1.ShipEditor.TileSave.cs's
+    // ApplyEditorTileCanvas) so both always agree on the exact same plan.
+    private void PlaceDeviceFootprint(IReadOnlyList<(TileCoord Coord, TileSide? HalfSide)> plan, string deviceId)
     {
-        if (!CustomDeviceFootprint.IsHalfWidthKind(kind))
+        foreach (var (coord, halfSide) in plan)
         {
-            foreach (var occupied in footprint)
-                _editorTiles.PlaceDevice(occupied, deviceId);
-            return;
-        }
-
-        var halfOpenSide = HalfOpenSideForHalfWidthDevice(halfSide);
-        foreach (var coord in footprint)
-        {
-            if (IsHalfTileOfHalfWidthFootprint(coord, anchor, halfSide))
-                _editorTiles.PlaceHalfWidthDevice(coord, halfOpenSide, deviceId);
+            if (halfSide is { } side)
+                _editorTiles.PlaceHalfWidthDevice(coord, side, deviceId);
             else
                 _editorTiles.PlaceDevice(coord, deviceId);
         }

@@ -50,6 +50,22 @@ public static class CelestialBodyGenerator
     // points clear of a body's footprint, the same role GravityModel.SoiRadius played before.
     public static float ClearanceRadius(CelestialBody body) => body.Radius * ClearanceRadiusFactor;
 
+    // Cosmoteer-style "sun zone": a ring of heat around the star. Kept just outside the disc (the
+    // innermost planet's orbit is only ~R+50 at minimum, so a wider ring would swallow it).
+    public const float SunZoneRadiusFactor = 1.3f;
+    public static float SunZoneRadius(CelestialBody star) => star.Radius * SunZoneRadiusFactor;
+
+    // 0 at/beyond the zone's edge, 1 on the star's own disc, linear in between.
+    public static float SunZoneIntensity(CelestialBody star, float distanceFromStarCenter)
+    {
+        var zone = SunZoneRadius(star);
+        if (distanceFromStarCenter >= zone)
+            return 0f;
+        if (distanceFromStarCenter <= star.Radius)
+            return 1f;
+        return (zone - distanceFromStarCenter) / (zone - star.Radius);
+    }
+
     // Orbit spacing no longer has to clear a gravity SOI (M52's patched-conics is gone) - just a
     // margin on top of the plain clearance-radius buffer above, so floating-point placement never
     // lets two neighbours' buffers actually touch.
@@ -228,5 +244,20 @@ public static class CelestialBodyGenerator
         for (var i = 0; i < gaps.Length; i++)
             gaps[i] = random.NextDouble() < BeltChance;
         return gaps;
+    }
+
+    // The radial extent (distance from the star) of each asteroid belt, for drawing its dashed
+    // boundary - the same planet-orbit gaps GenerateBeltAsteroids scatters rocks across.
+    public static IReadOnlyList<(float Inner, float Outer)> BeltBands(string systemId)
+    {
+        var bodies = Generate(systemId);
+        var star = bodies.Single(b => b.ParentId is null);
+        var planets = bodies.Where(b => b.ParentId == star.Id).OrderBy(b => b.OrbitRadius).ToList();
+        var gaps = BeltGaps(systemId, planets.Count);
+        var bands = new List<(float, float)>();
+        for (var gap = 0; gap < gaps.Count; gap++)
+            if (gaps[gap])
+                bands.Add((planets[gap].OrbitRadius, planets[gap + 1].OrbitRadius));
+        return bands;
     }
 }

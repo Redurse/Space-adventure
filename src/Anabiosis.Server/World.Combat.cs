@@ -78,7 +78,7 @@ public sealed partial class World
             if (_turretAimInput.TryGetValue(turret.Definition.Id, out var aimDirection) && aimDirection != 0)
             {
                 var next = turret.AimDegrees + aimDirection * TurretAimRateDegreesPerSecond * (float)deltaSeconds;
-                turret.AimDegrees = Math.Clamp(next, turret.Definition.MinAimDegrees, turret.Definition.MaxAimDegrees);
+                turret.AimDegrees = TurretMount.WrapDegrees(next); // full 360 degree traverse
             }
 
             if (turret.Definition.WeaponType == TurretWeaponType.Laser)

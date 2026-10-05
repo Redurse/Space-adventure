@@ -163,7 +163,8 @@ public static partial class ItemIcons
     public static bool HasMaterialIcon(ItemType type) => type is ItemType.IronOre or ItemType.NickelOre
         or ItemType.ZincOre or ItemType.CopperOre or ItemType.TitaniumOre or ItemType.UraniumOre
         or ItemType.Silicon or ItemType.Carbon or ItemType.AluminumOre or ItemType.PlastalloyOre
-        or ItemType.SteelPlate or ItemType.TitaniumPlate or ItemType.CopperCable or ItemType.Plastic or ItemType.Plastalloy;
+        or ItemType.SteelPlate or ItemType.TitaniumPlate or ItemType.CopperCable or ItemType.Plastic or ItemType.Plastalloy
+        or ItemType.Hyperium;
 
     private static bool DrawMaterialIcon(SpriteBatch spriteBatch, Texture2D pixel, ItemType type, Rectangle rect)
     {
@@ -179,6 +180,7 @@ public static partial class ItemIcons
             case ItemType.Carbon: DrawOreChunk(spriteBatch, pixel, rect, new Color(34, 34, 38), new Color(72, 72, 78), new Color(14, 14, 16)); return true;
             case ItemType.AluminumOre: DrawOreChunk(spriteBatch, pixel, rect, new Color(196, 199, 204), new Color(232, 234, 237), new Color(140, 142, 146)); return true;
             case ItemType.PlastalloyOre: DrawOreChunk(spriteBatch, pixel, rect, new Color(120, 90, 160), new Color(172, 140, 212), new Color(74, 54, 104)); return true;
+            case ItemType.Hyperium: DrawOreChunk(spriteBatch, pixel, rect, new Color(40, 150, 190), new Color(120, 225, 255), new Color(16, 70, 100)); return true;
             case ItemType.SteelPlate: DrawSteelPlate(spriteBatch, pixel, rect); return true;
             case ItemType.TitaniumPlate: DrawTitaniumPlate(spriteBatch, pixel, rect); return true;
             case ItemType.CopperCable: DrawCopperCable(spriteBatch, pixel, rect); return true;

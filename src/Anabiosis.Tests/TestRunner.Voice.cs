@@ -63,6 +63,10 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
+        // Players spawn already wearing a radio headset, so take it off first.
+        world.ApplyCommand(1, new ClientCommand(1,
+            MoveItemFrom: new SlotRef(ItemSlotKind.Equip, (int)EquipSlot.Headset),
+            MoveItemTo: new SlotRef(ItemSlotKind.Main, 9)));
 
         var payload = new VoiceChunkPayload(new byte[] { 5, 6 }, 44100, IsRadio: true);
         world.ApplyCommand(1, new ClientCommand(1, VoiceChunk: payload));
@@ -70,6 +74,41 @@ internal static partial class TestRunner
 
         var chunks = world.CreateSnapshot().VoiceChunks;
         return chunks is null || chunks.Count == 0;
+    }
+
+    // Direct user request: a freshly spawned player already wears a radio headset.
+    private static bool World_Voice_PlayerSpawnsWearingRadio()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+
+        var payload = new VoiceChunkPayload(new byte[] { 5, 6 }, 44100, IsRadio: true);
+        world.ApplyCommand(1, new ClientCommand(1, VoiceChunk: payload));
+        world.Step(RealtimeStep);
+
+        return world.CreateSnapshot().VoiceChunks is { Count: 1 };
+    }
+
+    // Voice chunks live in exactly one tick's snapshot, so when the client's latest-only receive
+    // skips snapshots, the chunks of the skipped ones must be carried into the one it returns.
+    private static bool InProcessTransport_SkippedSnapshots_KeepTheirVoiceChunks()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        var transport = new Anabiosis.Shared.Networking.InProcessTransport();
+        var server = (Anabiosis.Shared.Networking.IServerConnection)transport;
+        var client = (Anabiosis.Shared.Networking.IClientConnection)transport;
+
+        foreach (var marker in new byte[] { 1, 2, 0 })
+        {
+            if (marker != 0)
+                world.ApplyCommand(1, new ClientCommand(1, VoiceChunk: new VoiceChunkPayload(new byte[] { marker, 0 }, 24000, IsRadio: false)));
+            world.Step(RealtimeStep);
+            server.Send(world.CreateSnapshot());
+        }
+
+        var received = client.ReceiveLatestSnapshot()?.VoiceChunks;
+        return received is { Count: 2 } && received[0].Samples[0] == 1 && received[1].Samples[0] == 2;
     }
 
     private static bool World_Voice_EmptySamplesAreIgnored()

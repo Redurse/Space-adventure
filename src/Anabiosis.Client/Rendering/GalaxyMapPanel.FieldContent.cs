@@ -145,6 +145,14 @@ public sealed partial class GalaxyMapPanel
         var planets = _cachedBackdropPlanets;
         var centerScreen = FieldToScreen(mapOrigin, fieldCenter, zoom);
 
+        // Cosmoteer-style overlays: the star's heat ring and a dashed outline around each belt.
+        HudIcons.DrawRingArc(spriteBatch, _pixel, centerScreen, CelestialBodyGenerator.SunZoneRadius(_cachedBackdropStar) * PixelsPerUnit * zoom,
+            0f, 360f, new Color(255, 70, 40) * 0.6f, 96, 1.5f);
+        foreach (var (inner, outer) in CelestialBodyGenerator.BeltBands(systemId))
+        foreach (var radius in new[] { inner, outer })
+            for (var angle = 0f; angle < 360f; angle += 8f)
+                HudIcons.DrawRingArc(spriteBatch, _pixel, centerScreen, radius * PixelsPerUnit * zoom, angle, angle + 3f, Color.White * 0.3f, 2, 1.2f);
+
         foreach (var planet in planets)
         {
             var planetReal = CelestialBodyGenerator.PositionAt(planet, _cachedBackdropById) + fieldCenter;

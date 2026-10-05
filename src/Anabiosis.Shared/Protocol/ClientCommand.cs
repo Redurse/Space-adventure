@@ -325,4 +325,10 @@ public sealed record ClientCommand(
     string? LobbySelectCustomShipName = null,
     // Host-only, edge-triggered like DoorToggleId - the lobby's own start button. Ignored from
     // anyone but the host (GameServer.ApplyLobbyCommand).
-    bool LobbyStartRoundPressed = false);
+    bool LobbyStartRoundPressed = false,
+    // Shift held: walk 1.25x faster (World.Movement.cs's SprintSpeedMultiplier). Level-triggered like
+    // MoveX/MoveY - it only matters on ticks that also carry movement input.
+    bool Sprint = false,
+    // Right mouse held while a Rifle / LaserRifle is in hand: fire (a burst, or a beam). Level-triggered,
+    // the weapon's own cooldown paces it, same as FireHeld does for a turret.
+    bool WeaponFireHeld = false);

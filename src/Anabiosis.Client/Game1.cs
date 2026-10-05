@@ -850,6 +850,7 @@ public partial class Game1 : Game
         // own screenshots), keyed by the exact catalog display name. Loaded defensively per entry,
         // same reasoning as every texture above: a room whose own .xnb didn't build for whatever
         // reason falls back to the ordinary procedural room rather than taking the whole load down.
+        DrawLoadingFrame("ЗАГРУЗКА...", 92);
         foreach (var (catalogName, textureName) in RoomDecor.CatalogTextureNames)
         {
             try { RoomDecor.SetCatalogTexture(catalogName, Content.Load<Texture2D>($"Textures/RoomCatalog/{textureName}")); }
@@ -875,6 +876,7 @@ public partial class Game1 : Game
         // AI-generated attempts at Textures/Devices/Reactor.png never matched the game's own
         // pixel-art style, so this follows a Barotrauma reactor reference directly in code the
         // same way TileTextures/HullSkin already build the hull and floor.
+        DrawLoadingFrame("ЗАГРУЗКА...", 94);
         _editorReactorTexture = ReactorTexture.Create(GraphicsDevice);
         _shipRenderer.SetReactorTexture(_editorReactorTexture);
         // Marching-engine art (direct user request) - real Control/Bulkhead/Nozzle textures instead
@@ -892,6 +894,7 @@ public partial class Game1 : Game
         // own words: "просто text текстуру пока что, потом заменим"), just so a painted floor tile
         // reads as something rather than a flat colour rectangle. Falls back to the flat rectangle
         // Game1.ShipEditor.Draw.cs already draws if this one PNG doesn't build.
+        DrawLoadingFrame("ЗАГРУЗКА...", 97);
         try { _editorFloorTexture = Content.Load<Texture2D>("Textures/Tiles/FloorPlaceholder"); }
         catch { _editorFloorTexture = null; }
         // Overrides the two volume-knob/window lines above with whatever the player last saved on
@@ -905,18 +908,56 @@ public partial class Game1 : Game
     // LoadContent hasn't finished yet at the point this is called, so that loop isn't running.
     // percent, when given, is genuine progress through LoadContent's own known, fixed sequence of
     // steps (called at a handful of checkpoints below) - not an animation standing in for it.
+    // The studio opening scene plays from the first frame and keeps playing while the rest of this
+    // load runs: every checkpoint redraws it at its true elapsed time with the real load progress under it.
+    // The scene is a function of time, so a long step simply makes it skip ahead, never restart.
+    private System.Diagnostics.Stopwatch? _splashClock;
+    private long _lastSplashPumpTicks;
+    private float SplashSeconds => (float)(_splashClock?.Elapsed.TotalSeconds ?? 0.0);
+
     private void DrawLoadingFrame(string message, int percent = -1)
     {
-        var text = percent >= 0 ? $"{message} {Math.Clamp(percent, 0, 100)}%" : message;
-        var viewport = GraphicsDevice.Viewport;
-        var size = _font.MeasureString(text);
-        var position = new Vector2((viewport.Width - size.X) / 2f, (viewport.Height - size.Y) / 2f);
+        _splashClock ??= System.Diagnostics.Stopwatch.StartNew();
+        // A checkpoint that comes right after another one adds nothing the eye could see - skip it
+        // rather than spend a present on it (the first one always draws).
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (_lastSplashPumpTicks != 0 && (now - _lastSplashPumpTicks) * 1000 / System.Diagnostics.Stopwatch.Frequency < 12)
+            return;
+        _lastSplashPumpTicks = now;
 
+        var viewport = GraphicsDevice.Viewport;
         GraphicsDevice.Clear(Color.Black);
         _spriteBatch.Begin();
-        _spriteBatch.DrawString(_font, text, position, Color.White);
+        StudioSplash.Draw(_spriteBatch, _pixel, _font, viewport.Width, viewport.Height, SplashSeconds,
+            percent >= 0 ? Math.Clamp(percent, 0, 100) / 100f : null);
         _spriteBatch.End();
         GraphicsDevice.Present();
+    }
+
+    // After loading finishes the scene carries on through the normal Update/Draw loop until it ends.
+    // Any key or click ends it early once it has been on screen for a moment.
+    private void UpdateSplash(KeyboardState keyboard, float gameSeconds)
+    {
+        var mouse = Mouse.GetState();
+        var wantsSkip = keyboard.GetPressedKeys().Length > 0
+            || mouse.LeftButton == ButtonState.Pressed || mouse.RightButton == ButtonState.Pressed;
+        if (StudioSplash.IsDone(SplashSeconds) || (wantsSkip && SplashSeconds >= StudioSplash.SkippableAfter))
+        {
+            _menuScreen = _postSplashScreen;
+            // The menu's own fade-in is measured against the game clock, so stamp the change with it.
+            _screenChangedAt = gameSeconds;
+            // The click/key that skipped must not also press whatever button sits under the menu.
+            _prevMenuLeftMouseButton = ButtonState.Pressed;
+        }
+    }
+
+    private void DrawSplash()
+    {
+        var viewport = GraphicsDevice.Viewport;
+        GraphicsDevice.Clear(Color.Black);
+        _spriteBatch.Begin();
+        StudioSplash.Draw(_spriteBatch, _pixel, _font, viewport.Width, viewport.Height, SplashSeconds);
+        _spriteBatch.End();
     }
 
     // The background-session counterpart of DrawLoadingFrame above (StartHostedSession, M50) -
@@ -984,6 +1025,17 @@ public partial class Game1 : Game
                 break;
         }
         _graphics.SynchronizeWithVerticalRetrace = settings.VSync;
+        // Frame cap: a fixed step at the chosen rate (Update and Draw both follow it), or no fixed
+        // step at all for "uncapped" (vsync, if on, still bounds it to the monitor).
+        if (settings.FrameLimit > 0)
+        {
+            IsFixedTimeStep = true;
+            TargetElapsedTime = TimeSpan.FromSeconds(1.0 / settings.FrameLimit);
+        }
+        else
+        {
+            IsFixedTimeStep = false;
+        }
         _graphics.ApplyChanges();
         UpdateRenderScale();
 
@@ -1098,6 +1150,12 @@ public partial class Game1 : Game
             if (_pendingLobbySession is not null)
             {
                 FinishPendingLobbySessionIfReady();
+                base.Update(gameTime);
+                return;
+            }
+            if (_menuScreen == MenuScreen.Splash)
+            {
+                UpdateSplash(keyboard, (float)gameTime.TotalGameTime.TotalSeconds);
                 base.Update(gameTime);
                 return;
             }
@@ -1231,6 +1289,10 @@ public partial class Game1 : Game
         var cheatPanelToggleDown = keyboard.IsKeyDown(Keys.OemTilde);
         if (cheatPanelToggleDown && !_prevGameplayKeyboard.IsKeyDown(Keys.OemTilde) && !_pauseMenuOpen)
             _cheatPanelOpen = !_cheatPanelOpen;
+
+        // F9 cycles the voice test mode (off -> 3 -> 8 -> 14 units -> off), see DrawVoiceTestBanner.
+        if (keyboard.IsKeyDown(Keys.F9) && !_prevGameplayKeyboard.IsKeyDown(Keys.F9) && !_chatFocused)
+            _voiceTestLevel = (_voiceTestLevel + 1) % VoiceTestDistances.Length;
 
         // L lands/takes off (M55) - same edge-triggered shape as M above. World.PlanetLanding.cs's
         // own CanLandNow is what actually refuses to arm it away from a landable body's surface, so
@@ -1936,6 +1998,12 @@ public partial class Game1 : Game
         var weldHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingWelder();
         var axeSwingHeld = mouse.LeftButton == ButtonState.Pressed && _dragFrom is null && HoldingAxe();
 
+        // The held rifle / laser rifle fires on the right button, aimed at the cursor like the tools above are.
+        // Only on foot with no panel or placement mode that already owns the right button (map pan, cancel).
+        var weaponFireHeld = mouse.RightButton == ButtonState.Pressed && _dragFrom is null && HoldingFirearm()
+            && !isOutside && !isAtHelm && !mapOpen && !shipOverviewActive && !_galacticMapOpen && !_commsConsoleOpen
+            && _placingRoomCatalogId is null && myCharacter?.LayingWireFromPin is null;
+
         var debugSpawnEnemyPressed = _debugSpawnEnemyClickedThisFrame;
         _debugSpawnEnemyClickedThisFrame = false;
         var debugAddCreditsPressed = _debugAddCreditsClickedThisFrame;
@@ -1950,6 +2018,8 @@ public partial class Game1 : Game
         // One-shot outgoing voice chunk (VoiceCapture's own BufferReady handler sets this) - same
         // capture-send-clear lifecycle as chatMessage above, so a mic buffer is never resent.
         var voiceChunk = _voiceCapture.TakePendingChunk();
+        if (voiceChunk is not null)
+            _voiceChunksSent++;
 
         // Direct user request ("внутренний строитель вместо SendInput") - GameClient.SendInput used
         // to be a SECOND ~90-parameter positional list mirroring ClientCommand's own constructor
@@ -1978,7 +2048,9 @@ public partial class Game1 : Game
             suitLockerInteractId, turretInteractId, ammoStorageInteractId, stealCrateId, repairDeviceId, terminalInteractId,
             AutopilotTargetX: autopilotTarget?.X, AutopilotTargetY: autopilotTarget?.Y,
             AutopilotStopPressed: autopilotStopPressed, DesiredFacingDegrees: desiredFacingDegrees,
-            FabricatorCraftRecipeId: fabricatorCraftRecipeId, DeconstructItemType: deconstructItemType, ProductionCancelPressed: productionCancelPressed));
+            FabricatorCraftRecipeId: fabricatorCraftRecipeId, DeconstructItemType: deconstructItemType, ProductionCancelPressed: productionCancelPressed,
+            Sprint: keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift),
+            WeaponFireHeld: weaponFireHeld));
         _client.PollSnapshots();
         // Direct user request ("система достижений... как в Стиме") - checked every frame a real
         // snapshot exists, same as every other per-frame HUD read off _client.LatestSnapshot.
@@ -2032,12 +2104,27 @@ public partial class Game1 : Game
             // WorldSnapshot field uses), which includes the LOCAL player's own just-sent chunk right
             // back to them. VoicePlayback itself has no notion of "which player is me" to filter this
             // on its own, so it's excluded here, at the one place that already knows both.
-            var voiceChunksExcludingSelf = snapshotForVoice.VoiceChunks?
-                .Where(c => c.SenderPlayerId != _client.PlayerId).ToList();
-            _voicePlayback.Update(voiceChunksExcludingSelf, myVoicePosition,
-                senderId => snapshotForVoice.Characters.FirstOrDefault(c => c.PlayerId == senderId) is { } sender
-                    ? new Vec2(sender.X, sender.Y)
-                    : (Vec2?)null,
+            // Voice test (F9, VoiceTestDistances): your own voice is played back as if a crewmate were
+            // speaking from a spot that many units to your right, through the same server relay, the same
+            // distance/direction/wall muffling and the same radio filter - so you can hear what the other
+            // end of a conversation would hear without a second player.
+            var voiceTestOn = _voiceTestLevel > 0;
+            // Chunks ride in one snapshot only, but Update runs more often than the server ticks (60 vs
+            // 30 Hz), so the same snapshot is seen on consecutive frames - without this check every chunk
+            // would be queued for playback twice, stretching and garbling the speech.
+            var freshVoiceSnapshot = !ReferenceEquals(snapshotForVoice, _lastVoiceSnapshot);
+            _lastVoiceSnapshot = snapshotForVoice;
+            var snapshotVoice = freshVoiceSnapshot ? snapshotForVoice.VoiceChunks : null;
+            _voiceChunksReceived += snapshotVoice?.Count(c => c.SenderPlayerId == _client.PlayerId) ?? 0;
+            var voiceChunksToPlay = voiceTestOn
+                ? snapshotVoice?.ToList()
+                : snapshotVoice?.Where(c => c.SenderPlayerId != _client.PlayerId).ToList();
+            _voicePlayback.Update(voiceChunksToPlay, myVoicePosition,
+                senderId => voiceTestOn && senderId == _client.PlayerId
+                    ? myVoicePosition + new Vec2(VoiceTestDistances[_voiceTestLevel], 0f)
+                    : snapshotForVoice.Characters.FirstOrDefault(c => c.PlayerId == senderId) is { } sender
+                        ? new Vec2(sender.X, sender.Y)
+                        : (Vec2?)null,
                 (a, b) => ShadowCast.IsBlocked(new Vector2((float)a.X, (float)a.Y), new Vector2((float)b.X, (float)b.Y), voiceWalls));
         }
 
@@ -2073,8 +2160,37 @@ public partial class Game1 : Game
     private static readonly Color TopBarPlate = new(26, 27, 32);
     private static readonly Color TopBarGold = new(214, 178, 112);
 
+    // Voice test mode (F9): 0 = off, otherwise an index into VoiceTestDistances - how far to your right the
+    // simulated speaker stands. Client-side only; nothing is sent to the server for it.
+    private int _voiceTestLevel;
+    private WorldSnapshot? _lastVoiceSnapshot;
+    // Voice test diagnostics: own chunks handed to the server vs. own chunks that came back in a snapshot.
+    private int _voiceChunksSent, _voiceChunksReceived;
+    private static readonly float[] VoiceTestDistances = { 0f, 3f, 8f, 14f };
+
+    private void DrawVoiceTestBanner(SpriteBatch spriteBatch)
+    {
+        if (_voiceTestLevel <= 0)
+            return;
+        var lines = new[]
+        {
+            $"ТЕСТ ГОЛОСА: вас слышат как собеседника в {VoiceTestDistances[_voiceTestLevel]:0} ед. справа. Говорите: V - рядом, R - рация. F9 - дальше / выключить",
+            $"микрофон: {(_voiceCapture.IsTransmitting ? "ПИШЕТ" : "молчит")} | отправлено кусков: {_voiceChunksSent} | вернулось с сервера: {_voiceChunksReceived}",
+        };
+        var y = 62f;
+        foreach (var text in lines)
+        {
+            var size = _font.MeasureString(text) * 0.6f;
+            var position = new Vector2((DesignWidth - size.X) / 2f, y);
+            spriteBatch.Draw(_pixel, new Rectangle((int)position.X - 8, (int)position.Y - 4, (int)size.X + 16, (int)size.Y + 8), Color.Black * 0.7f);
+            spriteBatch.DrawString(_font, text, position, Color.Gold, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+            y += size.Y + 10f;
+        }
+    }
+
     private void DrawTopBar(SpriteBatch spriteBatch, WorldSnapshot? snapshot)
     {
+        DrawVoiceTestBanner(spriteBatch);
         var crewRect = GetTopBarButtonRect(0);
         var managementRect = GetTopBarButtonRect(1);
         var infoRect = GetTopBarButtonRect(2);
@@ -2225,6 +2341,13 @@ public partial class Game1 : Game
             if (_pendingSession is not null)
             {
                 DrawSessionLoadingScreen();
+                base.Draw(gameTime);
+                return;
+            }
+
+            if (_menuScreen == MenuScreen.Splash)
+            {
+                DrawSplash();
                 base.Draw(gameTime);
                 return;
             }
@@ -2534,6 +2657,11 @@ public partial class Game1 : Game
                 // standing near the ship/station boundary had their floating nameplate partly
                 // covered by the station's own wall art, which draws after the ship).
                 _shipRenderer.DrawCharacters(_spriteBatch, snapshot, origin, _chatBubbleTracker);
+                // The guns sit on TOP of the ship, over their turret devices (direct user request), so
+                // they are only drawn when the ship is seen from outside - behind a manned gun's own
+                // periscope, or while out on a spacewalk - and never from inside a compartment.
+                if (fromOutside || myCharacter?.IsOutside == true)
+                    _shipRenderer.DrawTurretGuns(_spriteBatch, snapshot, origin);
                 // TEMP-DIAG-BEGIN
                 _diagStationMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
                 diagSubStopwatch.Restart();

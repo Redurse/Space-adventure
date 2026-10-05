@@ -80,6 +80,9 @@ internal static partial class TestRunner
     {
         var slot = TakeFromRack(world, ItemType.Rifle);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: slot));
+        // The rifle does not fire without a magazine in it (TankSockets).
+        TakeTankFromRack(world, ItemType.Magazine);
+        AttachTankTo(world, slot, ItemType.Magazine);
 
         WalkOntoStation(world);
         var guard = world.Station.Npcs.First(n => n.Kind == NpcKind.Security);

@@ -94,7 +94,17 @@ public sealed class RoomLighting : IDisposable
         if (!EnsureTarget())
             return false;
 
-        _wallGrid.Rebuild(walls);
+        // Lamps and walls almost never move, yet the ray fan of every lamp used to be re-cast against
+        // its neighbouring walls every single frame (the biggest cost on screen when docked). A fan
+        // only depends on the walls and on the lamp's own position/radius, so it is kept until the
+        // wall set changes (a door opens, a wall breaks) or a lamp moves/resizes.
+        var wallsHash = HashWalls(walls);
+        if (wallsHash != _fansWallsHash || _fans.Count > MaxCachedFans)
+        {
+            _fans.Clear();
+            _fansWallsHash = wallsHash;
+        }
+        _wallGrid.Reset(walls);
 
         if (_lightEffect is not null && Enabled)
         {
@@ -114,22 +124,16 @@ public sealed class RoomLighting : IDisposable
     // itself, and pre-faded vertices would apply the curve twice.
     private void AddLight(PointLight light, Vector2 origin, bool fadeIntoVertices)
     {
-        // A wall farther than the lamp's own radius could never be hit by this lamp's own cast
-        // anyway, so it never needs to reach CollectRayOffsets/Cast at all - same reasoning
-        // ShadowCast.FilterNearby always used, just sourced from the pre-built grid now instead of
-        // a fresh linear scan (WallGrid.cs's own doc comment).
-        _wallGrid.QueryNearby(_nearbyWalls, light.Position, light.Radius);
-        ShadowCast.CollectRayOffsets(_offsets, _nearbyWalls, light.Position, 0f, MathF.PI * 2f, full: true);
-
-        var rayCount = _offsets.Count;
+        var fan = GetFan(light);
+        var rayCount = fan.Rim.Length;
         Grow(_vertexCount + rayCount * 3);
         var center = new VertexPositionColor(
             new Vector3(origin + light.Position * ShipRenderer.PixelsPerUnit, 0f), light.Color);
 
-        var previous = RimVertex(_offsets[0], _nearbyWalls, light, origin, fadeIntoVertices);
+        var previous = RimVertex(fan, 0, light, origin, fadeIntoVertices);
         for (var i = 1; i <= rayCount; i++)
         {
-            var current = RimVertex(_offsets[i % rayCount], _nearbyWalls, light, origin, fadeIntoVertices);
+            var current = RimVertex(fan, i % rayCount, light, origin, fadeIntoVertices);
             _vertices[_vertexCount++] = center;
             _vertices[_vertexCount++] = previous;
             _vertices[_vertexCount++] = current;
@@ -137,16 +141,64 @@ public sealed class RoomLighting : IDisposable
         }
     }
 
-    private VertexPositionColor RimVertex(float offset, IReadOnlyList<WallSegment> walls, PointLight light, Vector2 origin, bool fadeIntoVertices)
+    // The lamp's silhouette in world units: where each ray stops, and how far it got. Colour and the
+    // screen origin are applied per frame in RimVertex, so a dimming lamp or a moving camera reuse it.
+    private sealed class LightFan
     {
-        var direction = new Vector2(MathF.Cos(offset), MathF.Sin(offset));
-        var distance = ShadowCast.Cast(light.Position, direction, walls, light.Radius);
-        var point = light.Position + direction * distance;
+        public Vector2[] Rim = Array.Empty<Vector2>();
+        public float[] Distance = Array.Empty<float>();
+    }
 
-        var fade = fadeIntoVertices ? Falloff(distance / light.Radius) : 1f;
+    private readonly record struct LightKey(float X, float Y, float Radius);
+
+    private const int MaxCachedFans = 512;
+    private readonly Dictionary<LightKey, LightFan> _fans = new();
+    private int _fansWallsHash = int.MinValue;
+
+    private LightFan GetFan(PointLight light)
+    {
+        var key = new LightKey(light.Position.X, light.Position.Y, light.Radius);
+        if (_fans.TryGetValue(key, out var cached))
+            return cached;
+
+        // A wall farther than the lamp's own radius could never be hit by this lamp's own cast
+        // anyway, so it never needs to reach CollectRayOffsets/Cast at all - same reasoning
+        // ShadowCast.FilterNearby always used, just sourced from the pre-built grid now instead of
+        // a fresh linear scan (WallGrid.cs's own doc comment).
+        _wallGrid.QueryNearby(_nearbyWalls, light.Position, light.Radius);
+        ShadowCast.CollectRayOffsets(_offsets, _nearbyWalls, light.Position, 0f, MathF.PI * 2f, full: true);
+
+        var fan = new LightFan { Rim = new Vector2[_offsets.Count], Distance = new float[_offsets.Count] };
+        for (var i = 0; i < _offsets.Count; i++)
+        {
+            var offset = _offsets[i];
+            var direction = new Vector2(MathF.Cos(offset), MathF.Sin(offset));
+            var distance = ShadowCast.Cast(light.Position, direction, _nearbyWalls, light.Radius);
+            fan.Distance[i] = distance;
+            fan.Rim[i] = light.Position + direction * distance;
+        }
+        _fans[key] = fan;
+        return fan;
+    }
+
+    private static VertexPositionColor RimVertex(LightFan fan, int index, PointLight light, Vector2 origin, bool fadeIntoVertices)
+    {
+        var fade = fadeIntoVertices ? Falloff(fan.Distance[index] / light.Radius) : 1f;
         return new VertexPositionColor(
-            new Vector3(origin + point * ShipRenderer.PixelsPerUnit, 0f),
+            new Vector3(origin + fan.Rim[index] * ShipRenderer.PixelsPerUnit, 0f),
             light.Color * fade);
+    }
+
+    private static int HashWalls(IReadOnlyList<WallSegment> walls)
+    {
+        var hash = new HashCode();
+        hash.Add(walls.Count);
+        for (var i = 0; i < walls.Count; i++)
+        {
+            var wall = walls[i];
+            hash.Add(wall.Ax); hash.Add(wall.Ay); hash.Add(wall.Bx); hash.Add(wall.By);
+        }
+        return hash.ToHashCode();
     }
 
     // One draw per lamp, because each one needs its own centre and radius in the shader. That is a
