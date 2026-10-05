@@ -7,12 +7,16 @@ namespace Anabiosis.Client;
 public partial class Game1
 {
     private GameMusic? _music;
+    private MenuMusic? _menuMusic;
 
     // suppressed is true whenever the ship's jukebox (Game1.Jukebox.cs) is actually on - the
     // ambient bag simply stays stopped rather than trying to duck under or interleave with it,
     // since MediaPlayer is one global channel and the jukebox is the thing the crew asked for.
     private void UpdateGameMusic(double nowSeconds, bool suppressed)
     {
+        // The menu theme plays whenever no round is live (it fades out as one starts).
+        _menuMusic?.Update(nowSeconds, !_sessionStarted);
+
         if (_music is null)
             return;
 

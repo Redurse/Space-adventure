@@ -815,6 +815,7 @@ public partial class Game1 : Game
         _existingSave = SaveStore.Load();
         _sounds = new GameSounds(_audioEngine);
         _music = new GameMusic(_audioEngine);
+        _menuMusic = new MenuMusic(_audioEngine);
         _jukeboxAudio = new JukeboxAudio(_audioEngine);
         _voicePlayback = new VoicePlayback(_audioEngine);
         _micMonitor = new MicMonitor(_audioEngine);
@@ -1048,6 +1049,7 @@ public partial class Game1 : Game
         _audioEngine.VoiceVolume = Math.Clamp(settings.VoiceChatVolume, 0f, 2f);
         _audioEngine.DynamicRangeCompression = settings.DynamicRangeCompression;
         _music?.SetMasterVolume(settings.SoundVolume);
+        _menuMusic?.SetMasterVolume(settings.SoundVolume);
         _voicePlayback.DirectionalVoiceChat = settings.DirectionalVoiceChat;
         _voicePlayback.VoiceChatPriority = settings.VoiceChatPriority;
         _voiceCapture.SelectedMicrophoneName = settings.InputMicrophoneName;
