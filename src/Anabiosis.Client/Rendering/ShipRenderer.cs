@@ -240,6 +240,7 @@ public sealed partial class ShipRenderer
             DrawRoomWallLamps(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
         DrawShipWalls(spriteBatch, snapshot, origin);
         DrawWreckPatches(spriteBatch, snapshot, origin);
+        DrawRoomDamage(spriteBatch, snapshot, origin, totalSeconds); // scorch, cracks, sparks, flames by how hurt each compartment is
 
         // A frame over the metal plus a plain unpainted pane, only for the crew station that
         // actually faces open space - deliberately left blank rather than filled with any painted

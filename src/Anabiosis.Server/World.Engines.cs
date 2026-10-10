@@ -91,7 +91,7 @@ public sealed partial class World
         // Direct user request ("скрытое число хп" отсека) - same "aggregate of what already breaks
         // today" shape World.WallBlocks.cs's own DamageWallBlock already uses.
         if (Ship.Engines.FirstOrDefault(e => e.Id == id) is { } engine)
-            DamageRoom(engine.RoomId, amount);
+            CheckRoomDestroyed(engine.RoomId); // a wall of its compartment (World.RoomHp.cs)
     }
 
     private void RepairEngineBulkhead(string id, float amount) =>
@@ -104,7 +104,7 @@ public sealed partial class World
     {
         _engineNozzleHp[id] = Math.Max(0f, EngineNozzleHp(id) - amount);
         if (Ship.Engines.FirstOrDefault(e => e.Id == id) is { } engine)
-            DamageRoom(engine.RoomId, amount);
+            CheckRoomDestroyed(engine.RoomId); // a wall of its compartment (World.RoomHp.cs)
     }
 
     private void RepairEngineNozzle(string id, float amount) =>

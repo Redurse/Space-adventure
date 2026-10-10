@@ -30,4 +30,15 @@ public sealed record EnemyShipSnapshot(
     // The hull's own two locked hatches' Hp - folded into the SAME _wallBlockHp dictionary as
     // WallBlockStates now (EnemyShipRuntime, humble-soaring-cat.md), reusing WallBlockState's
     // shape since a hatch takes damage/reports Breached exactly the same way a wall panel does.
-    IReadOnlyList<WallBlockState> HatchStates);
+    IReadOnlyList<WallBlockState> HatchStates,
+    // The doors of the hull (door edges between tiles - a hostile crew keeps them open); drawn as doorways when you look inside.
+    IReadOnlyList<ShipDoorEdge>? DoorEdges = null,
+    // The hull as it is now (rooms lost change it), so a client can rebuild the whole ship - devices, turrets, engines - and draw it
+    // with the player-ship renderer. Only sent occasionally (null in between); LayoutVersion says when it changed.
+    CustomShipDefinition? Definition = null,
+    int LayoutVersion = 0,
+    // Which wired things (guns, engines, system devices) are not working right now, and the state of the main blocks.
+    IReadOnlyList<string>? NotWorkingIds = null,
+    bool ReactorBroken = false,
+    bool DistributionBroken = false,
+    bool HelmBroken = false);

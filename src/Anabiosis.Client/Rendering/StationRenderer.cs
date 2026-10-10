@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -39,7 +40,11 @@ public sealed partial class StationRenderer
     public static Rectangle GetNpcRect(StationNpc npc, Vector2 origin) =>
         ShipRenderer.GetBlockRect(npc.Position, NpcMarkerSize, origin);
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, string? talkingToNpcId, float totalSeconds = 0f)
+    public static Rectangle GetResidentRect(StationResidentState resident, Vector2 origin) =>
+        ShipRenderer.GetBlockRect(new Vec2(resident.X, resident.Y), NpcMarkerSize, origin);
+
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, string? talkingToNpcId, float totalSeconds = 0f,
+        IReadOnlyDictionary<string, (string Text, float Alpha)>? residentBubbles = null)
     {
         foreach (var room in snapshot.Station.Rooms)
             _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin, StationAccent);
@@ -80,6 +85,20 @@ public sealed partial class StationRenderer
                 !(snapshot.Station.Guards.FirstOrDefault(g => g.NpcId == npc.Id)?.Alive ?? true))
                 continue;
             DrawNpc(spriteBatch, npc, origin, npc.Id == talkingToNpcId, NearestStationVisitor(snapshot, npc));
+        }
+
+        // The people walking about the station (World.StationResidents.cs). A name shows once one of your
+        // crew is close enough to be introduced; a line they have just said floats above them.
+        foreach (var resident in snapshot.Station.Residents ?? Array.Empty<StationResidentState>())
+        {
+            var at = new Vec2(resident.X, resident.Y);
+            var nearest = NearestStationVisitor(snapshot, at);
+            var center = RectCenter(GetResidentRect(resident, origin));
+            _shipRenderer.DrawResident(spriteBatch, resident, center, nearest);
+            if (nearest is { } visitor && Vector2.Distance(visitor, new Vector2(resident.X, resident.Y)) < 4f)
+                spriteBatch.DrawString(_font, resident.Name, new Vector2(center.X - 4 * resident.Name.Length, center.Y + 14), Color.LightGray * 0.9f, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            if (residentBubbles is not null && residentBubbles.TryGetValue(resident.Id, out var bubble))
+                _shipRenderer.DrawChatBubble(spriteBatch, bubble.Text, bubble.Alpha, new Vector2(center.X, center.Y - 24));
         }
 
         _shipRenderer.DrawDroppedItems(spriteBatch, snapshot.DroppedItems, snapshot.Station.Rooms.Select(r => r.Id), origin, totalSeconds);
@@ -137,14 +156,17 @@ public sealed partial class StationRenderer
     }
 
     // Whichever of your crew is closest to a resident - who they turn to look at while standing still.
-    private static Vector2? NearestStationVisitor(WorldSnapshot snapshot, StationNpc npc)
+    private static Vector2? NearestStationVisitor(WorldSnapshot snapshot, StationNpc npc) =>
+        NearestStationVisitor(snapshot, npc.Position);
+
+    private static Vector2? NearestStationVisitor(WorldSnapshot snapshot, Vec2 from)
     {
         Vector2? best = null;
         var bestDistance = float.MaxValue;
         foreach (var character in snapshot.Characters.Where(c => c.OnStation && c.Health > 0f))
         {
             var at = new Vector2((float)character.X, (float)character.Y);
-            var distance = Vector2.DistanceSquared(at, new Vector2(npc.X, npc.Y));
+            var distance = Vector2.DistanceSquared(at, new Vector2((float)from.X, (float)from.Y));
             if (distance < bestDistance)
             {
                 bestDistance = distance;

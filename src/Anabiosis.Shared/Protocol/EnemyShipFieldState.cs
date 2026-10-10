@@ -20,7 +20,6 @@ public sealed record EnemyShipFieldState(
     // The one whose interior the boarding party would climb into (World.Boarding.cs) - only ever
     // true for a single ship at a time.
     bool IsBoardable,
-    // Which hull this is. The field renderer draws a different ship for each, and a boarding party
-    // finds the matching interior - so this has to be the real class rather than something derived
-    // from the id, or the outside would promise a freighter and the inside deliver a gunship.
-    EnemyShipClass Kind = EnemyShipClass.Raider);
+    // The compartments this ship still has, in its own local frame - every hostile ship is the same hull, but each loses
+    // compartments as it is shot up (World.EnemyShips.cs), and the field renderer draws exactly what is left.
+    IReadOnlyList<Room>? Rooms = null);

@@ -129,9 +129,9 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // starts open -> closed
+        MoveCharacterTo(world, 1, 7f, 3f); // onto the reactor side of the cockpit door (the crew now spawns in the cockpit)
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-cockpit-reactor")); // open -> closed
 
-        MoveCharacterTo(world, 1, 5f, 3f); // corridor -> reactor, right up against the now-closed door
 
         for (var i = 0; i < 30; i++) // keep pushing left, into the closed door
         {

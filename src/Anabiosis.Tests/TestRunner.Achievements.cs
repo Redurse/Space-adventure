@@ -119,9 +119,10 @@ internal static partial class TestRunner
         var path = TempAchievementsPath();
         try
         {
-            var baseSnapshot = new World().CreateSnapshot();
-            if (baseSnapshot.EnemyShip.Rooms.Count == 0)
-                return false; // the premise this test is guarding against no longer holds - investigate, don't just pass
+            // A snapshot outside any fight no longer carries the enemy rooms (World.cs slims it), so the "template rooms" are put in by hand:
+            // the achievement must not read them as a boarding.
+            var plain = new World().CreateSnapshot();
+            var baseSnapshot = plain with { EnemyShip = plain.EnemyShip with { Rooms = Anabiosis.Shared.Model.EnemyShipLayout.Default.Rooms } };
             var tracker = new AchievementTracker(path);
 
             tracker.Update(baseSnapshot, myPlayerId: 1, deltaSeconds: 0.016);

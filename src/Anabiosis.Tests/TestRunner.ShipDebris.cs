@@ -36,40 +36,12 @@ internal static partial class TestRunner
 
         var snapshot = world.CreateSnapshot();
         var roomGone = world.Ship.Rooms.Count == roomsBefore - 1 && world.Ship.Rooms.All(r => r.Id != builtRoomId);
-        var gotOneFragment = (snapshot.ShipDebris?.Count ?? 0) == debrisBefore + 1;
-        var fragmentHasARoom = snapshot.ShipDebris is { Count: > 0 } && snapshot.ShipDebris[^1].Rooms.Count == 1;
+        // The destroyed room itself stays as a wreck and does not fly off; nothing else was cut off from the
+        // reactor by losing a dead-end room, so there is no fragment at all.
+        var leftAWreck = world.Ship.WreckPatches.Count == 0; // nothing is left of it - open space
+        var noFragment = (snapshot.ShipDebris?.Count ?? 0) == debrisBefore;
 
-        return roomGone && gotOneFragment && fragmentHasARoom;
-    }
-
-    // Pure inertia (World.ShipDebris.cs's own doc comment - no gravity since M59) - a fragment
-    // launched with a known velocity has to have moved by exactly velocity*elapsed after a few ticks.
-    private static bool World_ShipDebris_DriftsByInertiaAfterDetaching()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        DockAtStation(world, "outpost-gamma");
-        var builtRoomId = BuildAndCompleteOneDeadEndRoom(world);
-
-        var velocity = new Vec2(37, -19);
-        world.DebugSetShipVelocity(velocity);
-        world.DebugDestroyRoomWallBlocks(builtRoomId);
-        world.Step(RealtimeStep);
-
-        var fragment = world.CreateSnapshot().ShipDebris?.FirstOrDefault();
-        if (fragment is null)
-            return false; // setup problem - detachment itself didn't happen
-        var positionRightAfterSplit = new Vec2(fragment.X, fragment.Y);
-
-        const int steps = 10;
-        for (var i = 0; i < steps; i++)
-            world.Step(RealtimeStep);
-
-        var moved = world.CreateSnapshot().ShipDebris!.First(f => f.Id == fragment.Id);
-        var actual = new Vec2(moved.X, moved.Y);
-        var expected = positionRightAfterSplit + velocity * (RealtimeStep * steps);
-
-        return (actual - expected).Length() < 0.5; // ship's own auto-stabilize doesn't touch debris, only float rounding
+        return roomGone && leftAWreck && noFragment;
     }
 
     // M64 - a character actually standing in a detaching room must come out the other side as a
@@ -116,9 +88,8 @@ internal static partial class TestRunner
         return characterEjected && itemGone;
     }
 
-    // The reactor's own room can't sensibly detach on its own (World.ShipDebris.cs's own guard) -
-    // destroying its wall blocks must leave the room exactly where it was, not spin off debris or
-    // corrupt the ship.
+    // The reactor's own room never detaches as debris: losing it blows up the whole ship instead (see
+    // TestRunner.ShipBlasts.cs). Right at the moment it is lost the hull is still in one piece, no fragment.
     private static bool World_ShipDebris_DestroyingReactorRoom_StaysAttachedNoDebris()
     {
         var world = new World();
@@ -129,16 +100,16 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
 
         var snapshot = world.CreateSnapshot();
-        return world.Ship.Rooms.Count == roomsBefore && world.Ship.Rooms.Any(r => r.Id == "reactor")
-            && (snapshot.ShipDebris?.Count ?? 0) == 0;
+        return world.IsShipExploding && world.Ship.Rooms.Count == roomsBefore && (snapshot.ShipDebris?.Count ?? 0) == 0;
     }
 
     // Same "refuse rather than corrupt" guard, hit via the hand-authored hull's own topology instead
     // of the reactor special-case above: the default Frigate's "quarters" room holds the ship's only
     // AmmoStorage (Ship.cs's own comment on it) and sits in the middle of a single-file corridor, so
     // destroying it would both lose the sole ammo rack AND strand "engine"/"airlock-chamber" behind
-    // it - CustomShipValidator has to reject the shrink, and the room must simply stay put, fully
-    // breached, same as an ordinary un-detachable hull breach today.
+    // it - CustomShipValidator has to reject the shrink. A destroyed compartment cannot be left standing, and the
+    // ship cannot go on without its only ammo rack: so the whole ship goes up (World.ShipBlasts.cs), at once, with
+    // no fragment split off first.
     private static bool World_ShipDebris_DestroyingRoomThatWouldInvalidateTheHull_StaysAttached()
     {
         var world = new World();
@@ -149,8 +120,7 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
 
         var snapshot = world.CreateSnapshot();
-        return world.Ship.Rooms.Count == roomsBefore && world.Ship.Rooms.Any(r => r.Id == "quarters")
-            && (snapshot.ShipDebris?.Count ?? 0) == 0;
+        return world.IsShipExploding && world.Ship.Rooms.Count == roomsBefore && (snapshot.ShipDebris?.Count ?? 0) == 0;
     }
 
     // M77 (humble-soaring-cat.md) - proves the tile-region BFS actually walks INDIRECT connectivity,
@@ -200,9 +170,10 @@ internal static partial class TestRunner
         var bothRoomsGone = world.Ship.Rooms.Count == roomsBefore - 2
             && world.Ship.Rooms.All(r => r.Id != innerRoom.Id && r.Id != outerRoom.Id);
         var cameraDeviceGone = world.Ship.Cameras.Count == camerasBefore - 1;
-        var gotOneFragmentWithBothRooms = (snapshot.ShipDebris?.Count ?? 0) == debrisBefore + 1
-            && snapshot.ShipDebris is { Count: > 0 } && snapshot.ShipDebris[^1].Rooms.Count == 2;
+        // The inner room itself is the wreck; only the room cut off behind it (the camera room) flies away.
+        var gotOneFragmentWithTheOuterRoom = (snapshot.ShipDebris?.Count ?? 0) == debrisBefore + 1
+            && snapshot.ShipDebris is { Count: > 0 } && snapshot.ShipDebris[^1].Rooms.Count == 1;
 
-        return bothRoomsGone && cameraDeviceGone && gotOneFragmentWithBothRooms;
+        return bothRoomsGone && cameraDeviceGone && gotOneFragmentWithTheOuterRoom;
     }
 }

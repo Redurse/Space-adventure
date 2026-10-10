@@ -21,4 +21,7 @@ public sealed record StationSnapshot(
     Vec2 WorldOffset,
     Vec2 DockingPortPosition,
     IReadOnlyList<WallBlock> WallBlocks,
-    IReadOnlyList<WallBlockState> WallBlockStates);
+    IReadOnlyList<WallBlockState> WallBlockStates,
+    // The people walking around the docked station (World.StationResidents.cs) - null while undocked and
+    // in every older save/test that never knew about them.
+    IReadOnlyList<StationResidentState>? Residents = null);

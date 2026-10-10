@@ -58,6 +58,9 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
+        // Docked, the airlock opens onto the station and one can walk out; undocked it is a closed vacuum door - the hull wall.
+        CastOffIntoSpace(world);
+        MoveCharacterTo(world, 1, 23f, 3f); // into the airlock chamber, then keep pushing right into the hull wall
 
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 1, MoveY: 0));
         for (var i = 0; i < 300; i++)
@@ -586,6 +589,9 @@ internal static partial class TestRunner
     // rack, or wherever the actual test needs it next.
     private static void EnterBattle(World world, int playerId = 1, string sectorId = "sector-alpha")
     {
+        // These fights run for minutes of unanswered enemy fire; compartments are destructible now (World.RoomHp.cs), so the
+        // ship would blow up part-way through and the test would no longer be about what it was written for.
+        world.DebugRoomsIndestructible = true;
         if (world.IsDocked)
         {
             world.ApplyCommand(playerId, new ClientCommand(playerId, DockPressed: true));

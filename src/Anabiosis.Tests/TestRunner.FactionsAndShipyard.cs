@@ -318,7 +318,7 @@ internal static partial class TestRunner
         EquipSuit(world, 1); // see World_Faction_HostileStanding_BlocksQuestOffers
 
         EnterBattle(world, sectorId: "sector-delta");
-        var baselineSize = world.CreateSnapshot().EnemyShip.Ships.Count;
+        var baselineSize = world.CreateSnapshot().Enemy.RemainingShips; // the whole squadron, not just the (capped) hulls in the field
 
         GrindStandingHostile(world, "sector-delta", FactionId.Consortium);
         if (world.GetStanding(FactionId.Consortium) > FactionDefinitions.HostileThreshold)
@@ -326,7 +326,7 @@ internal static partial class TestRunner
 
         EnterBattle(world, sectorId: "sector-delta");
 
-        return world.CreateSnapshot().EnemyShip.Ships.Count == baselineSize + 1;
+        return world.CreateSnapshot().Enemy.RemainingShips == baselineSize + 1;
     }
 
     // Deep enough hostility closes the territory entirely (World.StationDocking.cs's CanDockNow) -

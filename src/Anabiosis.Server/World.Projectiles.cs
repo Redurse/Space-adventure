@@ -61,6 +61,10 @@ public sealed partial class World
             if (SegmentHitsCircle(from, to, asteroid.Position, asteroid.Radius))
                 return true;
 
+        // Torn-off pieces of the player's own ship are in the line of fire too (World.ShipDebris.cs).
+        if (!shot.FromEnemy && TryHitDebris(from, to, shot.Damage))
+            return true;
+
         if (shot.FromEnemy)
         {
             var (hullLocalCenter, halfExtents) = GetHullLocalBounds();
@@ -112,16 +116,8 @@ public sealed partial class World
             return hitSomething;
         }
 
-        foreach (var enemy in _enemyShips.Where(e => e.Alive))
-        {
-            if (!SegmentHitsCircle(from, to, enemy.Position, EnemyHullRadius))
-                continue;
-
-            enemy.Ship.ApplyDamage(shot.Damage);
-            return true;
-        }
-
-        return false;
+        // A hostile ship is a real hull: the shell is traced through it and hurts the first intact thing it meets.
+        return TryHitEnemyShips(from, to, shot.Damage);
     }
 
     private IReadOnlyList<ProjectileState> CreateProjectileStates() =>

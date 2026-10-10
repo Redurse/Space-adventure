@@ -51,7 +51,7 @@ public sealed class PowerGrid
     /// applies is as much part of it as what it says.</summary>
     public void SplitEvenly()
     {
-        var share = Reactor.MaxOutput / Systems.Length;
+        var share = Reactor.CurrentOutput / Systems.Length; // what the reactor really gives (a reactor outside its zone gives less than its maximum)
         foreach (var system in Systems)
             _allocated[system] = share;
     }

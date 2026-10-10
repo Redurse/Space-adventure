@@ -70,6 +70,21 @@ public static class TileRegionConnectivity
             if (east is { } e && west is { } w && e != w)
                 AddEdge(e, w);
         }
+
+        // Door edges (the newer doors-as-edges model: a door sits on the boundary BETWEEN two tiles instead of occupying one)
+        // join the regions on either side of them just the same.
+        foreach (var ((coord, side), _) in tiles.DoorEdges)
+        {
+            var other = side switch
+            {
+                TileSide.North => new TileCoord(coord.X, coord.Y - 1),
+                TileSide.South => new TileCoord(coord.X, coord.Y + 1),
+                TileSide.East => new TileCoord(coord.X + 1, coord.Y),
+                _ => new TileCoord(coord.X - 1, coord.Y),
+            };
+            if (tiles.RegionIdAt(coord) is { } a && tiles.RegionIdAt(other) is { } b)
+                AddEdge(a, b);
+        }
         return adjacency;
     }
 }

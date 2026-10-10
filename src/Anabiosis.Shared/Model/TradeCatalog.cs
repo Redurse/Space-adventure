@@ -69,4 +69,24 @@ public static class TradeCatalog
     };
 
     public static TradeGood? Find(ItemType item) => Goods.FirstOrDefault(g => g.Item == item);
+
+    // The Miners' Guild pays a premium for ore at its own base - the one concrete thing that makes docking
+    // there (rather than any other trader) worth the detour (game_design.md section 10, StationKind.Mining).
+    public const float MiningStationOreSellBonus = 1.2f;
+
+    // What the crew actually pays/gets at the docked station: the list price scaled by the faction price
+    // multiplier (FactionDefinitions.PriceMultiplier - allies pay less, the disliked pay more; the sell side
+    // inverts it). One place for the server (World.Trade.cs) and the trade window's cart totals, so what the
+    // window promises is what the wallet changes by.
+    public static int BuyPrice(TradeGood good, float priceMultiplier) =>
+        (int)MathF.Round(good.BuyPrice * priceMultiplier);
+
+    public static int SellPrice(TradeGood good, float priceMultiplier, bool miningStation) =>
+        (int)MathF.Round(good.SellPrice / priceMultiplier *
+            (ItemDefinitions.IsRawOre(good.Item) && miningStation ? MiningStationOreSellBonus : 1f));
+
+    // Only things a trader really stocks are offered for purchase: the mined ores and crafted parts carry a
+    // nominal 999 price just so the sell flow can price them, they are not meant to be bought back.
+    public const int NotForSalePrice = 999;
+    public static bool IsForSale(TradeGood good) => good.BuyPrice < NotForSalePrice;
 }

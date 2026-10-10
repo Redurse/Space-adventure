@@ -196,20 +196,6 @@ public sealed partial class World
         Ship = Ship.FromCustomDefinition(_customShipDefinition);
         _turretRuntimes = Ship.Turrets.ToDictionary(t => t.Id, t => new TurretRuntime(t));
         InitializeShipState();
-        // Every enemy hull class, not only the one currently in front of the guns - which ship of
-        // the squadron is boardable changes mid-fight (World.EnemyFleet.cs), same as the station
-        // above changes as the ship travels.
-        foreach (var layout in EnemyShipLayout.All)
-        {
-            // Closed: a crew that has just been boarded seals its compartments, and opening one is
-            // a decision with a cost now that the hull leaks air (World.EnemyAtmosphere.cs). The
-            // hull's own OuterHatches are locked hatches now too - cutting one open (or a wall
-            // panel instead) is tracked per hull instance (EnemyShipRuntime), not in this shared
-            // dictionary, so they get no entry here at all.
-            foreach (var door in layout.Doors)
-                _doorOpen[door.Id] = false;
-        }
-        ResetEnemyCrew();
         foreach (var deposit in AsteroidField.OreDeposits)
             _oreDepositHp[deposit.Id] = deposit.MaxHp;
 
@@ -226,6 +212,7 @@ public sealed partial class World
         // ship that hasn't flown yet.
         AutosavePending = true;
         RegenerateRecruitRoster();
+        RecordDockCheckpoint(home.Id); // where the ship is put back if it ever blows up
     }
 
     // Every player starts with a radio headset already worn (direct user request) - radio voice
@@ -410,6 +397,15 @@ public sealed partial class World
         if (command.DemolishRoomId is { } demolishRoomId)
             TryDemolishRoom(demolishRoomId);
 
+        if (command.BuildCompartment is { } buildCompartmentRequest)
+            TryBuildCompartment(buildCompartmentRequest);
+
+        if (command.PlaceDoor is { } placeDoorRequest)
+            TryPlaceDoor(placeDoorRequest);
+
+        if (command.RemoveDoorId is { } removeDoorId)
+            TryRemoveDoor(removeDoorId);
+
         if (command.DockPressed)
             HandleDockButtonPressed();
 
@@ -569,6 +565,7 @@ public sealed partial class World
         // and voyage's loss check sees this tick's damage rather than the previous one's.
         StepEnemyFleet(deltaSeconds);
         StepProjectiles(deltaSeconds);
+        StepEnemyHulls(deltaSeconds);
         StepVoyage(deltaSeconds);
         StepSunZone(deltaSeconds);
         StepSalvage(deltaSeconds);
@@ -596,6 +593,7 @@ public sealed partial class World
         StepCardGame(deltaSeconds);
         StepFrontsGame(deltaSeconds);
         StepShipDebris(deltaSeconds); // M63 - order doesn't matter, pure independent inertia
+        StepShipBlasts(deltaSeconds); // explosions, chains of them, and the whole-ship one
         PowerGrid.Step(deltaSeconds);
         Shield.Step(deltaSeconds, GetEffectivePower(PowerSystemId.Shields));
     }
@@ -643,12 +641,13 @@ public sealed partial class World
             Station.WorldOffset,
             Station.DockingPortPosition,
             Station.WallBlocks,
-            CreateStationWallBlockStates()),
+            CreateStationWallBlockStates(),
+            Residents: CreateStationResidentStates()),
         DockBerthPosition,
         CanDockNow,
         new EnemyShipSnapshot(
-            EnemyShipLayout.Rooms,
-            EnemyShipLayout.Doors,
+            BoardableEnemy is null ? Array.Empty<Room>() : EnemyShipLayout.Rooms, // nothing to describe outside a fight - keeps the frame small
+            BoardableEnemy is null ? Array.Empty<Door>() : EnemyShipLayout.Doors,
             EnemyShipLayout.OuterHatches,
             EnemyShipLayout.Name,
             CreateEnemyRoomOxygenStates(),
@@ -657,7 +656,14 @@ public sealed partial class World
             CreateEnemyCrewStates(),
             BoardableEnemy?.Layout.WallBlocks ?? Array.Empty<WallBlock>(),
             CreateEnemyHullWallBlockStates(),
-            CreateEnemyHatchStates()),
+            CreateEnemyHatchStates(),
+            BoardableEnemy?.Layout.Ship.DoorEdges,
+            CreateEnemyDefinition(),
+            BoardableEnemy?.LayoutVersion ?? 0,
+            CreateEnemyNotWorkingIds(),
+            BoardableEnemy?.Grid.Reactor.Broken ?? false,
+            BoardableEnemy?.Grid.DistributionBroken ?? false,
+            BoardableEnemy?.HelmBroken ?? false),
         CreateProjectileStates(),
         CreatePersonalShotStates(),
         CreateFactionStandings(),
@@ -750,7 +756,7 @@ public sealed partial class World
         TimeAccelerationLevel,
         CreateBlockRepairStates(),
         _dockedPointId ?? _nearestStationPointId,
-        CreatePendingRoomBuildStates(),
+        CreatePendingRoomBuildStates().Concat(CreatePendingCompartmentStates()).ToArray(),
         _hullPlatingStock,
         CreateShipDebrisStates(),
         CreateEngineStates(),
@@ -779,5 +785,6 @@ public sealed partial class World
         HyperiumAboard,
         _salvagedPointIds.ToArray(),
         SalvageNotice,
-        CreateLaserBeamStates());
+        CreateLaserBeamStates(),
+        CreateShipBlastStates());
 }

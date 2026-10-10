@@ -37,6 +37,8 @@ public sealed class GameSounds
     public const string ItemPickup = "item_pickup";
     public const string ItemDrop = "item_drop";
     public const string HullBreach = "hull_breach";
+    public const string Explosion = "explosion";
+    public const string ExplosionBig = "explosion_big";
     public const string LaserShot = "laser_shot";
     public const string RifleShot = "rifle_shot";
     public const string LowOxygen = "low_oxygen";

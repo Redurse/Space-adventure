@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Anabiosis.Shared.Model;
@@ -7,24 +8,24 @@ using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Client.Rendering;
 
-// Hostile hulls, baked once per class - the same armour HullSkin draws for the player's own ship,
-// run once offscreen against each EnemyShipLayout's own real Rooms/OuterHatches instead of a
-// hand-drawn silhouette unrelated to what boarding actually finds inside. A raider really is a
-// squat 15x6 box; a boarded Frigate really is the same footprint as the player's own Corvette
-// (EnemyShipLayout.Classes.cs's own comment says so) - this is what makes that true on screen as
-// well as underfoot, and at the hull's real size rather than a uniform stand-in diameter.
+// Hostile hulls, baked offscreen - the same armour HullSkin draws for the player's own ship, run once against the enemy
+// ship's own real Rooms (every enemy is the same "крутой корабль" hull, EnemyShipLayout.cs, but a ship that has lost
+// compartments is a different shape and needs its own bake). Baked by room-set signature and cached, so two fresh enemies
+// share one texture and a damaged one gets its own.
+//
+// Baking switches the graphics device's render target, which is only safe between frames - so the owner calls Prepare
+// (Game1.Update) for whatever is about to be drawn, and drawing only ever calls Get.
 public sealed class EnemyHullSkin : IDisposable
 {
     // How much clear canvas to leave around the hull's own room footprint on every side - covers
     // the nose dome (HullSkin.NoseLengthUnits=2.3) whichever way it happens to point, plus the
-    // radiator fins/greebles that hang a little further out still. Generous rather than tight:
-    // spare canvas is free, a clipped hull baked once at load time is not something to redo.
+    // radiator fins/greebles that hang a little further out still.
     private const float MarginUnits = 4f;
 
     private readonly GraphicsDevice _graphics;
     private readonly Texture2D _pixel;
     private readonly Texture2D[] _hullPlates;
-    private readonly Dictionary<EnemyShipClass, (Texture2D Texture, Vector2 Origin)> _cache = new();
+    private readonly Dictionary<string, (Texture2D Texture, Vector2 Origin)> _cache = new();
 
     public EnemyHullSkin(GraphicsDevice graphics)
     {
@@ -32,13 +33,7 @@ public sealed class EnemyHullSkin : IDisposable
         _pixel = new Texture2D(graphics, 1, 1);
         _pixel.SetData(new[] { Color.White });
         _hullPlates = TileTextures.CreateHullPlates(graphics);
-
-        // Baked eagerly, not lazily on first Get() - baking switches the graphics device's own
-        // render target, which is only safe between frames (here, during LoadContent) and not
-        // mid-frame inside whatever outer SpriteBatch.Begin/End the main Draw() call is already in
-        // when a class is first seen in the field.
-        foreach (var kind in Enum.GetValues<EnemyShipClass>())
-            _cache[kind] = Bake(kind);
+        Prepare(EnemyShipLayout.Default.Rooms); // the undamaged hull, ready before the first fight
     }
 
     public void Dispose()
@@ -51,24 +46,45 @@ public sealed class EnemyHullSkin : IDisposable
         _pixel.Dispose();
     }
 
-    public (Texture2D Texture, Vector2 Origin) Get(EnemyShipClass kind) => _cache[kind];
+    // A compact, stable key for a set of rooms - ids plus their rectangles.
+    private static string Signature(IReadOnlyList<Room> rooms) =>
+        string.Join("|", rooms.OrderBy(r => r.Id, StringComparer.Ordinal)
+            .Select(r => r.Id + ":" + string.Join(",", r.Rects.Select(q => $"{q.X},{q.Y},{q.Width},{q.Height}"))));
 
-    // Which way each hull's own room layout flies nose-first. Frigate flies bow-up rather than
-    // bow-right - it's, room for room, the same footprint the player's own (now-deleted) Corvette
-    // hull used (EnemyShipLayout.Classes.cs's CreateFrigate comment), laid out along its own axis
-    // instead of as a row of compartments; the other three are all plain rows of compartments, nose
-    // to the right. Public: FieldRenderer needs the same bow direction to place the engine glow and
-    // scorch marks consistently with whatever this baked the hull as.
-    public static float ForwardDegreesFor(EnemyShipClass kind) => kind switch
+    // Bakes the hull for these rooms if it is not cached yet; drops baked hulls nothing in `inUse` still needs.
+    public void Prepare(IReadOnlyList<Room> rooms)
     {
-        EnemyShipClass.Frigate => -90f,
-        _ => 0f,
-    };
+        var key = Signature(rooms);
+        if (!_cache.ContainsKey(key))
+            _cache[key] = Bake(rooms);
+    }
 
-    private (Texture2D Texture, Vector2 Origin) Bake(EnemyShipClass kind)
+    // Forget every baked hull except the ones in `keep` (called with the shapes currently in the field).
+    public void Trim(IEnumerable<IReadOnlyList<Room>> keep)
     {
-        var layout = EnemyShipLayout.Of(kind);
-        var (center, halfExtents) = layout.GetLocalBounds();
+        var keepKeys = keep.Select(Signature).ToHashSet();
+        keepKeys.Add(Signature(EnemyShipLayout.Default.Rooms));
+        foreach (var key in _cache.Keys.Where(k => !keepKeys.Contains(k)).ToList())
+        {
+            _cache[key].Texture.Dispose();
+            _cache.Remove(key);
+        }
+    }
+
+    public (Texture2D Texture, Vector2 Origin)? Get(IReadOnlyList<Room> rooms) =>
+        _cache.TryGetValue(Signature(rooms), out var baked) ? baked : null;
+
+    // The direction the hull flies nose-first, in its own local frame - the saved hull's own forward.
+    public static float ForwardDegrees => EnemyShipLayout.Default.Ship.ForwardDegrees;
+
+    private (Texture2D Texture, Vector2 Origin) Bake(IReadOnlyList<Room> rooms)
+    {
+        var minX = rooms.Min(r => r.Left);
+        var maxX = rooms.Max(r => r.Right);
+        var minY = rooms.Min(r => r.Top);
+        var maxY = rooms.Max(r => r.Bottom);
+        var center = new Vec2((minX + maxX) / 2, (minY + maxY) / 2);
+        var halfExtents = new Vec2((maxX - minX) / 2, (maxY - minY) / 2);
 
         var widthPx = (int)MathF.Ceiling((float)((halfExtents.X * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit));
         var heightPx = (int)MathF.Ceiling((float)((halfExtents.Y * 2f + MarginUnits * 2f) * ShipRenderer.PixelsPerUnit));
@@ -100,8 +116,8 @@ public sealed class EnemyHullSkin : IDisposable
             // engine-nozzle fitting (which only draws for a device it's actually given) simply
             // contributes nothing, and the damage-scorch overlay (which needs systemStates) never
             // lights, the same "nothing to show" outcome null/empty already gives the player's ship.
-            HullSkin.Draw(spriteBatch, _pixel, _hullPlates, layout.Rooms, layout.OuterHatches,
-                Array.Empty<ShipSystemDevice>(), drawOrigin, ForwardDegreesFor(kind));
+            HullSkin.Draw(spriteBatch, _pixel, _hullPlates, rooms, Array.Empty<Door>(),
+                Array.Empty<ShipSystemDevice>(), drawOrigin, ForwardDegrees);
             spriteBatch.End();
         }
 

@@ -207,7 +207,10 @@ internal static partial class TestRunner
         // fight makes whatever test called this fail for a reason that has nothing to do with what
         // it was checking. Now that the roll sequence is seeded (World.EnemyAi.cs) an unlucky run is
         // reproducible rather than occasional - so it has to be survivable rather than rare.
-        for (var iteration = 0; iteration < 400 && world.CreateSnapshot().Enemy.Hp > 0; iteration++)
+        // A hostile ship is a real 17-compartment hull now (World.EnemyDamage.cs): its guns trade fire with it for a while for
+        // real, but grinding one down shell by shell would take minutes of simulated time, so what is left of the fight is
+        // settled directly once the exchange has been exercised.
+        for (var iteration = 0; iteration < 10 && world.CreateSnapshot().Enemy.Hp > 0; iteration++)
         {
             var state = world.CreateSnapshot().TurretStates.Single(t => t.Id == turretId);
 
@@ -252,6 +255,12 @@ internal static partial class TestRunner
             world.ApplyCommand(playerId, new ClientCommand(playerId, FirePressed: true));
             for (var i = 0; i < 20; i++) // outlast the 0.5s cooldown before the next shot
                 world.Step(RealtimeStep);
+        }
+
+        for (var finish = 0; finish < 20 && world.CreateSnapshot().Enemy.Hp > 0; finish++)
+        {
+            world.Enemy.ApplyDamage(world.Enemy.Hp);
+            world.Step(RealtimeStep);
         }
 
         // The kill that actually ends the loop leaves the character still seated at the turret -

@@ -583,43 +583,6 @@ public sealed partial class ShipRenderer
         spriteBatch.DrawString(_font, text, center, Color.White, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
     }
 
-    // Content-каталог отсеков - click-to-place UI's own overlay while a module is selected
-    // (Game1.cs's own _placingRoomCatalogId): a light 1-tile (3-unit) grid across the hull's own
-    // footprint, every currently valid attach spot (RoomPlacementPreview.FindCandidates) outlined
-    // faintly, and whichever one is closest to the cursor right now filled solid green - the one a
-    // click would actually confirm.
-    public void DrawPlacementOverlay(SpriteBatch spriteBatch, WorldSnapshot snapshot,
-        IReadOnlyList<RoomPlacementPreview.Candidate> candidates, RoomPlacementPreview.Candidate? nearest, Vector2 origin)
-    {
-        const float tileUnits = 3f;
-        var minX = snapshot.Rooms.Min(r => r.X) - tileUnits;
-        var maxX = snapshot.Rooms.Max(r => r.X + r.Width) + tileUnits;
-        var minY = snapshot.Rooms.Min(r => r.Y) - tileUnits;
-        var maxY = snapshot.Rooms.Max(r => r.Y + r.Height) + tileUnits;
-
-        Color gridLine = new(120, 160, 190, 60);
-        for (var x = MathF.Floor(minX / tileUnits) * tileUnits; x <= maxX; x += tileUnits)
-        {
-            var screenX = (int)origin.X + (int)(x * PixelsPerUnit);
-            spriteBatch.Draw(_pixel, new Rectangle(screenX, (int)origin.Y + (int)(minY * PixelsPerUnit), 1, (int)((maxY - minY) * PixelsPerUnit)), gridLine);
-        }
-        for (var y = MathF.Floor(minY / tileUnits) * tileUnits; y <= maxY; y += tileUnits)
-        {
-            var screenY = (int)origin.Y + (int)(y * PixelsPerUnit);
-            spriteBatch.Draw(_pixel, new Rectangle((int)origin.X + (int)(minX * PixelsPerUnit), screenY, (int)((maxX - minX) * PixelsPerUnit), 1), gridLine);
-        }
-
-        foreach (var candidate in candidates)
-        {
-            var rect = new Rectangle(
-                (int)origin.X + (int)(candidate.X * PixelsPerUnit), (int)origin.Y + (int)(candidate.Y * PixelsPerUnit),
-                (int)(candidate.Width * PixelsPerUnit), (int)(candidate.Height * PixelsPerUnit));
-            var isNearest = nearest is { } n && n.X == candidate.X && n.Y == candidate.Y;
-            spriteBatch.Draw(_pixel, rect, Color.LightGreen * (isNearest ? 0.35f : 0.1f));
-            DrawRectOutline(spriteBatch, _pixel, rect, Color.LightGreen * (isNearest ? 1f : 0.4f), isNearest ? 2 : 1);
-        }
-    }
-
     private static float RoomOxygen(WorldSnapshot snapshot, string roomId) =>
         snapshot.RoomOxygen.FirstOrDefault(o => o.RoomId == roomId)?.Oxygen ?? 100f;
 

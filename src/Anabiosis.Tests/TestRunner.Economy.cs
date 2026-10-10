@@ -439,14 +439,14 @@ internal static partial class TestRunner
                 world.Step(RealtimeStep);
             }
 
-            var hpBefore = world.CreateSnapshot().Enemy.Hp;
+            var hpBefore = world.DebugEnemyHullHp();
             world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
             StepFor(world, 20);
 
             // Base shot damage is TurretBalance.MagneticDamage - with the upgrade it should deal more.
-            var hpAfter = world.CreateSnapshot().Enemy.Hp;
+            var hpAfter = world.DebugEnemyHullHp();
             if (hpAfter < hpBefore)
-                return hpAfter < hpBefore - TurretBalance.MagneticDamage;
+                return hpBefore - hpAfter > TurretBalance.MagneticDamage * World.PlayerShotWallDamageScale + 0.01f;
         }
 
         return false; // never landed a hit within the retry budget

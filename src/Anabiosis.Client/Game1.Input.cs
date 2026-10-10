@@ -598,6 +598,11 @@ public partial class Game1
                 PlayUiClick();
                 EnterSpectatorMode();
             }
+            else if (CheatPanel.GetEnemyInteriorButtonRect(CheatPanelOrigin).Contains(_designMouse))
+            {
+                PlayUiClick();
+                _enemyInteriorCheat = !_enemyInteriorCheat;
+            }
             return (-1, -1, null, -1, false, false, null, null);
         }
 
@@ -1080,55 +1085,29 @@ public partial class Game1
         // picked stays selectable/reselectable even after the player has walked off the station and
         // back aboard their own ship to go point at a spot (the dialogue itself may have closed by
         // then, but the panel - and the choice it represents - hasn't).
-        var buildPanelShowing = _placingRoomCatalogId is not null ||
-            (snapshot.Station.Npcs.FirstOrDefault(n => n.Id == _talkingToNpcId)?.Kind == NpcKind.Shipwright);
-        if (buildPanelShowing)
-        {
-            for (var i = 0; i < StationBuildPanel.Categories.Length; i++)
-            {
-                if (!StationBuildPanel.GetCategoryTabRect(i, StationBuildPanelOrigin).Contains(_designMouse))
-                    continue;
-                _buildPanelCategory = StationBuildPanel.Categories[i].Category;
-                return (-1, -1, null, -1, false, false, null, null);
-            }
-
-            var buildEntries = StationBuildPanel.EntriesInCategory(_buildPanelCategory);
-            for (var i = 0; i < buildEntries.Count; i++)
-            {
-                if (!StationBuildPanel.GetModuleRect(i, StationBuildPanelOrigin).Contains(_designMouse))
-                    continue;
-                // Picking a module no longer buys instantly (M60's own one-click purchase) - it
-                // ENTERS PLACEMENT MODE, confirmed by a later click on the ship's own interior (the
-                // world-click section further down this same method).
-                _placingRoomCatalogId = buildEntries[i].Id;
-                return (-1, -1, null, -1, false, false, null, null);
-            }
-
-            // A click that landed inside the panel's own footprint but missed every button above
-            // (padding, gaps between tabs/modules) has to be swallowed here too - otherwise it falls
-            // through to the world hit-tests below (this whole block runs BEFORE the world-vs-panel
-            // "everything above is a panel's own controls" swallow check) and could confirm a
-            // placement or toggle a block right underneath the panel by accident.
-            if (new Rectangle((int)StationBuildPanelOrigin.X, (int)StationBuildPanelOrigin.Y, StationBuildPanel.PanelWidth, StationBuildPanel.PanelHeight).Contains(_designMouse))
-                return (-1, -1, null, -1, false, false, null, null);
-        }
+        if (HandleBuildPanelClick(snapshot))
+            return (-1, -1, null, -1, false, false, null, null);
 
         if (_openBlock.Kind == BlockKind.Station)
         {
             var talkingToKind = snapshot.Station.Npcs.FirstOrDefault(n => n.Id == _talkingToNpcId)?.Kind;
 
+            // The Trader's store window (Rendering/TradeWindow.cs): a click inside it is the window's own;
+            // outside it falls through like any click on the station floor (which closes the dialogue).
             if (talkingToKind == NpcKind.Trader)
             {
-                for (var i = 0; i < TradeCatalog.Goods.Count; i++)
+                switch (_tradeWindow.HandleClick(snapshot, _client.PlayerId, _designMouse))
                 {
-                    if (StationPanel.GetGoodRect(i, StationPanelOrigin).Contains(_designMouse))
-                        return (-1, -1, TradeCatalog.Goods[i].Item, -1, false, false, null, null);
-                }
-
-                for (var i = 0; i < slotCount; i++)
-                {
-                    if (StationPanel.GetSellRect(i, StationPanelOrigin).Contains(_designMouse))
-                        return (-1, -1, null, i, false, false, null, null);
+                    case TradeClick.Close:
+                        _talkingToNpcId = null;
+                        _openBlock = ClickTarget.None;
+                        return (-1, -1, null, -1, false, false, null, null);
+                    case TradeClick.Confirm:
+                        foreach (var command in _tradeWindow.TakeCommands())
+                            _tradeQueue.Enqueue(command);
+                        return (-1, -1, null, -1, false, false, null, null);
+                    case TradeClick.Handled:
+                        return (-1, -1, null, -1, false, false, null, null);
                 }
             }
 
@@ -1172,17 +1151,6 @@ public partial class Game1
                 }
             }
 
-            if (talkingToKind == NpcKind.Shipwright)
-            {
-                // M61 - "Снести <последний построенный>" button.
-                if (snapshot is not null && StationPanel.LastBuiltRoomId(snapshot.Rooms) is { } lastRoomId &&
-                    StationPanel.GetDemolishLastRoomRect(StationPanelOrigin).Contains(_designMouse))
-                {
-                    _pendingDemolishRoomId = lastRoomId;
-                    return (-1, -1, null, -1, false, false, null, null);
-                }
-            }
-
             if (talkingToKind == NpcKind.Recruiter)
             {
                 for (var i = 0; i < snapshot.RecruitCandidates.Count; i++)
@@ -1212,6 +1180,17 @@ public partial class Game1
                     continue;
                 _talkingToNpcId = _talkingToNpcId == npc.Id ? null : npc.Id;
                 _openBlock = _talkingToNpcId is null ? ClickTarget.None : ClickTarget.Station;
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+
+            // A walking station resident (World.StationResidents.cs): clicking one makes them say something -
+            // flavour only, no dialogue panel. Same reach as everything else you can interact with.
+            foreach (var resident in snapshot.Station.Residents ?? Array.Empty<StationResidentState>())
+            {
+                if ((new Vec2(resident.X, resident.Y) - new Vec2(me.X, me.Y)).Length() >= TurretInteractionRadius * 1.5f ||
+                    !StationRenderer.GetResidentRect(resident, stationOrigin).Contains(_designMouse))
+                    continue;
+                _residentSpeech.Say(resident);
                 return (-1, -1, null, -1, false, false, null, null);
             }
 
@@ -1294,15 +1273,8 @@ public partial class Game1
         // the placement overlay Game1.cs's own Draw is showing right now. Takes priority over every
         // other world click below, the same "modal until confirmed or cancelled" shape the wire-lay/
         // tank-drag flows already use elsewhere in this method.
-        if (_placingRoomCatalogId is { } placingCatalogId && RoomCatalog.Find(placingCatalogId) is { } placingEntry)
-        {
-            var mouseLocal = ScreenToShipLocal(new Vector2(_designMouse.X, _designMouse.Y), origin, SceneZoom(snapshot));
-            var candidates = RoomPlacementPreview.FindCandidates(snapshot, placingEntry);
-            if (RoomPlacementPreview.NearestTo(candidates, mouseLocal) is { } nearest)
-                _pendingBuildRoom = new BuildRoomRequest(placingCatalogId, nearest.X, nearest.Y);
-            _placingRoomCatalogId = null;
+        if (HandleBuildWorldClick(snapshot, origin))
             return (-1, -1, null, -1, false, false, null, null);
-        }
 
         // Still physically on the station (no module selected right now) - every check below this
         // point assumes myPosition/origin are the character's own SHIP-local ones, which they are

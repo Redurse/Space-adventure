@@ -9,10 +9,7 @@ namespace Anabiosis.Server;
 public sealed partial class World
 {
     private const int StartingCredits = 300;
-    // The Miners' Guild pays a premium for ore at its own base - the one concrete thing that
-    // makes docking there (rather than any other trader) worth the detour (game_design.md
-    // section 10, StationKind.Mining).
-    private const float MiningStationOreSellBonus = 1.2f;
+    // The mining-station ore premium lives in TradeCatalog.MiningStationOreSellBonus (shared with the trade window).
 
     public int Credits { get; private set; } = StartingCredits;
 
@@ -38,7 +35,7 @@ public sealed partial class World
         // World.Factions.cs) - allies get a discount, disliked crews pay a markup.
         if (TradeCatalog.Find(item) is not { } good)
             return;
-        var price = (int)MathF.Round(good.BuyPrice * LocalPriceMultiplier);
+        var price = TradeCatalog.BuyPrice(good, LocalPriceMultiplier);
         if (Credits < price)
             return;
 
@@ -69,7 +66,6 @@ public sealed partial class World
         // Sell prices move the same way as buy prices - an ally's station pays out better, a
         // hostile one lowballs you (the multiplier is inverted here, since a low multiplier means
         // "cheap for the player" on the buy side but "stingy" on the sell side).
-        var oreBonus = ItemDefinitions.IsRawOre(item) && DockedStationKind == StationKind.Mining ? MiningStationOreSellBonus : 1f;
-        Credits += (int)MathF.Round(good.SellPrice / LocalPriceMultiplier * oreBonus);
+        Credits += TradeCatalog.SellPrice(good, LocalPriceMultiplier, DockedStationKind == StationKind.Mining);
     }
 }

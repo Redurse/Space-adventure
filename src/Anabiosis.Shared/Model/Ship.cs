@@ -65,6 +65,8 @@ public sealed partial class Ship
     // this (unlike SupplementalWallTiles/ForcedFloorTiles/WallOpenSideOverrides above) is explicitly
     // round-tripped through Ship.ToDefinition().
     public IReadOnlyList<RectF> WreckPatches { get; }
+    // Walls removed by in-game junction doors (CustomShipDefinition.JunctionWalls).
+    public IReadOnlyList<CustomJunctionWallDef> JunctionWalls { get; }
     // M74 (humble-soaring-cat.md) - flattened ECS-style view over every physical device fixture
     // below (ReactorBlock/DistributionBlock/BatteryBlock/HelmConsole/NavigationConsole/CardTable/
     // Jukebox/SystemDevices/Turrets/AmmoStorages/SuitLockers/StorageRacks/Cameras/ComponentMounts,
@@ -211,7 +213,8 @@ public sealed partial class Ship
         // the canonical zone label would misfire and penalize ships that were never built with zones
         // at all. Only a custom hull's room name is actually driven by the zone-type picker.
         bool isCustomBuilt = false,
-        IReadOnlyList<RectF>? wreckPatches = null)
+        IReadOnlyList<RectF>? wreckPatches = null,
+        IReadOnlyList<CustomJunctionWallDef>? junctionWalls = null)
     {
         IsCustomBuilt = isCustomBuilt;
         ForwardDegrees = forwardDegrees;
@@ -254,6 +257,7 @@ public sealed partial class Ship
         WallOpenSideOverrides = wallOpenSideOverrides ?? Array.Empty<CustomWallOpenSideDef>();
         WallMaterialOverrides = wallMaterialOverrides ?? Array.Empty<CustomWallMaterialDef>();
         WreckPatches = wreckPatches ?? Array.Empty<RectF>();
+        JunctionWalls = junctionWalls ?? Array.Empty<CustomJunctionWallDef>();
         // A marching engine's own Bulkhead tile IS the hull plating at that spot (ShipEngine.cs's
         // own doc comment) - drops the ordinary WallBlock the room's own outer-wall generation would
         // otherwise ALSO place there, the same way a door's footprint already excludes one, so the

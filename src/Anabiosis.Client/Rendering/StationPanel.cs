@@ -195,14 +195,7 @@ public sealed class StationPanel
         var platingOrigin = panelOrigin + TradeListOrigin + new Vector2(0, (DemolishRowOffset - 1) * RowHeight - 4);
         spriteBatch.DrawString(_font, $"Обшивка в трюме: {snapshot.HullPlatingStock}", platingOrigin, Color.LightGray, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
 
-        // M61 - only shown once there's actually a player-built room to demolish.
-        if (LastBuiltRoomId(snapshot.Rooms) is { } lastRoomId)
-        {
-            var demolishRect = GetDemolishLastRoomRect(panelOrigin);
-            var roomName = snapshot.Rooms.First(r => r.Id == lastRoomId).Name;
-            spriteBatch.DrawString(_font, $"Снести «{roomName}»", new Vector2(demolishRect.X, demolishRect.Y),
-                Color.OrangeRed, 0f, Vector2.Zero, 0.55f, SpriteEffects.None, 0f);
-        }
+        // Taking a compartment down is the build panel's "Снос" tool now.
     }
 
     // The Recruiter's board (game_design.md section 10 - "случайный набор кандидатов... у каждого

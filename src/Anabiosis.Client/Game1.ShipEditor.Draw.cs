@@ -1202,6 +1202,11 @@ public partial class Game1
             return;
         }
 
+        // A door cut through a half-block wall (JunctionDoor.cs) previews green over the wall tiles it
+        // would turn into the opening; over a wall it can't go through, the red preview below shows.
+        if (DrawEditorJunctionDoorPreview(anchor, _editorDoorSpanTiles))
+            return;
+
         // Ordinary placement preview - mirrors PlaceEdgeDoor's own geometry exactly (a genuine
         // spanTiles-by-2 free-floor footprint, never a tile of its own - the OLD "click on floor or
         // wall" tile-conversion preview is gone along with the placement it used to describe).
@@ -1281,9 +1286,9 @@ public partial class Game1
         {
             EditorTool.Floor => "Клик - поставить пол. ПКМ - убрать.",
             EditorTool.Wall => "Клик - стена (нужен пол под ней). Зажать и протянуть - линия стен. ПКМ - убрать.",
-            EditorTool.Door when _editorDoorSpanTiles == 2 => "R - выбрать ориентацию. Клик на стыке 2х2 свободных клеток пола - широкая дверь; клик на стыке 2 отсеков - тоже дверь. ПКМ по двери - убрать.",
-            EditorTool.Door when _editorDoorSpanTiles == 3 => "R - выбрать ориентацию. Клик на стыке 3х2 свободных клеток пола - тройная дверь. ПКМ по двери - убрать.",
-            EditorTool.Door => "R - выбрать ориентацию. Клик на стыке пола и другой комнаты или открытого космоса - дверь (на космос - шлюз). ПКМ по двери - убрать.",
+            EditorTool.Door when _editorDoorSpanTiles == 2 => "R - выбрать ориентацию. Клик на стыке 2х2 свободных клеток пола - широкая дверь; клик на полублочной стене (стык отсеков или стена у космоса) - дверь в стене, по бокам должна продолжаться стена. ПКМ по двери - убрать.",
+            EditorTool.Door when _editorDoorSpanTiles == 3 => "R - выбрать ориентацию. Клик на стыке 3х2 свободных клеток пола - тройная дверь; клик на полублочной стене - тройная дверь в стене. ПКМ по двери - убрать.",
+            EditorTool.Door => "R - выбрать ориентацию. Клик на стыке пола и другой комнаты или открытого космоса - дверь (на космос - шлюз); клик на полублочной стене - дверь в стене. ПКМ по двери - убрать.",
             EditorTool.Terminal => "R - выбрать сторону крепления. Клик на полутолщинной стене - врезать в неё. Клик по полу рядом со стеной - поставить снаружи. ПКМ - убрать.",
             EditorTool.Device => "Клик внутри отсека - поставить устройство. ПКМ рядом - убрать.",
             EditorTool.Zone => "Зажмите и протяните по клеткам с полом, затем впишите название отсека.",

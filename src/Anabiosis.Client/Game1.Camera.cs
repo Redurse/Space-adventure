@@ -39,11 +39,29 @@ public partial class Game1
     private float SceneZoom(WorldSnapshot snapshot) =>
         _spectatorMode
             ? _spectatorZoom
-            : MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen
+            : EnemyInteriorViewActive(snapshot)
+                ? EnemyInteriorZoom(snapshot)
+                : MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen
                 ? TurretViewZoom
                 : ShipBuildOverviewActive(snapshot)
                     ? ShipOverviewZoom(snapshot)
                     : 1f;
+
+    // Cheat panel ("Видеть внутри врага"): the scene shows the boardable hostile ship's interior instead of the player's own, pulled back
+    // far enough to fit the whole hull. Not while actually aboard it - then the ordinary boarding view already is that.
+    private bool EnemyInteriorViewActive(WorldSnapshot snapshot) =>
+        _enemyInteriorCheat
+        && snapshot.EnemyShip.Rooms.Count > 0
+        && snapshot.EnemyShip.Ships.Any(s => s.IsBoardable)
+        && snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.OnEnemyShip != true;
+
+    private float EnemyInteriorZoom(WorldSnapshot snapshot)
+    {
+        var half = ShipLocalFrame.GetHullHalfExtents(snapshot.EnemyShip.Rooms);
+        var width = (float)half.X * 2f * ShipRenderer.PixelsPerUnit + 40f;
+        var height = (float)half.Y * 2f * ShipRenderer.PixelsPerUnit + 40f;
+        return MathF.Min(1f, MathF.Min(WorldViewportSize.X / width, WorldViewportSize.Y / height));
+    }
 
     // Content-каталог отсеков - "видно весь корабль" build screen: talking to the Shipwright pulls
     // the whole scene back far enough to fit the entire hull on screen at once (plus a margin for

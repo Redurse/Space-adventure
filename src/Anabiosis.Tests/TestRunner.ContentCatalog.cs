@@ -68,7 +68,7 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
 
         return world.Ship.ReactorDeviceCount == 1 && world.PowerGrid.Reactor.OutputBonus == 0f
-            && world.CreateSnapshot().ShipDebris is { Count: > 0 }; // actually detached, not just refused
+            && world.Ship.Rooms.All(r => r.Id != builtRoomId); // actually destroyed (gone from the ship), not just refused
     }
 
     // ShieldSystem.MaxPoints has to come from an instance (Shield.MaxPoints), not the old static

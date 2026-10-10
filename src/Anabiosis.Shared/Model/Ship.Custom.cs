@@ -189,7 +189,7 @@ public sealed partial class Ship
             engines: engines,
             supplementalWallTiles: def.SupplementalWallTiles, forcedFloorTiles: def.ForcedFloorTiles,
             wallOpenSideOverrides: def.WallOpenSides, wallMaterialOverrides: def.WallMaterials, doorEdges: doorEdges, isCustomBuilt: true,
-            wreckPatches: def.WreckPatches);
+            wreckPatches: def.WreckPatches, junctionWalls: def.JunctionWalls);
 
         // TileShipBuilder.BuildDefinition's own step 3.6 - extra wall tiles a T-junction's own
         // private ring needed that couldn't safely be folded into any room's Rects (see that step's

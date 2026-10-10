@@ -197,7 +197,6 @@ public sealed partial class World
         _shipRotationDegrees = 0f;
         _shipAutoStabilize = true;
         SpawnEnemySquadron(Math.Max(1, squadronSize + SquadronSizeAdjustment(OwnerOf(point.Id))));
-        ResetEnemyCrew(); // a fresh enemy ship means a fresh crew to board through
         _crewShipId = BoardableEnemy?.Id;
     }
 
@@ -208,7 +207,8 @@ public sealed partial class World
     // this counts what's left rather than dealing the next hull in.
     private void ResolveEnemyLosses()
     {
-        var stillFlying = _enemyShips.Count(e => e.Alive);
+        SpawnEnemyReinforcements();
+        var stillFlying = _enemyShips.Count(e => e.Alive) + _enemyReinforcements;
         // A station's own defensive squadron (UpdateNearestStation, M37) only exists because
         // standing was already hostile - it isn't a raid on anyone's territory. Charging it the
         // same per-kill standing/war-effort cost as attacking a hostile sector out in the field
@@ -229,7 +229,6 @@ public sealed partial class World
         if (boardableId != _crewShipId)
         {
             EjectBoardersFromLostHull(); // their ship is gone, and the next one is a different plan
-            ResetEnemyCrew();
             _crewShipId = boardableId;
         }
 
@@ -327,5 +326,6 @@ public sealed partial class World
         foreach (var room in Ship.Rooms)
             _roomOxygen[room.Id] = FullOxygen;
         RegenerateRecruitRoster();
+        RecordDockCheckpoint(pointId); // the hull as it is now is what an explosion puts back (World.ShipBlasts.cs)
     }
 }

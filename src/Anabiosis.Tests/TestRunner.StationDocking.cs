@@ -453,6 +453,8 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         if (!world.IsDocked)
             return false; // setup problem - a fresh campaign should always start docked
+        MoveCharacterTo(world, 1, 11.5f, 3f); // into the corridor, whose top wall this walks into (the crew spawns in the cockpit now)
+        var startX = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).X;
 
         for (var i = 0; i < 300; i++) // 10 simulated seconds - far more than enough to converge
         {
@@ -466,6 +468,6 @@ internal static partial class TestRunner
         // все превращаются в полублоки"; TileGridRasterizer.FromRooms no longer auto-infers a half-
         // open side for a straight run) - clearance stops at y=1+CharacterRadius, not the original
         // y=CharacterRadius zero-thickness model from before tiles existed at all.
-        return Math.Abs(after.X - 11.5) < 0.01 && Math.Abs(after.Y - (1f + RoomLayout.CharacterRadius)) < 0.01;
+        return Math.Abs(after.X - startX) < 0.01 && Math.Abs(after.Y - (1f + RoomLayout.CharacterRadius)) < 0.01;
     }
 }

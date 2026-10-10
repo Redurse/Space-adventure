@@ -3,111 +3,100 @@ using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
 
-// Air aboard the ship you are boarding. Until now the enemy hull had no atmosphere at all, which
-// made a breached warship the one pressurised place in the game - and made boarding a pure shooting
-// gallery, where the only question was who fired first.
-//
-// The model is the player's own (World.Atmosphere.cs) with everything the enemy doesn't have taken
-// out: no generator, no repairable breaches, no welding. What is left is the part that matters here.
-// The compartment behind the boarding breach is open to space and stays that way, every interior
-// door starts *closed* (a crew being boarded buttons up), and opening one bleeds the room behind it
-// into the vacuum next door. So there are two ways to take a hull: clear it room by room, or open
-// the doors and let it suffocate - and which one works depends on whether that crew wears suits,
-// which is what separates a freighter from a gunship (EnemyShipClass).
+// Air aboard a hostile ship. The model is the player's own (World.Atmosphere.cs) with what the enemy doesn't have taken
+// out: no generator, no repairable-by-hand seals. Air spreads between compartments through the hull's doors (which a
+// hostile crew keeps open) and drains out through every breached outer wall block, so cutting or shooting a hole in a
+// compartment slowly empties it and everything connected to it. Unsuited crew in thin air are on a clock; a suited
+// crew (EnemyCrewSpawn.Suited) and a boarder in a sealed suit are not - which is what separates ships that have to be
+// cleared room by room from ones that can simply be vented.
 public sealed partial class World
 {
-    // Faster than the player's ship loses air through a single punctured wall block: this is a hole
-    // the size of a hatch, not a crack, and waiting out a ship should be measured in tens of
-    // seconds rather than minutes.
+    // Faster than the player's ship loses air through a single punctured wall block: this is a hole in a warship's
+    // plating, not a crack, and waiting out a ship should be measured in tens of seconds rather than minutes.
     private const float EnemyVentRatePerSecond = 0.9f;
+    // However many holes a compartment has, the drain stops growing at this many.
+    private const int EnemyMaxVentingBreaches = 3;
 
-    private readonly Dictionary<string, float> _enemyRoomOxygen = new();
-    // Which hull's compartments the levels above describe. Every class has its own room ids, so
-    // reading one hull's air out of another's dictionary isn't a wrong number - it's a missing key.
-    private EnemyShipClass? _enemyAtmosphereKind;
-
-    private void ResetEnemyAtmosphere()
+    private void StepEnemyAtmospheres(double deltaSeconds)
     {
-        var layout = EnemyShipLayout;
-        _enemyRoomOxygen.Clear();
-        foreach (var room in layout.Rooms)
-            _enemyRoomOxygen[room.Id] = FullOxygen;
-        // The breach is a hole in the hull, so the compartment behind it has already lost its air
-        // by the time anyone climbs through.
-        _enemyRoomOxygen[layout.BoardingRoomId] = 0f;
-        _enemyAtmosphereKind = layout.Kind;
-    }
+        foreach (var enemy in _enemyShips)
+            if (enemy.Alive)
+                StepEnemyAtmosphere(enemy, deltaSeconds);
 
-    private void StepEnemyAtmosphere(double deltaSeconds)
-    {
-        var layout = EnemyShipLayout;
-        // The hull in front of the guns changes the moment one dies, and this runs every tick -
-        // including the tick between the kill and the squadron bookkeeping that swaps the crew.
-        if (_enemyAtmosphereKind != layout.Kind)
-            ResetEnemyAtmosphere();
-
-        // Same batched-delta diffusion as the player's ship: computed against the pre-diffusion
-        // levels so the order the doors happen to be listed in can't bias which side loses air.
-        var deltas = new Dictionary<string, float>();
-        // layout.Doors is interior-only - the hull's own vacuum-facing hatches live in the
-        // separate OuterHatches list instead (humble-soaring-cat.md, "убрать AirlockOuterDoor как
-        // отдельный тип"), so RoomBId is never actually null here despite the type now allowing it.
-        foreach (var door in layout.Doors)
-        {
-            if (!IsDoorOpen(door.Id))
-                continue;
-            var flow = OxygenDiffusionRatePerSecond * (_enemyRoomOxygen[door.RoomAId] - _enemyRoomOxygen[door.RoomBId!]) * (float)deltaSeconds;
-            deltas[door.RoomAId] = deltas.GetValueOrDefault(door.RoomAId) - flow;
-            deltas[door.RoomBId!] = deltas.GetValueOrDefault(door.RoomBId!) + flow;
-        }
-
-        foreach (var (roomId, delta) in deltas)
-            _enemyRoomOxygen[roomId] += delta;
-
-        // The breach itself: whatever drifts into that compartment goes straight back out.
-        var breached = layout.BoardingRoomId;
-        _enemyRoomOxygen[breached] -= EnemyVentRatePerSecond * FullOxygen * (float)deltaSeconds;
-
-        foreach (var room in layout.Rooms)
-            _enemyRoomOxygen[room.Id] = Math.Clamp(_enemyRoomOxygen[room.Id], 0f, FullOxygen);
-
-        SuffocateEnemyCrew(deltaSeconds);
         SuffocateBoarders(deltaSeconds);
     }
 
-    // A defender in a vented compartment is on a clock, unless it is wearing a suit. This is the
-    // whole payoff of the mechanic: air is a weapon that costs time instead of ammunition, and the
-    // crews that can ignore it are exactly the ones meant to be fought head on.
-    private void SuffocateEnemyCrew(double deltaSeconds)
+    private void StepEnemyAtmosphere(EnemyShipRuntime enemy, double deltaSeconds)
     {
-        foreach (var crew in _enemyCrew.Values)
+        var layout = enemy.Layout;
+        var oxygen = enemy.RoomOxygen;
+
+        // Batched against the pre-diffusion levels so the order doors happen to be listed in can't bias which side
+        // of a door loses air.
+        var deltas = new Dictionary<string, float>();
+        foreach (var edge in layout.Ship.DoorEdges)
+        {
+            if (edge.RoomAId is not { } a || edge.RoomBId is not { } b || !oxygen.ContainsKey(a) || !oxygen.ContainsKey(b))
+                continue;
+            var flow = OxygenDiffusionRatePerSecond * (oxygen[a] - oxygen[b]) * (float)deltaSeconds;
+            deltas[a] = deltas.GetValueOrDefault(a) - flow;
+            deltas[b] = deltas.GetValueOrDefault(b) + flow;
+        }
+        foreach (var (roomId, delta) in deltas)
+            oxygen[roomId] += delta;
+
+        // Whatever drifts into a compartment with a hole in its outer wall goes straight back out.
+        foreach (var room in layout.Rooms)
+        {
+            var breaches = layout.WallBlocks.Count(b => b.RoomId == room.Id && !b.IsInterior && enemy.IsWallBlockBreached(b.Id));
+            if (breaches > 0)
+                oxygen[room.Id] -= EnemyVentRatePerSecond * Math.Min(breaches, EnemyMaxVentingBreaches) * FullOxygen
+                    * (float)deltaSeconds;
+            oxygen[room.Id] = Math.Clamp(oxygen[room.Id], 0f, FullOxygen);
+        }
+
+        SuffocateEnemyCrew(enemy, deltaSeconds);
+    }
+
+    // A defender in a vented compartment is on a clock, unless it is wearing a suit. This is the whole payoff of the
+    // mechanic: air is a weapon that costs time instead of ammunition, and the crews that can ignore it are exactly the
+    // ones meant to be fought head on.
+    private void SuffocateEnemyCrew(EnemyShipRuntime enemy, double deltaSeconds)
+    {
+        foreach (var crew in enemy.Crew)
         {
             if (!crew.Alive || crew.Spawn.Suited)
                 continue;
-            if (!_enemyRoomOxygen.TryGetValue(crew.Spawn.RoomId, out var oxygen) || oxygen >= OxygenSafeThreshold)
+            if (!enemy.RoomOxygen.TryGetValue(crew.RoomId, out var oxygen) || oxygen >= OxygenSafeThreshold)
                 continue;
 
             var damage = MaxSuffocationDamagePerSecond * (OxygenSafeThreshold - oxygen) / OxygenSafeThreshold;
             crew.Health = Math.Max(0, crew.Health - damage * (float)deltaSeconds);
         }
 
-        // Suffocating the last defender takes the hull exactly like shooting the last one does
-        // (TryFirePersonalWeapon) - otherwise venting a ship would clear it of crew and still leave
-        // it flying and shooting.
-        if (_enemyCrew.Count > 0 && _enemyCrew.Values.All(c => !c.Alive) && Enemy.Hp > 0)
-            Enemy.ApplyDamage(Enemy.Hp);
+        CaptureIfCrewWiped(enemy);
     }
 
-    // A boarding party crosses vacuum to get there, so it is suited by definition - but the rule is
-    // written out rather than assumed, because losing a suit aboard is the sort of thing a later
-    // mechanic will do, and silently making the boarder immortal would be the wrong default.
+    // The last defender falling takes the hull however it happened - shot, or suffocated - otherwise venting a ship
+    // would clear it of crew and still leave it flying and shooting.
+    private static void CaptureIfCrewWiped(EnemyShipRuntime enemy)
+    {
+        if (enemy.Crew.Count > 0 && enemy.Crew.All(c => !c.Alive) && enemy.Ship.Hp > 0)
+            enemy.Ship.ApplyDamage(enemy.Ship.Hp);
+    }
+
+    // A boarding party crosses vacuum to get there, so it is suited by definition - but the rule is written out rather
+    // than assumed, because losing a suit aboard is the sort of thing a later mechanic will do, and silently making the
+    // boarder immortal would be the wrong default.
     private void SuffocateBoarders(double deltaSeconds)
     {
+        if (BoardableEnemy is not { } enemy)
+            return;
         foreach (var character in _characters.Values)
         {
             if (!character.OnEnemyShip || character.SuitSealed)
                 continue;
-            if (!_enemyRoomOxygen.TryGetValue(character.RoomId, out var oxygen) || oxygen >= OxygenSafeThreshold)
+            if (!enemy.RoomOxygen.TryGetValue(character.RoomId, out var oxygen) || oxygen >= OxygenSafeThreshold)
                 continue;
 
             var damage = MaxSuffocationDamagePerSecond * (OxygenSafeThreshold - oxygen) / OxygenSafeThreshold;
@@ -116,7 +105,7 @@ public sealed partial class World
     }
 
     private IReadOnlyList<RoomOxygenState> CreateEnemyRoomOxygenStates() =>
-        EnemyShipLayout.Rooms
-            .Select(r => new RoomOxygenState(r.Id, _enemyRoomOxygen.GetValueOrDefault(r.Id, FullOxygen)))
-            .ToArray();
+        BoardableEnemy is { } enemy
+            ? enemy.Layout.Rooms.Select(r => new RoomOxygenState(r.Id, enemy.RoomOxygen.GetValueOrDefault(r.Id, FullOxygen))).ToArray()
+            : Array.Empty<RoomOxygenState>();
 }

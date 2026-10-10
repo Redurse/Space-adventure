@@ -10,7 +10,7 @@ namespace Anabiosis.Client.Rendering;
 public sealed class CheatPanel
 {
     public const int PanelWidth = 300;
-    public const int PanelHeight = 208;
+    public const int PanelHeight = 264;
     private const int ButtonWidth = 260;
     private const int ButtonHeight = 44;
     private const int TopPadding = 38;
@@ -53,7 +53,14 @@ public sealed class CheatPanel
         (int)panelOrigin.Y + TopPadding + 2 * (ButtonHeight + ButtonGap),
         ButtonWidth, ButtonHeight);
 
-    public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint)
+    // "See inside the enemy": the scene pulls back and shows the hostile ship's interior (its rooms, walls, doors and the crew walking
+    // about it), like looking into a ship you have boarded - a testing tool for the simulated enemy crews.
+    public static Rectangle GetEnemyInteriorButtonRect(Vector2 panelOrigin) => new(
+        (int)panelOrigin.X + (PanelWidth - ButtonWidth) / 2,
+        (int)panelOrigin.Y + TopPadding + 3 * (ButtonHeight + ButtonGap),
+        ButtonWidth, ButtonHeight);
+
+    public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint, bool enemyInteriorOn = false)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
         PanelFrame.Draw(spriteBatch, _pixel, panelRect, PanelBackground, PanelBorder, 0.97f, BorderThickness);
@@ -64,6 +71,7 @@ public sealed class CheatPanel
         DrawButton(spriteBatch, GetSpawnEnemyButtonRect(panelOrigin), hoverPoint, "Заспавнить врага рядом");
         DrawButton(spriteBatch, GetAddCreditsButtonRect(panelOrigin), hoverPoint, "Выдать 100 кредитов");
         DrawButton(spriteBatch, GetSpectatorModeButtonRect(panelOrigin), hoverPoint, "Режим наблюдателя");
+        DrawButton(spriteBatch, GetEnemyInteriorButtonRect(panelOrigin), hoverPoint, enemyInteriorOn ? "Скрыть внутренности врага" : "Видеть внутри врага");
     }
 
     private void DrawButton(SpriteBatch spriteBatch, Rectangle buttonRect, Point hoverPoint, string label)

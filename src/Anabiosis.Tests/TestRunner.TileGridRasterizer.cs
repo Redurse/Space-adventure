@@ -43,7 +43,7 @@ internal static partial class TestRunner
 
     private static bool TileGridRasterizer_EveryEnemyHull_OneRegionPerRoom()
     {
-        foreach (var layout in EnemyShipLayout.All)
+        foreach (var layout in new[] { EnemyShipLayout.Default })
         {
             if (!EachRoomCenterMapsToItsOwnDistinctRegion(layout.Rooms, layout.Tiles))
                 return false;

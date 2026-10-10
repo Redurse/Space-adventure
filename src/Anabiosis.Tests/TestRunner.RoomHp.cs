@@ -2,17 +2,18 @@ using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
+// Each compartment's own health (World.RoomHp.cs): read off its walls, zero when a third of them is gone,
+// restored by repairing them. The destruction itself (blast, chains, the reactor) is TestRunner.ShipBlasts.cs.
 internal static partial class TestRunner
 {
-    // Three rooms in a row (World.RoomHp.cs's own doc comment: "тестовые 1000") - "a" holds every
-    // required device (Reactor/Distribution/Helm/Navigation/Oxygen/SuitLocker/StorageRack, all in the
-    // one room that's never touched by this file's own tests) plus the hull's only airlock, so the
-    // shrunk definition TryComputeRoomDetachment builds after "b" explodes still validates even
-    // though "b" and "c" both disappear. "b" holds the one real engine fixture (its Bulkhead is this
-    // file's own controlled room-hp damage source) and sits between "a" (the reactor room) and "c" (a
-    // pure dead end reachable only through "b") - destroying "b" must also cut "c" loose.
+    // Three rooms in a row - "a" holds every required device (Reactor/Distribution/Helm/Navigation/Oxygen/
+    // SuitLocker/StorageRack, all in the one room that's never touched by most of these tests) plus the
+    // hull's only airlock, so the shrunk definition TryComputeRoomDetachment builds after "b" explodes still
+    // validates even though "b" and "c" both disappear. "b" holds the one real engine fixture and sits between
+    // "a" (the reactor room) and "c" (a pure dead end reachable only through "b") - destroying "b" must also
+    // cut "c" loose.
     private static CustomShipDefinition BuildThreeRoomEngineCustomShipDefinition() => new(
-        "Тестовый корабль для скрытого хп отсека",
+        "Тестовый корабль для хп отсека",
         new[]
         {
             new CustomRoomDef("a", "Мостик", 0, 0, 4, 4),
@@ -37,12 +38,16 @@ internal static partial class TestRunner
             // Redundant on purpose: room "b"'s own real ShipEngine (below) is the only OTHER "way to
             // move" this hull has - without a second one surviving in "a", destroying "b" would leave
             // the shrunk definition with none at all, and CustomShipValidator (correctly) refuses the
-            // whole detachment rather than produce a ship with no engine whatsoever (the same "refuse
-            // rather than corrupt" guard TryComputeRoomDetachment's own doc comment describes).
+            // whole detachment rather than produce a ship with no engine whatsoever.
             new CustomDeviceDef(CustomDeviceKind.Engine, 3, 3),
         },
         0f,
         EnginesRaw: new[] { new CustomEngineDef(5f, 1f, TileSide.South, 20f) });
+
+    // How many hit points a room's walls hold in total (its wall blocks plus any engine's bulkhead+nozzle).
+    private static float RoomWallTotal(World world, string roomId) =>
+        world.Ship.WallBlocks.Where(b => b.RoomId == roomId).Sum(b => World.WallBlockMaxHp)
+        + 2f * World.EnginePartMaxHp * world.Ship.Engines.Count(e => e.RoomId == roomId);
 
     private static bool World_RoomHp_StartsAtMaxForEveryRoom()
     {
@@ -51,78 +56,114 @@ internal static partial class TestRunner
         return states.Count == 3 && states.All(s => s.Hp == World.RoomMaxHp && s.MaxHp == World.RoomMaxHp);
     }
 
-    // Direct user request ("скрытое число хп... тратится от урона") - a source already wired into
-    // DamageRoom (World.Engines.cs's DamageEngineBulkhead) visibly lowers the one room's own entry
-    // and leaves every other room untouched.
+    // The engine's bulkhead is one of its compartment's walls: damage to it lowers that room's health by the
+    // share of the room's wall hit points it took, and no other room's.
     private static bool World_RoomHp_EngineBulkheadDamage_ReducesOnlyItsOwnRoom()
     {
         var world = new World(ShipKind.Custom, BuildThreeRoomEngineCustomShipDefinition());
         var engineId = world.Ship.Engines.Single().Id;
         var engineRoomId = world.Ship.Engines.Single().RoomId;
+        var total = RoomWallTotal(world, engineRoomId);
 
-        world.DebugBreachEngineBulkhead(engineId); // one shot, World.EnginePartMaxHp (100) worth
+        world.DebugBreachEngineBulkhead(engineId); // World.EnginePartMaxHp (100) worth
 
         var states = world.CreateSnapshot().RoomHp!;
-        var engineRoom = states.Single(s => s.RoomId == engineRoomId);
-        return engineRoom.Hp == World.RoomMaxHp - World.EnginePartMaxHp
+        var expected = World.RoomMaxHp * (1f - World.EnginePartMaxHp / (total * World.RoomDestructionWallShare));
+        return Math.Abs(states.Single(s => s.RoomId == engineRoomId).Hp - expected) < 0.5f
             && states.Where(s => s.RoomId != engineRoomId).All(s => s.Hp == World.RoomMaxHp);
     }
 
-    // Direct user request ("скрытое число хп... тратится от урона") - ChopDoor (World.Doors.cs)
-    // damages BOTH rooms a door borders, same amount each.
-    private static bool World_RoomHp_DoorDamage_ReducesBothBorderingRooms()
+    // Doors are not part of the compartment's walls: breaking one leaves the rooms' health alone.
+    private static bool World_RoomHp_DoorDamage_DoesNotTouchRoomHp()
     {
         var world = new World(ShipKind.Custom, BuildThreeRoomEngineCustomShipDefinition());
         var door = world.Ship.Doors.First(d => d.RoomAId == "a" && d.RoomBId == "b" || d.RoomAId == "b" && d.RoomBId == "a");
 
         world.ChopDoor(door.Id, World.AxeChopDamage);
+        world.DamageDoor(door.Id);
 
-        var states = world.CreateSnapshot().RoomHp!;
-        return states.Single(s => s.RoomId == "a").Hp == World.RoomMaxHp - World.AxeChopDamage
-            && states.Single(s => s.RoomId == "b").Hp == World.RoomMaxHp - World.AxeChopDamage
-            && states.Single(s => s.RoomId == "c").Hp == World.RoomMaxHp;
+        return world.CreateSnapshot().RoomHp!.All(s => s.Hp == World.RoomMaxHp);
     }
 
-    // Direct user request, full round-trip ("отсек физически перестает существовать на корабле
-    // полностью, он удаляется везде где он используется, а на месте взорванного отсека будут всякие
-    // обломки"): a room whose hp reaches 0 disappears from Ship.Rooms/Engines/Doors, gains a static
-    // Ship.WreckPatches entry (NOT a flying ShipDebrisFragment - that's still reserved for a genuine
-    // wall breach, World.ShipDebris.cs's DestroyRoomAndDetach), ejects whoever was standing in it to
-    // EVA, and - since "c" was reachable only through the exploding room "b" - still detaches "c" as
-    // a real flying fragment exactly like a wall-breach would (World.RoomHp.cs's ExplodeRoom's own
-    // doc comment: "ANY other room that becomes unreachable purely as a side effect... still detaches
-    // and flies off exactly as before").
-    private static bool World_RoomHp_ReachingZero_ExplodesRoomAndDetachesOrphanedNeighbor()
+    // A wall that is only damaged, not breached, already costs the room part of its health - and welding it
+    // back gives exactly that part back (variant "B": a repaired breach returns what it cost).
+    private static bool World_RoomHp_PartialWallDamageLowersHp_AndRepairRestoresIt()
     {
         var world = new World(ShipKind.Custom, BuildThreeRoomEngineCustomShipDefinition());
-        var engineId = world.Ship.Engines.Single().Id;
+        var block = world.Ship.WallBlocks.First(b => b.RoomId == "a");
+        var total = RoomWallTotal(world, "a");
+
+        world.DebugDamageWallBlockById(block.Id, 40f);
+        var hurt = world.CreateSnapshot().RoomHp!.Single(s => s.RoomId == "a").Hp;
+        var expected = World.RoomMaxHp * (1f - 40f / (total * World.RoomDestructionWallShare));
+        if (Math.Abs(hurt - expected) > 0.5f)
+            return false;
+
+        world.DebugRepairWallBlockById(block.Id, 40f);
+        return world.CreateSnapshot().RoomHp!.Single(s => s.RoomId == "a").Hp == World.RoomMaxHp;
+    }
+
+    // A breach (wall at 0) costs the room one wall's whole share, and patching it gives that share back.
+    private static bool World_RoomHp_BreachCostsItsShare_WeldingItReturnsIt()
+    {
+        var world = new World(ShipKind.Custom, BuildThreeRoomEngineCustomShipDefinition());
+        var block = world.Ship.WallBlocks.First(b => b.RoomId == "a");
+        var total = RoomWallTotal(world, "a");
+
+        world.DebugBreachWallBlockById(block.Id);
+        var breached = world.CreateSnapshot().RoomHp!.Single(s => s.RoomId == "a").Hp;
+        var expected = World.RoomMaxHp * (1f - World.WallBlockMaxHp / (total * World.RoomDestructionWallShare));
+        if (Math.Abs(breached - expected) > 0.5f)
+            return false;
+
+        world.DebugRepairWallBlockById(block.Id, World.WallBlockMaxHp);
+        return world.CreateSnapshot().RoomHp!.Single(s => s.RoomId == "a").Hp == World.RoomMaxHp;
+    }
+
+    // The compartment dies exactly when a third of its wall hit points are gone - not before, not after.
+    private static bool World_RoomHp_ThirdOfTheWallsGone_DestroysTheCompartment()
+    {
+        var world = new World(ShipKind.Custom, BuildThreeRoomEngineCustomShipDefinition());
+        var blocks = world.Ship.WallBlocks.Where(b => b.RoomId == "c").ToList();
+        var needed = (int)MathF.Ceiling(blocks.Count * World.RoomDestructionWallShare);
+        if (needed < 2)
+            return false; // setup problem - the room has too few walls for this to tell anything
+
+        for (var i = 0; i < needed - 1; i++)
+            world.DebugBreachWallBlockById(blocks[i].Id);
+        var stillThere = world.Ship.Rooms.Any(r => r.Id == "c");
+        world.DebugBreachWallBlockById(blocks[needed - 1].Id);
+        world.Step(RealtimeStep);
+        var gone = world.Ship.Rooms.All(r => r.Id != "c");
+        return stillThere && gone;
+    }
+
+    // Full round-trip: destroying "b" (engine inside, "c" reachable only through it) removes it from
+    // Rooms/Engines/Doors, leaves a static wreck patch, ejects whoever stood in it, and - since "c" was cut off -
+    // sends "c" off as its own tumbling fragment.
+    private static bool World_RoomHp_DestroyedCompartment_LeavesAWreckAndCutsOffTheOrphanedNeighbor()
+    {
+        var world = new World(ShipKind.Custom, BuildThreeRoomEngineCustomShipDefinition());
         var wreckPatchesBefore = world.Ship.WreckPatches.Count;
 
         world.SpawnCharacter(1);
-        MoveCharacterTo(world, 1, 6f, 2f); // inside room "b", the one about to explode
+        MoveCharacterTo(world, 1, 6f, 2f); // inside room "b", the one about to be destroyed
 
-        // Repeated on purpose: DamageEngineBulkhead floors the bulkhead's OWN hp at 0 but still
-        // forwards the full `amount` to DamageRoom every time it's called (World.Engines.cs), the
-        // same "keeps taking damage" shape a real, sustained combat hit would produce - 10 calls at
-        // World.EnginePartMaxHp(100) each exhausts World.RoomMaxHp(1000) exactly.
-        for (var i = 0; i < 10; i++)
-            world.DebugBreachEngineBulkhead(engineId);
+        world.DebugDestroyRoomWallBlocks("b");
+        world.Step(RealtimeStep);
 
         var roomGone = world.Ship.Rooms.All(r => r.Id != "b" && r.Id != "c") && world.Ship.Rooms.Count == 1;
         var engineGone = world.Ship.Engines.Count == 0;
-        // Both interior doors (a/b and b/c) touched the exploded room "b" and are gone with it - but
-        // room "a"'s own airlock survives (room "a" itself was never destroyed), and now lives in this
-        // SAME Doors list rather than a separate one (humble-soaring-cat.md, "убрать AirlockOuterDoor
-        // как отдельный тип"), so this checks "no interior doors left", not "the list is empty".
         var doorsGone = world.Ship.Doors.Count(d => !d.LeadsToVacuum) == 0 && world.Ship.VacuumDoors.Count == 1;
-        var gotWreckPatch = world.Ship.WreckPatches.Count == wreckPatchesBefore + 1;
+        // It vanishes completely: no decal, and where it stood is open space - there is no floor to walk on any more.
+        var leftNoWreck = world.Ship.WreckPatches.Count == wreckPatchesBefore
+            && !(world.Ship.Tiles.CellAt(new TileCoord(6, 2)) is { HasFloor: true });
 
         var snapshot = world.CreateSnapshot();
         var characterEjected = snapshot.Characters.Single(c => c.PlayerId == 1).IsOutside;
-        // "c" detaches as a real, independently flying fragment - the exploded room "b" itself does
-        // NOT (it stays put as the wreck patch checked above), so exactly one fragment, holding "c".
+        // "c" detaches as a real, independently flying fragment - the exploded room "b" itself stays as the wreck.
         var neighborDetachedAsDebris = snapshot.ShipDebris is { Count: 1 } debris && debris[0].Rooms.Count == 1;
 
-        return roomGone && engineGone && doorsGone && gotWreckPatch && characterEjected && neighborDetachedAsDebris;
+        return roomGone && engineGone && doorsGone && leftNoWreck && characterEjected && neighborDetachedAsDebris;
     }
 }

@@ -331,4 +331,9 @@ public sealed record ClientCommand(
     bool Sprint = false,
     // Right mouse held while a Rifle / LaserRifle is in hand: fire (a burst, or a beam). Level-triggered,
     // the weapon's own cooldown paces it, same as FireHeld does for a turret.
-    bool WeaponFireHeld = false);
+    bool WeaponFireHeld = false,
+    // In-game building from the compartment catalog (World.CompartmentBuilding.cs): place a compartment by tile anchor and rotation,
+    // put a junction door on a wall joint, take one out. Edge-triggered, like BuildRoom above.
+    BuildCompartmentRequest? BuildCompartment = null,
+    PlaceDoorRequest? PlaceDoor = null,
+    string? RemoveDoorId = null);

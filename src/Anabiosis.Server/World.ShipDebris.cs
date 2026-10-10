@@ -31,6 +31,10 @@ public sealed partial class World
         public Vec2 Position;
         public required Vec2 Velocity;
         public required float RotationDegrees;
+        // Degrees per second - a piece torn off by an explosion tumbles instead of gliding along rigidly.
+        public float AngularVelocity;
+        // Hit points: a torn-off piece can be shot to pieces (TryHitDebris).
+        public float Hp;
         // Stored relative to the FRAGMENT's own pivot (its footprint's centre at the moment of
         // detachment), not the old ship's hull centre - so Position alone is enough to place every
         // room correctly from here on, the same "one transform, not two" shape Ship.Rooms itself
@@ -41,198 +45,12 @@ public sealed partial class World
     private readonly List<ShipDebrisFragment> _shipDebris = new();
     private int _nextDebrisId;
 
-    // Called from World.WallBlocks.cs's own DamageWallBlock, the single choke point every source of
-    // player-ship wall damage (enemy fire, cutting, asteroid impact) already funnels through - a
-    // room with no wall blocks of its own (fully interior, no exterior wall) can never be destroyed
-    // this way; it can still be swept into a debris group if whatever WAS between it and the reactor
-    // gets destroyed instead (DestroyRoomAndDetach's own connectivity check below handles that).
-    private void CheckRoomStructuralFailure(string blockId)
-    {
-        var block = Ship.WallBlocks.FirstOrDefault(b => b.Id == blockId);
-        if (block is null)
-            return;
-        var roomBlocks = Ship.WallBlocks.Where(b => b.RoomId == block.RoomId).ToList();
-        if (roomBlocks.Count == 0 || roomBlocks.Any(b => !IsWallBlockBreached(b.Id)))
-            return; // no exterior wall to lose, or not every block of it is gone yet
+    // (Which compartment dies, and when, is World.RoomHp.cs; what an explosion does is World.ShipBlasts.cs.
+    // A compartment is no longer lost the moment ALL its walls are breached - a third of them is enough.)
 
-        DestroyRoomAndDetach(block.RoomId);
-    }
-
-    // Removes roomId AND every other room that becomes unreachable from the reactor once it's gone -
-    // the whole detached group spins off together as one fragment, not one fragment per orphaned
-    // room, since they're still structurally one piece.
-    private void DestroyRoomAndDetach(string roomId)
-    {
-        if (!TryComputeRoomDetachment(roomId, out var shrunk, out var detachedRooms))
-            return;
-
-        // M64 - both use the OLD Ship/OLD room set, so this has to happen before ApplyShipDefinition
-        // below replaces Ship with the shrunk hull.
-        var detachedRoomIds = detachedRooms.Select(r => r.Id).ToHashSet();
-        EjectCrewFromDetachingRooms(detachedRoomIds);
-        _droppedItems.RemoveAll(item => item.RoomId is not null && detachedRoomIds.Contains(item.RoomId));
-
-        SpawnDebrisFragment(detachedRooms);
-        ApplyShipDefinition(shrunk);
-    }
-
-    // Shared by DestroyRoomAndDetach above and World.RoomHp.cs's own ExplodeRoom - both need "remove
-    // roomId, and detach anything ELSE that becomes unreachable from the reactor as a result",
-    // differing only in what happens to roomId's own footprint once it's gone (flies off with the
-    // rest of the detached group here vs sits in place as a permanent wreck decoration for
-    // ExplodeRoom - see that method's own doc comment). Stops short of actually applying anything -
-    // callers still need to eject crew/drop items/spawn debris (or a wreck patch) using the OLD Ship
-    // before calling ApplyShipDefinition themselves, since the exact "what happens to the detached
-    // group" step differs between the two callers.
-    //
-    // M77 (humble-soaring-cat.md) - reachability and device membership are answered from the
-    // ALREADY-SYNCED live Ship.Tiles (real tile/region data), not from Ship.ToDefinition()'s DTO
-    // round-trip (RoomGraphConnectivity) plus bounding-box math. Ship.Tiles still has the doomed
-    // room's own tiles in it at this point (only ApplyShipDefinition, later, actually rebuilds the
-    // grid) - simulate its removal on a throwaway TileGrid.Clone() (never mutate the live grid other
-    // systems read this same tick) by clearing its floor tiles the exact same way
-    // TileRegionConnectivity's own unit tests do, then run the region BFS on that.
-    private bool TryComputeRoomDetachment(string roomId, out CustomShipDefinition shrunk, out IReadOnlyList<CustomRoomDef> detachedRooms)
-    {
-        shrunk = CustomShipDefinition.Empty;
-        detachedRooms = Array.Empty<CustomRoomDef>();
-
-        var def = Ship.ToDefinition();
-        if (def.Rooms.Count <= 1)
-            return false; // the ship's own last room dying is a bigger event than this milestone handles
-        if (def.Rooms.All(r => r.Id != roomId))
-            return false;
-
-        // M74 - generic Devices query instead of the ReactorBlock field directly; still just the
-        // first/primary reactor (multiple reactors' anchor-choice is an open question for a later
-        // milestone, not this one - humble-soaring-cat.md's own "Риски" section).
-        var anchorRoomId = Ship.Devices.First(d => d.Kind == DeviceKind.Reactor).RoomId;
-        if (anchorRoomId == roomId)
-            return false; // the reactor's own compartment was the one destroyed - not something a
-                           // room-by-room detachment can sensibly resolve; leave it breached-but-
-                           // attached (the existing wall-breach behavior) rather than guessing at a
-                           // bigger outcome
-
-        var remainingRooms = def.Rooms.Where(r => r.Id != roomId).ToList();
-        var remainingRoomIds = remainingRooms.Select(r => r.Id).ToHashSet();
-        // A door no longer authors its own room pair (humble-soaring-cat.md "Дверь как свободный
-        // объект") - resolved against the ORIGINAL room layout (def.Rooms, still including the
-        // destroyed room) since a door's own position doesn't move when a room disappears.
-        var remainingDoors = def.Doors.Where(d =>
-        {
-            var overlap = ShipLayoutGeometry.FindOverlapAt(def.Rooms, d.X, d.Y, d.Vertical);
-            return overlap is { } o && remainingRoomIds.Contains(o.RoomAId) && remainingRoomIds.Contains(o.RoomBId);
-        }).ToList();
-
-        var scratchTiles = Ship.Tiles.Clone();
-        var destroyedRoom = Ship.Rooms.First(r => r.Id == roomId);
-        foreach (var coord in RoomTileCoords(destroyedRoom))
-            scratchTiles.SetFloor(coord, false);
-
-        var anchorRoom = Ship.Rooms.First(r => r.Id == anchorRoomId);
-        var anchorRegionId = RoomRegionId(anchorRoom, scratchTiles);
-        var reachableRegionIds = anchorRegionId is { } anchorId
-            ? TileRegionConnectivity.ReachableRegionsFrom(scratchTiles, anchorId)
-            : new HashSet<int>();
-
-        var keptRoomIds = remainingRooms
-            .Where(r =>
-            {
-                var liveRoom = Ship.Rooms.First(lr => lr.Id == r.Id);
-                return RoomRegionId(liveRoom, scratchTiles) is { } regionId && reachableRegionIds.Contains(regionId);
-            })
-            .Select(r => r.Id)
-            .ToHashSet();
-        var keptRooms = remainingRooms.Where(r => keptRoomIds.Contains(r.Id)).ToList();
-        var keptDoors = remainingDoors.Where(d =>
-        {
-            var overlap = ShipLayoutGeometry.FindOverlapAt(def.Rooms, d.X, d.Y, d.Vertical);
-            return overlap is { } o && keptRoomIds.Contains(o.RoomAId) && keptRoomIds.Contains(o.RoomBId);
-        }).ToList();
-        var keptAirlocks = def.Airlocks.Where(a => keptRoomIds.Contains(a.RoomId)).ToList();
-
-        var detachedRoomsList = def.Rooms.Where(r => !keptRoomIds.Contains(r.Id)).ToList(); // the destroyed room + anything cut off from the reactor with it
-        var keptDevices = def.Devices.Where(d => IsDeviceReachable(d, scratchTiles, reachableRegionIds, detachedRoomsList)).ToList();
-        // Same reachability filter as Devices just above (IsPointReachable's own doc comment) -
-        // Ship.Engines' own fixtures are a separate list CustomShipDefinition never folded into
-        // Devices, so without this an engine sitting in a detached room would silently survive into
-        // shrunkDef and crash Ship.FromCustomDefinition's own RoomIdAt lookup for it.
-        var keptEngines = def.Engines.Where(e => IsPointReachable(e.X, e.Y, scratchTiles, reachableRegionIds, detachedRoomsList)).ToList();
-
-        var shrunkDef = def with { Rooms = keptRooms, Doors = keptDoors, Airlocks = keptAirlocks, Devices = keptDevices, Engines = keptEngines };
-
-        // Same "refuse rather than corrupt" instinct TryBuildRoom/TryDemolishRoom both already have -
-        // if what's left no longer validates (lost the sole helm/nav/last airlock/etc.), detachment
-        // is skipped entirely for THIS destruction and the room simply stays fully breached in place,
-        // rather than forcing a shrink that would leave the remaining ship unplayable.
-        if (CustomShipValidator.Validate(shrunkDef).Count > 0)
-            return false;
-
-        shrunk = shrunkDef;
-        detachedRooms = detachedRoomsList;
-        return true;
-    }
-
-    // M77 - every tile a Room's own rectangle covers, using the exact same rounding convention
-    // TileGridRasterizer.FromRooms's own floor-population pass uses (RoundToInt, away-from-zero) so
-    // this walks precisely the tiles that rasterizer originally floored for this room - kept as its
-    // own small copy here rather than exposing TileGridRasterizer's private RoundToInt, the same
-    // "kept as its own small copy" call World.ShipBuilding.cs's NextRoomId already makes for a
-    // similarly tiny helper.
-    private static IEnumerable<TileCoord> RoomTileCoords(Room room)
-    {
-        var left = (int)MathF.Round(room.Left, MidpointRounding.AwayFromZero);
-        var right = (int)MathF.Round(room.Right, MidpointRounding.AwayFromZero);
-        var top = (int)MathF.Round(room.Top, MidpointRounding.AwayFromZero);
-        var bottom = (int)MathF.Round(room.Bottom, MidpointRounding.AwayFromZero);
-        for (var x = left; x < right; x++)
-            for (var y = top; y < bottom; y++)
-                yield return new TileCoord(x, y);
-    }
-
-    // A Room's own tiles all belong to one SealedRegion by construction (TileGridRasterizer walls
-    // every room's own boundary) - find it via any ONE of the room's tiles that's actually a region
-    // member (an edge/corner tile is a wall, not a member; RegionIdAt returns null for those and for
-    // any tile the room no longer has at all in `tiles` - e.g. the room just got cleared by the
-    // SetFloor(false) loop above). Null only if literally no tile of this room is a region member
-    // right now (the room itself was just cleared, or is too small to have any interior at all).
-    private static int? RoomRegionId(Room room, TileGrid tiles) =>
-        RoomTileCoords(room).Select(tiles.RegionIdAt).FirstOrDefault(id => id is not null);
-
-    // Which tile a device's own center position falls in - the same point-in-tile containment
-    // TileCoord's own doc comment defines ([X, X+1) x [Y, Y+1)), matching the existing point-
-    // containment convention Ship.RoomIdAt/CustomShipValidator's own Contains already use for "which
-    // room is this device in" (floor, not round - a device is never itself tile-aligned the way a
-    // wall/floor tile is).
-    private static TileCoord DeviceTileCoord(float x, float y) => new((int)MathF.Floor(x), (int)MathF.Floor(y));
-
-    // M77 - real tile ownership instead of bounding-box math: a device belongs to whichever region
-    // its own tile is in, and is kept iff that region is still reachable. Ship.Tiles never actually
-    // tags a live device's own tile with TileCell.DeviceId (only the offline Ship Editor's own
-    // separate scratch grid ever calls PlaceDevice - Ship's own TileGridRasterizer/TileSync never
-    // do), so this looks the device's tile up by its own position instead, which is exactly the same
-    // point-containment idea DeviceId would have encoded. Falls back to the OLD bounding-box check
-    // (against the now-detached rooms) whenever the device's own tile isn't a region member right
-    // now - a wall-mounted device (camera/turret periscope/terminal-adjacent console) sitting exactly
-    // on a wall tile, or a device whose room was just cleared above - so a device is never silently
-    // dropped just because its exact point landed off the walkable interior.
-    private static bool IsDeviceReachable(CustomDeviceDef device, TileGrid tiles, HashSet<int> reachableRegionIds, IReadOnlyList<CustomRoomDef> detachedRooms) =>
-        IsPointReachable(device.X, device.Y, tiles, reachableRegionIds, detachedRooms);
-
-    // Direct user request ("тяга зависимая от расположения движков") follow-up bug fix: a
-    // CustomEngineDef (Ship.Engines' own fixture - X/Y is its Control tile, ShipEngine.cs) is a
-    // SEPARATE list from CustomShipDefinition.Devices, so TryComputeRoomDetachment used to leave it
-    // entirely unfiltered - an engine sitting in a room that just got detached/exploded stayed in the
-    // shrunk definition anyway, and Ship.FromCustomDefinition's own RoomIdAt(engine position) then
-    // throws (no room left to assign it to). Same point-reachability test IsDeviceReachable already
-    // uses, just renamed off "device" since it now serves both.
-    private static bool IsPointReachable(float x, float y, TileGrid tiles, HashSet<int> reachableRegionIds, IReadOnlyList<CustomRoomDef> detachedRooms)
-    {
-        var coord = DeviceTileCoord(x, y);
-        if (tiles.RegionIdAt(coord) is { } regionId)
-            return reachableRegionIds.Contains(regionId);
-        return !detachedRooms.Any(r => x >= r.X && x <= r.X + r.Width && y >= r.Y && y <= r.Y + r.Height);
-    }
+    // The structural computation itself lives in Shared (ShipDetachment) so hostile ships can use it too.
+    private bool TryComputeRoomDetachment(string roomId, out CustomShipDefinition shrunk, out IReadOnlyList<CustomRoomDef> detachedRooms) =>
+        ShipDetachment.TryCompute(Ship, roomId, out shrunk, out detachedRooms);
 
     // M64 - everyone actually aboard a room that's about to detach becomes a free EVA body at their
     // own exact position, the moment before the room stops existing - same state-reset shape
@@ -270,7 +88,22 @@ public sealed partial class World
         }
     }
 
-    private void SpawnDebrisFragment(IReadOnlyList<CustomRoomDef> detachedRooms)
+    // How hard an explosion shoves a piece it tears off, away from the blast (field units per second), and how
+    // fast it ends up turning.
+    private const float DebrisHpPerTile = 6f; // a 4x4 room: 96 hp, about thirty cannon hits
+    private const float BlastKickSpeed = 2.2f;
+    private const float MinBlastSpinDegreesPerSecond = 8f;
+    private const float MaxBlastSpinDegreesPerSecond = 26f;
+
+    private void SpawnDebrisFragment(IReadOnlyList<CustomRoomDef> detachedRooms, Vec2 blastCenter)
+    {
+        var (ownHullCenter, _) = GetHullLocalBounds();
+        SpawnDebrisFragment(detachedRooms, blastCenter, ownHullCenter, _shipFieldPosition, _shipRotationDegrees, _shipVelocity);
+    }
+
+    // The same, for a piece torn off ANY ship: its hull centre in the ship-local frame, and where that ship is in the field.
+    private void SpawnDebrisFragment(IReadOnlyList<CustomRoomDef> detachedRooms, Vec2 blastCenter, Vec2 hullCenter, Vec2 fieldPosition,
+        float rotationDegrees, Vec2 shipVelocity)
     {
         // The detached group's own footprint centre becomes its new pivot - simple bounding-box
         // centre rather than an area-weighted one, plenty accurate for a first cut (nothing about
@@ -281,15 +114,18 @@ public sealed partial class World
         var maxY = detachedRooms.Max(r => r.Y + r.Height);
         var pivot = new Vec2((minX + maxX) / 2.0, (minY + maxY) / 2.0);
 
-        var (hullCenter, _) = GetHullLocalBounds();
-        var worldPosition = _shipFieldPosition + RotateLocalToWorld(pivot - hullCenter, _shipRotationDegrees);
+        var worldPosition = fieldPosition + RotateLocalToWorld(pivot - hullCenter, rotationDegrees);
 
         _shipDebris.Add(new ShipDebrisFragment
         {
             Id = $"debris-{_nextDebrisId++}",
             Position = worldPosition,
-            Velocity = _shipVelocity, // inherits the ship's own velocity at the exact moment of separation - no extra impulse
-            RotationDegrees = _shipRotationDegrees,
+            // Inherits the ship's velocity at the moment of separation, plus a shove away from the blast and a
+            // spin - the way a piece of a ship torn off by an explosion behaves in Cosmoteer.
+            Velocity = shipVelocity + KickAwayFrom(blastCenter, pivot, rotationDegrees),
+            RotationDegrees = rotationDegrees,
+            AngularVelocity = SpinFrom(blastCenter, pivot),
+            Hp = detachedRooms.Sum(r => r.Width * r.Height) * DebrisHpPerTile,
             Rooms = detachedRooms.Select(r => new Room(r.Id, r.Name, (float)(r.X - pivot.X), (float)(r.Y - pivot.Y), r.Width, r.Height)).ToArray(),
         });
     }
@@ -299,7 +135,74 @@ public sealed partial class World
     private void StepShipDebris(double deltaSeconds)
     {
         foreach (var fragment in _shipDebris)
+        {
             fragment.Position += fragment.Velocity * deltaSeconds;
+            fragment.RotationDegrees += fragment.AngularVelocity * (float)deltaSeconds;
+        }
+    }
+
+    // Direct user request ("Ð¾ÑÐ¾ÑÐ²Ð°Ð½Ð½ÑÐµ ÑÐ°ÑÑÐ¸ ... ÐºÐ°Ðº Ð² Cosmoteer"): a shot from the player's guns that reaches a
+    // torn-off piece hurts it, and a piece that runs out of hit points blows up. The segment is carried into the
+    // fragment's own frame (its rooms are stored relative to its pivot) and sampled for a point inside any room.
+    private bool TryHitDebris(Vec2 from, Vec2 to, float damage)
+    {
+        foreach (var fragment in _shipDebris.ToList())
+        {
+            var a = RotateWorldToLocal(from - fragment.Position, fragment.RotationDegrees);
+            var b = RotateWorldToLocal(to - fragment.Position, fragment.RotationDegrees);
+            var length = (b - a).Length();
+            var samples = Math.Max(1, (int)Math.Ceiling(length / 0.2));
+            for (var i = 0; i <= samples; i++)
+            {
+                var p = a + (b - a) * (i / (double)samples);
+                if (fragment.Rooms.Any(r => r.Contains(p)))
+                {
+                    DamageDebris(fragment, damage);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void DamageDebris(ShipDebrisFragment fragment, float damage)
+    {
+        fragment.Hp -= damage;
+        if (fragment.Hp > 0f)
+            return;
+        var area = fragment.Rooms.Sum(r => r.Width * r.Height);
+        AddBlast(fragment.Position, Math.Clamp(MathF.Sqrt(area) * 0.8f + 1.5f, 3f, 7f), ShipBlastKind.Compartment, inField: true);
+        _shipDebris.Remove(fragment);
+    }
+
+    // Test-only: shoot the first piece at its own centre / along an arbitrary segment.
+    public void DebugDamageDebris(string fragmentId, float damage)
+    {
+        if (_shipDebris.FirstOrDefault(f => f.Id == fragmentId) is { } fragment)
+            DamageDebris(fragment, damage);
+    }
+
+    public bool DebugShootSegmentAtDebris(Vec2 from, Vec2 to, float damage) => TryHitDebris(from, to, damage);
+
+    // The push on a piece centred at `pivot` from a blast at `center` (both in the ship-local frame): straight
+    // away from the blast, carried into field space by the hull's current attitude.
+    private Vec2 KickAwayFrom(Vec2 center, Vec2 pivot, float rotationDegrees)
+    {
+        var away = pivot - center;
+        if (away.Length() < 0.01)
+            away = new Vec2(1, 0);
+        away = away * (1.0 / away.Length());
+        return RotateLocalToWorld(away, rotationDegrees) * BlastKickSpeed;
+    }
+
+    // Which way and how fast it turns: the side of the blast it was thrown to decides the direction, a bit of
+    // randomness the speed.
+    private float SpinFrom(Vec2 center, Vec2 pivot)
+    {
+        var offset = pivot - center;
+        var sign = offset.X * 0.31 + offset.Y * -0.77 >= 0 ? 1f : -1f; // an arbitrary but stable handedness per direction
+        var speed = MinBlastSpinDegreesPerSecond + (float)_random.NextDouble() * (MaxBlastSpinDegreesPerSecond - MinBlastSpinDegreesPerSecond);
+        return sign * speed;
     }
 
     private IReadOnlyList<ShipDebrisState> CreateShipDebrisStates() =>

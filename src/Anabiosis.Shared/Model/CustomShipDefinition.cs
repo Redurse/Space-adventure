@@ -105,6 +105,9 @@ public sealed record CustomWallOpenSideDef(int X, int Y, TileSide Side);
 // TileGrid.DoorEdges verbatim) - the editor is the only source of truth for where these sit.
 public sealed record CustomDoorEdgeDef(int X, int Y, TileSide Side, string Id);
 
+// A half-block wall tile cleared by the junction door with this id; OpenSide is which side of the tile the wall stayed solid on.
+public sealed record CustomJunctionWallDef(int X, int Y, TileSide OpenSide, string DoorId);
+
 public enum CustomDeviceKind
 {
     Reactor,
@@ -308,7 +311,9 @@ public sealed record CustomShipDefinition(
     // WallOpenSides above, which are one-shot tile-editor corrections nothing needs to preserve
     // across a later build/demolish) so a wreck patch survives every subsequent hull change, not just
     // the one that created it. Defaults to empty for every call site that predates this feature.
-    IReadOnlyList<RectF>? WreckPatchesRaw = null)
+    IReadOnlyList<RectF>? WreckPatchesRaw = null,
+    // Half-block walls that an in-game junction door removed (so removing the door can put them back) - see JunctionDoorBuilder.
+    IReadOnlyList<CustomJunctionWallDef>? JunctionWallsRaw = null)
 {
     public IReadOnlyList<CustomWallMaterialDef> WallMaterials { get; init; } = WallMaterialsRaw ?? Array.Empty<CustomWallMaterialDef>();
     public IReadOnlyList<CustomEngineDef> Engines { get; init; } = EnginesRaw ?? Array.Empty<CustomEngineDef>();
@@ -317,6 +322,7 @@ public sealed record CustomShipDefinition(
     public IReadOnlyList<CustomWallOpenSideDef> WallOpenSides { get; init; } = WallOpenSidesRaw ?? Array.Empty<CustomWallOpenSideDef>();
     public IReadOnlyList<CustomDoorEdgeDef> DoorEdges { get; init; } = DoorEdgesRaw ?? Array.Empty<CustomDoorEdgeDef>();
     public IReadOnlyList<RectF> WreckPatches { get; init; } = WreckPatchesRaw ?? Array.Empty<RectF>();
+    public IReadOnlyList<CustomJunctionWallDef> JunctionWalls { get; init; } = JunctionWallsRaw ?? Array.Empty<CustomJunctionWallDef>();
 
     public static CustomShipDefinition Empty { get; } = new(
         "Мой корабль", Array.Empty<CustomRoomDef>(), Array.Empty<CustomDoorDef>(),

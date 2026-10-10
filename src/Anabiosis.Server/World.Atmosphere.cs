@@ -11,6 +11,7 @@ namespace Anabiosis.Server;
 public sealed partial class World
 {
     private const float FullOxygen = 100f;
+    internal const float FullOxygenLevel = FullOxygen;
     private const float OxygenLeakPerBreachPerSecond = 3f;
     private const float OxygenGenerationPerPowerUnitPerSecond = 0.3f; // 10 power ~= offsets 1 breach
     private const float OxygenDiffusionRatePerSecond = 0.5f; // fraction of a door's level gap equalized per second

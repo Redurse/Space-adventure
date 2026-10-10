@@ -192,6 +192,31 @@ public sealed partial class ShipRenderer
         _ => (new Color(120, 120, 124), new Color(236, 232, 218), Outfit.Crew),
     };
 
+    // The clothes of a wandering station resident: one of a handful of everyday colourways picked by the
+    // resident's Look number, so a crowd is a crowd of different people. Guards wear the station guard's
+    // own uniform.
+    private static readonly (Color Uniform, Color Accent)[] ResidentPalette =
+    {
+        (new Color(150, 92, 70), new Color(236, 214, 190)),
+        (new Color(70, 110, 140), new Color(230, 230, 236)),
+        (new Color(104, 124, 84), new Color(232, 220, 170)),
+        (new Color(140, 106, 150), new Color(236, 232, 240)),
+        (new Color(176, 140, 76), new Color(244, 238, 220)),
+        (new Color(92, 98, 112), new Color(210, 214, 226)),
+        (new Color(158, 84, 90), new Color(240, 220, 214)),
+        (new Color(76, 132, 120), new Color(226, 240, 236)),
+    };
+
+    internal void DrawResident(SpriteBatch spriteBatch, StationResidentState resident, Vector2 center, Vector2? lookToward)
+    {
+        var guard = resident.Role == ResidentRole.Guard;
+        var (uniform, accent, outfit) = guard
+            ? NpcLook(NpcKind.Security)
+            : (ResidentPalette[resident.Look % ResidentPalette.Length].Uniform, ResidentPalette[resident.Look % ResidentPalette.Length].Accent, Outfit.Crew);
+        _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(resident.Id), new Vector2(resident.X, resident.Y),
+            uniform, accent, outfit, armsForward: guard, lookToward);
+    }
+
     internal void DrawStationResident(SpriteBatch spriteBatch, StationNpc npc, Vector2 center, Vector2? lookToward)
     {
         var (uniform, accent, outfit) = NpcLook(npc.Kind);
@@ -276,7 +301,7 @@ public sealed partial class ShipRenderer
     // A speech bubble above the sender (direct user request, "как в Баротравме", ChatBubbleTracker) -
     // positioned further above the head than the permanent nameplate/role glyph so the two never
     // overlap. A bubble is a brief announcement, not the full chat log, so long text is truncated.
-    private void DrawChatBubble(SpriteBatch spriteBatch, string text, float alpha, Vector2 anchorBottomCenter)
+    internal void DrawChatBubble(SpriteBatch spriteBatch, string text, float alpha, Vector2 anchorBottomCenter)
     {
         const int maxChars = 40;
         if (text.Length > maxChars)

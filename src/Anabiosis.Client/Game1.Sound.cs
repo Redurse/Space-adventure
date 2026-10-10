@@ -60,6 +60,14 @@ public partial class Game1
             if (_soundLastBreachCount >= 0 && breaches > _soundLastBreachCount)
                 _sounds.Play(GameSounds.HullBreach, nowSeconds, pitchSpread: 0.03f);
             _soundLastBreachCount = breaches;
+
+            // A compartment (or the reactor) going up - once per new explosion id. Blasts stay in the snapshot for a couple
+            // of seconds, so the ids already heard are remembered rather than compared against the previous tick.
+            foreach (var blast in current.ShipBlasts ?? Array.Empty<ShipBlastState>())
+                if (_soundHeardBlasts.Add(blast.Id))
+                    _sounds.Play(blast.Kind == ShipBlastKind.Reactor ? GameSounds.ExplosionBig : GameSounds.Explosion, nowSeconds, pitchSpread: 0.04f);
+            if (_soundHeardBlasts.Count > 64)
+                _soundHeardBlasts.Clear();
         }
 
         // The player's own suit, not the ship's: everyone hears their own air running out.
@@ -71,6 +79,8 @@ public partial class Game1
             _sounds.Play(GameSounds.LowOxygen, nowSeconds, volume: 0.6f, pitchSpread: 0f);
         }
     }
+
+    private readonly System.Collections.Generic.HashSet<string> _soundHeardBlasts = new();
 
     // Opening and closing a block terminal. Client-side state, so it is watched here rather than in
     // the snapshot diff above.

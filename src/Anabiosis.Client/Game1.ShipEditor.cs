@@ -319,6 +319,7 @@ public partial class Game1
         else
         {
             _editorTiles = new TileGrid();
+            _editorJunctionWalls.Clear();
             _editorDeviceKinds.Clear();
             _editorDeviceFootprint.Clear();
             _editorDeviceFootprintSecondary.Clear();
@@ -646,6 +647,12 @@ public partial class Game1
         // stays threaded through the span-based logic below, since it's the one case that still has
         // to try the OLD tile-based compartment-boundary special case FIRST (never asked to change)
         // before falling back to the same edge model the other spans use exclusively.
+        // Doors in walls (JunctionDoor.cs): a click on a wall tile cuts the door through the half-block
+        // wall there (or is refused with a reason); a click on anything else carries on as before.
+        if (leftClicked && GridCellAt(_designMouse) is { } junctionCell
+            && TryPlaceJunctionDoor(new TileCoord(junctionCell.X, junctionCell.Y), _editorDoorSpanTiles))
+            return;
+
         if (_editorDoorSpanTiles != 2)
         {
             HandleEdgeDoorToolInput(leftClicked, rightClicked, keyboard, _editorDoorSpanTiles);
@@ -830,8 +837,12 @@ public partial class Game1
     // clicked.
     private void RemoveDoorEdgeGroupAt(TileCoord anchor)
     {
-        foreach (var (coord, side) in DoorEdgeGroupAt(anchor))
+        var group = DoorEdgeGroupAt(anchor);
+        var doorId = group.Count > 0 ? _editorTiles.DoorEdgeAt(group[0].Coord, group[0].Side)?.Id : null;
+        foreach (var (coord, side) in group)
             _editorTiles.RemoveDoorEdge(coord, side);
+        // A door cut through half-block walls gives them back (JunctionDoor.cs).
+        RestoreJunctionWalls(doorId);
     }
 
     // Direct user requests ("сделай по аналогии дверь 1 на 2 т е дверь занимающую 4 клетки и назови
@@ -1729,6 +1740,7 @@ public partial class Game1
         _editorDevices.Clear();
         _editorRoomCounter = 1;
         _editorTiles = new TileGrid();
+        _editorJunctionWalls.Clear();
         _editorDeviceKinds.Clear();
         _editorDeviceFootprint.Clear();
         _editorDeviceFootprintSecondary.Clear();

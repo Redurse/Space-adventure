@@ -46,16 +46,16 @@ public sealed partial class World
     // fight reads as an exchange rather than as two health bars ticking down.
     private void FireCrewShot(EnemyCrewRuntime crew, Character victim)
     {
-        var direction = victim.Position - crew.Spawn.Position;
+        var direction = victim.Position - crew.Position;
         if (direction.Length() < 0.01f)
             return;
 
         _personalShots.Add(new PersonalShotRuntime(
             $"shot-{_nextPersonalShotId++}",
-            crew.Spawn.Position,
+            crew.Position,
             direction.Normalized() * ShotSpeed(crew.Spawn.Weapon),
             WeaponDefinitions.DamagePerHit(crew.Spawn.Weapon),
-            crew.Spawn.RoomId,
+            crew.RoomId,
             scene: ShotScene.EnemyShip,
             fromEnemy: true,
             crew.Spawn.Weapon));
@@ -98,16 +98,17 @@ public sealed partial class World
 
             if (shot.Scene == ShotScene.EnemyShip)
             {
-                var target = _enemyCrew.Values.FirstOrDefault(c =>
-                    c.Alive && c.Spawn.RoomId == shot.RoomId && (c.Spawn.Position - point).Length() <= BulletRadius);
+                var hullCrew = BoardableEnemy?.Crew;
+                var target = hullCrew?.FirstOrDefault(c =>
+                    c.Alive && c.RoomId == shot.RoomId && (c.Position - point).Length() <= BulletRadius);
                 if (target is null)
                     continue;
 
                 target.Health = Math.Max(0, target.Health - shot.Damage);
                 // Clearing the last defender captures the ship, the same as suffocating them does
                 // (World.EnemyAtmosphere.cs).
-                if (_enemyCrew.Values.All(c => !c.Alive))
-                    Enemy.ApplyDamage(Enemy.Hp);
+                if (BoardableEnemy is { } hull)
+                    CaptureIfCrewWiped(hull);
                 return true;
             }
 

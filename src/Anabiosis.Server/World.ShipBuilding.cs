@@ -211,6 +211,7 @@ public sealed partial class World
     // anything else this same tick reads it.
     private void StepRoomBuilds(double deltaSeconds)
     {
+        StepCompartmentBuilds(deltaSeconds);
         for (var i = _pendingRoomBuilds.Count - 1; i >= 0; i--)
         {
             var pending = _pendingRoomBuilds[i];
@@ -256,60 +257,6 @@ public sealed partial class World
         _pendingRoomBuilds.Select(p => new PendingRoomBuildState(p.Room.Id, p.Room.Name, p.Room.X, p.Room.Y,
             p.Room.Width, p.Room.Height, (float)Math.Min(1.0, p.ElapsedSeconds / RoomBuildDurationSeconds))).ToArray();
 
-    // M61 - the symmetric operation: removes a room (and only the devices actually sitting inside
-    // its own footprint - an empty M60-catalog room never has any, but this stays correct once a
-    // later milestone's catalog rooms do). Free (no refund) for this milestone - the plan doesn't
-    // specify demolition economics yet, and inventing one nobody asked for is worse than leaving it
-    // for whichever milestone actually needs it.
-    private void TryDemolishRoom(string roomId)
-    {
-        if (!IsDocked)
-            return;
-        if (Station.Npcs.All(n => n.Kind != NpcKind.Shipwright))
-            return;
-
-        var def = Ship.ToDefinition();
-        if (def.Rooms.Count <= 1)
-            return; // nothing left to demolish down to
-        if (def.Rooms.FirstOrDefault(r => r.Id == roomId) is not { } demolished)
-            return;
-
-        var remainingRooms = def.Rooms.Where(r => r.Id != roomId).ToList();
-        // A door no longer authors its own room pair (humble-soaring-cat.md "Дверь как свободный
-        // объект") - resolved against the ORIGINAL room layout (the demolished room's own rect is
-        // still needed to tell whether a door touched it at all), same geometric lookup
-        // Ship.Custom.cs's BuildDoors itself relies on.
-        var remainingDoors = def.Doors.Where(d =>
-        {
-            var overlap = ShipLayoutGeometry.FindOverlapAt(def.Rooms, d.X, d.Y, d.Vertical);
-            return overlap is null || (overlap.Value.RoomAId != roomId && overlap.Value.RoomBId != roomId);
-        }).ToList();
-        var remainingAirlocks = def.Airlocks.Where(a => a.RoomId != roomId).ToList();
-        var remainingDevices = def.Devices.Where(d =>
-            !(d.X >= demolished.X && d.X <= demolished.X + demolished.Width &&
-              d.Y >= demolished.Y && d.Y <= demolished.Y + demolished.Height)).ToList();
-        // Direct user request (Cosmoteer-style marching engines) - same bounds-containment filter as
-        // devices above, checked against the engine's own Control tile.
-        var remainingEngines = def.Engines.Where(e =>
-            !(e.X >= demolished.X && e.X <= demolished.X + demolished.Width &&
-              e.Y >= demolished.Y && e.Y <= demolished.Y + demolished.Height)).ToList();
-        var shrunk = def with { Rooms = remainingRooms, Doors = remainingDoors, Airlocks = remainingAirlocks, Devices = remainingDevices, Engines = remainingEngines };
-
-        // CustomShipValidator already catches "that was the sole reactor/distribution/helm/
-        // navigation room" and "that was the last airlock/oxygen generator/suit locker/storage
-        // rack" - exactly the "held the sole X" rule the plan calls for, for free. It does NOT check
-        // connectivity (nothing about a room-overlap/device-in-bounds validator needs to), which is
-        // exactly what RoomGraphConnectivity is for below.
-        if (CustomShipValidator.Validate(shrunk).Count > 0)
-            return;
-        if (!RoomGraphConnectivity.AllReachable(remainingRooms, remainingDoors, remainingRooms[0].Id))
-            return; // would split the hull into disconnected pieces - refused, not something a
-                     // voluntary demolition should ever produce (M63's combat-driven detachment is
-                     // the deliberate, different case where this outcome is actually the point)
-
-        ApplyShipDefinition(shrunk);
-    }
-
     // M61 - shared apply path for both TryBuildRoom and TryDemolishRoom, replacing M60's own
     // "InitializeShipState() wholesale, like a hull swap" simplification (that file's own doc
     // comment called out the exact exploit: it silently healed hull/wire damage and reset doors
@@ -340,7 +287,9 @@ public sealed partial class World
             // Direct user request (Cosmoteer-style marching engines) - a build/demolish that
             // adds/removes one must take the "device graph changed" full-reset branch below
             // (InitializeShipState, which calls InitializeEngines) rather than the incremental one.
-            .Concat(s.Engines.Select(e => e.Id)).ToHashSet();
+            .Concat(s.Engines.Select(e => e.Id))
+            // A door edge has its own state (open/hp) that only the full reset creates: placing or removing a door takes that branch.
+            .Concat(s.DoorEdges.Select(e => "edge:" + e.Id)).ToHashSet();
         var deviceGraphUnchanged = DeviceIds(oldShip).SetEquals(DeviceIds(newShip));
 
         CurrentShipKind = ShipKind.Custom;
@@ -350,7 +299,12 @@ public sealed partial class World
 
         if (!deviceGraphUnchanged)
         {
+            // The full reset below heals everything - which would undo the damage the rest of the hull has
+            // taken every time a compartment with a device in it is lost (an explosion, World.ShipBlasts.cs).
+            // So the damage that belongs to parts that still exist is carried across it.
+            var carried = CaptureHullDamage();
             InitializeShipState();
+            RestoreHullDamage(carried);
             _turretRuntimes.Clear();
             foreach (var turret in newShip.Turrets)
                 _turretRuntimes[turret.Id] = new TurretRuntime(turret);
@@ -378,6 +332,10 @@ public sealed partial class World
                 character.EvaAttachedTo = EvaAttachment.None;
                 character.EvaAttachedAsteroidId = null;
                 character.EvaVelocity = Vec2.Zero;
+                // Someone standing in a compartment that is still there stays put (an explosion elsewhere must
+                // not teleport the whole crew to the cockpit); only a character whose room is gone falls back.
+                if (newShip.Rooms.Any(r => r.Id == character.RoomId))
+                    continue;
                 character.Position = newShip.SpawnPoint;
                 character.RoomId = newShip.SpawnRoomId;
             }

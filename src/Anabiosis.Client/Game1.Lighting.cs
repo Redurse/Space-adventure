@@ -69,6 +69,10 @@ public partial class Game1
         if (ShipBuildOverviewActive(snapshot))
             return false;
 
+        // Looking into the hostile ship from outside (cheat panel) - the whole interior is shown.
+        if (EnemyInteriorViewActive(snapshot))
+            return false;
+
         var gaps = new List<SightGap>();
         List<WallSegment> walls;
         Vector2 origin;
@@ -93,6 +97,23 @@ public partial class Game1
             // permanently "closed" to TileOccluders.IsOccluding, leaving a sliver of wall behind even
             // though the SightGap above is unconditionally cut through it.
             ClientTileGrid.ApplyLiveDoorState(enemyTiles, snapshot.EnemyShip.Rooms, enemyDoors, snapshot.DoorStates);
+            // The hull's doorways (door edges, always open): the wall tiles flanking each one are cut away so sight passes through.
+            foreach (var edge in snapshot.EnemyShip.DoorEdges ?? Array.Empty<ShipDoorEdge>())
+            {
+                var other = edge.Side switch
+                {
+                    TileSide.North => new TileCoord(edge.Coord.X, edge.Coord.Y - 1),
+                    TileSide.South => new TileCoord(edge.Coord.X, edge.Coord.Y + 1),
+                    TileSide.East => new TileCoord(edge.Coord.X + 1, edge.Coord.Y),
+                    _ => new TileCoord(edge.Coord.X - 1, edge.Coord.Y),
+                };
+                foreach (var tile in new[] { edge.Coord, other })
+                    if (enemyTiles.CellAt(tile) is { Wall: not TileWallKind.None })
+                    {
+                        enemyTiles.SetFloor(tile, true);
+                        enemyTiles.SetWall(tile, TileWallKind.None);
+                    }
+            }
             walls = TileOccluders.Build(enemyTiles, gaps);
             origin = ComputeStationCamera(me);
             eye = new Vector2((float)me.X, (float)me.Y);

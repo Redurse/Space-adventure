@@ -53,27 +53,22 @@ public sealed partial class World
     private void DamageWallBlock(string blockId, float amount)
     {
         _wallBlockHp[blockId] = Math.Max(0f, WallBlockHp(blockId) - amount);
-        // M63 - the single choke point every source of player-hull wall damage already funnels
-        // through (World.ShipDebris.cs's own doc comment), so this is the one place that needs to
-        // ask "did that just fully breach every wall this room has left".
-        //
-        // Deliberately does NOT also feed World.RoomHp.cs's own shadow pool (unlike engine/door
-        // damage, which do) - found via a real test regression: a room's own wall-block HP total
-        // scales with its size (perimeter), so for any room whose own walls add up to more than
-        // RoomMaxHp (an ordinary-sized built room already clears that, and a player-built custom room
-        // has no upper bound at all), fully destroying every wall one at a time would always exhaust
-        // the shadow pool a few blocks BEFORE the last one breaks - silently replacing the older,
-        // already-tested "every wall gone -> the whole room flies off as one real debris fragment"
-        // outcome with ExplodeRoom's static-wreck one, for a reason that has nothing to do with the
-        // room's own hidden health and everything to do with how big it happens to be. Wall damage
-        // already has its own dedicated, correct "the room is now gone" ending right here - routing
-        // it into the second, competing one as well can only make that ending less predictable, never
-        // more correct. Excluded for the same reason the plan already excludes CutWire/SetBlockBroken.
-        CheckRoomStructuralFailure(blockId);
+        // The single choke point every source of player-hull wall damage funnels through (enemy fire,
+        // cutting, asteroid impact, an explosion's blast): a compartment's health is read off its walls
+        // (World.RoomHp.cs), so this is the one place that asks "did that just finish the compartment".
+        if (Ship.WallBlocks.FirstOrDefault(b => b.Id == blockId) is { } block)
+            CheckRoomDestroyed(block.RoomId);
     }
 
-    private void RepairWallBlock(string blockId, float amount) =>
+    private void RepairWallBlock(string blockId, float amount)
+    {
         _wallBlockHp[blockId] = Math.Min(MaxHpForBlockId(blockId), WallBlockHp(blockId) + amount);
+        // A compartment that could not actually be destroyed (the hull would not have survived it) stays marked as
+        // doomed so it is not blown up over and over; once its walls are mended it is a normal compartment again.
+        if (_doomedRooms.Count > 0 && Ship.WallBlocks.FirstOrDefault(b => b.Id == blockId) is { } block
+            && _doomedRooms.Contains(block.RoomId) && RoomIntegrity(block.RoomId) > 0f)
+            _doomedRooms.Remove(block.RoomId);
+    }
 
     // Test-only direct breach, same convention as World.ShipField.cs's DebugPlaceShip - a
     // precondition setter, not a gameplay action. Enemy fire aims at fixed priority targets now
@@ -96,6 +91,10 @@ public sealed partial class World
     // always hitting that same first block.
     public void DebugBreachWallBlockById(string blockId) =>
         DamageWallBlock(blockId, MaxHpForBlockId(blockId));
+
+    // Test-only: damage / repair one block by an exact amount (a partial hit, or the welder's work).
+    public void DebugDamageWallBlockById(string blockId, float amount) => DamageWallBlock(blockId, amount);
+    public void DebugRepairWallBlockById(string blockId, float amount) => RepairWallBlock(blockId, amount);
 
     // Same test-only precondition setter as DebugBreachWallBlock above, just against whichever enemy
     // hull is currently boardable - a test that only cares "there's a hole in the enemy's hull, does

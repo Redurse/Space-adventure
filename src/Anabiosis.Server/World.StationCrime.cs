@@ -115,6 +115,7 @@ public sealed partial class World
 
         StepGuardFire(onStation, deltaSeconds);
         StepArrestChecks(onStation, deltaSeconds);
+        StepStationResidents(deltaSeconds, onStation);
     }
 
     private void StepGuardFire(List<Character> onStation, double deltaSeconds)

@@ -197,7 +197,6 @@ public sealed partial class World
         _shipRotationDegrees = 0f;
         _shipAutoStabilize = true;
         SpawnEnemySquadron(1); // the ambient hull itself is one ship, not a sector's squadron
-        ResetEnemyCrew();
         _crewShipId = BoardableEnemy?.Id;
     }
 

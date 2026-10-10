@@ -208,6 +208,10 @@ public partial class Game1 : Game
     private GalaxyMapPanel _galaxyMapPanel = null!;
     private GalacticMapPanel _galacticMapPanel = null!;
     private StationPanel _stationPanel = null!;
+    // The Trader's store window (Rendering/TradeWindow.cs) and the one-item-per-tick command queue a confirmed
+    // cart is sent through (the server takes a single buy/sell per command).
+    private TradeWindow _tradeWindow = null!;
+    private readonly Queue<(ItemType? Buy, int SellSlot)> _tradeQueue = new();
     private StationBuildPanel _stationBuildPanel = null!;
     private CardGamePanel _cardGamePanel = null!;
     private FrontsGamePanel _frontsGamePanel = null!;
@@ -452,6 +456,8 @@ public partial class Game1 : Game
     // Dev cheat panel (Rendering/CheatPanel.cs) - Ё/OemTilde toggles it, same edge-triggered
     // single-key convention as the pause menu and the galactic map above.
     private bool _cheatPanelOpen;
+    // Cheat-panel toggle: look into the hostile ship (the boardable one) from out here - see EnemyInteriorViewActive.
+    private bool _enemyInteriorCheat;
     // Set by HandleMouseClick (Game1.Input.cs) when the cheat panel's button is clicked, read and
     // cleared once this same frame when building the outgoing ClientCommand - same "side-effect
     // field for an overlay click" shape as _pendingReturnToMainMenu above.
@@ -474,7 +480,6 @@ public partial class Game1 : Game
     // HandleMouseClick's own placement-confirm block and Update's right-click cancel check). Not
     // edge-triggered like _pendingBuildRoom above - this one persists across frames while the
     // player is busy pointing at a spot, not sent to the server until they actually click one.
-    private string? _placingRoomCatalogId;
     private RoomCategory _buildPanelCategory = RoomCategory.Structural;
     // Whole-ship overview's own free camera - right-drag pans, scroll wheel zooms, same idiom the
     // galaxy map/helm schematic already use (_mapPanOffset/_mapZoom above) rather than a new one.
@@ -766,7 +771,9 @@ public partial class Game1 : Game
         _galaxyMapPanel = new GalaxyMapPanel(GraphicsDevice, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
         _galacticMapPanel = new GalacticMapPanel(GraphicsDevice, _font);
         _stationPanel = new StationPanel(_font);
+        _tradeWindow = new TradeWindow(GraphicsDevice, _font);
         _stationBuildPanel = new StationBuildPanel(GraphicsDevice, _font);
+        _buildOverlay = new ShipBuildOverlay(GraphicsDevice, _font);
         _cardGamePanel = new CardGamePanel(GraphicsDevice, _font);
         _frontsGamePanel = new FrontsGamePanel(GraphicsDevice, _font);
         _cardTableChoicePanel = new CardTableChoicePanel(GraphicsDevice, _font);
@@ -1569,7 +1576,13 @@ public partial class Game1 : Game
         }
         var scrollDelta = mouse.ScrollWheelValue - _prevScrollWheelValue;
         _prevScrollWheelValue = mouse.ScrollWheelValue;
-        if (_spectatorMode && scrollDelta != 0)
+        UpdateBuildToolInput(Keyboard.GetState(), scrollDelta);
+        if (scrollDelta != 0 && TradeWindow.WindowRect.Contains(_designMouse) && IsTalkingToTrader(_client.LatestSnapshot))
+        {
+            // The Trader's store window: the wheel scrolls its item grid (and nothing else underneath).
+            _tradeWindow.Scroll(-Math.Sign(scrollDelta));
+        }
+        else if (_spectatorMode && scrollDelta != 0)
         {
             // Direct user request ("отдалять экран и приближать в 3 раза относительно текущего при
             // помощи колесика мыши") - takes priority over every other scroll-zoom branch below,
@@ -1758,6 +1771,11 @@ public partial class Game1 : Game
             dragTookTheClick
                 ? (-1, -1, (ItemType?)null, -1, false, false, (ShipUpgradeTrack?)null, (string?)null)
                 : HandleMouseClick(mouse);
+        // A confirmed trade cart goes out one buy/sell per tick, behind any click-driven one.
+        if (_tradeQueue.Count > 0 && buyItemType is null && sellSlotIndex < 0)
+            (buyItemType, sellSlotIndex) = _tradeQueue.Dequeue();
+        if (!IsTalkingToTrader(_client.LatestSnapshot))
+            _tradeWindow.Reset();
 
         // Bail out of the rest of this frame immediately - _client is about to become null, and
         // everything below (up to and including this frame's _client.SendInput) assumes it isn't.
@@ -1843,6 +1861,12 @@ public partial class Game1 : Game
         _pendingBuildRoom = null;
         var demolishRoomId = _pendingDemolishRoomId;
         _pendingDemolishRoomId = null;
+        var buildCompartment = _pendingBuildCompartment;
+        _pendingBuildCompartment = null;
+        var placeDoor = _pendingPlaceDoor;
+        _pendingPlaceDoor = null;
+        var removeDoorId = _pendingRemoveDoorId;
+        _pendingRemoveDoorId = null;
         var questKind = _pendingQuestKind;
         var dockPressed = _pendingDock;
         var hireCandidateId = _pendingHireCandidateId;
@@ -1970,9 +1994,12 @@ public partial class Game1 : Game
         if (rightPressedThisFrame)
             _shipOverviewRightPressPos = mouse.Position;
 
-        if (!shipOverviewActive && rightPressedThisFrame && _placingRoomCatalogId is not null)
+        if (!shipOverviewActive && rightPressedThisFrame && BuildToolActive)
         {
-            _placingRoomCatalogId = null;
+            if (_client.LatestSnapshot is { } buildSnapshot && _shipInteriorOrigin is { } buildOrigin)
+                HandleBuildRightClick(buildSnapshot, buildOrigin);
+            else
+                LeaveBuildTool();
         }
         else if (shipOverviewActive && rightReleasedThisFrame)
         {
@@ -1981,8 +2008,13 @@ public partial class Game1 : Game
                 Vector2.Distance(pressPos.ToVector2(), mouse.Position.ToVector2()) > dragThresholdPixels;
             if (!wasDrag)
             {
-                if (_placingRoomCatalogId is not null)
-                    _placingRoomCatalogId = null;
+                if (BuildToolActive)
+                {
+                    if (_client.LatestSnapshot is { } buildSnapshot2 && _shipInteriorOrigin is { } buildOrigin2)
+                        HandleBuildRightClick(buildSnapshot2, buildOrigin2);
+                    else
+                        LeaveBuildTool();
+                }
                 else
                 {
                     _talkingToNpcId = null;
@@ -2004,7 +2036,7 @@ public partial class Game1 : Game
         // Only on foot with no panel or placement mode that already owns the right button (map pan, cancel).
         var weaponFireHeld = mouse.RightButton == ButtonState.Pressed && _dragFrom is null && HoldingFirearm()
             && !isOutside && !isAtHelm && !mapOpen && !shipOverviewActive && !_galacticMapOpen && !_commsConsoleOpen
-            && _placingRoomCatalogId is null && myCharacter?.LayingWireFromPin is null;
+            && !BuildToolActive && myCharacter?.LayingWireFromPin is null;
 
         var debugSpawnEnemyPressed = _debugSpawnEnemyClickedThisFrame;
         _debugSpawnEnemyClickedThisFrame = false;
@@ -2052,7 +2084,8 @@ public partial class Game1 : Game
             AutopilotStopPressed: autopilotStopPressed, DesiredFacingDegrees: desiredFacingDegrees,
             FabricatorCraftRecipeId: fabricatorCraftRecipeId, DeconstructItemType: deconstructItemType, ProductionCancelPressed: productionCancelPressed,
             Sprint: keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift),
-            WeaponFireHeld: weaponFireHeld));
+            WeaponFireHeld: weaponFireHeld,
+            BuildCompartment: buildCompartment, PlaceDoor: placeDoor, RemoveDoorId: removeDoorId));
         _client.PollSnapshots();
         // Direct user request ("система достижений... как в Стиме") - checked every frame a real
         // snapshot exists, same as every other per-frame HUD read off _client.LatestSnapshot.
@@ -2077,6 +2110,9 @@ public partial class Game1 : Game
         // One shared tracker (not one per renderer) so a message only ever spawns one bubble
         // regardless of which renderer context the sender is currently drawn in (Ship/Field).
         _chatBubbleTracker.Update(_client.LatestSnapshot?.ChatLog, (float)gameTime.ElapsedGameTime.TotalSeconds);
+        _fieldRenderer.PrepareEnemyHulls(_client.LatestSnapshot); // armour for each hostile ship's current shape (baked between frames)
+        // The station's walking residents greet whoever walks up to them (flavour only).
+        _residentSpeech.Update(_client.LatestSnapshot, _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId), gameTime.TotalGameTime.TotalSeconds);
 
         // Voice chunks relayed this tick (World.Voice.cs) - proximity-mixed for local mode, always
         // full volume for radio (Audio/VoicePlayback.cs). myCharacter/snapshot are already resolved
@@ -2166,6 +2202,7 @@ public partial class Game1 : Game
     // simulated speaker stands. Client-side only; nothing is sent to the server for it.
     private int _voiceTestLevel;
     private WorldSnapshot? _lastVoiceSnapshot;
+    private readonly ResidentSpeech _residentSpeech = new();
     // Voice test diagnostics: own chunks handed to the server vs. own chunks that came back in a snapshot.
     private int _voiceChunksSent, _voiceChunksReceived;
     private static readonly float[] VoiceTestDistances = { 0f, 3f, 8f, 14f };
@@ -2602,6 +2639,14 @@ public partial class Game1 : Game
                 }
                 _helmTabBar.Draw(_spriteBatch, _helmTab, HelmTabBarOrigin, _designMouse);
             }
+            else if (EnemyInteriorViewActive(snapshot))
+            {
+                // Cheat view: the hostile ship's interior from outside, centred in the (zoomed-out) viewport.
+                var interiorPivot = (WorldViewportOrigin + WorldViewportSize / 2f) / SceneZoom(snapshot);
+                var interiorCenter = ShipLocalFrame.GetHullCenter(snapshot.EnemyShip.Rooms);
+                var interiorOrigin = interiorPivot - new Vector2((float)interiorCenter.X, (float)interiorCenter.Y) * ShipRenderer.PixelsPerUnit;
+                _boardingRenderer.Draw(_spriteBatch, snapshot, interiorOrigin, totalSeconds);
+            }
             else if (myCharacter?.OnEnemyShip == true)
             {
                 // Needed for the same HUD-batch tool-target bar the player's own ship gets further
@@ -2642,18 +2687,12 @@ public partial class Game1 : Game
                 // Content-каталог отсеков - the click-to-place grid/ghost overlay, drawn in this
                 // same ship-local frame right on top of the real geometry so it lines up exactly
                 // with whatever HandleMouseClick's own confirm-click hit-test computes.
-                if (_placingRoomCatalogId is { } placingId && RoomCatalog.Find(placingId) is { } placingEntry)
-                {
-                    var candidates = RoomPlacementPreview.FindCandidates(snapshot, placingEntry);
-                    var mouseLocal = ScreenToShipLocal(new Vector2(_designMouse.X, _designMouse.Y), origin, sceneZoom);
-                    var nearest = RoomPlacementPreview.NearestTo(candidates, mouseLocal);
-                    _shipRenderer.DrawPlacementOverlay(_spriteBatch, snapshot, candidates, nearest, origin);
-                }
+                DrawBuildOverlay(snapshot, origin, sceneZoom);
                 // A docked station is laid out in these same coordinates, joined to the ship by the
                 // shared airlock rectangle - drawn alongside the interior rather than instead of it,
                 // so there's no moment where the view swaps to "the station screen".
                 if (snapshot.Voyage.DockedPointId is not null && !fromOutside)
-                    _stationRenderer.Draw(_spriteBatch, snapshot, origin, _talkingToNpcId, totalSeconds);
+                    _stationRenderer.Draw(_spriteBatch, snapshot, origin, _talkingToNpcId, totalSeconds, _residentSpeech.Bubbles());
                 // Drawn after the (optional) docked station above, not as part of _shipRenderer.Draw
                 // itself - see ShipRenderer.DrawCharacters' own doc comment (bug report: a crewmate
                 // standing near the ship/station boundary had their floating nameplate partly
@@ -2786,6 +2825,9 @@ public partial class Game1 : Game
         // DrawEngineNozzles's own doc comment explains why).
         if (_shipInteriorOrigin is { } engineOrigin && _client.LatestSnapshot is { } engineSnapshot)
             _shipRenderer.DrawEngineNozzles(_spriteBatch, engineSnapshot, engineOrigin, sceneTransform, totalSeconds);
+        // Compartment / reactor explosions (World.ShipBlasts.cs), after the lighting so they blaze in the dark too.
+        if (_shipInteriorOrigin is { } blastOrigin && _client.LatestSnapshot is { } blastSnapshot)
+            _shipRenderer.DrawShipBlasts(_spriteBatch, blastSnapshot, blastOrigin, sceneTransform);
 
         // Crew nameplates, also after the composite (direct user request, bug report: a nameplate
         // going dark in a wall's own cast shadow) - see ShipRenderer.DrawCharacterLabels' own doc
@@ -2809,7 +2851,11 @@ public partial class Game1 : Game
             // Station dialogue is a HUD overlay on top of the physical scene (like the panels
             // below), not a full-screen takeover - drawn whenever talking to someone; it no-ops
             // internally if _talkingToNpcId is null.
-            _stationPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, StationPanelOrigin, _talkingToNpcId);
+            if (IsTalkingToTrader(hudSnapshot))
+                _tradeWindow.Draw(_spriteBatch, hudSnapshot, _client.PlayerId,
+                    hudSnapshot.Station.Npcs.First(n => n.Id == _talkingToNpcId).Name, _designMouse);
+            else
+                _stationPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, StationPanelOrigin, _talkingToNpcId);
 
             // Content-каталог отсеков - shown while actively talking to the Shipwright OR while a
             // module is still being placed (StationBuildPanel highlights whichever tile is selected,
@@ -2817,8 +2863,12 @@ public partial class Game1 : Game
             // their own ship - the dialogue itself may have already closed by then).
             var talkingToShipwright = _talkingToNpcId is { } npcId &&
                 hudSnapshot.Station.Npcs.FirstOrDefault(n => n.Id == npcId)?.Kind == NpcKind.Shipwright;
-            if (talkingToShipwright || _placingRoomCatalogId is not null)
-                _stationBuildPanel.Draw(_spriteBatch, hudSnapshot, StationBuildPanelOrigin, _buildPanelCategory, _placingRoomCatalogId, _designMouse);
+            if (talkingToShipwright || BuildToolActive)
+            {
+                _stationBuildPanel.Draw(_spriteBatch, hudSnapshot, StationBuildPanelOrigin, _buildTool, _buildPanelCategory, _placingCompartmentId, _doorSpan, _designMouse);
+                if (_buildMessageToShow is not null && BuildToolActive)
+                    _buildOverlay.DrawMessage(_spriteBatch, _buildMessageToShow, new Vector2(_designMouse.X, _designMouse.Y));
+            }
 
             _cardGamePanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, CardGamePanelOrigin);
             _frontsGamePanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, FrontsGamePanelOrigin);
@@ -3143,7 +3193,7 @@ public partial class Game1 : Game
             else if (_pauseMenuOpen)
                 _pauseMenuPanel.Draw(_spriteBatch, PauseMenuPanelOrigin, _designMouse, _sessionStartedFromEditor);
             else if (_cheatPanelOpen)
-                _cheatPanel.Draw(_spriteBatch, CheatPanelOrigin, _designMouse);
+                _cheatPanel.Draw(_spriteBatch, CheatPanelOrigin, _designMouse, _enemyInteriorCheat);
         }
         // TEMP-DIAG-BEGIN
         _diagHudMs = diagPhaseStopwatch.Elapsed.TotalMilliseconds;

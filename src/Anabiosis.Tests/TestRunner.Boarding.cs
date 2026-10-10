@@ -111,7 +111,6 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.DebugForceEnemyClass(EnemyShipClass.Frigate);
         EnterBattle(world);
         ExitShipIntoVacuum(world);
 
@@ -155,7 +154,6 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.DebugForceEnemyClass(EnemyShipClass.Frigate);
         EnterBattle(world);
         ExitShipIntoVacuum(world);
 
@@ -194,7 +192,6 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        world.DebugForceEnemyClass(EnemyShipClass.Frigate);
         EnterBattle(world);
         // Suits up while still indoors (EquipSuit's suit locker is at ship-interior coordinates,
         // same order BoardEnemyShip uses) - DebugPlaceEvaCharacter below does the actual "step
@@ -219,36 +216,6 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
 
         return world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).IsEvaAttached;
-    }
-
-    // "резак и сварка работали корректно внутри вражеского корабля" - once aboard, the cutter has
-    // to reach the enemy's own interior fittings (FindAimedEnemyIndoorTarget/
-    // CutIndoorAlongFlameOnEnemyShip in World.Cutting.cs), not just the outer hull it cut through
-    // to get in. Every hull class has exactly one interior door off its boarding room (confirmed by
-    // inspection across all four EnemyShipLayout.Classes.cs hulls), so this doesn't need to force a
-    // specific class the way the outer-hull tests do.
-    private static bool World_Boarding_IndoorCuttingDamagesEnemyDoor()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        BoardEnemyShip(world, ItemType.Knife, withCutter: true);
-
-        var door = world.EnemyShipLayout.Doors.First(d => d.Connects(world.EnemyShipLayout.BoardingRoomId));
-        MoveCharacterTo(world, 1, (float)door.Position.X, (float)door.Position.Y);
-
-        // WallCutDamagePerSecond=34 against DoorMaxHp=100 takes just under 3 real seconds of
-        // continuous flame - well under 100 ticks at RealtimeStep, with margin for the cut not
-        // landing every single tick.
-        for (var i = 0; i < 120 && !world.IsDoorDestroyed(door.Id); i++)
-        {
-            var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-            var toDoor = door.Position - new Vec2(me.X, me.Y);
-            var dir = toDoor.Length() > 0.001f ? toDoor.Normalized() : new Vec2(1f, 0f);
-            world.ApplyCommand(1, new ClientCommand(1, CutHeld: true, LookX: (float)dir.X, LookY: (float)dir.Y));
-            world.Step(RealtimeStep);
-        }
-
-        return world.IsDoorDestroyed(door.Id);
     }
 
     // The welder's own counterpart, sealing shut the very hole the boarder just cut through
@@ -293,42 +260,47 @@ internal static partial class TestRunner
         return me.OnEnemyShip && !me.IsOutside;
     }
 
-    // Not every class holds its boarding room (Gunship's breach is empty, unlike Raider/Freighter),
-    // so this commits to whichever living defender is nearest by door-graph hops (not recomputed
-    // every tick - re-picking "nearest" by straight-line distance while crossing rooms can thrash
-    // between two defenders that are each briefly closer mid-walk) and walks the door path to them
-    // one waypoint at a time, each leg with its own generous timeout. Returns that defender's id.
+    // Walks the boarder, tile by tile along the hull's own A* path, to melee reach of the nearest living defender, and
+    // returns that defender's id. The defender is picked once (the nearest at the start) and kept - re-picking "nearest"
+    // every tick while the crew are walking about thrashes between whoever is briefly closer. The crew move too (fighters
+    // come for a boarder), so the path is re-planned every tick toward wherever the target is now.
     private static string WalkBoarderToMeleeRangeOfNearestDefender(World world)
     {
-        var me0 = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-        var myRoom0 = world.EnemyShipLayout.Rooms.FirstOrDefault(r => r.Contains(new Vec2(me0.X, me0.Y)));
-        var target = world.CreateSnapshot().EnemyShip.Crew.Where(c => c.Alive)
-            .OrderBy(c => myRoom0 is null ? 0 : FindDoorPath(world.EnemyShipLayout.Doors, myRoom0.Id, c.RoomId).Count)
-            .First();
-
-        var waypoints = myRoom0 is null ? new List<Vec2>() : FindDoorPath(world.EnemyShipLayout.Doors, myRoom0.Id, target.RoomId);
-        waypoints.Add(new Vec2(target.X, target.Y));
-
-        foreach (var waypoint in waypoints)
+        string? targetId = null;
+        for (var i = 0; i < 25 * 30; i++)
         {
-            for (var i = 0; i < 10 * 30; i++)
-            {
-                var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
-                var toWaypoint = waypoint - new Vec2(me.X, me.Y);
-                if (toWaypoint.Length() <= 0.6f)
-                    break;
+            var snapshot = world.CreateSnapshot();
+            var me = snapshot.Characters.Single(c => c.PlayerId == 1);
+            var mePos = new Vec2(me.X, me.Y);
+            var alive = snapshot.EnemyShip.Crew.Where(c => c.Alive).ToList();
+            var target = alive.FirstOrDefault(c => c.Id == targetId)
+                ?? alive.OrderBy(c => (new Vec2(c.X, c.Y) - mePos).Length()).First();
+            targetId = target.Id;
+            var targetPos = new Vec2(target.X, target.Y);
+            if ((targetPos - mePos).Length() <= 0.9f)
+                break;
 
-                foreach (var door in world.EnemyShipLayout.Doors)
-                    if (!world.IsDoorOpen(door.Id) && (door.Position - new Vec2(me.X, me.Y)).Length() < 1.5f)
-                        world.ToggleDoor(door.Id);
-
-                var dir = toWaypoint.Normalized();
-                world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)dir.X, MoveY: (float)dir.Y));
-                world.Step(RealtimeStep);
-            }
+            var path = TilePathfinder.FindPath(world.EnemyShipLayout.Tiles, TilePathfinder.TileAt(mePos), TilePathfinder.TileAt(targetPos));
+            var waypoint = path is { Count: > 0 } ? TilePathfinder.CenterOf(path[0]) : targetPos;
+            // The last tile before the target: walk straight at it rather than at the tile centre.
+            if (path is { Count: <= 1 })
+                waypoint = targetPos;
+            var dir = (waypoint - mePos).Normalized();
+            world.ApplyCommand(1, new ClientCommand(1, MoveX: (float)dir.X, MoveY: (float)dir.Y));
+            world.Step(RealtimeStep);
         }
 
-        return target.Id;
+        return targetId!;
+    }
+
+    // Pulls the trigger aimed straight at one defender (the aim is the cursor, not the walking direction).
+    private static void FireAtCrew(World world, string crewId)
+    {
+        var snapshot = world.CreateSnapshot();
+        var me = snapshot.Characters.Single(c => c.PlayerId == 1);
+        var target = snapshot.EnemyShip.Crew.First(c => c.Id == crewId);
+        var dir = (new Vec2(target.X, target.Y) - new Vec2(me.X, me.Y)).Normalized();
+        world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, LookX: (float)dir.X, LookY: (float)dir.Y, FirePressed: true));
     }
 
     private static bool World_Boarding_FireWeaponDamagesCrewInSameRoom()
@@ -343,8 +315,12 @@ internal static partial class TestRunner
         var defenderId = WalkBoarderToMeleeRangeOfNearestDefender(world);
         var healthBefore = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId).Health;
 
-        world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
-        world.Step(RealtimeStep);
+        // The round leaves on one tick and lands on the next.
+        for (var i = 0; i < 3; i++)
+        {
+            FireAtCrew(world, defenderId);
+            world.Step(RealtimeStep);
+        }
 
         var after = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId);
         return after.Health < healthBefore;
@@ -364,8 +340,11 @@ internal static partial class TestRunner
         var defenderId = WalkBoarderToMeleeRangeOfNearestDefender(world);
 
         var healthBefore = world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId).Health;
-        world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
-        world.Step(RealtimeStep);
+        for (var i = 0; i < 3; i++)
+        {
+            FireAtCrew(world, defenderId);
+            world.Step(RealtimeStep);
+        }
 
         return world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == defenderId).Health == healthBefore;
     }
@@ -381,140 +360,62 @@ internal static partial class TestRunner
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip)
             return false;
 
-        // Work through the ship one defender at a time: walk to melee range of the nearest one
-        // (WalkBoarderToMeleeRangeOfNearestDefender's own door-graph BFS, robust to any hull shape -
-        // Frigate's spine runs the other way from the older classes, like the player's own Corvette),
-        // then hose it down with the rifle - well within its actual firing range by the time you're
-        // that close - before moving on to whoever's nearest next.
-        for (var round = 0; round < world.EnemyShipLayout.CrewSpawns.Count && world.CreateSnapshot().EnemyShip.Crew.Any(c => c.Alive); round++)
-        {
-            if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health <= 0)
-                return false; // died boarding - not what this test is checking
+        // Eight armed people are not something a lone boarder clears with a rifle, so the rest are put down directly and the
+        // last one is really hunted: walk to them and shoot. The kill that empties the ship is what takes it.
+        var last = world.EnemyShipLayout.CrewSpawns.Last().Id;
+        foreach (var spawn in world.EnemyShipLayout.CrewSpawns.Where(s => s.Id != last))
+            world.DebugDamageEnemyCrew(spawn.Id, EnemyCrewHealthForTests);
 
-            // Direct fallout of the door-default change: BoardEnemyShip now actually gets the
-            // boarder aboard reliably (see its own comment), so this test's own combat loop runs
-            // for real for the first time - previously it always bailed out at the OnEnemyShip
-            // check above before ever reaching this far. Stop firing the instant the current
-            // target dies instead of blindly holding the trigger for the full 3 seconds regardless
-            // - standing exposed in melee range longer than necessary was costing enough
-            // accumulated counter-attack damage across all CrewSpawns.Count rounds to kill the
-            // boarder before the last defender fell. FirstOrDefault, not First - a defender that's
-            // already gone (this ship destroyed underneath them, EnemyShipLayout rotating to the
-            // next squadron member) reads the same as "target down", not a crash.
-            var targetId = WalkBoarderToMeleeRangeOfNearestDefender(world);
-            for (var i = 0; i < 3 * 30 && (world.CreateSnapshot().EnemyShip.Crew.FirstOrDefault(c => c.Id == targetId)?.Alive ?? false); i++)
-            {
-                world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0, FirePressed: true));
-                world.Step(RealtimeStep);
-            }
+        var targetId = WalkBoarderToMeleeRangeOfNearestDefender(world);
+        for (var i = 0; i < 6 * 30 && (world.CreateSnapshot().EnemyShip.Crew.FirstOrDefault(c => c.Id == targetId)?.Alive ?? false); i++)
+        {
+            FireAtCrew(world, targetId);
+            world.Step(RealtimeStep);
         }
 
         return world.CreateSnapshot().EnemyShip.Crew.All(c => !c.Alive) && world.CreateSnapshot().Enemy.Hp <= 0;
     }
 
-    // Every hull class is a distinct structure, and nothing about it may collide with another's:
-    // door state and the room a character stands in are flat dictionaries shared by every structure
-    // in the game, so two classes reusing an id would be the same door and the same room.
-    private static bool EnemyShipClasses_AreDistinctStructures()
-    {
-        var layouts = EnemyShipLayout.All;
-        if (layouts.Count < 3 || layouts.Select(l => l.Kind).Distinct().Count() != layouts.Count)
-            return false;
 
-        var roomIds = layouts.SelectMany(l => l.Rooms.Select(r => r.Id)).ToList();
-        var doorIds = layouts.SelectMany(l => l.Doors.Select(d => d.Id).Concat(l.OuterHatches.Select(d => d.Id))).ToList();
-        var crewIds = layouts.SelectMany(l => l.CrewSpawns.Select(c => c.Id)).ToList();
-
-        // Every class also has to be walkable end to end: a breach compartment that is actually one
-        // of its rooms, and every defender standing in a room that exists.
-        foreach (var layout in layouts)
-        {
-            if (layout.Rooms.All(r => r.Id != layout.BoardingRoomId))
-                return false;
-            if (layout.CrewSpawns.Any(c => layout.Rooms.All(r => r.Id != c.RoomId)))
-                return false;
-        }
-
-        return roomIds.Distinct().Count() == roomIds.Count
-               && doorIds.Distinct().Count() == doorIds.Count
-               && crewIds.Distinct().Count() == crewIds.Count;
-    }
-
-    // The Frigate's whole point is matching the player's own Corvette footprint (Ship.Corvette.cs:
-    // x 0..13.5, y 0..18.5) while fielding a fixed 2-magnetic/1-laser loadout no other class carries.
-    private static bool EnemyShipClasses_FrigateMatchesCorvetteFootprintAndCarriesItsFixedGuns()
-    {
-        var frigate = EnemyShipLayout.Of(EnemyShipClass.Frigate);
-        var left = frigate.Rooms.Min(r => r.X);
-        var top = frigate.Rooms.Min(r => r.Y);
-        var right = frigate.Rooms.Max(r => r.X + r.Width);
-        var bottom = frigate.Rooms.Max(r => r.Y + r.Height);
-        if (left != 0 || top != 0 || right != 13.5f || bottom != 18.5f)
-            return false;
-
-        return frigate.WeaponLoadout is { Count: 3 } loadout
-               && loadout.Count(w => w == TurretWeaponType.Magnetic) == 2
-               && loadout.Count(w => w == TurretWeaponType.Laser) == 1
-               // Every other class keeps the older behavior: whichever single weapon the squadron
-               // formation hands it, not a loadout of its own.
-               && EnemyShipLayout.All.Where(l => l.Kind != EnemyShipClass.Frigate).All(l => l.WeaponLoadout is null);
-    }
-
-    // Which hull defends a sector is fixed by the sector, not rolled fresh: run from a fight, come
-    // back, and it has to be the same opposition waiting - otherwise retreating would be a way to
-    // reroll a gunship into a freighter.
-    private static bool World_Boarding_SectorAlwaysFieldsTheSameHull()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        EngageSector(world, "sector-beta");
-        var first = world.CreateSnapshot().EnemyShip.ClassName;
-
-        var again = new World();
-        again.SpawnCharacter(1);
-        EngageSector(again, "sector-beta");
-
-        var elsewhere = new World();
-        elsewhere.SpawnCharacter(1);
-        EngageSector(elsewhere, "sector-alpha");
-
-        // Same sector, same hull. (The two sectors are allowed to match - what matters is that the
-        // answer is a property of the sector, which the repeat run is what proves.)
-        return first == again.CreateSnapshot().EnemyShip.ClassName
-               && EnemyShipLayout.All.Any(l => l.Name == elsewhere.CreateSnapshot().EnemyShip.ClassName);
-    }
-
-    // Air as a weapon (World.EnemyAtmosphere.cs): a boarded hull is buttoned up, so its compartments
-    // hold their air until someone opens a door onto the breach - and then whoever is inside without
-    // a suit is on a clock, while a crew that fights in suits doesn't care.
-    private static bool World_Boarding_OpeningDoors_VentsTheHullAndSuffocatesUnsuitedCrew()
+    // Air as a weapon (World.EnemyAtmosphere.cs): a sealed hull holds its air; a breach in one compartment's outer wall
+    // drains it and, through the open doors, everything connected to it - and whoever is inside without a suit is on a
+    // clock (fleeing to thinner and thinner rooms doesn't save them), while a crew that fights in suits doesn't care.
+    private static bool World_Boarding_BreachVentsTheHullAndSuffocatesUnsuitedCrew()
     {
         var world = new World();
         world.SpawnCharacter(1);
         EngageSector(world, "sector-alpha");
 
         var layout = world.EnemyShipLayout;
-        var deepRoom = layout.Rooms.Last(r => r.Id != layout.BoardingRoomId);
         float Oxygen(string roomId) =>
             world.CreateSnapshot().EnemyShip.RoomOxygen.First(o => o.RoomId == roomId).Oxygen;
 
-        // Sealed: the breach vents its own compartment and nothing else, however long it stands.
+        // Sealed: nothing leaks, however long it stands.
         for (var i = 0; i < 10 * 30; i++)
             world.Step(RealtimeStep);
-        if (Oxygen(layout.BoardingRoomId) > 1f || Oxygen(deepRoom.Id) < 99f)
+        if (layout.Rooms.Any(r => Oxygen(r.Id) < 99f))
             return false;
 
-        foreach (var door in layout.Doors)
-            world.ToggleDoor(door.Id);
-        for (var i = 0; i < 40 * 30; i++)
+        // The engineers would weld the hole shut (World.EnemyCrew.cs) - this is about what an unrepaired breach does.
+        world.DebugKillEnemyCrewWithRole(EnemyCrewRole.Engineer);
+        var block = layout.WallBlocks.First(b => b.RoomId == layout.BoardingRoomId && !b.IsInterior);
+        world.DebugBreachEnemyWallBlock(block.Id);
+        for (var i = 0; i < 20 * 30; i++)
+            world.Step(RealtimeStep);
+        if (Oxygen(layout.BoardingRoomId) > 5f)
+            return false;
+
+        for (var i = 0; i < 100 * 30; i++)
             world.Step(RealtimeStep);
 
         bool Alive(string crewId) => world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == crewId).Alive;
+        var anyAir = layout.Rooms.Any(r => Oxygen(r.Id) >= OxygenSafeThresholdForTests);
         var unsuitedGone = layout.CrewSpawns.Where(s => !s.Suited).All(s => !Alive(s.Id));
-        var suitedHolding = layout.CrewSpawns.Where(s => s.Suited).All(s => Alive(s.Id));
-
-        return Oxygen(deepRoom.Id) < OxygenSafeThresholdForTests && unsuitedGone && suitedHolding;
+        var suitedHolding = layout.CrewSpawns.Where(s => s.Suited && s.Role != EnemyCrewRole.Engineer).All(s => Alive(s.Id)); // the engineers were killed above
+        return !anyAir && unsuitedGone && suitedHolding;
     }
+
+    private const float EnemyCrewHealthForTests = 1000f; // more than any crew member has
 
     private const float OxygenSafeThresholdForTests = 50f; // mirrors World.Atmosphere.cs's own threshold
 

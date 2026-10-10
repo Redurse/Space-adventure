@@ -17,27 +17,13 @@ public sealed partial class World
     private const float CrewAttackIntervalSeconds = 2.5f;
     private const float EjectClearRadius = 6f; // clear of the hull entirely, not just past the plating
 
-    private readonly Dictionary<string, EnemyCrewRuntime> _enemyCrew = new();
     private readonly Dictionary<int, float> _weaponCooldowns = new();
     private float _crewAttackCooldown = CrewAttackIntervalSeconds;
 
     // The hull a boarding party would find themselves in: whichever ship of the squadron is still
     // flying. Falls back to the ordinary raider outside a fight, so callers that ask between
     // battles (the snapshot, the tests) always get a valid structure.
-    public EnemyShipLayout EnemyShipLayout => BoardableEnemy?.Layout ?? EnemyShipLayout.CreateDefault();
-
-    private void ResetEnemyCrew()
-    {
-        _enemyCrew.Clear();
-        // No hull left to board means no crew - the list describes the people aboard a specific
-        // ship. Rebuilding the fallback layout's crew here (which is what this used to do) invented
-        // three defenders standing in empty space the moment a sector was cleared.
-        if (BoardableEnemy is not null)
-            foreach (var spawn in EnemyShipLayout.CrewSpawns)
-                _enemyCrew[spawn.Id] = new EnemyCrewRuntime(spawn);
-        _crewAttackCooldown = CrewAttackIntervalSeconds;
-        ResetEnemyAtmosphere();
-    }
+    public EnemyShipLayout EnemyShipLayout => BoardableEnemy?.Layout ?? EnemyShipLayout.Default;
 
     // Anyone still inside a hull that just died goes out through its breach. Their RoomId names a
     // compartment of a structure that no longer exists, and the next ship of the squadron is a
@@ -110,7 +96,8 @@ public sealed partial class World
 
     private void StepBoarding(double deltaSeconds)
     {
-        StepEnemyAtmosphere(deltaSeconds);
+        StepEnemyAtmospheres(deltaSeconds);
+        StepEnemyCrews(deltaSeconds);
 
         foreach (var playerId in _weaponCooldowns.Keys.ToList())
             _weaponCooldowns[playerId] = Math.Max(0, _weaponCooldowns[playerId] - (float)deltaSeconds);
@@ -124,13 +111,15 @@ public sealed partial class World
             return;
         _crewAttackCooldown = CrewAttackIntervalSeconds;
 
-        // Defenders shoot back on the same interval-timer model the ship-scale enemy AI already
-        // uses (World.EnemyAi.cs) - no pathing or movement, they hold their room.
-        foreach (var crew in _enemyCrew.Values.Where(c => c.Alive))
+        // Defenders shoot back on the same interval-timer model the ship-scale enemy AI already uses (World.EnemyAi.cs);
+        // they close in on a boarder by walking (World.EnemyCrew.cs) and fire once they share a room and are in range.
+        if (BoardableEnemy is not { } enemy)
+            return;
+        foreach (var crew in enemy.Crew.Where(c => c.Alive))
         {
             var victim = boarders.FirstOrDefault(b =>
-                b.RoomId == crew.Spawn.RoomId &&
-                (crew.Spawn.Position - b.Position).Length() <= WeaponDefinitions.Range(crew.Spawn.Weapon));
+                b.RoomId == crew.RoomId &&
+                (crew.Position - b.Position).Length() <= WeaponDefinitions.Range(crew.Spawn.Weapon));
             if (victim is null)
                 continue;
 
@@ -174,18 +163,10 @@ public sealed partial class World
     }
 
     private IReadOnlyList<EnemyCrewState> CreateEnemyCrewStates() =>
-        _enemyCrew.Values
-            .Select(c => new EnemyCrewState(c.Spawn.Id, c.Spawn.Name, c.Spawn.RoomId, c.Spawn.X, c.Spawn.Y, c.Health, c.Alive))
-            .ToArray();
+        BoardableEnemy is { } enemy
+            ? enemy.Crew
+                .Select(c => new EnemyCrewState(c.Spawn.Id, c.Spawn.Name, c.RoomId, (float)c.Position.X, (float)c.Position.Y, c.Health, c.Alive, c.Spawn.Role))
+                .ToArray()
+            : Array.Empty<EnemyCrewState>();
 }
 
-internal sealed class EnemyCrewRuntime
-{
-    public const float MaxHealth = 60f;
-
-    public EnemyCrewSpawn Spawn { get; }
-    public float Health { get; set; } = MaxHealth;
-    public bool Alive => Health > 0;
-
-    public EnemyCrewRuntime(EnemyCrewSpawn spawn) => Spawn = spawn;
-}

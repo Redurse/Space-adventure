@@ -35,7 +35,7 @@ public sealed partial class World
         if (character.IsOutside)
             return true;
         if (character.OnEnemyShip)
-            return _enemyRoomOxygen.GetValueOrDefault(character.RoomId, FullOxygen) < OxygenSafeThreshold;
+            return (BoardableEnemy?.RoomOxygen.GetValueOrDefault(character.RoomId, FullOxygen) ?? FullOxygen) < OxygenSafeThreshold;
         return false;
     }
 

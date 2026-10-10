@@ -567,7 +567,8 @@ internal static partial class TestRunner
     private static bool World_Component_MotionSensor_FiresWhileCharacterInRoom()
     {
         var world = new World();
-        world.SpawnCharacter(1); // spawns in corridor
+        world.SpawnCharacter(1);
+        MoveCharacterTo(world, 1, 11.5f, 3f); // into the corridor (the crew spawns in the cockpit now)
         world.AddComponent(new Component("mot", ComponentKind.MotionSensor, "corridor", 0, 0));
         world.Step(RealtimeStep);
         var whilePresent = GateSignal(world, "mot");

@@ -128,7 +128,7 @@ internal static partial class TestRunner
                 world.Step(RealtimeStep);
             }
 
-            var hpBefore = world.CreateSnapshot().Enemy.Hp;
+            var hpBefore = world.DebugEnemyHullHp();
             world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
             world.Step(RealtimeStep);
             // Second attempt lands within the cooldown window — no second shell leaves the barrel,
@@ -136,9 +136,14 @@ internal static partial class TestRunner
             world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
             StepFor(world, 20); // outlast the magnetic cannon's short cooldown, let the shell arrive
 
-            var hpAfter = world.CreateSnapshot().Enemy.Hp;
+            // A shell hurts the first thing it meets on the real hull: a wall takes the scaled damage, the reactor a bit more.
+            var hpAfter = world.DebugEnemyHullHp();
             if (hpAfter < hpBefore)
-                return Math.Abs(hpAfter - (hpBefore - TurretBalance.MagneticDamage)) < 0.01f;
+            {
+                var lost = hpBefore - hpAfter;
+                var oneShot = TurretBalance.MagneticDamage * World.PlayerShotWallDamageScale;
+                return Math.Abs(lost - oneShot) < 0.01f || Math.Abs(lost - oneShot * 1.5f) < 0.01f;
+            }
         }
 
         return false; // never landed a hit within the retry budget
@@ -554,7 +559,7 @@ internal static partial class TestRunner
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: 0));    // take it in hand
         world.ApplyCommand(1, new ClientCommand(1, ToggleReactorSlotIndex: 0)); // put a rod back in
 
-        return Math.Abs(reactor.Fuel - reactor.RodCapacity) < 0.001f && reactor.CurrentOutput == reactor.MaxOutput;
+        return Math.Abs(reactor.Fuel - reactor.RodCapacity) < 0.001f && Math.Abs(reactor.CurrentOutput - reactor.MaxOutput * reactor.ZonePenaltyMultiplier) < 0.001f; // a reactor outside its zone gives a tenth less
     }
 
     private static bool Shield_TryAbsorbHit_DepletesPointsUntilEmpty()

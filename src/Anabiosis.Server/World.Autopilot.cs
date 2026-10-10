@@ -13,7 +13,7 @@ namespace Anabiosis.Server;
 // working for free, since as far as that code is concerned a stick is a stick regardless of who's
 // holding it.
 //
-// No pathfinding exists anywhere in this codebase (confirmed by a full search - NPC traffic and the
+// There is no pathfinding for ships in this codebase (TilePathfinder only walks people over a tile grid - NPC traffic and the
 // enemy squadron both fly straight lines with zero obstacle awareness). This is a simple "seek the
 // destination, steer away from whatever asteroid is actually in the way" heuristic (a classic
 // steering-behavior blend, the same shape World.EnemyFleet.cs's own SegmentHitsCircle already uses

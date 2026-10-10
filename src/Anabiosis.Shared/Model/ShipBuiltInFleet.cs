@@ -38,6 +38,12 @@ public static partial class ShipBuiltInFleet
     public static CustomShipDefinition WorkingShip =>
         _workingShip ??= JsonSerializer.Deserialize<CustomShipDefinition>(WorkingShipJson, Options)!;
 
+    private static CustomShipDefinition? _coolShip;
+
+    // The hull every hostile ship is built from (EnemyShipLayout.cs). Never handed out for the player to fly.
+    public static CustomShipDefinition CoolShip =>
+        _coolShip ??= JsonSerializer.Deserialize<CustomShipDefinition>(CoolShipJson, Options)!;
+
     // Looks up a frozen built-in ship by name - returns null for any name that isn't one of the 2
     // (the caller then falls back to CustomShipStore for an ordinary player-saved design).
     public static CustomShipDefinition? TryGet(string name) => name switch

@@ -56,8 +56,14 @@ public partial class Game1
             .Select(kv => new CustomShipTileCanvas.CompartmentInstanceRecord(
                 kv.Key, _editorCompartmentEntryId[kv.Key], kv.Value.Anchor.X, kv.Value.Anchor.Y, kv.Value.RotationSteps))
             .ToList();
+        var junctionDoors = _editorJunctionWalls
+            .Where(kv => _editorTiles.DoorEdges.Values.Any(e => e.Id == kv.Key))
+            .Select(kv => new CustomShipTileCanvas.JunctionDoorRecord(kv.Key, kv.Value
+                .Select(w => new CustomShipTileCanvas.JunctionWallRecord(w.Coord.X, w.Coord.Y, w.OpenSide, w.Material, w.Hp, w.FromCompartment))
+                .ToList()))
+            .ToList();
         return new CustomShipTileCanvas(tiles, devices, zones, engines, ManualHalfBlockWalls: true, DoorEdgesRaw: doorEdges,
-            CompartmentInstancesRaw: compartmentInstances);
+            CompartmentInstancesRaw: compartmentInstances, JunctionDoorsRaw: junctionDoors);
     }
 
     // Replays the saved data through the SAME TileGrid mutators the editor's own tools use (floors
@@ -68,6 +74,7 @@ public partial class Game1
     private void ApplyEditorTileCanvas(CustomShipTileCanvas canvas)
     {
         _editorTiles = new TileGrid();
+        _editorJunctionWalls.Clear();
         _editorDeviceKinds.Clear();
         _editorDeviceFootprint.Clear();
         _editorDeviceFootprintSecondary.Clear();
@@ -125,6 +132,11 @@ public partial class Game1
             if (e.Id.StartsWith("door-edge-") && int.TryParse(e.Id.Substring("door-edge-".Length), out var n) && n >= _editorNextDoorEdgeId)
                 _editorNextDoorEdgeId = n + 1;
         }
+        // The walls each junction door cleared, so removing the door still restores them.
+        foreach (var junction in canvas.JunctionDoors)
+            _editorJunctionWalls[junction.Id] = junction.Walls
+                .Select(w => new SavedJunctionWall(new TileCoord(w.X, w.Y), w.OpenSide, w.Material, w.Hp, w.FromCompartment))
+                .ToList();
         foreach (var d in canvas.Devices)
         {
             var anchor = new TileCoord(d.X, d.Y);

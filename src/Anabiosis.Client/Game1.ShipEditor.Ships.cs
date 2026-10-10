@@ -140,6 +140,7 @@ public partial class Game1
         else
         {
             _editorTiles = new TileGrid();
+            _editorJunctionWalls.Clear();
             _editorDeviceKinds.Clear();
             _editorDeviceFootprint.Clear();
             _editorZones.Clear();

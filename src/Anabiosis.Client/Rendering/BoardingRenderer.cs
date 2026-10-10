@@ -23,6 +23,7 @@ public sealed class BoardingRenderer
     public bool ShowHealthBars { get; set; } = true;
 
     private readonly ShipRenderer _shipRenderer;
+    private readonly EnemyShipView _view = new();
     private readonly Texture2D _pixel;
     private readonly SpriteFont _font;
 
@@ -36,6 +37,13 @@ public sealed class BoardingRenderer
 
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, float totalSeconds = 0f)
     {
+        // The whole hull drawn by the player-ship renderer (every device, turret and engine) once its definition has arrived;
+        // until then, and as a fallback, the plain room/wall outline below.
+        var view = _view.Build(snapshot);
+        if (view is not null)
+            _shipRenderer.Draw(spriteBatch, view, origin, default, totalSeconds);
+        else
+        {
         // Real air, drawn through the same red tint the player's own compartments use: which rooms
         // are already vented is the boarding party's main tactical readout (World.EnemyAtmosphere.cs).
         float Oxygen(string roomId) =>
@@ -57,6 +65,12 @@ public sealed class BoardingRenderer
             _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, door.IsVertical,
                 state?.IsOpen ?? false, origin, destroyed: state?.Destroyed ?? false, totalSeconds: totalSeconds);
         }
+
+        // The hull's doors are doorways between compartments (a hostile crew keeps them open).
+        if (snapshot.EnemyShip.DoorEdges is { Count: > 0 } doorEdges)
+            foreach (var edge in doorEdges)
+                _shipRenderer.DrawDoorEdge(spriteBatch, edge.Coord, edge.Side, isOpen: true, destroyed: false, origin, totalSeconds,
+                    leadsToVacuum: edge.RoomAId is null || edge.RoomBId is null);
 
         // A cut-through interior wall panel, same black-hole-plus-hazard-stripes treatment the
         // player's own ship's DrawBreachedWallBlock gives one - previously this hull's own
@@ -83,6 +97,7 @@ public sealed class BoardingRenderer
                 isOpen: breached, origin, leadsToVacuum: true, destroyed: breached);
         }
 
+        }
         // Which hull this is: the classes differ in how many defenders hold them and whether those
         // defenders can be suffocated, so naming it is naming the plan of attack.
         var firstRoom = snapshot.EnemyShip.Rooms.FirstOrDefault();
@@ -211,6 +226,21 @@ public sealed class BoardingRenderer
             spriteBatch.Draw(_pixel, new Rectangle(barX, barY, (int)(barWidth * fraction), barHeight), Color.Red);
         }
 
-        spriteBatch.DrawString(_font, crew.Name, new Vector2(rect.X - 8, rect.Bottom + 3), Color.LightGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        var label = crew.Role switch
+        {
+            EnemyCrewRole.Captain => "Капитан",
+            EnemyCrewRole.Scientist => "Учёный",
+            EnemyCrewRole.Engineer => "Инженер",
+            _ => "Боец",
+        };
+        spriteBatch.DrawString(_font, label, new Vector2(rect.X - 8, rect.Bottom + 3), RoleColor(crew.Role), 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
     }
+
+    private static Color RoleColor(EnemyCrewRole role) => role switch
+    {
+        EnemyCrewRole.Captain => Color.Gold,
+        EnemyCrewRole.Scientist => Color.LightSkyBlue,
+        EnemyCrewRole.Engineer => Color.Orange,
+        _ => Color.LightGray,
+    };
 }

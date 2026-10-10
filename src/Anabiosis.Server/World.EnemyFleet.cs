@@ -31,12 +31,12 @@ public sealed partial class World
     // Bumped up a bit ("враги держались чуть подальше от корабля при стрельбе") - keeps the same
     // margin under EnemyWeaponRangeUnits as before so raiders still settle within their own range
     // once on station.
-    private const float EnemyStandoffDistance = 27f; // where a raider prefers to sit and shoot from
+    private const float EnemyStandoffDistance = 44f; // where a raider prefers to sit and shoot from
     private const float EnemyFormationAngleSpacingDegrees = 6f; // angular gap between wingmen on the same orbit
     private const float EnemyMaxSpeed = 3.4f;        // deliberately under the player's 8: you can outrun them
     private const float EnemyAccelerationPerSecond = 2.2f;
     private const float EnemyTurnDegreesPerSecond = 120f;
-    private const float EnemyWeaponRangeUnits = 31f; // just outside their standoff: they shoot once settled
+    private const float EnemyWeaponRangeUnits = 50f; // just outside their standoff: they shoot once settled
     // Per ship, so a squadron still hits harder than a lone raider without three of them turning
     // the hull into scrap faster than a crew can weld it.
     private const float EnemyFireIntervalSeconds = 7f;
@@ -46,8 +46,8 @@ public sealed partial class World
     private const int EnemyMachineGunPelletsPerBurst = 4;
     private const float EnemyMachineGunSpreadDegrees = 6f;
     private const float EnemyOpeningDelaySeconds = 4f; // a beat to close in before the first volley
-    private const float EnemySpawnDistance = 38f;    // far enough that the fight opens with an approach
-    public const float EnemyHullRadius = 3.5f;       // what a shell has to hit, and what its own shots clear
+    private const float EnemySpawnDistance = 68f;    // far enough that the fight opens with an approach
+    private const int MaxEnemyShipsInField = 2; // a real hull is big and costly to simulate: never more than this many at once
     // Weaving evasion (game_design.md enemy overhaul - "не стояли на одном месте а пытались
     // уворачиваться от снарядов игрока"): a smooth extra swing on top of the steady orbit below,
     // active for as long as the player is shooting at all (StepEnemyFleet's own isPlayerFiring
@@ -81,29 +81,48 @@ public sealed partial class World
     private void SpawnEnemySquadron(int count)
     {
         _enemyShips.Clear();
-        for (var i = 0; i < count; i++)
-        {
-            // Off the stern quarter, strung out in a line so they arrive one after another rather
-            // than as a wall. _shipFieldPosition is the hull's centre in field space; +X is the
-            // side the guns and the airlock are on (TurretMount), so the fight happens where the
-            // ship can answer it and where a boarding party can reach it.
-            var position = _shipFieldPosition + new Vec2(EnemySpawnDistance + i * 6f, 0f);
-            var layout = EnemyClassFor(i);
-            var ship = new EnemyShipRuntime($"enemy-{i + 1}", EnemyMaxHp, position, layout, WeaponLoadoutFor(layout, i))
-            {
-                // Own random phase so a whole squadron doesn't weave in lockstep (SteerEnemy's dodge).
-                DodgePhaseSeed = (float)(_random.NextDouble() * 1000.0),
-                // Starts its orbit exactly where it already is, spinning either way at random.
-                OrbitAngleDegrees = BearingDegrees(position - _shipFieldPosition),
-                OrbitDirection = _random.Next(2) == 0 ? 1f : -1f,
-            };
-            // A sector opens with raiders closing in, not with a volley at the moment of arrival -
-            // the player gets a few seconds to get to a gun. Applies to every turret this hull has.
-            for (var t = 0; t < ship.TurretFireCooldowns.Length; t++)
-                ship.TurretFireCooldowns[t] = EnemyOpeningDelaySeconds;
-            _enemyShips.Add(ship);
-        }
+        // Never more than MaxEnemyShipsInField hulls at once: the rest of a bigger squadron arrives as the first ones fall
+        // (ResolveEnemyLosses -> SpawnEnemyReinforcements).
+        var inField = Math.Min(count, MaxEnemyShipsInField);
+        for (var i = 0; i < inField; i++)
+            _enemyShips.Add(CreateEnemyRuntime($"enemy-{++_nextEnemyId}", i));
+        _enemyReinforcements = count - inField;
         _remainingEnemyShips = count;
+    }
+
+    // Off the stern quarter, strung out in a line so they arrive one after another rather than as a wall.
+    // _shipFieldPosition is the hull's centre in field space; +X is the side the guns and the airlock are on
+    // (TurretMount), so the fight happens where the ship can answer it and where a boarding party can reach it.
+    private EnemyShipRuntime CreateEnemyRuntime(string id, int slot)
+    {
+        var position = _shipFieldPosition + new Vec2(EnemySpawnDistance + slot * 52f, 0f);
+        var layout = NewEnemyLayout();
+        var ship = new EnemyShipRuntime(id, EnemyMaxHp, position, layout)
+        {
+            // Own random phase so a whole squadron doesn't weave in lockstep (SteerEnemy's dodge).
+            DodgePhaseSeed = (float)(_random.NextDouble() * 1000.0),
+            // Starts its orbit exactly where it already is, spinning either way at random.
+            OrbitAngleDegrees = BearingDegrees(position - _shipFieldPosition),
+            OrbitDirection = _random.Next(2) == 0 ? 1f : -1f,
+        };
+        // A sector opens with raiders closing in, not with a volley at the moment of arrival -
+        // the player gets a few seconds to get to a gun. Applies to every turret this hull has.
+        foreach (var turret in layout.Ship.Turrets)
+            ship.TurretCooldowns[turret.Id] = EnemyOpeningDelaySeconds;
+        return ship;
+    }
+
+    // Hulls of the squadron still waiting to arrive (the field holds at most MaxEnemyShipsInField at a time).
+    private int _enemyReinforcements;
+    private int _nextEnemyId;
+
+    private void SpawnEnemyReinforcements()
+    {
+        while (_enemyReinforcements > 0 && _enemyShips.Count(e => e.Alive) < MaxEnemyShipsInField)
+        {
+            _enemyReinforcements--;
+            _enemyShips.Add(CreateEnemyRuntime($"enemy-{++_nextEnemyId}", 0));
+        }
     }
 
     // Dev cheat panel only (World.cs's DebugSpawnEnemyPressed) - drops one more raider in
@@ -113,6 +132,9 @@ public sealed partial class World
     // IsInBattle - a fast way to get a live target for testing hit resolution.
     private void DebugSpawnEnemyNearby()
     {
+        if (_enemyShips.Count(e => e.Alive) >= MaxEnemyShipsInField)
+            return; // the field is full
+
         if (_battleSectorPointId is null && _battleNpcShipId is null)
         {
             // _battleSectorPointId has to be a real GalaxyPoint id - StepVoyage's own battle
@@ -130,8 +152,8 @@ public sealed partial class World
         var axis = RotateLocalToWorld(new Vec2(1f, 0f), _shipRotationDegrees);
         var position = _shipFieldPosition + axis * EnemyStandoffDistance;
         var index = _enemyShips.Count;
-        var layout = EnemyClassFor(index);
-        _enemyShips.Add(new EnemyShipRuntime($"debug-enemy-{index + 1}", EnemyMaxHp, position, layout, WeaponLoadoutFor(layout, index))
+        var layout = NewEnemyLayout();
+        _enemyShips.Add(new EnemyShipRuntime($"debug-enemy-{index + 1}", EnemyMaxHp, position, layout)
         {
             OrbitAngleDegrees = BearingDegrees(position - _shipFieldPosition),
             OrbitDirection = _random.Next(2) == 0 ? 1f : -1f,
@@ -139,53 +161,9 @@ public sealed partial class World
         _remainingEnemyShips = _enemyShips.Count;
     }
 
-    // Which hull each ship of the squadron is. Derived from the sector's own id and the ship's place
-    // in the formation, so a given sector always fields the same opposition - travelling back to a
-    // fight you ran from must not roll it again - while different sectors differ. The lead ship is
-    // never the freighter: the one you meet first should be the one that shoots back.
-    // Test-only override (same "precondition setter" convention as World.WallBlocks.cs's
-    // DebugBreachWallBlock) - lets a test force which hull a battle fields instead of hunting
-    // through the galaxy for a sector id that happens to hash to the one it needs.
-    private EnemyShipClass? _debugForcedEnemyClass;
-    public void DebugForceEnemyClass(EnemyShipClass? kind) => _debugForcedEnemyClass = kind;
-
-    private EnemyShipLayout EnemyClassFor(int index)
-    {
-        if (_debugForcedEnemyClass is { } forced)
-            return EnemyShipLayout.Of(forced);
-
-        // _battleSectorPointId is which sector/station the current fight is at (M39's VoyagePhase
-        // removal dropped the old _travelTargetPointId this used to read) - falls back to
-        // _dockedPointId (rare: a resolved fight can still be ticking down while the ship is
-        // already back at a berth) and then a fixed seed so this never throws.
-        var seed = StableSectorSeed(_battleSectorPointId ?? _dockedPointId ?? "sector") + index * 7;
-        var classes = EnemyShipLayout.All;
-        var pick = classes[Math.Abs(seed) % classes.Count];
-        return index == 0 && pick.Kind == EnemyShipClass.Freighter
-            ? EnemyShipLayout.Of(EnemyShipClass.Raider)
-            : pick;
-    }
-
-    // A squadron fields the whole arsenal, not a random subset ("у врагов были и лазеры и пулемёты
-    // и магнитные пушки в арсенале") - cycling by index rather than an independent hash-per-ship
-    // pick guarantees every type shows up at least once in any squadron of 3+, while the per-sector
-    // offset still varies which type leads the cycle from one encounter to the next. Enemies don't
-    // track ammo or heat like a manned TurretRuntime does; this just picks which of the 3 weapons'
-    // rate-of-fire, bolt style and wall damage (TryEnemyFire, TurretBalance) a given raider uses.
-    private static readonly TurretWeaponType[] EnemyWeaponChoices =
-        { TurretWeaponType.Magnetic, TurretWeaponType.Laser, TurretWeaponType.MachineGun };
-
-    private TurretWeaponType EnemyWeaponFor(int index)
-    {
-        var offset = Math.Abs(StableSectorSeed(_battleSectorPointId ?? _dockedPointId ?? "sector"));
-        return EnemyWeaponChoices[(index + offset) % EnemyWeaponChoices.Length];
-    }
-
-    // Most hulls carry exactly the single weapon EnemyWeaponFor hands them by squadron slot; a class
-    // with its own EnemyShipLayout.WeaponLoadout (Frigate's 2 magnetic + 1 laser) overrides that and
-    // always brings its whole fixed arsenal instead, regardless of formation slot.
-    private IReadOnlyList<TurretWeaponType> WeaponLoadoutFor(EnemyShipLayout layout, int index) =>
-        layout.WeaponLoadout ?? new[] { EnemyWeaponFor(index) };
+    // Every hostile ship is the same hull (the frozen "ÐºÑÑÑÐ¾Ð¹ ÐºÐ¾ÑÐ°Ð±Ð»Ñ", EnemyShipLayout.cs), each built into its own
+    // Ship so it can be damaged and lose compartments on its own.
+    private static EnemyShipLayout NewEnemyLayout() => EnemyShipLayout.Create();
 
     // string.GetHashCode is randomised per process, so it would hand the same sector a different
     // squadron on every launch - the same reason AsteroidShape writes its own hash.
@@ -331,15 +309,20 @@ public sealed partial class World
         var toStation = station - enemy.Position;
         var approach = (aimTarget - enemy.Position).Normalized();
 
+        // Flying is the engines' and the captain's job (World.EnemyCrew.cs): knock out the engines, or kill or draw the captain
+        // away from the helm, and the ship barely manoeuvres.
+        var control = EnemyControlFactor(enemy);
+        var maxSpeed = EnemyMaxSpeed * control;
+
         var desired = toStation.Length() > 0.4f
-            ? toStation.Normalized() * EnemyMaxSpeed
+            ? toStation.Normalized() * maxSpeed
             : Vec2.Zero; // briefly caught up with the (still-moving) station point, not truly parked
 
         var steering = desired - enemy.Velocity;
-        var maxDelta = EnemyAccelerationPerSecond * dt;
+        var maxDelta = EnemyAccelerationPerSecond * Math.Max(control, EnemyDriftControl) * dt;
         enemy.Velocity += steering.Length() <= maxDelta ? steering : steering.Normalized() * maxDelta;
-        if (enemy.Velocity.Length() > EnemyMaxSpeed)
-            enemy.Velocity = enemy.Velocity.Normalized() * EnemyMaxSpeed;
+        if (enemy.Velocity.Length() > maxSpeed)
+            enemy.Velocity = enemy.Velocity.Normalized() * Math.Max(maxSpeed, 0f);
 
         enemy.Position += enemy.Velocity * dt;
         SeparateEnemy(enemy);
@@ -347,7 +330,7 @@ public sealed partial class World
         // Always facing its actual target, not its heading or the ship's centre - a warship keeps
         // its guns on exactly what it's shooting at while it maneuvers.
         var facing = BearingDegrees(approach);
-        enemy.RotationDegrees = RotateToward(enemy.RotationDegrees, facing, EnemyTurnDegreesPerSecond * dt);
+        enemy.RotationDegrees = RotateToward(enemy.RotationDegrees, facing, EnemyTurnDegreesPerSecond * Math.Max(control, EnemyDriftControl) * dt);
     }
 
     // Hulls are solid. A raider that flies into the player's ship - or into a wingman - gets pushed
@@ -362,12 +345,12 @@ public sealed partial class World
             Math.Clamp(local.Y, -halfExtents.Y, halfExtents.Y));
         var away = local - onHull;
         var gap = away.Length();
-        if (gap < EnemyHullRadius)
+        if (gap < enemy.HullRadius)
         {
             // gap == 0 means the centre is inside the box, where "away" has no direction of its
             // own - shove it out through the nearest face instead.
             var normal = gap > 0.001f ? away.Normalized() : NearestFaceNormal(local, halfExtents);
-            enemy.Position = _shipFieldPosition + RotateLocalToWorld(onHull + normal * EnemyHullRadius, _shipRotationDegrees);
+            enemy.Position = _shipFieldPosition + RotateLocalToWorld(onHull + normal * enemy.HullRadius, _shipRotationDegrees);
             enemy.Velocity = Vec2.Zero;
         }
 
@@ -377,7 +360,7 @@ public sealed partial class World
                 continue;
             var between = enemy.Position - other.Position;
             var distance = between.Length();
-            const float minimumSeparation = EnemyHullRadius * 2f;
+            var minimumSeparation = enemy.HullRadius + other.HullRadius;
             if (distance >= minimumSeparation)
                 continue;
             var normal = distance > 0.001f ? between.Normalized() : new Vec2(1f, 0f);
@@ -409,21 +392,19 @@ public sealed partial class World
             var onHull = new Vec2(
                 Math.Clamp(local.X, -halfExtents.X, halfExtents.X),
                 Math.Clamp(local.Y, -halfExtents.Y, halfExtents.Y));
-            if ((local - onHull).Length() < EnemyHullRadius)
+            if ((local - onHull).Length() < enemy.HullRadius)
                 return true;
         }
         return false;
     }
 
-    // Each turret in enemy.WeaponLoadout fires independently on its own TurretFireCooldowns entry -
-    // almost always a single-entry loop (the common one-weapon-per-hull case), but a multi-turret
-    // hull like Frigate has each of its 3 guns reload and fire on its own schedule against the same
-    // resolved target, rather than the whole ship sharing one clock.
+    // Each turret of the hostile hull fires independently on its own cooldown, from its own mount - and only if it is
+    // intact and a scientist is standing at its periscope (World.EnemyCrew.cs).
     private void TryEnemyFire(EnemyShipRuntime enemy, Vec2 target, double deltaSeconds)
     {
         // Same rule the design gives the player: badly hurt raiders break off (EnemyShip's
         // IsRetreating) - they stay shootable and boardable, they just stop shooting back.
-        if (enemy.Ship.IsRetreating)
+        if (enemy.Ship.IsRetreating || enemy.IsExploding)
             return;
 
         // Range is judged against the hull's own centre, not the specific priority target - a
@@ -432,21 +413,23 @@ public sealed partial class World
         // gating range on that exact point would leave a raider that's plainly close enough to
         // fight never actually firing at all. Line of sight still checks the real aim line, since
         // that's genuinely about whether this specific shot is blocked.
-        var toTarget = target - enemy.Position;
         var inRange = (_shipFieldPosition - enemy.Position).Length() <= EnemyWeaponRangeUnits && HasLineOfSight(enemy.Position, target);
+        var layout = enemy.Layout;
 
-        for (var t = 0; t < enemy.WeaponLoadout.Count; t++)
+        foreach (var turret in layout.Ship.Turrets)
         {
-            enemy.TurretFireCooldowns[t] = Math.Max(0f, enemy.TurretFireCooldowns[t] - (float)deltaSeconds);
-            if (enemy.TurretFireCooldowns[t] > 0 || !inRange)
+            var cooldown = Math.Max(0f, enemy.TurretCooldowns.GetValueOrDefault(turret.Id, EnemyOpeningDelaySeconds) - (float)deltaSeconds);
+            enemy.TurretCooldowns[turret.Id] = cooldown;
+            if (cooldown > 0 || !inRange || !enemy.IsTurretFiring(turret.Id) || !IsEnemyTurretManned(enemy, turret.Id))
                 continue;
 
-            var weapon = enemy.WeaponLoadout[t];
-            enemy.TurretFireCooldowns[t] = weapon == TurretWeaponType.Magnetic
+            var weapon = turret.WeaponType;
+            enemy.TurretCooldowns[turret.Id] = weapon == TurretWeaponType.Magnetic
                 ? EnemyMagneticFireIntervalSeconds
                 : EnemyFireIntervalSeconds;
 
-            var direction = toTarget.Normalized();
+            var muzzle = EnemyLocalToWorld(enemy, TurretMount.For(layout.Rooms, layout.Ship.Turrets, turret).Position);
+            var direction = (target - muzzle).Normalized();
             var isLaser = weapon == TurretWeaponType.Laser;
             var pellets = weapon == TurretWeaponType.MachineGun ? EnemyMachineGunPelletsPerBurst : 1;
 
@@ -470,7 +453,7 @@ public sealed partial class World
                 var cos = MathF.Cos(jitterRadians);
                 var sin = MathF.Sin(jitterRadians);
                 var jittered = new Vec2(direction.X * cos - direction.Y * sin, direction.X * sin + direction.Y * cos);
-                SpawnProjectile(enemy.Position + jittered * EnemyHullRadius, jittered, fromEnemy: true, isLaser, damage);
+                SpawnProjectile(muzzle, jittered, fromEnemy: true, isLaser, damage);
             }
         }
     }
@@ -505,7 +488,7 @@ public sealed partial class World
         return _enemyShips
             .Where(e => e.Alive)
             .Select(e => new EnemyShipFieldState(e.Id, e.Position.X, e.Position.Y, e.RotationDegrees,
-                e.Ship.Hp, e.Ship.MaxHp, e.Ship.IsRetreating, ReferenceEquals(e, boardable), e.Layout.Kind))
+                e.Ship.Hp, e.Ship.MaxHp, e.Ship.IsRetreating, ReferenceEquals(e, boardable), e.Layout.Rooms))
             .ToArray();
     }
 }

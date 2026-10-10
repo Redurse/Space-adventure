@@ -712,51 +712,87 @@ public sealed partial class FieldRenderer
     // weathered rust patches, a glowing engine at the tail, and scorch marks that accumulate as
     // its own health drops, so a fight against it visibly wears the ship down the way the
     // player's own hull already shows damage (HullSkin's DrawHullDamage).
+    // Bakes (between frames - Game1.Update calls this) the armour for the shape of every hostile ship in the field, and
+    // frees the ones no ship has any more.
+    public void PrepareEnemyHulls(WorldSnapshot? snapshot)
+    {
+        if (snapshot is null)
+            return;
+        var shapes = snapshot.EnemyShip.Ships.Select(e => e.Rooms ?? EnemyShipLayout.Default.Rooms).ToList();
+        foreach (var rooms in shapes)
+            _enemyHulls.Prepare(rooms);
+        _enemyHulls.Trim(shapes);
+    }
+
     private void DrawEnemyShipExterior(SpriteBatch spriteBatch, Vector2 screenCenter,
         EnemyShipFieldState enemy, int crewAlive, float rotation, float totalSeconds)
     {
-        // The hull's own real footprint (EnemyShipLayout.Classes.cs), not a uniform stand-in
-        // diameter - a Frigate (deliberately Corvette-sized) now actually reads as bigger on
-        // screen than a Raider. World.EnemyHullRadius (the shell hit-test circle) stays a fixed
-        // 3.5 for every class regardless - a bigger hull just means a shot can land visibly on the
-        // plating well outside that circle without it having missed a smaller one.
-        var (_, halfExtents) = EnemyShipLayout.Of(enemy.Kind).GetLocalBounds();
-        var sizePx = (float)(halfExtents.Length() * 2f * ShipRenderer.PixelsPerUnit);
+        // The hull's own real footprint: every enemy is the same ship, minus whatever compartments it has lost.
+        var rooms = enemy.Rooms ?? EnemyShipLayout.Default.Rooms;
+        var minX = rooms.Min(r => r.Left);
+        var maxX = rooms.Max(r => r.Right);
+        var minY = rooms.Min(r => r.Top);
+        var maxY = rooms.Max(r => r.Bottom);
+        var halfWidth = (maxX - minX) / 2f;
+        var halfHeight = (maxY - minY) / 2f;
+        var sizePx = MathF.Sqrt(halfWidth * halfWidth + halfHeight * halfHeight) * 2f * ShipRenderer.PixelsPerUnit;
+        var centre = new Vec2((minX + maxX) / 2f, (minY + maxY) / 2f);
 
-        // A baked hull per class, at its own true scale - the same armour HullSkin draws for the
-        // player's own ship, run once offscreen against this class's real Rooms (EnemyHullSkin).
-        var (hull, hullOrigin) = _enemyHulls.Get(enemy.Kind);
-        // Muted rather than a second bake for the retreating state - approximates the old bake's
-        // own colour mix (Mix(baseColour, darker, 0.5f)) as a straight tint on the already-drawn
-        // armour instead.
+        // The armour baked for exactly these compartments (EnemyHullSkin); until the bake for a freshly changed shape is
+        // ready (it is made between frames) the last known shape is drawn rather than nothing.
+        var baked = _enemyHulls.Get(rooms) ?? _enemyHulls.Get(EnemyShipLayout.Default.Rooms);
         var tint = enemy.IsRetreating ? new Color(150, 138, 128) : Color.White;
-        spriteBatch.Draw(hull, screenCenter, null, tint, rotation, hullOrigin, 1f, SpriteEffects.None, 0f);
+        if (baked is { } hullSprite)
+            spriteBatch.Draw(hullSprite.Texture, screenCenter, null, tint, rotation, hullSprite.Origin, 1f, SpriteEffects.None, 0f);
 
         var cos = MathF.Cos(rotation);
         var sin = MathF.Sin(rotation);
-        Vector2 Local(float x, float y)
+        // A point in the hull's own local frame (ship units, relative to the hull centre) as a screen point.
+        Vector2 LocalPoint(Vec2 point)
         {
-            var s = new Vector2(x, y) * sizePx;
+            var s = new Vector2((float)(point.X - centre.X), (float)(point.Y - centre.Y)) * ShipRenderer.PixelsPerUnit;
             return screenCenter + new Vector2(s.X * cos - s.Y * sin, s.X * sin + s.Y * cos);
         }
 
-        // The engine flare pulses, so it stays live rather than being baked into the hull: a
-        // derelict that can still manoeuvre is one that can still fight.
-        var enginePulse = 0.7f + 0.3f * MathF.Sin(totalSeconds * 3f + enemy.Id.GetHashCode());
-        var engineColor = enemy.IsRetreating ? new Color(200, 120, 40) : new Color(255, 90, 40);
-        HudIcons.FillCircle(spriteBatch, _pixel, Local(-0.46f, 0.02f), sizePx * 0.06f * enginePulse,
-            engineColor * 0.75f);
+        // Engine flames at every nozzle that is still on the ship: a live, pulsing plume out of each one, brighter while the
+        // ship is under way. (Which compartments survive decides which engines still burn.)
+        var layoutShip = EnemyShipLayout.Default.Ship;
+        var pulse = 0.7f + 0.3f * MathF.Sin(totalSeconds * 9f + enemy.Id.GetHashCode());
+        foreach (var engine in layoutShip.Engines)
+        {
+            if (!rooms.Any(r => r.Contains(new Vec2(engine.X, engine.Y))))
+                continue;
+            var step = engine.NozzlePosition - engine.BulkheadPosition;
+            var direction = new Vector2((float)step.X, (float)step.Y);
+            if (direction.LengthSquared() < 0.01f)
+                continue;
+            direction.Normalize();
+            var nozzle = LocalPoint(engine.NozzlePosition);
+            var worldDirection = new Vector2(direction.X * cos - direction.Y * sin, direction.X * sin + direction.Y * cos);
+            var power = enemy.IsRetreating ? 0.5f : 1f;
+            for (var i = 0; i < 4; i++)
+            {
+                var along = nozzle + worldDirection * (12f + i * 11f) * power * pulse;
+                HudIcons.FillCircle(spriteBatch, _pixel, along, (11f - i * 2.2f) * pulse, new Color(255, 150 - i * 25, 50) * (0.6f - i * 0.1f));
+            }
+        }
 
-        // Scorch marks that accumulate as the hull loses health - none at full health, several
-        // near death, so the fight's progress is visible on the ship itself, not just its bar.
+        // Windows lit in every surviving compartment, so a hull that is up and running looks lived in and a dark one doesn't.
+        foreach (var room in rooms)
+        {
+            var window = LocalPoint(new Vec2(room.Center.X, room.Center.Y));
+            HudIcons.FillCircle(spriteBatch, _pixel, window, 5f, new Color(255, 220, 140) * 0.55f);
+        }
+
+        // Scorch marks that accumulate as the hull loses health - none at full health, several near death.
         var damageFraction = enemy.MaxHp > 0 ? 1f - Math.Clamp(enemy.Hp / enemy.MaxHp, 0f, 1f) : 0f;
-        var scorchCount = (int)(damageFraction * 5f);
+        var scorchCount = (int)(damageFraction * 8f);
         for (var i = 0; i < scorchCount; i++)
         {
             var scorch = new Random(enemy.Id.GetHashCode() + i * 31);
-            var position = Local(-0.35f + (float)scorch.NextDouble() * 0.7f, -0.3f + (float)scorch.NextDouble() * 0.6f);
-            HudIcons.FillCircle(spriteBatch, _pixel, position, sizePx * (0.04f + (float)scorch.NextDouble() * 0.05f), Color.Black * 0.5f);
-            HudIcons.FillCircle(spriteBatch, _pixel, position, sizePx * 0.025f, new Color(255, 100, 40) * 0.3f);
+            var position = screenCenter + new Vector2((float)scorch.NextDouble() - 0.5f, (float)scorch.NextDouble() - 0.5f) * sizePx * 0.6f;
+            HudIcons.FillCircle(spriteBatch, _pixel, position, sizePx * (0.02f + (float)scorch.NextDouble() * 0.03f), Color.Black * 0.5f);
+            HudIcons.FillCircle(spriteBatch, _pixel, position, sizePx * 0.012f, new Color(255, 100, 40) * 0.3f);
         }
 
         DrawEnemyHealthBar(spriteBatch, screenCenter, sizePx, enemy);

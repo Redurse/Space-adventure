@@ -90,7 +90,11 @@ public sealed partial class Ship
         var wreckPatches = WreckPatches.ToList();
 
         return new CustomShipDefinition("Мой корабль", rooms, doors, airlocks, devices, ForwardDegrees,
-            WallMaterialsRaw: wallMaterials, EnginesRaw: engines, DoorEdgesRaw: doorEdges, WreckPatchesRaw: wreckPatches);
+            WallMaterialsRaw: wallMaterials, EnginesRaw: engines, DoorEdgesRaw: doorEdges, WreckPatchesRaw: wreckPatches,
+            // The tile-editor corrections the hull was built with (extra wall tiles, tiles forced open, half-thickness walls) - a hull
+            // built or rebuilt from this definition needs them, or its doors sit in walls and its half walls become full ones.
+            SupplementalWallTilesRaw: SupplementalWallTiles.ToList(), ForcedFloorTilesRaw: ForcedFloorTiles.ToList(),
+            WallOpenSidesRaw: WallOpenSideOverrides.ToList(), JunctionWallsRaw: JunctionWalls.ToList());
     }
 
     private static readonly IReadOnlyDictionary<PowerSystemId, CustomDeviceKind> SystemDeviceKindsReverse =

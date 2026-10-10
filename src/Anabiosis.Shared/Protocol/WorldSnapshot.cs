@@ -275,4 +275,6 @@ public sealed record WorldSnapshot(
     IReadOnlyList<string>? SalvagedPointIds = null,
     string? SalvageNotice = null,
     // Laser rifle beams still on screen (World.PersonalShots.cs). Appended last, same reasoning as every other field above.
-    IReadOnlyList<LaserBeamState>? LaserBeams = null);
+    IReadOnlyList<LaserBeamState>? LaserBeams = null,
+    // Explosions on the ship in the last couple of seconds (World.ShipBlasts.cs). Appended last, same reasoning as every other field above.
+    IReadOnlyList<ShipBlastState>? ShipBlasts = null);

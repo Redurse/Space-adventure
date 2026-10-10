@@ -39,7 +39,11 @@ public sealed record CustomShipTileCanvas(
     // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - see
     // CompartmentInstanceRecord's own doc comment. Null/empty for every save from before the
     // Compartment tool tracked its own placed instances this way.
-    IReadOnlyList<CustomShipTileCanvas.CompartmentInstanceRecord>? CompartmentInstancesRaw = null)
+    IReadOnlyList<CustomShipTileCanvas.CompartmentInstanceRecord>? CompartmentInstancesRaw = null,
+    // Direct user request (doors on compartment junctions) - the half-block walls each junction door
+    // removed, so deleting the door after a save/reload still puts them back. Null/empty for every save
+    // from before junction doors existed.
+    IReadOnlyList<CustomShipTileCanvas.JunctionDoorRecord>? JunctionDoorsRaw = null)
 {
     // Defaulted/nullable (same convention CustomShipDefinition.EnginesRaw/Engines already uses) so a
     // save file from before the real ShipEngine editor tool existed - which has no "EnginesRaw"
@@ -47,6 +51,7 @@ public sealed record CustomShipTileCanvas(
     public IReadOnlyList<EngineRecord> Engines { get; init; } = EnginesRaw ?? new List<EngineRecord>();
     public IReadOnlyList<DoorEdgeRecord> DoorEdges { get; init; } = DoorEdgesRaw ?? new List<DoorEdgeRecord>();
     public IReadOnlyList<CompartmentInstanceRecord> CompartmentInstances { get; init; } = CompartmentInstancesRaw ?? new List<CompartmentInstanceRecord>();
+    public IReadOnlyList<JunctionDoorRecord> JunctionDoors { get; init; } = JunctionDoorsRaw ?? new List<JunctionDoorRecord>();
 
     // One entry per tile the player ever painted (TileGrid.Cells only ever holds cells with
     // HasFloor true - SetFloor(false) removes the dictionary entry entirely - so this always is,
@@ -110,4 +115,8 @@ public sealed record CustomShipTileCanvas(
     // same geometry CompartmentPlacer.Stamp originally computed, without re-stamping onto the
     // already-loaded grid.
     public sealed record CompartmentInstanceRecord(string InstanceId, string EntryId, int AnchorX, int AnchorY, int RotationSteps);
+
+    // One junction door (JunctionDoor.cs): the id its door edges share, and the wall tiles it cleared.
+    public sealed record JunctionDoorRecord(string Id, IReadOnlyList<JunctionWallRecord> Walls);
+    public sealed record JunctionWallRecord(int X, int Y, TileSide OpenSide, WallMaterial Material, float Hp, bool FromCompartment);
 }
