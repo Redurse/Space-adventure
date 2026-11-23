@@ -682,7 +682,7 @@ public partial class Game1 : Game
     // the bottom-left corner, same corner/font/color treatment as Barotrauma's own version line.
     // There's no CI/git revision available to this project (no repo here), so this is just the
     // assembly's own version number rather than a fabricated build hash.
-    private const string GameVersionText = "Anabiosis v1.3 (Windows)";
+    private const string GameVersionText = "Anabiosis v1.4 alpha (Windows)";
     private static readonly Color VersionTextColor = new Color(190, 195, 200) * 0.6f;
 
     private Matrix _renderScale = Matrix.Identity;
