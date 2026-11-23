@@ -9,8 +9,10 @@ namespace Anabiosis.Server;
 // asteroid in the way eats it, and a badly led shot sails past.
 public sealed partial class World
 {
-    private const float ShellSpeed = 22f;
-    private const float LaserBoltSpeed = 44f;
+    // Four times what they were (22 and 44): direct user request, "полет снарядов в 4 раза быстрее". The lifetime is unchanged, so a
+    // shot now also carries four times as far before it burns out.
+    private const float ShellSpeed = 88f;
+    private const float LaserBoltSpeed = 176f;
     private const float ProjectileLifetimeSeconds = 6f;
 
     private readonly List<ProjectileRuntime> _projectiles = new();

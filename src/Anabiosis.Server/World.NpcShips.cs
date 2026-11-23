@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
@@ -58,21 +58,27 @@ public sealed partial class World
         var dt = (float)deltaSeconds;
         foreach (var npc in _npcShips)
             StepNpcShip(npc, dt);
+        StepNpcHulls(dt);
 
         // Can't be jumped while safely parked at a berth - the same reason StepVoyage's own sector
         // check never runs while IsDocked.
-        if (!IsDocked && _battleSectorPointId is null && _battleNpcShipId is null)
+        if (!IsDocked && _battleSectorPointId is null && _battleNpcShipId is null && !_battleWar)
             TryEngageHostileNpc();
     }
 
     private void StepNpcShip(NpcShipRuntime npc, float dt)
     {
+        // A ship the player has fired on stops its run and comes for them; otherwise it follows its waypoints.
         // Resolved live through WaypointStationId whenever the current target actually is a real
         // GalaxyPoint (M58 follow-up), not navigated toward the static npc.Waypoint snapshot
         // directly - see NpcShipRuntime's own doc comment on why.
-        var waypointPosition = ResolveNpcWaypoint(npc);
+        var waypointPosition = npc.Provoked ? _shipFieldPosition : ResolveNpcWaypoint(npc);
         var toWaypoint = waypointPosition - npc.Position;
-        if (toWaypoint.Length() < NpcWaypointArriveRadius)
+        // A station is solid (World.Solidity.cs): the ship has "arrived" once it is alongside, not at the centre it could never reach.
+        var arriveRadius = npc.WaypointStationId is { } stationId
+            ? Math.Max(NpcWaypointArriveRadius, StationReachOf(stationId) + NpcBroadHullRadius.Value + 2f)
+            : NpcWaypointArriveRadius;
+        if (!npc.Provoked && toWaypoint.Length() < arriveRadius)
         {
             (npc.Waypoint, npc.WaypointStationId) = NextWaypointFor(npc);
             waypointPosition = ResolveNpcWaypoint(npc);
@@ -85,16 +91,28 @@ public sealed partial class World
             NpcShipKind.Scout => NpcScoutSpeed,
             _ => NpcMilitarySpeed,
         };
-        npc.Velocity = toWaypoint.Length() > 0.01f ? toWaypoint.Normalized() * speed : Vec2.Zero;
+
+        // Damaged engines or a dead captain slow a real hull down exactly as they do a raider's (EnemyControlFactor).
+        var control = npc.Hull is { } hull ? EnemyControlFactor(hull) : 1f;
+        var agility = Math.Max(control, EnemyDriftControl);
+
+        var desired = Vec2.Zero;
+        if (toWaypoint.Length() > 0.01f)
+        {
+            var heading = NpcAvoidObstacles(npc, toWaypoint.Normalized(), speed);
+            desired = heading * (speed * control);
+        }
+        var steering = desired - npc.Velocity;
+        var maxDelta = NpcAccelerationPerSecond * agility * dt;
+        npc.Velocity += steering.Length() <= maxDelta ? steering : steering.Normalized() * maxDelta;
         npc.Position += npc.Velocity * dt;
 
         if (npc.Velocity.Length() > 0.1f)
         {
             var facing = MathF.Atan2((float)npc.Velocity.Y, (float)npc.Velocity.X) * (180f / MathF.PI);
-            npc.RotationDegrees = RotateToward(npc.RotationDegrees, facing, NpcTurnDegreesPerSecond * dt);
+            npc.RotationDegrees = RotateToward(npc.RotationDegrees, facing, NpcTurnDegreesPerSecond * agility * dt);
         }
     }
-
     // Live position of an NPC's current waypoint - WaypointStationId, when set, is a real
     // GalaxyPoint whose station may have moved a real distance since npc.Waypoint was last
     // snapshotted (M58 follow-up); the static Vec2 is the fallback for random patrol points and
@@ -182,9 +200,11 @@ public sealed partial class World
     private void TryEngageHostileNpc()
     {
         var hostile = _npcShips.FirstOrDefault(npc =>
-            npc.Kind == NpcShipKind.Military &&
-            GetStanding(npc.FactionId) <= FactionDefinitions.HostileThreshold &&
-            (npc.Position - _shipFieldPosition).Length() <= NpcAggroRadius);
+            (npc.Kind == NpcShipKind.Military &&
+             GetStanding(npc.FactionId) <= FactionDefinitions.HostileThreshold &&
+             (npc.Position - _shipFieldPosition).Length() <= NpcAggroRadius) ||
+            // Any ship the player has fired on - cargo, scout or patrol - comes back at them once it has closed.
+            (npc.Provoked && (npc.Position - _shipFieldPosition).Length() <= NpcProvokedEngageRadius));
         if (hostile is null)
             return;
 
@@ -196,7 +216,7 @@ public sealed partial class World
         _shipThrust = Vec2.Zero;
         _shipRotationDegrees = 0f;
         _shipAutoStabilize = true;
-        SpawnEnemySquadron(1); // the ambient hull itself is one ship, not a sector's squadron
+        AdoptNpcAsEnemy(hostile); // the ambient hull itself is the one ship, damage and crew and all
         _crewShipId = BoardableEnemy?.Id;
     }
 
@@ -206,7 +226,7 @@ public sealed partial class World
     // standing cost any other kill already carries.
     private void ResolveNpcBattleLosses()
     {
-        if (_enemyShips.Any(e => e.Alive))
+        if (_enemyShips.Any(e => e.Alive && !e.Derelict))
             return;
         if (_battleFaction is { } faction)
             RecordShipDestroyed(faction);
@@ -231,5 +251,6 @@ public sealed partial class World
     }
 
     private IReadOnlyList<NpcShipFieldState> CreateNpcShipStates() =>
-        _npcShips.Select(n => new NpcShipFieldState(n.Id, n.Kind, n.FactionId, n.Position.X, n.Position.Y, n.RotationDegrees)).ToArray();
+        _npcShips.Select(n => new NpcShipFieldState(n.Id, n.Kind, n.FactionId, n.Position.X, n.Position.Y, n.RotationDegrees,
+            n.Hull?.Ship.Hp ?? EnemyMaxHp, EnemyMaxHp, n.Hull?.Layout.Rooms, n.Provoked)).ToArray();
 }

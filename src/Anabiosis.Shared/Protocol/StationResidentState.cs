@@ -10,4 +10,8 @@ public enum ResidentRole
     Guard,
 }
 
-public sealed record StationResidentState(string Id, string Name, int Look, ResidentRole Role, float X, float Y);
+public sealed record StationResidentState(string Id, string Name, int Look, ResidentRole Role, float X, float Y,
+    float Health = 60f, float MaxHealth = 60f)
+{
+    public bool Alive => Health > 0f;
+}

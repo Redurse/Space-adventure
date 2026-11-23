@@ -51,7 +51,8 @@ internal static partial class TestRunner
             // it), so a position snapshotted once at the start of this 60-simulated-minute window
             // would drift arbitrarily far from the real, current one well before the loop ends.
             for (var s = 0; s < stationPoints.Length; s++)
-                if ((world.ResolveGalaxyPointPosition(stationPoints[s]) - here).Length() < 16f)
+                // Alongside, not at the centre: stations are solid (World.Solidity.cs), the ship stops at the surface.
+                if ((world.ResolveGalaxyPointPosition(stationPoints[s]) - here).Length() < 80f)
                     visitedStations.Add(s);
         }
 

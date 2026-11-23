@@ -34,6 +34,12 @@ public sealed partial class GalaxyMapPanel
     {
         var noseDegrees = snapshot.ShipField.RotationDegrees + snapshot.ShipForwardDegrees;
 
+        // A soft light under the hull, and - zoomed so far out that the hull is a speck - a ring to find it by.
+        var hullPixels = snapshot.Rooms.Count > 0 ? (float)ShipLocalFrame.GetHullHalfExtents(snapshot.Rooms).Length() * PixelsPerUnit * zoom : 0f;
+        DrawGlow(spriteBatch, shipCenter, MathF.Max(16f, hullPixels * 1.8f), new Color(150, 205, 255), 0.3f);
+        if (hullPixels < 7f)
+            HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, 10f, 0f, 360f, Ink(new Color(190, 225, 255) * 0.8f), 24, 1.4f);
+
         // While docked, the ship's own map marker sits at the EXACT same point as the station it's
         // docked at by design (World.cs's ShipMapPosition doc comment - there's no meaningful
         // map-space offset for the real physical berth to plot). The ship still gets its own real
@@ -69,7 +75,7 @@ public sealed partial class GalaxyMapPanel
     private static Station GetOrBuildSchematic(GalaxyPoint point)
     {
         if (!_stationSchematicCache.TryGetValue(point.Id, out var station))
-            _stationSchematicCache[point.Id] = station = Station.CreateProcedural(point.Id, point.StationKind, Vec2.Zero);
+            _stationSchematicCache[point.Id] = station = Station.CreateFor(point, Vec2.Zero);
         return station;
     }
 
@@ -91,11 +97,28 @@ public sealed partial class GalaxyMapPanel
             var local = new Vector2((float)room.Center.X, (float)room.Center.Y) - boundsCenter;
             var size = new Vector2(room.Width, room.Height) * scale;
             var screenCenter = markerScreen + local * scale;
-            spriteBatch.Draw(_pixel, screenCenter, null, Color.SteelBlue * 0.85f, 0f,
+            spriteBatch.Draw(_pixel, screenCenter, null, Ink(Color.SteelBlue * 0.85f), 0f,
                 new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);
             DrawRectOutline(spriteBatch, new Rectangle((int)(screenCenter.X - size.X / 2f), (int)(screenCenter.Y - size.Y / 2f), (int)size.X, (int)size.Y),
-                new Color(120, 150, 170), 1);
+                Ink(new Color(120, 150, 170)), 1);
         }
+    }
+
+    // The docked station's real rooms, drawn through the ship's own transform (both are in the docked frame, the hull is unturned
+    // while mated), so the berth lines up exactly with the ship.
+    private void DrawRealDockedStation(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 hullCenterOnScreen, float zoom)
+    {
+        var hullCenter = ShipLocalFrame.GetHullCenter(snapshot.Rooms);
+        var scale = PixelsPerUnit * zoom;
+        foreach (var room in snapshot.Station.Rooms)
+            foreach (var rect in room.Rects)
+            {
+                var size = new Vector2(rect.Width, rect.Height) * scale;
+                var topLeft = hullCenterOnScreen + new Vector2(rect.X - (float)hullCenter.X, rect.Y - (float)hullCenter.Y) * scale;
+                var screen = new Rectangle((int)topLeft.X, (int)topLeft.Y, Math.Max(1, (int)size.X), Math.Max(1, (int)size.Y));
+                spriteBatch.Draw(_pixel, screen, Ink(Color.SteelBlue * 0.85f));
+                DrawRectOutline(spriteBatch, screen, Ink(new Color(120, 150, 170)), 1);
+            }
     }
 
     // "При сильном приближении было видно корабль как в прошлых версиях" - the real hull, room by
@@ -119,7 +142,7 @@ public sealed partial class GalaxyMapPanel
                 s.Breached && snapshot.WallBlocks.FirstOrDefault(b => b.Id == s.Id)?.RoomId == room.Id);
 
             spriteBatch.Draw(_pixel, shipCenter + rotated * scale, null,
-                (breached ? Color.IndianRed : Color.LightSteelBlue) * 0.9f, radians,
+                Ink((breached ? Color.IndianRed : Color.LightSteelBlue) * 0.9f), radians,
                 new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);
         }
 
@@ -144,8 +167,8 @@ public sealed partial class GalaxyMapPanel
             noseBase + side * 8f,
             noseBase - side * 8f,
         };
-        Primitives.FillPolygon(spriteBatch, _pixel, noseBase, noseTrianglePoints, Color.White * 0.95f);
-        Primitives.StrokePolygon(spriteBatch, _pixel, noseTrianglePoints, Color.Black * 0.6f, 1.5f);
+        Primitives.FillPolygon(spriteBatch, _pixel, noseBase, noseTrianglePoints, Ink(Color.White * 0.95f));
+        Primitives.StrokePolygon(spriteBatch, _pixel, noseTrianglePoints, Ink(Color.Black * 0.6f), 1.5f);
     }
 
     // The ship's own course, not its heading - the two only agree while flying straight ahead in
@@ -166,11 +189,11 @@ public sealed partial class GalaxyMapPanel
         var end = shipCenter + direction * length;
         var rotation = MathF.Atan2(direction.Y, direction.X);
 
-        spriteBatch.Draw(_pixel, shipCenter, null, Color.Gold * 0.85f, rotation, new Vector2(0f, 0.5f),
+        spriteBatch.Draw(_pixel, shipCenter, null, Ink(Color.Gold * 0.85f), rotation, new Vector2(0f, 0.5f),
             new Vector2(length, 2f), SpriteEffects.None, 0f);
         // Small arrowhead, same construction as the heading arrow's own triangle.
         var side = new Vector2(-direction.Y, direction.X);
         var headPoints = new[] { end, end - direction * 8f + side * 5f, end - direction * 8f - side * 5f };
-        Primitives.FillPolygon(spriteBatch, _pixel, end, headPoints, Color.Gold * 0.85f);
+        Primitives.FillPolygon(spriteBatch, _pixel, end, headPoints, Ink(Color.Gold * 0.85f));
     }
 }

@@ -43,6 +43,7 @@ public enum PlayerAction
     RadioPushToTalk,
     ToggleGalacticMap,
     OpenChat,
+    OpenHealth,
 }
 
 public sealed class PlayerActionBindings
@@ -63,6 +64,7 @@ public sealed class PlayerActionBindings
         [PlayerAction.RadioPushToTalk] = Keys.R,
         [PlayerAction.ToggleGalacticMap] = Keys.M,
         [PlayerAction.OpenChat] = Keys.Enter,
+        [PlayerAction.OpenHealth] = Keys.H,
     };
 
     private static readonly Dictionary<PlayerAction, string> Labels = new()
@@ -79,6 +81,7 @@ public sealed class PlayerActionBindings
         [PlayerAction.RadioPushToTalk] = "Голосовой чат (рация)",
         [PlayerAction.ToggleGalacticMap] = "Карта галактики",
         [PlayerAction.OpenChat] = "Открыть чат экипажа",
+        [PlayerAction.OpenHealth] = "Меню здоровья (лечение)",
     };
 
     public static string Label(PlayerAction action) => Labels[action];

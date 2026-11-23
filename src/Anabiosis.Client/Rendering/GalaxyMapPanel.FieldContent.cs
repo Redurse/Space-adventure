@@ -28,10 +28,10 @@ public sealed partial class GalaxyMapPanel
         foreach (var asteroid in snapshot.Field.Asteroids.OrderByDescending(a => a.Radius).Take(LargestAsteroidMarkerCount))
         {
             var screen = FieldToScreen(mapOrigin, new Vec2(asteroid.X, asteroid.Y), zoom);
-            if (!IsWithinRadarView(panelOrigin, screen, pilotView))
+            if (!IsWithinRadarView(panelOrigin, screen, pilotView) || !IsExplored(snapshot, new Vec2(asteroid.X, asteroid.Y)))
                 continue;
-            HudIcons.FillCircle(spriteBatch, _pixel, screen, 4f, new Color(150, 120, 92));
-            HudIcons.DrawRingArc(spriteBatch, _pixel, screen, 6f, 0f, 360f, new Color(96, 74, 56), 12, 1.5f);
+            HudIcons.FillCircle(spriteBatch, _pixel, screen, 4f, Ink(new Color(150, 120, 92)));
+            HudIcons.DrawRingArc(spriteBatch, _pixel, screen, 6f, 0f, 360f, Ink(new Color(96, 74, 56)), 12, 1.5f);
         }
     }
 
@@ -73,8 +73,8 @@ public sealed partial class GalaxyMapPanel
             for (var i = 0; i < outline.Length; i++)
                 points[i] = RelativeScreen(outline[i]);
 
-            Primitives.FillPolygon(spriteBatch, _pixel, center, points, new Color(96, 74, 56));
-            Primitives.StrokePolygon(spriteBatch, _pixel, points, new Color(150, 120, 92));
+            Primitives.FillPolygon(spriteBatch, _pixel, center, points, Ink(new Color(96, 74, 56)));
+            Primitives.StrokePolygon(spriteBatch, _pixel, points, Ink(new Color(150, 120, 92)));
         }
 
         // A squadron already fighting the player, or a shell already in flight, is not intel to be
@@ -85,7 +85,7 @@ public sealed partial class GalaxyMapPanel
             var screen = RelativeScreen(new Vec2(enemy.X, enemy.Y));
             if (!IsWithinRadarView(panelOrigin, screen, pilotView))
                 continue;
-            var color = enemy.IsRetreating ? Color.Goldenrod : Color.OrangeRed;
+            var color = Ink(enemy.IsRetreating ? Color.Goldenrod : Color.OrangeRed);
             HudIcons.FillCircle(spriteBatch, _pixel, screen, 5f, color * 0.9f);
             HudIcons.DrawRingArc(spriteBatch, _pixel, screen, 8f, 0f, 360f, color, 16, 1.5f);
         }
@@ -95,7 +95,7 @@ public sealed partial class GalaxyMapPanel
             var screen = RelativeScreen(new Vec2(shot.X, shot.Y));
             if (!IsWithinRadarView(panelOrigin, screen, pilotView))
                 continue;
-            spriteBatch.Draw(_pixel, new Rectangle((int)screen.X - 1, (int)screen.Y - 1, 3, 3), shot.FromEnemy ? Color.Red : Color.Gold);
+            spriteBatch.Draw(_pixel, new Rectangle((int)screen.X - 1, (int)screen.Y - 1, 3, 3), Ink(shot.FromEnemy ? Color.Red : Color.Gold));
         }
     }
 
@@ -114,107 +114,4 @@ public sealed partial class GalaxyMapPanel
         return mapOrigin + new Vector2((float)scaled.X, (float)scaled.Y);
     }
 
-    // Generate/ToDictionary/the Where+OrderBy below all allocate (a fresh Random, several Lists, a
-    // Dictionary, LINQ enumerators) - drawn every single frame this panel is open with no caching,
-    // that's a steady stream of garbage collected 60 times a second, which is real, visible stutter
-    // (M50 follow-up - "нереально лагает"), not just wasted CPU. systemId's own body layout is
-    // deterministic and never changes while looking at the same system, so this only has to be
-    // rebuilt the one time the ship actually warps somewhere else - moons are grouped by their own
-    // parent planet id up front too, so the per-planet loop below never allocates its own Where().
-    private string? _cachedBackdropSystemId;
-    private IReadOnlyList<CelestialBody> _cachedBackdropBodies = Array.Empty<CelestialBody>();
-    private Dictionary<string, CelestialBody> _cachedBackdropById = new();
-    private CelestialBody _cachedBackdropStar = null!;
-    private List<CelestialBody> _cachedBackdropPlanets = new();
-    private Dictionary<string, List<CelestialBody>> _cachedBackdropMoonsByPlanet = new();
-
-    private void DrawSystemBackdrop(SpriteBatch spriteBatch, Vector2 mapOrigin, Vec2 fieldCenter, float zoom, float totalSeconds, string systemId, Vector2 panelOrigin, bool pilotView)
-    {
-        if (_cachedBackdropSystemId != systemId)
-        {
-            _cachedBackdropSystemId = systemId;
-            var bodies = CelestialBodyGenerator.Generate(systemId);
-            _cachedBackdropBodies = bodies;
-            _cachedBackdropById = bodies.ToDictionary(b => b.Id);
-            _cachedBackdropStar = bodies.Single(b => b.ParentId is null);
-            _cachedBackdropPlanets = bodies.Where(b => b.ParentId == _cachedBackdropStar.Id).OrderBy(b => b.OrbitRadius).ToList();
-            _cachedBackdropMoonsByPlanet = _cachedBackdropPlanets.ToDictionary(
-                p => p.Id, p => bodies.Where(m => m.ParentId == p.Id).ToList());
-        }
-
-        var planets = _cachedBackdropPlanets;
-        var centerScreen = FieldToScreen(mapOrigin, fieldCenter, zoom);
-
-        // Cosmoteer-style overlays: the star's heat ring and a dashed outline around each belt.
-        HudIcons.DrawRingArc(spriteBatch, _pixel, centerScreen, CelestialBodyGenerator.SunZoneRadius(_cachedBackdropStar) * PixelsPerUnit * zoom,
-            0f, 360f, new Color(255, 70, 40) * 0.6f, 96, 1.5f);
-        foreach (var (inner, outer) in CelestialBodyGenerator.BeltBands(systemId))
-        foreach (var radius in new[] { inner, outer })
-            for (var angle = 0f; angle < 360f; angle += 8f)
-                HudIcons.DrawRingArc(spriteBatch, _pixel, centerScreen, radius * PixelsPerUnit * zoom, angle, angle + 3f, Color.White * 0.3f, 2, 1.2f);
-
-        foreach (var planet in planets)
-        {
-            var planetReal = CelestialBodyGenerator.PositionAt(planet, _cachedBackdropById) + fieldCenter;
-            var planetScreen = FieldToScreen(mapOrigin, planetReal, zoom);
-
-            foreach (var moon in _cachedBackdropMoonsByPlanet[planet.Id])
-            {
-                var moonReal = CelestialBodyGenerator.PositionAt(moon, _cachedBackdropById) + fieldCenter;
-                var moonScreen = FieldToScreen(mapOrigin, moonReal, zoom);
-                if (IsWithinRadarView(panelOrigin, moonScreen, pilotView))
-                {
-                    // Real physical scale (M53 - "чтобы отображался РЕАЛЬНЫЙ размер планеты") - the
-                    // exact same radius*PixelsPerUnit*zoom every other real-scale object on this map
-                    // uses (ship/asteroids). A tiny 1px floor only guards against a literal zero/
-                    // negative-width circle at extreme zoom-out, not a scale hack.
-                    // "как в KSP" - a lit sphere (HudIcons.DrawShadedSphere) instead of a flat
-                    // FillCircle disc, same pre-baked pseudo-3D shading the planet's own body below
-                    // uses.
-                    var moonSizePixels = MathF.Max(1f, moon.Radius * PixelsPerUnit * zoom);
-                    HudIcons.DrawShadedSphere(spriteBatch, _shadedSphere, moonScreen, moonSizePixels, TierColor(moon.MassTier));
-                }
-            }
-
-            var sizePixels = MathF.Max(1f, planet.Radius * PixelsPerUnit * zoom);
-            if (IsWithinRadarView(panelOrigin, planetScreen, pilotView))
-                HudIcons.DrawShadedSphere(spriteBatch, _shadedSphere, planetScreen, sizePixels, TierColor(planet.MassTier));
-        }
-
-        if (!IsWithinRadarView(panelOrigin, centerScreen, pilotView))
-            return;
-
-        // "как в KSP" - the sun used to be a handful of small flat FillCircle discs (fine as a tiny
-        // icon, but the map now draws real relative body sizes elsewhere, GalaxyMapPanel.FieldContent
-        // .cs's own moon/planet comments, so a flat dot next to lit spheres read as backwards - the
-        // one body that should look brightest instead looked flattest). A warm white-hot core inside
-        // a soft golden corona (DrawScaledCircle's own pre-baked soft-edge texture, layered
-        // large-to-small so each fainter outer layer shows through) reads as an actual light source;
-        // the existing pulse still animates the corona's own reach.
-        var pulse = 0.75f + 0.25f * MathF.Sin(totalSeconds * 1.3f);
-        HudIcons.DrawScaledCircle(spriteBatch, _softCircle, centerScreen, 26f * pulse, new Color(255, 200, 110) * 0.18f);
-        HudIcons.DrawScaledCircle(spriteBatch, _softCircle, centerScreen, 16f * pulse, new Color(255, 180, 90) * 0.3f);
-        HudIcons.DrawScaledCircle(spriteBatch, _softCircle, centerScreen, 9f * pulse, new Color(255, 220, 140) * 0.55f);
-        HudIcons.FillCircle(spriteBatch, _pixel, centerScreen, 4.5f, new Color(255, 250, 230));
-    }
-
-    private static Color TierColor(BodyMassTier tier) => tier switch
-    {
-        BodyMassTier.Rocky => new Color(178, 132, 94),
-        BodyMassTier.IceGiant => new Color(181, 201, 221),
-        BodyMassTier.GasGiant => new Color(203, 163, 112),
-        _ => Color.White,
-    };
-
-    // A pair of ring arcs spinning opposite ways at the size of the whole warp zone - the same
-    // "portal you could actually fall through" idea a single WarpPoint marker used to have, just
-    // scaled up to the size of the boundary it now represents instead of one small icon.
-    private void DrawWarpZoneRing(SpriteBatch spriteBatch, Vector2 center, float radius, bool armed, float totalSeconds)
-    {
-        var color = armed ? Color.Gold : Color.MediumPurple;
-        var spinOuter = totalSeconds * 20f % 360f;
-        var spinInner = -totalSeconds * 28f % 360f;
-        HudIcons.DrawRingArc(spriteBatch, _pixel, center, radius, spinOuter, spinOuter + 300f, color * 0.55f, 64, 2.5f);
-        HudIcons.DrawRingArc(spriteBatch, _pixel, center, radius * 0.985f, spinInner, spinInner + 300f, Color.White * 0.35f, 64, 1.5f);
-    }
 }

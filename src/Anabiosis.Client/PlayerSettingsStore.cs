@@ -49,7 +49,11 @@ public sealed record PlayerSettings(string? Nickname = null, CrewRole? Role = nu
     // reference-screenshot items that were deliberately left out because nothing here backs them.
     bool? TooltipsEnabled = null, bool? ChatBubblesEnabled = null, bool? EnemyHealthBarsEnabled = null,
     // Frame cap chosen in Settings (0 = uncapped). Null keeps the 60 FPS the game always ran at.
-    int? FrameLimit = null);
+    int? FrameLimit = null,
+    // Screen shake from blows, blasts and firing guns (CameraShake); null keeps it on.
+    bool? ScreenShakeEnabled = null,
+    // The look and starting kit picked in the lobby (the "Внешность" tab and the 1/2/3 sets): kept, so the next lobby starts with the same ones.
+    CharacterLook? Look = null, int? KitIndex = null);
 
 public enum WindowMode
 {
@@ -112,6 +116,16 @@ public static class PlayerSettingsStore
 
     public static CrewRole? LoadRole(string? path = null) => Load(path).Role;
 
+    public static CharacterLook? LoadLook(string? path = null) => Load(path).Look?.Clamped();
+
+    public static int LoadKitIndex(string? path = null) => Math.Clamp(Load(path).KitIndex ?? 0, 0, StartKits.PerRole - 1);
+
+    public static void SaveLook(CharacterLook look, string? path = null) =>
+        Save(Load(path) with { Look = look }, path);
+
+    public static void SaveKitIndex(int index, string? path = null) =>
+        Save(Load(path) with { KitIndex = index }, path);
+
     public static void SaveRole(CrewRole? role, string? path = null) =>
         Save(Load(path) with { Role = role }, path);
 
@@ -133,7 +147,7 @@ public static class PlayerSettingsStore
             settings.ShadersEnabled ?? true,
             settings.KeyBindings, settings.Language ?? "ru",
             settings.TooltipsEnabled ?? true, settings.ChatBubblesEnabled ?? true, settings.EnemyHealthBarsEnabled ?? true,
-            settings.FrameLimit ?? 60);
+            settings.FrameLimit ?? 60, settings.ScreenShakeEnabled ?? true);
     }
 
     public static void SaveGraphicsSettings(GraphicsSettings graphics, string? path = null) =>
@@ -166,6 +180,7 @@ public static class PlayerSettingsStore
             ChatBubblesEnabled = graphics.ChatBubblesEnabled,
             EnemyHealthBarsEnabled = graphics.EnemyHealthBarsEnabled,
             FrameLimit = graphics.FrameLimit,
+            ScreenShakeEnabled = graphics.ScreenShakeEnabled,
         }, path);
 }
 
@@ -183,4 +198,4 @@ public readonly record struct GraphicsSettings(int? ResolutionWidth, int? Resolu
     bool ShadersEnabled = true,
     string? KeyBindings = null, string Language = "ru",
     bool TooltipsEnabled = true, bool ChatBubblesEnabled = true, bool EnemyHealthBarsEnabled = true,
-    int FrameLimit = 60);
+    int FrameLimit = 60, bool ScreenShakeEnabled = true);

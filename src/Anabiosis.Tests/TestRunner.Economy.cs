@@ -223,47 +223,23 @@ internal static partial class TestRunner
         return inventory.MainSlots.Count(s => s == ItemType.MedKit) == 1;
     }
 
+    // A first-aid kit stops a wound's bleeding, gives blood and health back, and is used up.
     private static bool World_MedKit_HealsSelfAndConsumesItem()
     {
         var world = new World();
         world.SpawnCharacter(1);
-
-        // Grab and hold the medkit BEFORE things get dangerous, not after: TakeFromRack walks
-        // there (WalkAcrossShipTo), and an unresolved fight (nothing here ever fires back) keeps
-        // damaging the whole hull for as long as that walk takes - long enough, it turns out, to
-        // cross the entire gap from "just started taking damage" to dead. Holding it in advance
-        // means the only thing left to do once hurt is press the button, no walking through live
-        // decompression required.
         var medkitSlot = TakeFromRack(world, ItemType.MedKit);
         world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: medkitSlot)); // hold it
 
-        // EnterBattle only teleports the ship (World.DebugPlaceShip) - it never touches the
-        // character, so whoever's holding the medkit just stays put at the rack they grabbed it
-        // from for the rest of this test. Deliberately not walking anywhere once the fight is
-        // live: any further movement risks the same bang-bang MoveCharacterTo walk stepping into
-        // a hull breach that's opened up somewhere along the way and crossing it straight into
-        // vacuum (World.Eva.cs's TryCrossIntoVacuum only fires on an actual move step) - which
-        // would silently reroute a later Interact press to the EVA handler instead of the medkit.
-        EnterBattle(world);
+        world.DebugDamageCharacter(1, DamageKind.Bullet, 30f, BodyPart.LeftArm);
+        var hurt = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        if (hurt.Health >= Character.MaxHealth || !hurt.IsBleeding || world.DebugBody(1).IsDowned)
+            return false; // setup problem - the wound must hurt and bleed without knocking them out
 
-        // Watch health directly, tick by tick, rather than waiting for corridor's own wall to
-        // breach first (or for it to drop some way below full): a single tick's
-        // decompression/impact damage can be large enough to fall clean through any lower
-        // threshold, so bailing at the very first sign of any damage at all keeps this test's own
-        // wait from being the thing that overshoots into a kill; the medkit assertion below only
-        // needs "not full, still alive", not a specific health value.
-        for (var i = 0; i < 600 * 30 && world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health >= Character.MaxHealth; i++)
-            world.Step(RealtimeStep);
-        var hurtHealth = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health;
-        if (hurtHealth <= 0f || hurtHealth >= Character.MaxHealth)
-            return false; // either never got hurt within budget, or the same hit that hurt them killed them
-
-        var healthBeforeHeal = hurtHealth;
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // use the medkit
 
-        var snapshot = world.CreateSnapshot();
-        var me = snapshot.Characters.Single(c => c.PlayerId == 1);
-        return me.Health > healthBeforeHeal && me.Inventory!.MainSlots.All(s => s != ItemType.MedKit);
+        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
+        return me.Health > hurt.Health && !me.IsBleeding && me.Inventory!.MainSlots.All(s => s != ItemType.MedKit);
     }
 
     private static bool World_MedKit_DoesNothingAtFullHealth()
@@ -281,86 +257,6 @@ internal static partial class TestRunner
         var me = snapshot.Characters.Single(c => c.PlayerId == 1);
         return before >= Character.MaxHealth && me.Health == before
             && me.Inventory!.MainSlots.Any(s => s == ItemType.MedKit); // not consumed
-    }
-
-    // Isolates the bleeding drain from decompression without needing to relocate anyone (walking
-    // across a ship that's taken 900+ seconds of random combat risks passing through other
-    // breached rooms too - and a single isolated breach turns out not to be dangerous at all:
-    // with both neighbors still at full oxygen, diffusion inflow from them alone comfortably
-    // outpaces what corridor's few wall blocks could ever leak, so real danger here requires
-    // broader ship-wide damage, which then makes any other room a gamble too). Instead: two
-    // characters share the exact same room at the exact same tick throughout, so they experience
-    // identical decompression damage - character 2 enters first and is left to cross below the
-    // bleeding threshold, character 3 enters later from full health and hasn't crossed it yet.
-    // From that point, any difference in their per-tick Health drop can only be the extra
-    // bleeding drain applied to character 2, since the room's oxygen level affects both equally.
-    private static bool World_Bleeding_DrainsHealthFasterThanDecompressionAlone()
-    {
-        var world = new World();
-        world.SpawnCharacter(1); // pilot, sends commands
-
-        BreachRoom(world, "corridor");
-        if (!RoomHasBreach(world.CreateSnapshot(), "corridor"))
-            return false;
-
-        for (var i = 0; i < 300 * 30; i++)
-        {
-            world.Step(RealtimeStep);
-            if (world.CreateSnapshot().RoomOxygen.First(o => o.RoomId == "corridor").Oxygen < 40f)
-                break;
-        }
-
-        // Character 2 enters and takes damage down to just above the bleeding threshold (not yet
-        // bleeding) - stopping there, not indefinitely, avoids bottoming out before the window
-        // below even starts.
-        world.SpawnCharacter(2);
-        var reachedJustAboveThreshold = false;
-        for (var i = 0; i < 200 * 30; i++)
-        {
-            world.Step(RealtimeStep);
-            if (world.CreateSnapshot().Characters.Single(c => c.PlayerId == 2).Health <= 55f)
-            {
-                reachedJustAboveThreshold = true;
-                break;
-            }
-        }
-        if (!reachedJustAboveThreshold)
-            return false;
-
-        // Character 3 enters fresh, right now, into the exact same room - from this point on
-        // both experience identical decompression conditions every tick.
-        world.SpawnCharacter(3);
-
-        var crossedWhileOtherSafe = false;
-        for (var i = 0; i < 60 * 30; i++)
-        {
-            world.Step(RealtimeStep);
-            var snapshot = world.CreateSnapshot();
-            var c2 = snapshot.Characters.Single(c => c.PlayerId == 2);
-            var c3 = snapshot.Characters.Single(c => c.PlayerId == 3);
-            if (c2.Health < Character.BleedingThreshold && c3.Health >= Character.BleedingThreshold)
-            {
-                crossedWhileOtherSafe = true;
-                break;
-            }
-            if (c2.Health <= 0f)
-                break; // bottomed out before giving us the comparison window - budget exhausted
-        }
-        if (!crossedWhileOtherSafe)
-            return false;
-
-        var before = world.CreateSnapshot();
-        var health2Before = before.Characters.Single(c => c.PlayerId == 2).Health;
-        var health3Before = before.Characters.Single(c => c.PlayerId == 3).Health;
-
-        for (var i = 0; i < 30; i++) // 1 more second, both still in the identical room
-            world.Step(RealtimeStep);
-
-        var after = world.CreateSnapshot();
-        var drop2 = health2Before - after.Characters.Single(c => c.PlayerId == 2).Health;
-        var drop3 = health3Before - after.Characters.Single(c => c.PlayerId == 3).Health;
-
-        return drop2 > drop3; // character 2 (bleeding + decompression) drops faster than 3 (decompression only)
     }
 
     private static bool World_Upgrade_PurchaseReactorOutput_IncreasesMaxOutputAndDeductsCredits()

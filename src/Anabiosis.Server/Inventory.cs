@@ -34,6 +34,18 @@ public sealed class Inventory
     // A slot still holds an item *type* rather than an item, so the one piece of per-item state the
     // game now needs lives here, alongside the slot, instead of turning every item into an object.
     public float?[] MainSlotTanks { get; } = new float?[MainSlotCount];
+    // Runs parallel to MainSlotTanks for guns: which kind of round is loaded (a gun takes its ordinary round or a
+    // variant of it - GunDefinitions.Variants). Only meaningful while the socket holds something; read through LoadedAmmo.
+    public ItemType?[] MainSlotTankTypes { get; } = new ItemType?[MainSlotCount];
+
+    public ItemType? LoadedAmmo(int slotIndex) =>
+        slotIndex >= 0 && slotIndex < MainSlotCount && MainSlotTanks[slotIndex] is not null ? MainSlotTankTypes[slotIndex] : null;
+
+    private void SetLoadedKind(int slotIndex, ItemType? kind)
+    {
+        if (slotIndex >= 0 && slotIndex < MainSlotCount)
+            MainSlotTankTypes[slotIndex] = kind;
+    }
     public Dictionary<EquipSlot, float?> EquippedTanks { get; } = new()
     {
         [EquipSlot.Headset] = null,
@@ -72,12 +84,51 @@ public sealed class Inventory
             return false;
         if (targetSlotIndex != WornSuitSlot && (targetSlotIndex < 0 || targetSlotIndex >= MainSlotCount))
             return false;
-        if (SocketedItem(targetSlotIndex) is not { } target || TankSockets.AcceptedTank(target) != sourceItem)
+        if (SocketedItem(targetSlotIndex) is not { } target || !TankSockets.Accepts(target, sourceItem))
             return false;
-        if (TankCharge(targetSlotIndex) is not null)
-            return false;
+        var loaded = TankCharge(targetSlotIndex);
+        var loadedKind = LoadedAmmo(targetSlotIndex) ?? TankSockets.AcceptedTank(target);
+        if (TankSockets.IsStack(sourceItem))
+        {
+            // Loose rounds go in from a stack: the gun is topped up to what it holds and the rest stays in the stack.
+            var capacity = TankSockets.CapacityOf(target);
+            var have = loaded ?? 0f;
+            if (have >= capacity)
+                return false;
+            if (have > 0f && loadedKind != sourceItem)
+                return false; // a different kind of round is in there: it has to come out first
+            SetLoadedKind(targetSlotIndex, sourceItem);
+            var stack = MainSlotTanks[sourceSlotIndex] ?? TankSockets.FullChargeOf(sourceItem);
+            var added = Math.Min(capacity - have, stack);
+            SetTank(targetSlotIndex, have + added);
+            if (stack - added <= 0f)
+            {
+                MainSlots[sourceSlotIndex] = null;
+                MainSlotTanks[sourceSlotIndex] = null;
+                HeldSlotIndices.Remove(sourceSlotIndex);
+            }
+            else
+                MainSlotTanks[sourceSlotIndex] = stack - added;
+            return true;
+        }
 
-        SetTank(targetSlotIndex, MainSlotTanks[sourceSlotIndex] ?? TankSockets.FullChargeOf(sourceItem));
+        var incoming = MainSlotTanks[sourceSlotIndex] ?? TankSockets.FullChargeOf(sourceItem);
+        if (loaded is { } old)
+        {
+            // A magazine offered to a gun that already has one in is a swap, as in Barotrauma: the new one goes
+            // in, the old one comes out into the slot the new one was carried in. Tanks do not swap.
+            if (GunDefinitions.Of(target) is null)
+                return false;
+            SetTank(targetSlotIndex, incoming);
+            SetLoadedKind(targetSlotIndex, sourceItem);
+            MainSlotTanks[sourceSlotIndex] = old;
+            if (loadedKind is { } oldKind)
+                MainSlots[sourceSlotIndex] = oldKind; // the magazine that came out may be of another kind
+            return true;
+        }
+
+        SetTank(targetSlotIndex, incoming);
+        SetLoadedKind(targetSlotIndex, sourceItem);
         MainSlots[sourceSlotIndex] = null;
         MainSlotTanks[sourceSlotIndex] = null;
         HeldSlotIndices.Remove(sourceSlotIndex);
@@ -92,18 +143,23 @@ public sealed class Inventory
             return false;
         if (TankCharge(slotIndex) is not { } charge)
             return false;
-        if (SocketedItem(slotIndex) is not { } owner || TankSockets.AcceptedTank(owner) is not { } tankType)
+        if (SocketedItem(slotIndex) is not { } owner || (LoadedAmmo(slotIndex) ?? TankSockets.AcceptedTank(owner)) is not { } tankType)
             return false;
 
         var freeIndex = Array.IndexOf(MainSlots, null);
         if (freeIndex < 0)
             return false;
 
+        // Loose rounds come out a stack at a time: a gun that holds more than one stack keeps the rest.
+        var taken = TankSockets.IsStack(tankType) ? Math.Min(charge, TankSockets.FullChargeOf(tankType)) : charge;
         MainSlots[freeIndex] = tankType;
-        MainSlotTanks[freeIndex] = charge;
-        SetTank(slotIndex, null);
+        MainSlotTanks[freeIndex] = taken;
+        SetTank(slotIndex, charge - taken > 0f ? charge - taken : null);
         return true;
     }
+
+    // A spent socket goes back to being empty (a revolver whose last round has gone - there is no empty "magazine" to take out).
+    public void ClearTank(int slotIndex) => SetTank(slotIndex, null);
 
     public void RefillTank(int slotIndex)
     {

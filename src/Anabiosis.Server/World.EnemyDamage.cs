@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
@@ -35,6 +35,22 @@ public sealed partial class World
                 continue;
             if (ApplyAttackToEnemy(enemy, EnemyWorldToLocal(enemy, from), EnemyWorldToLocal(enemy, to), shotDamage * PlayerShotWallDamageScale))
                 return true;
+        }
+
+        // The ambient traffic is hit the same way (World.NpcHulls.cs): a hull is built on the spot if the shell reaches one that was
+        // still only a point, and the ship that was hit is Provoked from then on.
+        foreach (var npc in _npcShips)
+        {
+            if (npc.Hull is { Alive: false })
+                continue;
+            if (!SegmentHitsCircle(from, to, npc.Position, NpcBroadHullRadius.Value))
+                continue;
+            var hull = EnsureNpcHull(npc);
+            if (ApplyAttackToEnemy(hull, EnemyWorldToLocal(hull, from), EnemyWorldToLocal(hull, to), shotDamage * PlayerShotWallDamageScale))
+            {
+                npc.Provoked = true;
+                return true;
+            }
         }
         return false;
     }
@@ -136,8 +152,13 @@ public sealed partial class World
     private void StepEnemyHulls(double deltaSeconds)
     {
         var dt = (float)deltaSeconds;
-        foreach (var enemy in _enemyShips.Where(e => e.Alive).ToList())
+        foreach (var enemy in SimulatedHulls().Where(e => e.Alive).ToList())
         {
+            // A wreck (World.Wrecks.cs) is already as broken as it gets: its holed plating must not count as
+            // fresh damage, or the "a compartment that lost a third of its walls blows up" rule would finish
+            // the hull off seconds after it appears (it did).
+            if (enemy.Derelict)
+                continue;
             if (enemy.ShipExplosion is not null)
             {
                 StepEnemyExplosion(enemy, dt);
@@ -317,13 +338,13 @@ public sealed partial class World
         {
             var distance = (float)(crew.Position - center).Length();
             if (distance < radius)
-                crew.Health = Math.Max(0f, crew.Health - BlastCrewDamage * (1f - distance / radius));
+                DamageBody(crew.Body, DamageKind.Blast, BlastCrewDamage * (1f - distance / radius));
         }
         foreach (var character in _characters.Values.Where(c => c.OnEnemyShip && !c.IsDead))
         {
             var distance = (float)(character.Position - center).Length();
             if (distance < radius)
-                character.Health = Math.Max(0f, character.Health - BlastCrewDamage * (1f - distance / radius));
+                DamageCharacter(character, DamageKind.Blast, BlastCrewDamage * (1f - distance / radius));
         }
         CaptureIfCrewWiped(enemy);
     }

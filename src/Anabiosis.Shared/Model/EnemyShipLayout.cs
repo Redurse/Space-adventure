@@ -1,4 +1,4 @@
-namespace Anabiosis.Shared.Model;
+﻿namespace Anabiosis.Shared.Model;
 
 // The hostile ship as a real ship (direct user request: enemies are simulated ships made of compartments, like the
 // player's, with people moving about it). Every enemy is the same hull - the frozen "крутой корабль"
@@ -66,9 +66,10 @@ public sealed class EnemyShipLayout
         return (new Vec2((minX + maxX) / 2, (minY + maxY) / 2), new Vec2((maxX - minX) / 2, (maxY - minY) / 2));
     }
 
-    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen)
+    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen,
+        TileMovement.MoveMemory? memory = null)
     {
-        var next = TileMovement.MoveAlongAxis(Tiles, position, delta);
+        var next = TileMovement.MoveAlongAxis(Tiles, position, delta, null, memory);
         return (next, TileMovement.RoomIdAt(Rooms, next) ?? roomId);
     }
 }

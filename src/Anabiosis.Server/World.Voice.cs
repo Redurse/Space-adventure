@@ -15,7 +15,7 @@ public sealed partial class World
 
     private void RelayVoiceChunk(Character character, VoiceChunkPayload payload)
     {
-        if (payload.Samples.Length == 0)
+        if (payload.Samples.Length == 0 || !VoiceChatEnabled)
             return;
         // Direct user request - radio needs a worn Radio (ItemType.Radio's own doc comment) to
         // transmit on; local/proximity voice needs no item at all. A radio chunk sent without one

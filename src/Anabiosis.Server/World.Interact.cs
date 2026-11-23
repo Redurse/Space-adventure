@@ -35,6 +35,11 @@ public sealed partial class World
             return;
         }
 
+        // Aboard a wreck the key picks up the nearest salvage in reach (World.Wrecks.cs); with nothing in reach
+        // it falls through to what it always did aboard another hull.
+        if (character.OnEnemyShip && TryTakeWreckLoot(character, null))
+            return;
+
         if (character.ManningTurretId is { } manned)
         {
             _turretRuntimes[manned].MannedByPlayerId = null;
@@ -50,7 +55,7 @@ public sealed partial class World
             return;
         }
 
-        if (character.Inventory.IsHolding(ItemType.MedKit) && character.Health < Character.MaxHealth)
+        if (character.Inventory.IsHolding(ItemType.MedKit) && character.Body.NeedsTreatment)
         {
             TryUseMedKit(character);
             return;
@@ -81,7 +86,10 @@ public sealed partial class World
             return;
         }
 
-        if (nearbyTurret is not null)
+        // With a wrench or screwdriver in hand an intact gun doesn't grab the press - the reach is 1.5 now that devices
+        // are solid, so a turret is often in range of whatever broken thing next to it the player came to fix.
+        var holdingRepairTool = character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver);
+        if (nearbyTurret is not null && !(holdingRepairTool && !_turretRuntimes[nearbyTurret.Id].Damaged))
         {
             var runtime = _turretRuntimes[nearbyTurret.Id];
             if (runtime.Damaged)
@@ -122,7 +130,7 @@ public sealed partial class World
         // already steps/finishes all five via RepairableBlockKinds/IsBlockBroken/SetBlockBroken).
         var nearbyBrokenBlock = RepairableBlockKinds
             .Select(RepairableBlock)
-            .FirstOrDefault(b => IsBlockBroken(b.Kind) && (b.Position - character.Position).Length() < InteractionRadius);
+            .FirstOrDefault(b => IsBlockBroken(b.Kind) && (b.Position - character.Position).Length() < BlockReach(b.Kind));
 
         if (nearbyBrokenBlock is not null)
         {
@@ -164,10 +172,13 @@ public sealed partial class World
         // at its own trunk wire this time - IsJunctionDamaged/RepairDeviceWiring both already
         // handle a Junction's id correctly with no change of their own). An undamaged one has
         // nothing left for F to do - it's a fixed fixture, not something the wrench relocates.
-        var nearbyJunction = _components.FirstOrDefault(c =>
-            c.Kind == ComponentKind.Junction &&
-            c.RoomId == character.RoomId &&
-            (c.Position - character.Position).Length() < InteractionRadius);
+        // Several boxes can be in reach at once - the damaged one, then the nearest, is the one meant.
+        var nearbyJunction = _components
+            .Where(c => c.Kind == ComponentKind.Junction && c.RoomId == character.RoomId &&
+                (c.Position - character.Position).Length() < InteractionRadius)
+            .OrderBy(c => IsJunctionDamaged(c.Id) ? 0 : 1)
+            .ThenBy(c => (c.Position - character.Position).Length())
+            .FirstOrDefault();
 
         if (nearbyJunction is not null && IsJunctionDamaged(nearbyJunction.Id))
         {
@@ -179,13 +190,12 @@ public sealed partial class World
         // Doors have their own hit points now too (game_design.md) - only a destroyed one has
         // anything to do here (an intact one is opened/closed by clicking it, not F), repaired by
         // the same wrench/screwdriver-driven minigame as everything else above.
-        var nearbyDestroyedDoor = AllShipDoors().FirstOrDefault(d =>
-            d.Connects(character.RoomId) && (d.Position - character.Position).Length() < InteractionRadius && IsDoorDestroyed(d.Id));
+        var nearbyDamagedDoor = AllShipDoors().FirstOrDefault(d =>
+            d.Connects(character.RoomId) && (d.Position - character.Position).Length() < InteractionRadius && DoorIsDamaged(d.Id));
 
-        if (nearbyDestroyedDoor.Id is not null)
+        if (nearbyDamagedDoor.Id is not null && HoldsRepairTool(character))
         {
-            if (character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver))
-                AttemptSystemRepair(nearbyDestroyedDoor.Id);
+            StartDoorRepair(character, nearbyDamagedDoor.Id);
             return;
         }
 
@@ -212,6 +222,13 @@ public sealed partial class World
             // the empty one to receive it, same as a ComponentMount only accepting an install into
             // a free socket.
             var equipping = !character.WearingSuit;
+            // Body armour sits where the suit goes: it comes off into a pocket first, or the suit stays in the locker.
+            if (equipping && character.Inventory.Equipped[EquipSlot.Suit] is { } wornArmor)
+            {
+                if (!character.Inventory.TryAdd(wornArmor))
+                    return;
+                character.Inventory.Equipped[EquipSlot.Suit] = null;
+            }
             if (equipping != SuitLockerHasSuit(nearbyLocker.Id))
                 return;
 

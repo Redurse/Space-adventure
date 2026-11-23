@@ -29,4 +29,7 @@ public sealed record ServerMessage(
     int PlayerId = 0,
     WorldSnapshot? Snapshot = null,
     string? Reason = null,
-    LobbySnapshot? Lobby = null);
+    LobbySnapshot? Lobby = null,
+    // Delta frames only (SnapshotDelta.cs): the snapshot properties left out of this frame because they are byte-for-byte what the previous frame on
+    // this connection carried; "Station.WallBlocks" names a property of a nested record.
+    IReadOnlyList<string>? Unchanged = null);

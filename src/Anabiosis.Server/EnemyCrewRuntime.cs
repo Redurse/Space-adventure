@@ -11,8 +11,25 @@ internal sealed class EnemyCrewRuntime
     public EnemyCrewSpawn Spawn { get; }
     // The gun this person mans (turret id on the CURRENT hull - it is re-pointed when the hull is rebuilt).
     public string? PostId { get; set; }
-    public float Health { get; set; } = MaxHealth;
-    public bool Alive => Health > 0;
+    // The same body model as a player (Shared/Model/BodyHealth.cs); Health is that body on the old 0..MaxHealth scale, so the code that
+    // just wants to hurt, heal or kill keeps working, while shots, blasts and bleeding go through real parts.
+    public BodyHealth Body { get; } = new();
+    public float Health
+    {
+        get => Body.Health * MaxHealth / BodyHealth.MaxVitality;
+        set => Body.SetHealth(value * BodyHealth.MaxVitality / MaxHealth);
+    }
+    public bool Alive => !Body.Dead;
+    // Unconscious or with a stopped heart: still there, but not walking, working or manning a gun.
+    public bool Downed => Body.IsDowned;
+    // Gunfire (World.Boarding.cs): fighters wear a vest and a helmet; each defender keeps its own pace of fire,
+    // counts the rounds left in its gun, and takes a moment to bring the gun up on a fresh target.
+    public ArmorWorn Armor => Spawn.Role == EnemyCrewRole.Fighter ? new ArmorWorn(true, true) : ArmorWorn.None;
+    public float WeaponsSkill => WeaponSkills.Starting(Spawn.Role);
+    public float FireCooldown { get; set; }
+    public float AimSeconds { get; set; }
+    public int RoundsLeft { get; set; } = -1;
+    public float FirstAidTimer;
     public Vec2 Position { get; set; }
     public string RoomId { get; set; }
     // Tiles still to walk through to reach GoalTile (centre to centre), nearest first.

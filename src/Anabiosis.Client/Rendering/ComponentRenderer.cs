@@ -19,11 +19,17 @@ public static class ComponentRenderer
     private const int MountSize = 16;
     private const int PinSize = 6;
 
+    // Wire visibility, "variant 3" of the user's choice (wiring-plan.md): thin and translucent while
+    // just playing, bright with every pin showing in wiring mode - a wire spool or screwdriver in
+    // hand (set by Game1 each frame; the editor's wiring mode joins it in W10).
+    public static bool WiringMode { get; set; }
+
     public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, WorldSnapshot snapshot, Vector2 origin, float totalSeconds)
     {
         DrawWires(spriteBatch, pixel, snapshot, origin);
         DrawJunctions(spriteBatch, pixel, font, snapshot, origin);
-        DrawPowerPins(spriteBatch, pixel, snapshot, origin);
+        if (WiringMode)
+            DrawPowerPins(spriteBatch, pixel, snapshot, origin);
         DrawMounts(spriteBatch, pixel, font, snapshot, origin);
         DrawWiresInProgress(spriteBatch, pixel, snapshot, origin, totalSeconds);
     }
@@ -36,7 +42,10 @@ public static class ComponentRenderer
     // would, instead of always looking intact.
     private static void DrawJunctions(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font, WorldSnapshot snapshot, Vector2 origin)
     {
-        foreach (var junction in snapshot.Wiring.Components.Where(c => c.Kind == ComponentKind.Junction))
+        // W4: a junction that IS one of the hull's real junction boxes already has its fixture art
+        // (ShipRenderer.DrawJunctionBox) - only the generated virtual boxes need this stand-in.
+        var realBoxes = (snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>()).Select(b => b.Id).ToHashSet();
+        foreach (var junction in snapshot.Wiring.Components.Where(c => c.Kind == ComponentKind.Junction && !realBoxes.Contains(c.Id)))
         {
             var damaged = snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == junction.Id)?.Damaged ?? false;
             var rect = ShipRenderer.GetBlockRect(junction.Position, ShipRenderer.NormalBlockSize, origin);
@@ -51,18 +60,37 @@ public static class ComponentRenderer
     // connector squares wire-laying actually targets.
     private static void DrawPowerPins(SpriteBatch spriteBatch, Texture2D pixel, WorldSnapshot snapshot, Vector2 origin)
     {
-        foreach (var component in snapshot.Wiring.Components.Where(c => c.Kind is ComponentKind.Distribution or ComponentKind.Junction or ComponentKind.Device))
+        foreach (var component in snapshot.Wiring.Components.Where(c => ComponentDefinitions.IsShipFixture(c.Kind)))
         {
             var size = FootprintSize(component, snapshot);
             var rect = ShipRenderer.GetBlockRect(component.Position, size, origin);
-            foreach (var (pinId, kind, index, total) in PowerPinLayout(component, snapshot))
+            foreach (var (pinId, kind, index, total) in FixturePinLayout(component, snapshot))
                 DrawPinStub(spriteBatch, pixel, PinPosition(rect, kind, index, total), kind);
         }
+    }
+
+    // W6: a ship fixture's full set of pins - its power pins (backbone only) plus its signal pins
+    // (ComponentDefinitions.DeviceSignalPins), inputs down the left edge and outputs down the right.
+    private static IEnumerable<(string PinId, PinKind Kind, int Index, int Total)> FixturePinLayout(Component component, WorldSnapshot snapshot)
+    {
+        var pins = (ComponentDefinitions.IsPowerBackbone(component.Kind)
+                ? PowerPinLayout(component, snapshot).Select(p => (p.PinId, p.Kind))
+                : Enumerable.Empty<(string PinId, PinKind Kind)>())
+            .Concat(ComponentDefinitions.DeviceSignalPins(component.Kind).Select(p => (PinId: p.Id, p.Kind)))
+            .ToList();
+        var inputs = pins.Where(p => p.Kind is PinKind.PowerIn or PinKind.SignalIn).ToList();
+        var outputs = pins.Where(p => p.Kind is PinKind.PowerOut or PinKind.SignalOut).ToList();
+        for (var i = 0; i < inputs.Count; i++)
+            yield return (inputs[i].PinId, inputs[i].Kind, i, inputs.Count);
+        for (var i = 0; i < outputs.Count; i++)
+            yield return (outputs[i].PinId, outputs[i].Kind, i, outputs.Count);
     }
 
     private static int FootprintSize(Component component, WorldSnapshot snapshot) => component.Kind switch
     {
         ComponentKind.Distribution => ShipRenderer.MediumBlockSize,
+        ComponentKind.Reactor => ShipRenderer.ReactorBlockSize,
+        ComponentKind.Battery => ShipRenderer.MediumBlockSize,
         ComponentKind.Device => snapshot.SystemDevices.FirstOrDefault(d => d.Id == component.Id)?.System == PowerSystemId.Engine
             ? ShipRenderer.BigBlockSize
             : ShipRenderer.NormalBlockSize,
@@ -80,19 +108,41 @@ public static class ComponentRenderer
             yield break;
         }
 
-        if (component.Kind == ComponentKind.Distribution)
+        if (component.Kind == ComponentKind.Reactor)
         {
-            var systems = Enum.GetValues<PowerSystemId>();
-            for (var i = 0; i < systems.Length; i++)
-                yield return ($"out-{systems[i]}".ToLowerInvariant(), PinKind.PowerOut, i, systems.Length);
+            yield return (ComponentDefinitions.ReactorOutPin().Id, PinKind.PowerOut, 0, 1);
             yield break;
         }
 
-        // Junction: exactly one input and one output, always - a system with several identical
-        // devices (Engine/Shields) now gets one junction PER device (WireGraphFactory) instead of
-        // one shared box fanning out to all of them, so there's never more than a single drop here.
+        if (component.Kind == ComponentKind.Battery)
+        {
+            yield return (ComponentDefinitions.BatteryInPin().Id, PinKind.PowerIn, 0, 1);
+            yield return (ComponentDefinitions.BatteryOutPin().Id, PinKind.PowerOut, 0, 1);
+            yield break;
+        }
+
+        if (component.Kind == ComponentKind.Distribution)
+        {
+            // W4: one input (reactor and battery feeds), one output per system plus the battery's
+            // charging output.
+            yield return (ComponentDefinitions.DistributionInPin().Id, PinKind.PowerIn, 0, 1);
+            var systems = Enum.GetValues<PowerSystemId>();
+            var outputs = systems.Length + 1;
+            for (var i = 0; i < systems.Length; i++)
+                yield return ($"out-{systems[i]}".ToLowerInvariant(), PinKind.PowerOut, i, outputs);
+            yield return (ComponentDefinitions.DistributionBatteryPin().Id, PinKind.PowerOut, systems.Length, outputs);
+            yield break;
+        }
+
+        // Junction: one input, and as many outputs as it has drops wired - a generated virtual box
+        // feeds a single device, a real junction box (W4) everything nearest to it.
+        var used = snapshot.Wiring.Wires
+            .Where(w => w.FromPin.ComponentId == component.Id && w.FromPin.PinId.StartsWith("out-"))
+            .Select(w => int.TryParse(w.FromPin.PinId[4..], out var n) ? n + 1 : 1)
+            .DefaultIfEmpty(1).Max();
         yield return ("in", PinKind.PowerIn, 0, 1);
-        yield return ("out-0", PinKind.PowerOut, 0, 1);
+        for (var i = 0; i < used; i++)
+            yield return ($"out-{i}", PinKind.PowerOut, i, used);
     }
 
     // Empty gnездо - a thin outline, nothing installed yet; occupied - the same beveled panel every
@@ -150,9 +200,10 @@ public static class ComponentRenderer
 
     private static (Color Fill, Color Border) CategoryColors(ComponentKind kind) => kind switch
     {
-        ComponentKind.GateAnd or ComponentKind.GateOr or ComponentKind.GateNot or ComponentKind.GateXor => (Color.SlateBlue * 0.7f, Color.SlateBlue),
-        ComponentKind.Timer or ComponentKind.Memory => (Color.Purple * 0.6f, Color.MediumPurple),
-        ComponentKind.Relay => (Color.DarkGoldenrod * 0.6f, Color.Gold),
+        ComponentKind.GateAnd or ComponentKind.GateOr or ComponentKind.GateNot or ComponentKind.GateXor
+            or ComponentKind.Comparator or ComponentKind.SignalCheck or ComponentKind.Math or ComponentKind.Function or ComponentKind.Regex => (Color.SlateBlue * 0.7f, Color.SlateBlue),
+        ComponentKind.Timer or ComponentKind.Memory or ComponentKind.Delay or ComponentKind.Oscillator => (Color.Purple * 0.6f, Color.MediumPurple),
+        ComponentKind.Relay or ComponentKind.Button or ComponentKind.Keyboard => (Color.DarkGoldenrod * 0.6f, Color.Gold),
         ComponentKind.OxygenSensor or ComponentKind.BreachSensor or ComponentKind.PowerLossSensor or ComponentKind.MotionSensor => (Color.SeaGreen * 0.6f, Color.LightSeaGreen),
         ComponentKind.AutoDoorController or ComponentKind.AlarmKlaxon or ComponentKind.LightToggle => (Color.DarkOrange * 0.6f, Color.Goldenrod),
         _ => (Color.DimGray * 0.6f, Color.LightGray),
@@ -191,8 +242,8 @@ public static class ComponentRenderer
     // Shared by AllPinHitRects and ConnectionsPanel (screwdriver "open the panel" view) - the same
     // built-in-vs-purchased split PowerPinLayout/SignalPinLayout already encode.
     internal static IEnumerable<(string PinId, PinKind Kind)> PinsFor(Component component, WorldSnapshot snapshot) =>
-        component.Kind is ComponentKind.Distribution or ComponentKind.Junction or ComponentKind.Device
-            ? PowerPinLayout(component, snapshot).Select(p => (p.PinId, p.Kind))
+        ComponentDefinitions.IsShipFixture(component.Kind)
+            ? FixturePinLayout(component, snapshot).Select(p => (p.PinId, p.Kind))
             : SignalPinLayout(component.Kind).Select(p => (p.PinId, p.Kind));
 
     // A short, readable name for a pin's owner - built-in power components don't have a purchasable
@@ -207,12 +258,23 @@ public static class ComponentRenderer
         var name = owner.Kind switch
         {
             ComponentKind.Distribution => "шина",
-            ComponentKind.Junction => "щиток",
-            ComponentKind.Device => "устройство",
+            ComponentKind.Junction => $"щиток {JunctionNumber(owner.Id)}",
+            // W5: which device it is matters once a box feeds several - name its system.
+            ComponentKind.Device => snapshot.SystemDevices.FirstOrDefault(d => d.Id == owner.Id) is { } device
+                ? SystemLabel(device.System).ToLowerInvariant()
+                : snapshot.Cameras.Any(c => c.Id == owner.Id) ? "камера" : "устройство",
+            ComponentKind.Reactor => "реактор",
+            ComponentKind.Battery => "батарея",
+            ComponentKind.Door => "дверь",
+            ComponentKind.Lamp => "лампа",
             _ => ComponentDefinitions.ShortLabel(owner.Kind),
         };
         return $"{name}.{pin.PinId}";
     }
+
+    // "junction-3" -> "3", "junction-oxygen" -> "oxygen": the part of a box's id that tells boxes
+    // apart when a panel lists several.
+    private static string JunctionNumber(string id) => id.StartsWith("junction-") ? id["junction-".Length..] : id;
 
     // Full display name for a component's own header line in ConnectionsPanel - unlike PinLabel
     // (short, inline with a pin id) this names the component itself, and looks up the actual system
@@ -225,7 +287,11 @@ public static class ComponentRenderer
         return component.Kind switch
         {
             ComponentKind.Distribution => "Распределительный блок",
-            ComponentKind.Junction => "Щиток",
+            ComponentKind.Junction => $"Щиток {JunctionNumber(componentId)}",
+            ComponentKind.Reactor => "Реактор",
+            ComponentKind.Battery => "Батарея",
+            ComponentKind.Door => "Дверь",
+            ComponentKind.Lamp => "Лампа",
             ComponentKind.Device => snapshot.SystemDevices.FirstOrDefault(d => d.Id == componentId) is { } device
                 ? $"Устройство: {SystemLabel(device.System)}"
                 : snapshot.Cameras.Any(c => c.Id == componentId)
@@ -255,10 +321,10 @@ public static class ComponentRenderer
         if (component is null)
             return null;
 
-        if (component.Kind is ComponentKind.Distribution or ComponentKind.Junction or ComponentKind.Device)
+        if (ComponentDefinitions.IsShipFixture(component.Kind))
         {
             var rect = ShipRenderer.GetBlockRect(component.Position, FootprintSize(component, snapshot), origin);
-            var match = PowerPinLayout(component, snapshot).FirstOrDefault(p => p.PinId == pin.PinId);
+            var match = FixturePinLayout(component, snapshot).FirstOrDefault(p => p.PinId == pin.PinId);
             return match.PinId is null ? null : PinPosition(rect, match.Kind, match.Index, match.Total);
         }
 
@@ -277,9 +343,17 @@ public static class ComponentRenderer
                 continue;
 
             var state = snapshot.Wiring.WireStates.FirstOrDefault(s => s.WireId == wire.Id);
-            var live = snapshot.Wiring.ComponentStates.FirstOrDefault(s => s.ComponentId == wire.FromPin.ComponentId)?.SignalValue ?? true;
+            // W6: a signal wire is lit by the value on its output end; a power wire by default.
+            var signal = snapshot.Wiring.PinSignals?.FirstOrDefault(s => s.Pin == wire.FromPin || s.Pin == wire.ToPin);
+            var live = signal is not null
+                ? SignalValues.IsTruthy(signal.Value)
+                : snapshot.Wiring.ComponentStates.FirstOrDefault(s => s.ComponentId == wire.FromPin.ComponentId)?.SignalValue ?? true;
             var color = state?.Damaged == true ? Color.OrangeRed : live ? Color.LimeGreen : Color.DimGray;
-            DrawWirePath(spriteBatch, pixel, from.Value, wire.Bends, to.Value, origin, color, 2);
+            if (WiringMode)
+                DrawWirePath(spriteBatch, pixel, from.Value, wire.Bends, to.Value, origin, color, 2);
+            else
+                DrawWirePath(spriteBatch, pixel, from.Value, wire.Bends, to.Value, origin,
+                    state?.Damaged == true ? color * 0.75f : color * 0.3f, 1);
         }
     }
 

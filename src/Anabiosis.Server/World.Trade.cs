@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
 
@@ -13,6 +13,9 @@ public sealed partial class World
 
     public int Credits { get; private set; } = StartingCredits;
 
+    // The lobby's round settings (GameServer.Lobby.cs): the crew's money at the start, set once when the round is built.
+    public void SetStartingCredits(int credits) => Credits = Math.Max(0, credits);
+
     // Originally a test-only precondition setter, same convention as DebugSetHullPlatingStock
     // (World.ShipBuilding.cs) - content-каталог отсеков's expensive entries (reactor 900cr, cockpit
     // 700cr, ...) exceed StartingCredits, and grinding real trades up to that just to isolate a
@@ -26,9 +29,12 @@ public sealed partial class World
 
     // Charges the crew wallet and adds the item to the character's inventory. No-ops (no credits
     // spent) if the crew can't afford it, the inventory row is full, or the ship isn't docked.
+    // A station whose trader has been killed sells and buys nothing until the next visit (World.StationCrime.cs).
+    private bool TraderIsDead => Station.Npcs.Any(n => n.Kind == NpcKind.Trader) && !HasLivingNpc(NpcKind.Trader);
+
     private void TryBuyItem(Character character, ItemType item)
     {
-        if (!IsDocked)
+        if (ServicePointId is null || ServiceTraderIsDead)
             return;
 
         // Reputation with whoever owns this station scales the price (game_design.md section 12,
@@ -51,7 +57,7 @@ public sealed partial class World
     // weapons like Rifle/Knife are — they're just not in the catalog).
     private void TrySellItem(Character character, int slotIndex)
     {
-        if (!IsDocked)
+        if (ServicePointId is null || ServiceTraderIsDead)
             return;
 
         if (character.Inventory.ItemAt(slotIndex) is not { } item)
@@ -66,6 +72,6 @@ public sealed partial class World
         // Sell prices move the same way as buy prices - an ally's station pays out better, a
         // hostile one lowballs you (the multiplier is inverted here, since a low multiplier means
         // "cheap for the player" on the buy side but "stingy" on the sell side).
-        Credits += TradeCatalog.SellPrice(good, LocalPriceMultiplier, DockedStationKind == StationKind.Mining);
+        Credits += TradeCatalog.SellPrice(good, LocalPriceMultiplier, ServiceStationKind == StationKind.Mining);
     }
 }

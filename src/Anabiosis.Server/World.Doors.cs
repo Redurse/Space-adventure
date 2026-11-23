@@ -47,8 +47,31 @@ public sealed partial class World
     // no special-casing needed - humble-soaring-cat.md, "убрать AirlockOuterDoor как отдельный
     // тип"). Shared by the repair-proximity check (World.SystemRepair.cs) and the random combat-
     // damage roll (World.EnemyAi.cs) so neither can drift out of sync with which doors actually exist.
+    // The doorways of an editor- or shipwright-built hull (Ship.DoorEdges) are physical doors too - same hit points, same cutter, same wrench - so they are
+    // listed here with the middle of the seam as their position (World.Doors.cs, DoorEdgeSeamCenter).
     private IEnumerable<(string Id, Func<string, bool> Connects, Vec2 Position)> AllShipDoors() =>
-        Ship.Doors.Select(d => (d.Id, (Func<string, bool>)d.Connects, d.Position));
+        Ship.Doors.Select(d => (d.Id, (Func<string, bool>)d.Connects, d.Position))
+            .Concat(Ship.DoorEdges.Select(e => (e.Id, (Func<string, bool>)(room => room == e.RoomAId || room == e.RoomBId), DoorEdgeSeamCenter(e))));
+
+    private static Vec2 DoorEdgeSeamCenter(ShipDoorEdge edge) => edge.Side == TileSide.East
+        ? new Vec2(edge.Coord.X + 1, edge.Coord.Y + 0.5)
+        : new Vec2(edge.Coord.X + 0.5, edge.Coord.Y + 1);
+
+    private void SetDoorHp(string doorId, float hp)
+    {
+        if (_doorEdgeHp.ContainsKey(doorId))
+            _doorEdgeHp[doorId] = hp;
+        else
+            _doorHp[doorId] = hp;
+    }
+
+    private void ForceDoorOpen(string doorId)
+    {
+        if (_doorEdgeOpen.ContainsKey(doorId))
+            _doorEdgeOpen[doorId] = true;
+        else
+            _doorOpen[doorId] = true;
+    }
 
     // One shot, same as a wall block's own combat damage (World.WallBlocks.cs's DamageWallBlock
     // call with WallBlockMaxHp) - a hit either misses entirely or wrecks the door outright, no
@@ -57,8 +80,8 @@ public sealed partial class World
     // own random-attack roll (World.EnemyAi.cs) and tests both call this directly.
     public void DamageDoor(string doorId)
     {
-        _doorHp[doorId] = 0f;
-        _doorOpen[doorId] = true;
+        SetDoorHp(doorId, 0f);
+        ForceDoorOpen(doorId);
     }
 
     // "ТОПОР ГОШИ ДЛЯ ЛОМАНИЯ ДВЕРЕЙ" - a hand tool that chops down a closed door two swings at a
@@ -73,9 +96,9 @@ public sealed partial class World
     public void ChopDoor(string doorId, float damage)
     {
         var next = Math.Max(0f, DoorHp(doorId) - damage);
-        _doorHp[doorId] = next;
+        SetDoorHp(doorId, next);
         if (next <= 0f)
-            _doorOpen[doorId] = true; // same as a destroyed door taking full combat damage
+            ForceDoorOpen(doorId); // same as a destroyed door taking full combat damage
     }
 
     // Swings whatever axe is in hand at the nearest closed, not-yet-destroyed door in reach - an
@@ -104,6 +127,44 @@ public sealed partial class World
     {
         foreach (var playerId in _axeCooldowns.Keys.ToList())
             _axeCooldowns[playerId] = Math.Max(0, _axeCooldowns[playerId] - (float)deltaSeconds);
+    }
+
+    // Mending a door, Barotrauma-style: stand at a damaged or broken door with a wrench in hand and work it (F near it, or a click on it) - its hit
+    // points climb back while you stay in reach with the wrench, and a door that was wrecked answers the controls again as soon as it has any left.
+    // The long device timer of World.SystemRepair.cs is for wiring and consoles; nobody should spend hours on a door.
+    public const float DoorRepairHpPerSecond = DoorMaxHp / 8f;
+    private readonly Dictionary<int, string> _doorRepairs = new();
+
+    private static bool HoldsRepairTool(Character character) =>
+        character.Inventory.IsHolding(ItemType.Wrench) || character.Inventory.IsHolding(ItemType.Screwdriver);
+
+    private bool DoorIsDamaged(string doorId) => DoorHp(doorId) < DoorMaxHp - 0.01f;
+
+    private void StartDoorRepair(Character character, string doorId)
+    {
+        if (!HoldsRepairTool(character) || character.IsDowned || !character.Body.HandsUsable || !DoorIsDamaged(doorId))
+            return;
+        var door = AllShipDoors().FirstOrDefault(d => d.Id == doorId);
+        if (door.Id is null || !door.Connects(character.RoomId) || (door.Position - character.Position).Length() >= InteractionRadius)
+            return;
+        _doorRepairs[character.PlayerId] = doorId;
+    }
+
+    private void StepDoorRepairs(float dt)
+    {
+        foreach (var (playerId, doorId) in _doorRepairs.ToList())
+        {
+            var door = AllShipDoors().FirstOrDefault(d => d.Id == doorId);
+            if (!_characters.TryGetValue(playerId, out var character) || door.Id is null || character.Health <= 0f || character.IsDowned
+                || !character.Body.HandsUsable || !HoldsRepairTool(character) || !door.Connects(character.RoomId)
+                || (door.Position - character.Position).Length() >= InteractionRadius || !DoorIsDamaged(doorId))
+            {
+                _doorRepairs.Remove(playerId);
+                continue;
+            }
+            _repairingNow.Add(playerId);
+            SetDoorHp(doorId, Math.Min(DoorMaxHp, DoorHp(doorId) + DoorRepairHpPerSecond * dt));
+        }
     }
 
     // Test-only precondition setter, same convention as every other Debug* helper (e.g.
@@ -160,6 +221,9 @@ public sealed partial class World
     // E-key minigame is how a destroyed one gets fixed), so there's no welding branch here.
     private string? GetDoorToolTargetId(Character character)
     {
+        // Mending shows the same bar as cutting does.
+        if (_doorRepairs.TryGetValue(character.PlayerId, out var mendingDoorId))
+            return mendingDoorId;
         if (!IsCutting(character.PlayerId))
             return null;
         // Same lookup CutIndoorAlongFlameOnEnemyShip itself uses (World.Cutting.cs), so the bar

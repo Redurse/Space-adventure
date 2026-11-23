@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
@@ -90,11 +90,12 @@ public sealed partial class World
         _warEffort.Remove(key);
     }
 
-    private bool IsHostileHere => GetStanding(DockedFaction) <= FactionDefinitions.HostileThreshold;
+    // Of the station the services are used at: the one docked at, or the one on the comms line (World.Comms.cs).
+    private bool IsHostileHere => GetStanding(ServiceFaction) <= FactionDefinitions.HostileThreshold;
 
     // Applied to both buy and sell prices at the docked station (World.Trade.cs).
     private float LocalPriceMultiplier =>
-        FactionDefinitions.PriceMultiplier(DockedFaction, GetStanding(DockedFaction));
+        FactionDefinitions.PriceMultiplier(ServiceFaction, GetStanding(ServiceFaction)) * Modifiers.ShopPrice;
 
     // Same standing that moves prices also moves how hard a sector's defenders are to get past
     // (World.EnemyFleet.cs's SpawnEnemySquadron, called from World.Voyage.cs's Arrive): a faction
@@ -119,6 +120,8 @@ public sealed partial class World
     // always has) never needs to know a war exists at all.
     private IReadOnlyList<GalaxyPoint> CreateGalaxyPoints() =>
         GalaxyMap.GetSystem(_currentSystemId).Points
+            // a dead station is not sent until the crew has found it (World.Exploration.cs)
+            .Where(p => p.Kind != GalaxyPointKind.AbandonedStation || ExplorationOf(_currentSystemId).Identified.Contains(p.Id))
             .Select(p => OwnerOf(p.Id) == p.Faction ? p : p with { Faction = OwnerOf(p.Id) })
             .ToArray();
 }

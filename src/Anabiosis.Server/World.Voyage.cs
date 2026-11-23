@@ -40,7 +40,7 @@ public sealed partial class World
     private const float FieldEdgeSafetyMarginFraction = 192f / 4800f;
     private float FieldEdgeSafetyMargin => AsteroidField.Width * FieldEdgeSafetyMarginFraction;
 
-    public GalaxyMap GalaxyMap { get; } = GalaxyMap.CreateStarter();
+    public GalaxyMap GalaxyMap { get; }
 
     // Which StarSystem the ship is currently in (World.StarSystems.cs) - changed only by warp;
     // AsteroidField resolves through it rather than through a single stored instance.
@@ -130,6 +130,13 @@ public sealed partial class World
             if (HasFledTheNpcBattle())
                 FleeNpcBattle();
         }
+        // The galactic war reaching the ship (World.WarBattle.cs): a third kind of fight, never set together with the others.
+        else if (_battleWar)
+        {
+            ResolveWarBattleLosses();
+            if (HasFledTheWarBattle())
+                FleeWarBattle();
+        }
         else
         {
             TryEngageHostileSector();
@@ -154,8 +161,11 @@ public sealed partial class World
     // one that still lets you approach, just not peacefully.
     private void UpdateNearestStation()
     {
+        // A dead station counts once the crew has found it (World.Exploration.cs) - before that it is not
+        // somewhere the ship can know to dock.
+        var found = ExplorationOf(_currentSystemId).Identified;
         var nearest = GalaxyMap.GetSystem(_currentSystemId).Points
-            .Where(p => p.Kind == GalaxyPointKind.Station)
+            .Where(p => p.Kind == GalaxyPointKind.Station || (p.Kind == GalaxyPointKind.AbandonedStation && found.Contains(p.Id)))
             .OrderBy(p => (ResolveGalaxyPointPosition(p) - _shipFieldPosition).Length())
             .FirstOrDefault();
         _nearestStationPointId = nearest?.Id;
@@ -165,7 +175,7 @@ public sealed partial class World
         var nearestPosition = ResolveGalaxyPointPosition(nearest);
         Station.RepositionTo(nearestPosition);
 
-        if (_battleSectorPointId is null && nearest.Id != _recentlyDisengagedSectorId &&
+        if (_battleSectorPointId is null && nearest.Id != _recentlyDisengagedSectorId && nearest.Kind == GalaxyPointKind.Station &&
             (nearestPosition - _shipFieldPosition).Length() <= nearest.CaptureRadius &&
             GetStanding(OwnerOf(nearest.Id)) <= FactionDefinitions.HostileThreshold)
             StartBattle(nearest, StationDefenseSquadronSize);
@@ -208,7 +218,7 @@ public sealed partial class World
     private void ResolveEnemyLosses()
     {
         SpawnEnemyReinforcements();
-        var stillFlying = _enemyShips.Count(e => e.Alive) + _enemyReinforcements;
+        var stillFlying = _enemyShips.Count(e => e.Alive && !e.Derelict) + _enemyReinforcements;
         // A station's own defensive squadron (UpdateNearestStation, M37) only exists because
         // standing was already hostile - it isn't a raid on anyone's territory. Charging it the
         // same per-kill standing/war-effort cost as attacking a hostile sector out in the field
@@ -317,6 +327,12 @@ public sealed partial class World
         SetShipFieldPosition(DockBerthPosition);
         _dockedPointId = pointId;
         AutosavePending = true; // game_design.md section 5 - docking is the save point
+        if (IsAbandonedStationPoint(pointId))
+        {
+            // Nobody here to refuel, repair or restock anything - just the salvage (World.AbandonedStations.cs).
+            PlaceStationSalvage(pointId);
+            return;
+        }
         ResetStationCrimeState(); // a new visit finds the crates restocked and the guards calm
         PowerGrid.Reactor.Refuel();
         RefillOxygenTanks(); // a station resupplies air the same way it refuels and repairs

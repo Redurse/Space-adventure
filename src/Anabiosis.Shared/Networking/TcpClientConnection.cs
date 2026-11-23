@@ -20,6 +20,7 @@ public sealed class TcpClientConnection : IClientConnection, IDisposable
     private readonly ConcurrentQueue<ClientCommand> _outgoing = new();
     private readonly AutoResetEvent _outgoingReady = new(false);
     private WorldSnapshot? _latest;
+    private readonly SnapshotDeltaDecoder _deltaDecoder = new(); // read loop only: rebuilds every frame in arrival order, before the latest-wins mailbox
     private LobbySnapshot? _latestLobby;
     private volatile bool _closed;
 
@@ -86,7 +87,7 @@ public sealed class TcpClientConnection : IClientConnection, IDisposable
                 if (message is null)
                     break;
                 if (message.Kind == ServerMessageKind.Snapshot && message.Snapshot is { } snapshot)
-                    Volatile.Write(ref _latest, snapshot);
+                    Volatile.Write(ref _latest, _deltaDecoder.Decode(snapshot, message.Unchanged));
                 else if (message.Kind == ServerMessageKind.Lobby && message.Lobby is { } lobby)
                     Volatile.Write(ref _latestLobby, lobby);
             }

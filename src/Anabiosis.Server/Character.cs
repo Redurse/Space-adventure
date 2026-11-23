@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
@@ -28,6 +28,8 @@ public sealed class Character
     // Typed at the menu, echoed on every ClientCommand (World.cs's ApplyCommand) - null until the
     // first command arrives, and always null for a bot (BotName is its name instead).
     public string? Nickname { get; set; }
+    // The appearance chosen in the lobby (null: the figure picks one from the player id).
+    public CharacterLook? Look { get; set; }
     // Round-trip time in ms, updated in ApplyCommand off the client's own echoed timestamp
     // (CharacterState.PingMs's own doc comment has the full reasoning).
     public float PingMs { get; set; }
@@ -35,6 +37,8 @@ public sealed class Character
     public string RoomId { get; set; }
     public string? ManningTurretId { get; set; }
     public bool IsAtHelm { get; set; }
+    // Whether this character is in the middle of squeezing through a narrow gap (TileMovement.MoveMemory).
+    public TileMovement.MoveMemory MoveMemory { get; } = new();
     // M57 - the Engineer tab's own device list (World.SystemRepair.cs's StepSystemRepairFor):
     // which device this character is remotely focused on repairing from that list, or null for
     // none. Unconditionally overwritten every ApplyCommand the same way HelmThrottle is ("zero/
@@ -57,14 +61,28 @@ public sealed class Character
     public ScannerMode ScannerMode { get; set; }
     public Inventory Inventory { get; } = new();
     public bool CarryingAmmoCrate => Inventory.Has(ItemType.AmmoCrate);
-    public float Health { get; set; } = MaxHealth;
+    // The medical state (Anabiosis.Shared.Model.BodyHealth): injuries per body part and whole-body conditions. Health is READ OFF it
+    // (it is what is left of 100 once everything wrong is subtracted); setting it still works for callers that just hurt, heal or kill.
+    public BodyHealth Body { get; } = new();
+    public float Health { get => Body.Health; set => Body.SetHealth(value); }
     public const float BleedingThreshold = 50f;
-    public bool IsBleeding => Health > 0 && Health < BleedingThreshold;
+    public bool IsBleeding => Body.IsBleeding;
+    // Unconscious or with a stopped heart: alive, but can do nothing until someone helps (World.Medical.cs).
+    public bool IsDowned => Body.IsDowned;
     // Same "derived from Health, no separate flag to keep in sync" shape as IsBleeding just above,
     // and the same convention World.Boarding.cs's own EnemyCrewState.Alive/StationCrimeState.Alive
     // already use the other way round. No new protocol field needed - CharacterState.Health is
     // already networked, so the client derives death (and the death screen) from it directly.
-    public bool IsDead => Health <= 0f;
+    public bool IsDead => Body.Dead;
+
+    // The weapons skill (WeaponSkills.cs): what the job starts with, plus what has been earned by hurting hostiles.
+    public float WeaponsSkillGained { get; set; }
+    public float WeaponsSkill => Math.Min(WeaponSkills.Max, (Role is { } role ? WeaponSkills.Starting(role) : 20f) + WeaponsSkillGained);
+    public void GainWeaponsSkill(float damageDone)
+    {
+        if (damageDone > 0f)
+            WeaponsSkillGained = Math.Min(WeaponSkills.Max, WeaponsSkillGained + WeaponSkills.GainFor(damageDone, WeaponsSkill));
+    }
     // Direct user request ("через 10 секунд... в игре сверху пишется таймер... игрок спанился на
     // корабле в кокпите") - 0 while alive (World.Respawn.cs's own StepRespawn arms it the first
     // tick IsDead is found true), counts down to 0 while dead, echoed to the client

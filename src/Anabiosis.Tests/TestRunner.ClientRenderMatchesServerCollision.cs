@@ -42,13 +42,15 @@ internal static partial class TestRunner
 
         var deviceKinds = new System.Collections.Generic.Dictionary<TileCoord, CustomDeviceKind>
         {
+            // Laid out without overlaps, the way the editor allows - devices are solid now, and a 4x4
+            // reactor drawn over the others used to box the spawn into a pocket.
             [new TileCoord(1, 1)] = CustomDeviceKind.Reactor,
-            [new TileCoord(2, 1)] = CustomDeviceKind.Distribution,
-            [new TileCoord(3, 1)] = CustomDeviceKind.Helm,
-            [new TileCoord(4, 1)] = CustomDeviceKind.Navigation,
-            [new TileCoord(5, 1)] = CustomDeviceKind.Oxygen,
-            [new TileCoord(1, 2)] = CustomDeviceKind.SuitLocker,
-            [new TileCoord(2, 2)] = CustomDeviceKind.StorageRack,
+            [new TileCoord(5, 1)] = CustomDeviceKind.Distribution,
+            [new TileCoord(5, 4)] = CustomDeviceKind.Helm,
+            [new TileCoord(5, 7)] = CustomDeviceKind.Navigation,
+            [new TileCoord(0, 1)] = CustomDeviceKind.Oxygen,
+            [new TileCoord(0, 2)] = CustomDeviceKind.SuitLocker,
+            [new TileCoord(0, 3)] = CustomDeviceKind.StorageRack,
         };
         foreach (var (coord, kind) in deviceKinds)
             tiles.PlaceDevice(coord, kind.ToString());

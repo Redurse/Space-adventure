@@ -69,7 +69,7 @@ public partial class Game1
     private bool _editorPanDragEngaged;
     private const int EditorPanDragThreshold = 6;
 
-    private enum EditorTool { Floor, Wall, Door, Terminal, Device, Zone, Engine, Compartment, DoubleEngine }
+    private enum EditorTool { Floor, Wall, Door, Terminal, Device, Zone, Engine, Compartment, DoubleEngine, Wire }
     private enum EditorAction { Back, New, Save, SaveAs, Load, Play }
 
     private static readonly float[] EditorForwardOptions = { 0f, 90f, 180f, -90f };
@@ -331,6 +331,7 @@ public partial class Game1
             _editorCompartmentProtected.Clear();
             _editorCompartmentEntryId.Clear();
             _editorCompartmentPlacement.Clear();
+            ClearEditorWires();
         }
         _editorTool = EditorTool.Floor;
         _editorWallMaterial = WallMaterial.Standard;
@@ -463,6 +464,9 @@ public partial class Game1
                 break;
             case EditorTool.Compartment:
                 HandleCompartmentToolInput(leftClicked, rightClicked, keyboard);
+                break;
+            case EditorTool.Wire:
+                HandleWireToolInput(leftClicked, rightClicked);
                 break;
         }
     }
@@ -1535,6 +1539,8 @@ public partial class Game1
 
         var rotated = CompartmentPlacer.Rotate(entry, _editorCompartmentPendingRotation);
         var anchor = new TileCoord(clicked.X - rotated.Width / 2, clicked.Y - rotated.Height / 2);
+        // Near a door of what is already placed that this compartment's own door lines up with, it snaps there - the two doors become one.
+        anchor = CompartmentBuilder.SnapToDoors(_editorTiles, new HashSet<TileCoord>(), entry, anchor, _editorCompartmentPendingRotation);
         var instance = $"compartment-{_editorNextCompartmentInstance++}";
         var result = CompartmentPlacer.Stamp(_editorTiles, entry, anchor, _editorCompartmentPendingRotation, instance);
         if (!result.Success)
@@ -1625,6 +1631,11 @@ public partial class Game1
                 _editorTiles.RemoveDevice(coord);
             _editorTiles.SetFloor(coord, false);
         }
+        // Doors that stood on the seams of the removed compartment: one with floor left on neither side has nothing to open onto and goes; one
+        // that still has floor on one side stays, as a door out of the compartment that is left (an airlock where the other side is now empty).
+        foreach (var key in _editorTiles.DoorEdges.Keys.ToList())
+            if (_editorTiles.CellAt(key.Coord) is not { HasFloor: true } && _editorTiles.CellAt(key.Side.Offset(key.Coord)) is not { HasFloor: true })
+                _editorTiles.RemoveDoorEdge(key.Coord, key.Side);
         _editorCompartmentTiles.Remove(instanceId);
         _editorCompartmentProtected.Remove(instanceId);
         _editorCompartmentEntryId.Remove(instanceId);
@@ -1752,6 +1763,7 @@ public partial class Game1
         _editorCompartmentProtected.Clear();
         _editorCompartmentEntryId.Clear();
         _editorCompartmentPlacement.Clear();
+        ClearEditorWires();
         _editorCurrentSlotName = null; // a blank hull isn't the previously-open named slot any more
         SaveEditorDefinition();
     }

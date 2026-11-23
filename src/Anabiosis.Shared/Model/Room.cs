@@ -40,10 +40,37 @@ public sealed record Room(string Id, string Name, IReadOnlyList<RectF> Rects)
     // Derived bounding box - every read site that only ever wants "a" size/position (lighting
     // radius, UI, HullSkin's nose/flank reach math) keeps working unchanged. Equals the true single
     // rect exactly whenever Rects.Count == 1 (every hand-authored hull, forever).
-    public float X => Rects.Min(r => r.X);
-    public float Y => Rects.Min(r => r.Y);
-    public float Width => Rects.Max(r => r.Right) - X;
-    public float Height => Rects.Max(r => r.Bottom) - Y;
+    // Computed once per room, with plain loops: every one of these used to be a LINQ pass (an enumerator and a delegate each), and they are read
+    // hundreds of times a frame by rendering, lighting and physics. Rects is never changed after construction.
+    private sealed record Bounds(float X, float Y, float Width, float Height);
+    private Bounds? _bounds;
+
+    private Bounds Box
+    {
+        get
+        {
+            if (_bounds is { } cached)
+                return cached;
+            var minX = float.MaxValue;
+            var minY = float.MaxValue;
+            var maxRight = float.MinValue;
+            var maxBottom = float.MinValue;
+            for (var i = 0; i < Rects.Count; i++)
+            {
+                var rect = Rects[i];
+                minX = MathF.Min(minX, rect.X);
+                minY = MathF.Min(minY, rect.Y);
+                maxRight = MathF.Max(maxRight, rect.Right);
+                maxBottom = MathF.Max(maxBottom, rect.Bottom);
+            }
+            return _bounds = new Bounds(minX, minY, maxRight - minX, maxBottom - minY);
+        }
+    }
+
+    public float X => Box.X;
+    public float Y => Box.Y;
+    public float Width => Box.Width;
+    public float Height => Box.Height;
     public float Left => X;
     public float Right => X + Width;
     public float Top => Y;
@@ -56,5 +83,11 @@ public sealed record Room(string Id, string Name, IReadOnlyList<RectF> Rects)
         ? Rects[0].Center
         : RoomGeometry.AreaWeightedCentroid(Rects);
 
-    public bool Contains(Vec2 p) => Rects.Any(r => r.Contains(p));
+    public bool Contains(Vec2 p)
+    {
+        for (var i = 0; i < Rects.Count; i++)
+            if (Rects[i].Contains(p))
+                return true;
+        return false;
+    }
 }

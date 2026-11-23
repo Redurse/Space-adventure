@@ -1,4 +1,4 @@
-﻿namespace Anabiosis.Shared.Model;
+namespace Anabiosis.Shared.Model;
 
 // M80 (humble-soaring-cat.md) - the first of 5 milestones (M80-M84) replacing free-tile painting
 // with a Cosmoteer/Space-Haven-style "place a whole pre-baked compartment, then outfit it" building
@@ -26,6 +26,9 @@ public enum CompartmentType
     Weapons,
     Medical,
     CrewQuarters,
+    // The outpost compartments (the author's hand-drawn modules of an outpost): shown apart, in their own colour, in the shipwright's list and
+    // the editor's catalog, so they are told from the ship's own compartments at a glance.
+    Outpost,
 }
 
 // One device baked into a compartment template. RelativePosition is the device's own footprint
@@ -57,7 +60,18 @@ public sealed record CompartmentDeviceSpec(CustomDeviceKind Kind, TileCoord Rela
 // itself. The wall tile itself must already be Solid with a matching half-block by the time this is
 // applied (WallOpenSides above, or the compartment's own ring - CompartmentPlacer.Stamp orders its
 // steps accordingly), or TileGrid.PlaceRecessedWallDevice throws.
-public sealed record CompartmentWallDeviceSpec(CustomDeviceKind Kind, TileCoord RelativePosition);
+//
+// Recessed: false is the other mode (TileGrid.PlaceWallDevice) - the Terminal/WallLamp stands on a FLOOR tile against a full-thickness wall,
+// RelativePosition is that floor tile and MountSide the side the wall is on (it turns with the compartment). Entries from before this field
+// are all recessed.
+public sealed record CompartmentWallDeviceSpec(CustomDeviceKind Kind, TileCoord RelativePosition, bool Recessed = true, TileSide? MountSide = null);
+
+// A door on the seam between two tiles, exactly as the Ship Editor's door tool leaves it (TileGrid.DoorEdges): RelativePosition is the tile and
+// Side the side of it the door is on, and either flank tile may lie just OUTSIDE the footprint (a door on the compartment's outer face).
+// Group names the segments of one wide door, which share an id. The footprint-side flank is left as plain floor (no wall ring there), so the
+// opening is walkable; where the outside is open space the door is an airlock, where another compartment's matching door already stands the
+// two become ONE door (CompartmentPlacer.Stamp), where the outside is a wall it is simply not made.
+public sealed record CompartmentDoorEdgeSpec(TileCoord RelativePosition, TileSide Side, string Group);
 
 // An INTERIOR wall tile, beyond the compartment's own outer ring (CompartmentPlacer's own IsRingTile
 // never walls one of these on its own) - direct user request ("стены не касаются внешней оболочки...
@@ -109,8 +123,11 @@ public sealed record CompartmentCatalogEntry(
     // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - see
     // CompartmentExtraWallSpec/CompartmentWallDeviceSpec's own doc comments.
     IReadOnlyList<CompartmentExtraWallSpec>? ExtraWallsRaw = null,
-    IReadOnlyList<CompartmentWallDeviceSpec>? WallDevicesRaw = null)
+    IReadOnlyList<CompartmentWallDeviceSpec>? WallDevicesRaw = null,
+    // The doors the author drew on the compartment's seams (see CompartmentDoorEdgeSpec) - the outpost compartments carry them.
+    IReadOnlyList<CompartmentDoorEdgeSpec>? DoorEdgesRaw = null)
 {
+    public IReadOnlyList<CompartmentDoorEdgeSpec> DoorEdges { get; init; } = DoorEdgesRaw ?? Array.Empty<CompartmentDoorEdgeSpec>();
     public CompartmentCatalogEntry(string Id, string DisplayName, CompartmentType Type, int Width, int Height,
         IReadOnlyList<CompartmentDeviceSpec> Devices, IReadOnlyList<CompartmentEngineSpec> Engines, CompartmentAirlockSpec? Airlock = null,
         IReadOnlyList<CompartmentWallOpenSideSpec>? WallOpenSidesRaw = null)
@@ -530,6 +547,427 @@ public static class CompartmentCatalog
                 new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(6, 0)),
                 new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 7)),
                 new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(6, 7)),
+            }),
+        // The medbay: a plain 6x4 ward with lamps. What makes it a medbay is the server: treatment given while the patient lies in a room
+        // of this type goes faster and the patient recovers on their own (World.Treatment.cs, MedbayTreatmentFactor).
+        new CompartmentCatalogEntry(
+            Id: "medbay",
+            DisplayName: "Медотсек",
+            Type: CompartmentType.Medical,
+            FootprintRects: new[]
+            {
+                new RectF(0, 0, 6, 4),
+            },
+            Devices: NoDevices,
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 3), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 3), TileSide.South),
+            },
+            WallDevicesRaw: new[]
+            {
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 0)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(4, 0)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 3)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(4, 3)),
+            }),
+        // The outpost compartments the author drew in the Ship Editor ("аванпост переходный отсек", "Реакторный отсек аванпоста", "администрация аванпоста",
+        // "инжинерный отсек аванпроста", "стыковочный шлюз аванпоста"), transcribed 1:1 like every round above: shape, devices, half-block walls, wall lamps and
+        // terminals (recessed or standing on the floor), and the doors on tile seams (DoorEdgesRaw) - where two compartments' doors coincide they become one.
+        new CompartmentCatalogEntry(
+            Id: "outpost-hub",
+            DisplayName: "Переходный отсек аванпоста",
+            Type: CompartmentType.Outpost,
+            FootprintRects: new[]
+            {
+                new RectF(2, 0, 6, 10),
+                new RectF(0, 2, 2, 6),
+                new RectF(8, 2, 2, 6),
+            },
+            Devices: NoDevices,
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 2), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 2), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 7), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 7), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 8), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 8), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 9), TileSide.South),
+            },
+            ExtraWallsRaw: new[]
+            {
+                new CompartmentExtraWallSpec(new TileCoord(2, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(7, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(2, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(7, 7)),
+            },
+            WallDevicesRaw: new[]
+            {
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(2, 1)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(7, 1)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 2)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(8, 2)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(2, 3), Recessed: false, MountSide: TileSide.North),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(7, 3), Recessed: false, MountSide: TileSide.North),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(2, 6), Recessed: false, MountSide: TileSide.South),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(7, 6), Recessed: false, MountSide: TileSide.South),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 7)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(8, 7)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(2, 8)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(7, 8)),
+            },
+            DoorEdgesRaw: new[]
+            {
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 4), TileSide.East, "g22"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 5), TileSide.East, "g22"),
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 4), TileSide.East, "g23"),
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 5), TileSide.East, "g23"),
+                new CompartmentDoorEdgeSpec(new TileCoord(4, 9), TileSide.South, "g24"),
+                new CompartmentDoorEdgeSpec(new TileCoord(5, 9), TileSide.South, "g24"),
+                new CompartmentDoorEdgeSpec(new TileCoord(4, -1), TileSide.South, "g25"),
+                new CompartmentDoorEdgeSpec(new TileCoord(5, -1), TileSide.South, "g25"),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "outpost-reactor",
+            DisplayName: "Реакторный отсек аванпоста",
+            Type: CompartmentType.Outpost,
+            FootprintRects: new[]
+            {
+                new RectF(1, 0, 8, 10),
+                new RectF(0, 2, 1, 6),
+                new RectF(9, 2, 1, 6),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Reactor, new TileCoord(3, 1), IsCore: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(3, 8), IsCore: false, Rotated: true, HalfSide: TileSide.South),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(4, 8), IsCore: false, Rotated: true, HalfSide: TileSide.South),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(5, 8), IsCore: false, Rotated: true, HalfSide: TileSide.South),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(6, 8), IsCore: false, Rotated: true, HalfSide: TileSide.South),
+                new CompartmentDeviceSpec(CustomDeviceKind.Distribution, new TileCoord(5, 5), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Battery, new TileCoord(4, 5), IsCore: false),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 5), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 5), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 8), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 8), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 9), TileSide.South),
+            },
+            ExtraWallsRaw: new[]
+            {
+                new CompartmentExtraWallSpec(new TileCoord(1, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(8, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(3, 5)),
+                new CompartmentExtraWallSpec(new TileCoord(6, 5)),
+                new CompartmentExtraWallSpec(new TileCoord(1, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(8, 7)),
+            },
+            WallDevicesRaw: new[]
+            {
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(2, 0)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(7, 0)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(0, 3)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(9, 3)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(3, 5)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(6, 5)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(2, 9)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(7, 9)),
+            },
+            DoorEdgesRaw: new[]
+            {
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 4), TileSide.East, "g26"),
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 5), TileSide.East, "g26"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 4), TileSide.East, "g27"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 5), TileSide.East, "g27"),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "outpost-admin",
+            DisplayName: "Администрация аванпоста",
+            Type: CompartmentType.Outpost,
+            FootprintRects: new[]
+            {
+                new RectF(1, 0, 8, 10),
+                new RectF(0, 2, 1, 6),
+                new RectF(9, 2, 1, 6),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Chair, new TileCoord(2, 5), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Chair, new TileCoord(2, 4), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Helm, new TileCoord(5, 5), IsCore: true, HalfSide: TileSide.West),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(5, 3), IsCore: true, HalfSide: TileSide.West),
+                new CompartmentDeviceSpec(CustomDeviceKind.Navigation, new TileCoord(3, 3), IsCore: true, HalfSide: TileSide.East),
+                new CompartmentDeviceSpec(CustomDeviceKind.CommsConsole, new TileCoord(3, 5), IsCore: false, HalfSide: TileSide.East),
+                new CompartmentDeviceSpec(CustomDeviceKind.Chair, new TileCoord(7, 4), IsCore: false),
+                new CompartmentDeviceSpec(CustomDeviceKind.Chair, new TileCoord(7, 5), IsCore: false),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 5), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 5), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 7), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 7), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 8), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 8), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 9), TileSide.South),
+            },
+            ExtraWallsRaw: new[]
+            {
+                new CompartmentExtraWallSpec(new TileCoord(1, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(8, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 3)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 3)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 4)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 4)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 5)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 5)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 6)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 6)),
+                new CompartmentExtraWallSpec(new TileCoord(1, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(8, 7)),
+            },
+            WallDevicesRaw: new[]
+            {
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 1)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(8, 1)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 8)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(8, 8)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(3, 9)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(4, 9)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(5, 9)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(6, 9)),
+            },
+            DoorEdgesRaw: new[]
+            {
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 4), TileSide.East, "g28"),
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 5), TileSide.East, "g28"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 4), TileSide.East, "g29"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 5), TileSide.East, "g29"),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "outpost-engineering",
+            DisplayName: "Инжинерный отсек аванпоста",
+            Type: CompartmentType.Outpost,
+            FootprintRects: new[]
+            {
+                new RectF(1, 0, 8, 10),
+                new RectF(0, 2, 1, 6),
+                new RectF(9, 2, 1, 6),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Fabricator, new TileCoord(3, 2), IsCore: true, HalfSide: TileSide.East),
+                new CompartmentDeviceSpec(CustomDeviceKind.Deconstructor, new TileCoord(5, 2), IsCore: true, HalfSide: TileSide.West),
+                new CompartmentDeviceSpec(CustomDeviceKind.WeaponWorkbench, new TileCoord(3, 5), IsCore: true, Rotated: true),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 0), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 3), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 3), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 6), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 6), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 7), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 7), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 7), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 7), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 7), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 7), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 8), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 8), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(4, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(5, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 9), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 9), TileSide.South),
+            },
+            ExtraWallsRaw: new[]
+            {
+                new CompartmentExtraWallSpec(new TileCoord(1, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(8, 2)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 3)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 3)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 4)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 4)),
+                new CompartmentExtraWallSpec(new TileCoord(1, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(3, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(4, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(5, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(6, 7)),
+                new CompartmentExtraWallSpec(new TileCoord(8, 7)),
+            },
+            WallDevicesRaw: new[]
+            {
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 1)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(8, 1)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(4, 7)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.Terminal, new TileCoord(5, 7)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(1, 8)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(8, 8)),
+            },
+            DoorEdgesRaw: new[]
+            {
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 4), TileSide.East, "g28"),
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 5), TileSide.East, "g28"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 4), TileSide.East, "g29"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 5), TileSide.East, "g29"),
+            }),
+        new CompartmentCatalogEntry(
+            Id: "outpost-docking",
+            DisplayName: "Стыковочный шлюз аванпоста",
+            Type: CompartmentType.Outpost,
+            FootprintRects: new[]
+            {
+                new RectF(3, 0, 4, 12),
+                new RectF(0, 3, 3, 6),
+                new RectF(7, 3, 3, 6),
+            },
+            Devices: new[]
+            {
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(1, 3), IsCore: false, Rotated: true, HalfSide: TileSide.North),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(2, 3), IsCore: false, Rotated: true, HalfSide: TileSide.North),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(2, 7), IsCore: false, Rotated: true, HalfSide: TileSide.South),
+                new CompartmentDeviceSpec(CustomDeviceKind.Junction, new TileCoord(1, 7), IsCore: false, Rotated: true, HalfSide: TileSide.South),
+                new CompartmentDeviceSpec(CustomDeviceKind.DecorativePlant, new TileCoord(6, 7), IsCore: false, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.DecorativePlant, new TileCoord(6, 4), IsCore: false, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.DecorativePlant, new TileCoord(3, 4), IsCore: false, Rotated: true),
+                new CompartmentDeviceSpec(CustomDeviceKind.DecorativePlant, new TileCoord(3, 7), IsCore: false, Rotated: true),
+            },
+            Engines: NoEngines,
+            WallOpenSidesRaw: new[]
+            {
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 1), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 1), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 2), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 2), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 3), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 3), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 3), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 3), TileSide.North),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 4), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 4), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(0, 7), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(9, 7), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(1, 8), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(2, 8), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(7, 8), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(8, 8), TileSide.South),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 9), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 9), TileSide.East),
+                new CompartmentWallOpenSideSpec(new TileCoord(3, 10), TileSide.West),
+                new CompartmentWallOpenSideSpec(new TileCoord(6, 10), TileSide.East),
+            },
+            ExtraWallsRaw: new[]
+            {
+                new CompartmentExtraWallSpec(new TileCoord(3, 3)),
+                new CompartmentExtraWallSpec(new TileCoord(6, 3)),
+                new CompartmentExtraWallSpec(new TileCoord(3, 8)),
+                new CompartmentExtraWallSpec(new TileCoord(6, 8)),
+            },
+            WallDevicesRaw: new[]
+            {
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(0, 4)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(9, 4)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(0, 7)),
+                new CompartmentWallDeviceSpec(CustomDeviceKind.WallLamp, new TileCoord(9, 7)),
+            },
+            DoorEdgesRaw: new[]
+            {
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 5), TileSide.East, "g28"),
+                new CompartmentDoorEdgeSpec(new TileCoord(9, 6), TileSide.East, "g28"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 5), TileSide.East, "g29"),
+                new CompartmentDoorEdgeSpec(new TileCoord(-1, 6), TileSide.East, "g29"),
+                new CompartmentDoorEdgeSpec(new TileCoord(4, 8), TileSide.South, "g31"),
+                new CompartmentDoorEdgeSpec(new TileCoord(5, 8), TileSide.South, "g31"),
+                new CompartmentDoorEdgeSpec(new TileCoord(4, 11), TileSide.South, "g32"),
+                new CompartmentDoorEdgeSpec(new TileCoord(5, 11), TileSide.South, "g32"),
+                new CompartmentDoorEdgeSpec(new TileCoord(4, 2), TileSide.South, "g33"),
+                new CompartmentDoorEdgeSpec(new TileCoord(5, 2), TileSide.South, "g33"),
+                new CompartmentDoorEdgeSpec(new TileCoord(4, -1), TileSide.South, "g34"),
+                new CompartmentDoorEdgeSpec(new TileCoord(5, -1), TileSide.South, "g34"),
             }),
     };
 

@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -305,6 +305,10 @@ internal static partial class TestRunner
         var midway = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         if (midway.IsEvaAttached)
             return false; // sanity: shouldn't have reattached yet, still moving away
+
+        // Shut the airlock behind us: a drifter that meets an OPEN airlock now flies in through it (World.Eva.EdgeAirlock.cs), and this test is
+        // about meeting the plating.
+        world.ApplyCommand(1, new ClientCommand(1, DoorToggleId: "door-airlock-vacuum"));
 
         // Jetpack thrust back toward the ship, stopping the instant it reattaches (game_design.md
         // Phase 3, M17) - held any longer than that and, now walking rather than drifting, it'd

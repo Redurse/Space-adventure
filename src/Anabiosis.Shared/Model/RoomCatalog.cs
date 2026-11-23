@@ -27,6 +27,8 @@ public enum RoomCategory
     Weapons,
     Shields,
     Sensors,
+    // The outpost compartments (CompartmentType.Outpost).
+    Outpost,
 }
 
 public sealed record RoomCatalogEntry(

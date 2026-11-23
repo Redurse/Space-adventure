@@ -176,3 +176,17 @@
 /importer:TextureImporter
 /processor:TextureProcessor
 /build:Textures/Devices/EngineNozzle.png
+
+#begin MapFont.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Compressed
+/build:MapFont.spritefont
+
+#begin MapTitleFont.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Compressed
+/build:MapTitleFont.spritefont

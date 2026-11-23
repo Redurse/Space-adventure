@@ -45,7 +45,7 @@ public sealed partial class World
     // bodies per system) and avoids a second piece of state that could drift out of sync with
     // _shipFieldPosition.
     public bool CanLandNow =>
-        !IsDocked && !IsInBattle && _landedBodyId is null &&
+        !IsDocked && !IsInBattle && AllShuttlesHome && _landedBodyId is null &&
         HullOverlapsCelestialBody(_shipFieldPosition) is { } body && CelestialBodyGenerator.IsLandable(body) &&
         _shipVelocity.Length() < LandMaxSpeed;
 

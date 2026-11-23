@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
 
@@ -18,13 +18,15 @@ public sealed partial class World
 
     private void StepEnemyCrews(double deltaSeconds)
     {
-        foreach (var enemy in _enemyShips)
+        foreach (var enemy in SimulatedHulls().ToList())
             if (enemy.Alive)
                 StepEnemyCrew(enemy, (float)deltaSeconds);
     }
 
     private void StepEnemyCrew(EnemyShipRuntime enemy, float dt)
     {
+        // An ambient ship's crew rolls on the ambient stream, so a ship flying by never shifts the shared sequence the fights depend on.
+        var ambient = _npcShips.Any(n => ReferenceEquals(n.Hull, enemy));
         var boarders = ReferenceEquals(enemy, BoardableEnemy)
             ? _characters.Values.Where(c => c.OnEnemyShip && c.Health > 0).ToList()
             : new List<Character>();
@@ -32,6 +34,10 @@ public sealed partial class World
         foreach (var crew in enemy.Crew)
         {
             if (!crew.Alive)
+                continue;
+
+            crew.Body.Step(dt, (float)(ambient ? _npcRandom : _random).NextDouble());
+            if (!crew.Alive || crew.Downed)
                 continue;
 
             crew.DecisionCooldown -= dt;
@@ -44,6 +50,7 @@ public sealed partial class World
             Walk(enemy, crew, dt);
             Work(enemy, crew, dt);
         }
+        CaptureIfCrewWiped(enemy);
     }
 
     // Picks the activity and the tile to walk to. Priorities: get out of thin air, then the role's own job, then the post.
@@ -81,10 +88,10 @@ public sealed partial class World
                 if (crew.Job is { } job)
                 {
                     crew.Activity = EnemyCrewActivity.Repairing;
-                    if ((job.Position - crew.Position).Length() <= EnemyCrewWorkReach)
+                    if ((job.Position - crew.Position).Length() <= WorkReach(enemy, job))
                         StopWalking(crew);
                     else
-                        GoTo(enemy, crew, FindWorkTile(enemy, crew, job.Position));
+                        GoTo(enemy, crew, FindWorkTile(enemy, crew, job.Position, WorkReach(enemy, job)));
                     return;
                 }
                 break;
@@ -117,17 +124,24 @@ public sealed partial class World
 
     // A tile to stand on to work on something at `target`: within reach of it AND actually reachable by walking (the nearest
     // floor can be on the far side of a wall).
-    private static TileCoord? FindWorkTile(EnemyShipRuntime enemy, EnemyCrewRuntime crew, Vec2 target)
+    // Devices are solid (ShipDeviceOccupancy): a job whose spot is inside one - the reactor's or a turret's centre - is
+    // worked from the device's edge, a tile further out (for the 4x4 reactor that is exactly the player's
+    // InteractionConstants.ReactorReach).
+    private static float WorkReach(EnemyShipRuntime enemy, EnemyRepairJob job) =>
+        TilePathfinder.IsPassable(enemy.Layout.Tiles, TilePathfinder.TileAt(job.Position)) ? EnemyCrewWorkReach : EnemyCrewWorkReach + 1f;
+
+    private static TileCoord? FindWorkTile(EnemyShipRuntime enemy, EnemyCrewRuntime crew, Vec2 target, float reach)
     {
+        var span = (int)MathF.Ceiling(reach);
         var tiles = enemy.Layout.Tiles;
         var origin = TilePathfinder.TileAt(target);
         var start = TilePathfinder.TileAt(crew.Position);
         var candidates = new List<TileCoord>();
-        for (var dx = -2; dx <= 2; dx++)
-            for (var dy = -2; dy <= 2; dy++)
+        for (var dx = -span; dx <= span; dx++)
+            for (var dy = -span; dy <= span; dy++)
             {
                 var tile = new TileCoord(origin.X + dx, origin.Y + dy);
-                if (TilePathfinder.IsPassable(tiles, tile) && (TilePathfinder.CenterOf(tile) - target).Length() <= EnemyCrewWorkReach)
+                if (TilePathfinder.IsPassable(tiles, tile) && (TilePathfinder.CenterOf(tile) - target).Length() <= reach)
                     candidates.Add(tile);
             }
         foreach (var tile in candidates.OrderBy(t => (TilePathfinder.CenterOf(t) - target).Length()))
@@ -190,13 +204,13 @@ public sealed partial class World
         switch (crew.Activity)
         {
             case EnemyCrewActivity.Repairing:
-                if (crew.Job is { } job && (job.Position - crew.Position).Length() <= EnemyCrewWorkReach)
+                if (crew.Job is { } job && (job.Position - crew.Position).Length() <= WorkReach(enemy, job))
                     WorkOn(enemy, job, dt);
                 break;
 
             case EnemyCrewActivity.Healing:
                 if (FindPatient(enemy, crew) is { } patient && (patient.Position - crew.Position).Length() <= EnemyCrewWorkReach)
-                    patient.Health = Math.Min(EnemyCrewRuntime.MaxHealth, patient.Health + EnemyCrewHealPerSecond * dt);
+                    AdministerFirstAid(patient.Body, dt, EnemyCrewHealPerSecond * BodyHealth.MaxVitality / EnemyCrewRuntime.MaxHealth, ref crew.FirstAidTimer);
                 break;
         }
     }
@@ -204,7 +218,7 @@ public sealed partial class World
     // Someone worth healing - and, for a healer without a suit, one standing where there is air to breathe.
     private static EnemyCrewRuntime? FindPatient(EnemyShipRuntime enemy, EnemyCrewRuntime healer) =>
         enemy.Crew
-            .Where(c => c != healer && c.Alive && c.Health < EnemyCrewRuntime.MaxHealth * EnemyCrewHurtFraction)
+            .Where(c => c != healer && c.Alive && (c.Downed || c.Body.IsBleeding || c.Health < EnemyCrewRuntime.MaxHealth * EnemyCrewHurtFraction))
             .Where(c => healer.Spawn.Suited || enemy.RoomOxygen.GetValueOrDefault(c.RoomId, FullOxygen) >= OxygenSafeThreshold)
             .OrderBy(c => (c.Position - healer.Position).Length())
             .FirstOrDefault();
@@ -224,6 +238,11 @@ public sealed partial class World
     }
 
     // Test precondition: hurts one of the boardable hull's crew directly, taking the ship if that was the last one standing.
+    public BodyHealth DebugEnemyCrewBody(string crewId) => BoardableEnemy!.Crew.First(c => c.Spawn.Id == crewId).Body;
+
+    public void DebugDamageEnemyCrewBody(string crewId, DamageKind kind, float amount) =>
+        DamageBody(DebugEnemyCrewBody(crewId), kind, amount);
+
     public void DebugDamageEnemyCrew(string crewId, float amount)
     {
         if (BoardableEnemy is not { } enemy || enemy.Crew.FirstOrDefault(c => c.Spawn.Id == crewId) is not { } crew)
@@ -234,7 +253,7 @@ public sealed partial class World
 
     // A gun fires only while its scientist (the one posted to this turret) is alive and standing at the periscope.
     private static bool IsEnemyTurretManned(EnemyShipRuntime enemy, string turretId) =>
-        enemy.Crew.Any(c => c.Alive && c.PostId == turretId && (c.Spawn.Position - c.Position).Length() <= EnemyCrewPostReach);
+        enemy.Crew.Any(c => c.Alive && !c.Downed && c.PostId == turretId && (c.Spawn.Position - c.Position).Length() <= EnemyCrewPostReach);
 
     private const float EnemyDriftControl = 0.2f;        // even with no control the ship bleeds speed and slowly turns
     private const float EnemyUnmannedHelmFactor = 0.25f; // nobody at the helm: the ship is only barely steered

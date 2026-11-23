@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -194,11 +194,17 @@ public partial class Game1 : Game
     private ReactorPanel _reactorPanel = null!;
     private JukeboxPanel _jukeboxPanel = null!;
     private FabricatorPanel _fabricatorPanel = null!;
+    private ShuttleBayPanel _shuttleBayPanel = null!;
+    // A shuttle order made this frame (the bay panel buttons, or a click on the helm map), sent once like every edge-triggered command.
+    private ShuttleRequest? _pendingShuttleRequest;
+    // The shuttle picked on the helm map to give an order to; cleared by the order, or by picking it again.
+    private string? _selectedShuttleBayId;
     // Purely local UI state (direct user request, "сделай меню фабрикатора") - never sent to the
     // server, unlike _pendingFabricatorCraftRecipeId; only which recipe is highlighted/how the list
     // is filtered right now.
     private bool _fabricatorOnlyAvailable;
     private bool _fabricatorSortByName;
+    private string _fabricatorCategory = FabricatorCatalog.Categories[0]; // the open recipe page: "Материалы" or "Переработка"
     private string? _fabricatorSelectedRecipeId;
     private DeconstructorPanel _deconstructorPanel = null!;
     // Same "purely local, never sent" shape as the Fabricator fields above.
@@ -207,6 +213,8 @@ public partial class Game1 : Game
     private SystemDevicePanel _systemDevicePanel = null!;
     private GalaxyMapPanel _galaxyMapPanel = null!;
     private GalacticMapPanel _galacticMapPanel = null!;
+    // The film of a hyperspace jump (mini map over the game, and the mark on the big map): starts itself when the snapshot's system changes.
+    private readonly JumpAnimation _jumpAnimation = new();
     private StationPanel _stationPanel = null!;
     // The Trader's store window (Rendering/TradeWindow.cs) and the one-item-per-tick command queue a confirmed
     // cart is sent through (the server takes a single buy/sell per command).
@@ -324,7 +332,6 @@ public partial class Game1 : Game
     private PauseMenuPanel _pauseMenuPanel = null!;
     private DeathScreenPanel _deathScreenPanel = null!;
     private ShipStatusMonitorPanel _shipStatusMonitorPanel = null!;
-    private CommsConsolePanel _commsConsolePanel = null!;
     private ComingSoonPanel _comingSoonPanel = null!;
     private CheatPanel _cheatPanel = null!;
     private CrewPanel _crewPanel = null!;
@@ -341,6 +348,17 @@ public partial class Game1 : Game
     // The inter-system map (GalacticMapPanel) - opened by the M key from anywhere (Update's own
     // edge-triggered check), not gated behind walking to a console like _openBlock's other targets.
     private bool _galacticMapOpen;
+    // The galactic map is locked behind a password (direct user request, "при открытии галактической карты вначале требовало ввести пароль"): the
+    // prompt shows instead of the map until the right digits are typed once in the session. It takes keyboard focus the way the chat box does
+    // (_chatFocused keeps the game keys quiet), and OnChatTextInput hands the typed characters to HandleMapPasswordChar while this is on.
+    private const string GalacticMapPassword = "3565";
+    // The galactic map asked for a password (direct user request); taken off for now, while friends play without knowing the story. Setting this back to true
+    // brings the whole prompt back (Game1.MapPassword.cs).
+    private const bool GalacticMapNeedsPassword = false;
+    private bool _galacticMapUnlocked = !GalacticMapNeedsPassword;
+    private bool _mapPasswordMode;
+    private string _mapPasswordInput = "";
+    private double _mapPasswordWrongUntil;
     // Direct user request ("монитор состояния корабля... консоль связи") - each a full-screen
     // takeover like _infoPanelOpen/_galacticMapOpen above, opened by walking up to its own physical
     // console and pressing E (same pattern NavigationConsole's own opening code below uses), not a
@@ -353,11 +371,13 @@ public partial class Game1 : Game
     // (ComingSoonPanel.cs's own doc comment) - walking up to ANY Junction ("Щиток") opens the one
     // shared placeholder screen.
     private bool _junctionComingSoonOpen;
+    // The docked station's power panel (Rendering/StationPowerPanel.cs): a full-screen console like the two above; its one button is sent as ToggleShorePowerPressed.
+    private bool _stationPowerOpen;
+    private bool _pendingToggleShorePower;
+    private StationPowerPanel _stationPowerPanel = null!;
     // The comms console's own read-only view of GalaxyMapPanel (Game1.Camera.cs's own pilotView -
     // kept separate from _mapZoom/_mapPanOffset, which the Navigation console/helm branches also
     // read, so panning this map never disturbs theirs).
-    private float _commsConsoleMapZoom = 1f;
-    private Vector2 _commsConsoleMapPanOffset = Vector2.Zero;
     private string? _shipEditorSelectedComponentId;
     private SlotRef? _dragFrom;
     // Oxygen-tank sockets: clicking one plugs in the tank you're holding, or pulls the tank back
@@ -379,7 +399,6 @@ public partial class Game1 : Game
     private ButtonState _prevDragButton = ButtonState.Released;
     private SlotRef? _lastClickedSlot;
     private double _lastSlotClickSeconds = double.NegativeInfinity;
-    private int _selectedPowerSystem = -1;
     private bool _prevInteractDown;
     private bool _prevFireDown;
     private ButtonState _prevLeftMouseButton = ButtonState.Released;
@@ -458,6 +477,9 @@ public partial class Game1 : Game
     private bool _cheatPanelOpen;
     // Cheat-panel toggle: look into the hostile ship (the boardable one) from out here - see EnemyInteriorViewActive.
     private bool _enemyInteriorCheat;
+    private bool _infiniteAmmoCheat;
+    private bool? _pendingInfiniteAmmo;
+    private bool _pendingRevealSystemMap; // cheat panel: explore the whole current system
     // Set by HandleMouseClick (Game1.Input.cs) when the cheat panel's button is clicked, read and
     // cleared once this same frame when building the outgoing ClientCommand - same "side-effect
     // field for an overlay click" shape as _pendingReturnToMainMenu above.
@@ -530,6 +552,7 @@ public partial class Game1 : Game
     // the rest of the _pending* fields above, cleared/sent once per click.
     private bool _pendingToggleLights;
     private bool _pendingToggleReactorEmergency;
+    private bool _pendingToggleReactorRunning; // W3: the reactor panel's start/stop button
     private bool _pendingToggleDoorsLocked;
     // The jukebox's checkbox and two steppers (JukeboxPanel) - edge-triggered same as the reactor
     // levers above, cleared/sent once per click.
@@ -605,7 +628,6 @@ public partial class Game1 : Game
     // near acceptable, so this narrows down which of the three renderers it actually is.
     private double _diagShipMs, _diagStationMs, _diagFieldMs;
     private Point? _mapPanLastMouse;
-    private Point? _commsConsoleMapPanLastMouse;
     private int _prevScrollWheelValue;
     // The console's own housing can be dragged around the HUD by its own right-drag (M48 follow-up -
     // "панельку сонара можно было перетаскивать при зажатии ПКМ") - unlike the helm's free camera
@@ -642,6 +664,9 @@ public partial class Game1 : Game
     private float _galacticMapZoom = 1f;
     private Vector2 _galacticMapPanOffset = Vector2.Zero;
     private Point? _galacticMapPanLastMouse;
+    private bool _galacticMapFitted;
+    private bool _galacticMapWasOpen;
+    private int? _pendingWarSpeedLevel; // a war speed button on the galactic map (World.War.cs)
     private readonly EffectTracker _effectTracker = new();
     private readonly AtmosphereField _atmosphere = new();
     private WorldSnapshot? _previousSnapshot;
@@ -657,7 +682,7 @@ public partial class Game1 : Game
     // the bottom-left corner, same corner/font/color treatment as Barotrauma's own version line.
     // There's no CI/git revision available to this project (no repo here), so this is just the
     // assembly's own version number rather than a fabricated build hash.
-    private const string GameVersionText = "Anabiosis v0.1.0 (Windows)";
+    private const string GameVersionText = "Anabiosis v1.3 (Windows)";
     private static readonly Color VersionTextColor = new Color(190, 195, 200) * 0.6f;
 
     private Matrix _renderScale = Matrix.Identity;
@@ -670,6 +695,15 @@ public partial class Game1 : Game
     private bool _prevDiagOverlayToggleDown;
     private bool _showDiagOverlay;
     private Point _designMouse; // cursor in design pixels, refreshed once per Update
+
+    // Where the connection panel opens (W5) - shared by drawing and click handling. Height 0 asks
+    // the panel to size itself from its pins; X is centred since the width is fixed, Y follows the
+    // standard housing so it opens where every other terminal does.
+    private Rectangle ConnectionsPanelBounds => new((DesignWidth - ConnectionsPanel.Width) / 2,
+        (int)PowerPanelOrigin.Y - DevicePanelChrome.OriginInsetY, ConnectionsPanel.Width, 0);
+
+    private string? _pendingRemoveWireId; // W5: the connection panel's screwdriver click on a wire
+    private (string ComponentId, int Action)? _pendingComponentSetting; // W7: a click on a part's settings button in the connection panel
 
     public Game1()
     {
@@ -713,6 +747,7 @@ public partial class Game1 : Game
             (viewport.Width - DesignWidth * _renderZoom) / 2f,
             (viewport.Height - DesignHeight * _renderZoom) / 2f);
         _renderScale = Matrix.CreateScale(_renderZoom) * Matrix.CreateTranslation(_renderOffset.X, _renderOffset.Y, 0f);
+        ItemSkin.SetPixelGrid(_renderZoom, _renderOffset); // icons bake at real screen size, not design size
     }
 
     // Real cursor position mapped back into design pixels - every hit test in this class works in
@@ -765,15 +800,18 @@ public partial class Game1 : Game
         _reactorPanel = new ReactorPanel(GraphicsDevice, _font);
         _jukeboxPanel = new JukeboxPanel(GraphicsDevice, _font);
         _fabricatorPanel = new FabricatorPanel(GraphicsDevice, _font);
+        _shuttleBayPanel = new ShuttleBayPanel(GraphicsDevice, _font);
         _deconstructorPanel = new DeconstructorPanel(GraphicsDevice, _font);
         _batteryPanel = new BatteryPanel(GraphicsDevice, _font);
         _systemDevicePanel = new SystemDevicePanel(GraphicsDevice, _font);
         _galaxyMapPanel = new GalaxyMapPanel(GraphicsDevice, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
-        _galacticMapPanel = new GalacticMapPanel(GraphicsDevice, _font);
+        _galacticMapPanel = new GalacticMapPanel(GraphicsDevice, _font, new Rectangle(0, 0, DesignWidth, DesignHeight),
+            Content.Load<SpriteFont>("MapFont"), Content.Load<SpriteFont>("MapTitleFont")) { Jump = _jumpAnimation };
         _stationPanel = new StationPanel(_font);
         _tradeWindow = new TradeWindow(GraphicsDevice, _font);
         _stationBuildPanel = new StationBuildPanel(GraphicsDevice, _font);
         _buildOverlay = new ShipBuildOverlay(GraphicsDevice, _font);
+        _healthWindow = new HealthWindow(GraphicsDevice, _font);
         _cardGamePanel = new CardGamePanel(GraphicsDevice, _font);
         _frontsGamePanel = new FrontsGamePanel(GraphicsDevice, _font);
         _cardTableChoicePanel = new CardTableChoicePanel(GraphicsDevice, _font);
@@ -811,8 +849,10 @@ public partial class Game1 : Game
         _pauseMenuPanel = new PauseMenuPanel(GraphicsDevice, _font);
         _deathScreenPanel = new DeathScreenPanel(GraphicsDevice, _font);
         _shipStatusMonitorPanel = new ShipStatusMonitorPanel(GraphicsDevice, _font);
-        _commsConsolePanel = new CommsConsolePanel(GraphicsDevice, _font);
+        _commsMapPanel = new CommsMapPanel(GraphicsDevice, _font);
+        _commsStationWindow = new CommsStationWindow(GraphicsDevice, _font);
         _comingSoonPanel = new ComingSoonPanel();
+        _stationPowerPanel = new StationPowerPanel(GraphicsDevice, _font);
         _cheatPanel = new CheatPanel(GraphicsDevice, _font);
         _crewPanel = new CrewPanel(GraphicsDevice, _font);
         _infoPanel = new InfoPanel(GraphicsDevice, _font);
@@ -821,8 +861,10 @@ public partial class Game1 : Game
 
         _existingSave = SaveStore.Load();
         _sounds = new GameSounds(_audioEngine);
+        _ambience = new ShipAmbience(_sounds, _audioEngine);
         _music = new GameMusic(_audioEngine);
-        _menuMusic = new MenuMusic(_audioEngine);
+        // The main menu has no music any more (direct user request): MenuMusic is simply not created; every use of _menuMusic is null-safe.
+        _menuMusic = null;
         _jukeboxAudio = new JukeboxAudio(_audioEngine);
         _voicePlayback = new VoicePlayback(_audioEngine);
         _micMonitor = new MicMonitor(_audioEngine);
@@ -885,8 +927,10 @@ public partial class Game1 : Game
         // pixel-art style, so this follows a Barotrauma reactor reference directly in code the
         // same way TileTextures/HullSkin already build the hull and floor.
         DrawLoadingFrame("ЗАГРУЗКА...", 94);
-        _editorReactorTexture = ReactorTexture.Create(GraphicsDevice);
-        _shipRenderer.SetReactorTexture(_editorReactorTexture);
+        var reactorArt = ReactorTexture.CreateArt(GraphicsDevice);
+        _editorReactorTexture = reactorArt.Stages[0];
+        _shipRenderer.SetReactorArt(reactorArt);
+        _shipRenderer.SetWorkshopArt(MachineArt.CreateWorkshopArt(GraphicsDevice)); // fabricator + deconstructor (MachineArt.Workshop.cs)
         // Marching-engine art (direct user request) - real Control/Bulkhead/Nozzle textures instead
         // of the DeviceSkin placeholder faces; same defensive load, ShipRenderer falls back to the
         // old procedural look for whichever part's .xnb is missing/unbuilt.
@@ -1173,14 +1217,10 @@ public partial class Game1 : Game
             return;
         }
 
-        // Number keys / Q-E only reach the grid while the distribution block is open — you have
-        // to "walk up and click in" first (game_design.md section 1).
-        var distributionOpen = _openBlock.Kind == BlockKind.Distribution;
-        var selection = distributionOpen ? ReadPowerSystemSelection(keyboard) : null;
-        if (selection.HasValue)
-            _selectedPowerSystem = selection.Value;
-        var powerDirection = distributionOpen ? ReadPowerDirection(keyboard) : 0f;
-        var powerSystemIndexToSend = distributionOpen ? _selectedPowerSystem : -1;
+        // The distribution sliders are gone - the ship's grid feeds every wired device by itself
+        // (World.Power.cs, W2 of wiring-plan.md); the protocol fields stay, always "nothing held".
+        const float powerDirection = 0f;
+        const int powerSystemIndexToSend = -1;
 
         var isManningTurret = _client.LatestSnapshot?.TurretStates.Any(t => t.MannedByPlayerId == _client.PlayerId) ?? false;
         var myCharacter = _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
@@ -1200,7 +1240,18 @@ public partial class Game1 : Game
         // leaving the helm is server-side (World.Interact.cs's F handling, top-priority there too),
         // so that case is folded into this frame's interactPressed rather than duplicated here.
         var escapeSendsInteract = false;
-        if (escapePressed && _chatFocused)
+        if (_mapPasswordMode && !_galacticMapOpen)
+            EndMapPasswordPrompt(); // the map was closed some other way
+        if (escapePressed && _mapPasswordMode)
+        {
+            _galacticMapOpen = false;
+            EndMapPasswordPrompt();
+        }
+        else if (escapePressed && _partTextMode)
+        {
+            EndPartText(); // dropped what was being typed into a wiring part
+        }
+        else if (escapePressed && _chatFocused)
         {
             // Same "handle the more specific overlay first" priority as the search box below -
             // closing the chat input is the one thing this Escape press should do, not also
@@ -1234,7 +1285,7 @@ public partial class Game1 : Game
             }
             else if (_openBlock.Kind != BlockKind.None || _crewPanelOpen || _infoPanelOpen || _shipEditorOpen
                      || _galacticMapOpen || _talkingToNpcId is not null || (!_spectatorMode && (isManningTurret || isAtHelm)) || _externalCameraMode
-                     || _shipStatusMonitorOpen || _commsConsoleOpen || _junctionComingSoonOpen)
+                     || _shipStatusMonitorOpen || _commsConsoleOpen || _junctionComingSoonOpen || _stationPowerOpen)
             {
                 _openBlock = ClickTarget.None;
                 _crewPanelOpen = false;
@@ -1246,6 +1297,7 @@ public partial class Game1 : Game
                 _shipStatusMonitorOpen = false;
                 _commsConsoleOpen = false;
                 _junctionComingSoonOpen = false;
+                _stationPowerOpen = false;
                 escapeSendsInteract = !_spectatorMode && (isManningTurret || isAtHelm);
             }
             else
@@ -1282,14 +1334,28 @@ public partial class Game1 : Game
         if (galacticMapToggleDown && !_prevGameplayKeyboard.IsKeyDown(galacticMapKey) && !_pauseMenuOpen)
         {
             _galacticMapOpen = !_galacticMapOpen;
+            if (_galacticMapOpen && !_galacticMapUnlocked)
+            {
+                _mapPasswordMode = true;
+                _mapPasswordInput = "";
+                _chatFocused = true;
+                _chatJustOpenedThisFrame = false;
+            }
             if (_galacticMapOpen)
             {
+                // The first time it opens, the whole galaxy is put on screen.
+                if (!_galacticMapFitted && _client.LatestSnapshot is { StarSystems.Count: > 0 } fitSnapshot)
+                {
+                    (_galacticMapZoom, _galacticMapPanOffset) = _galacticMapPanel.FitView(fitSnapshot.StarSystems);
+                    _galacticMapFitted = true;
+                }
                 _openBlock = ClickTarget.None;
                 _infoPanelOpen = false;
                 _shipEditorOpen = false;
                 _shipStatusMonitorOpen = false;
                 _commsConsoleOpen = false;
                 _junctionComingSoonOpen = false;
+                _stationPowerOpen = false;
             }
         }
 
@@ -1334,6 +1400,8 @@ public partial class Game1 : Game
         // settings above, so a mid-session Apply takes effect immediately without a reconnect.
         _chatBubbleTracker.Enabled = _graphicsSettings.ChatBubblesEnabled;
         _boardingRenderer.ShowHealthBars = _graphicsSettings.EnemyHealthBarsEnabled;
+        HealthBars.Enabled = _graphicsSettings.EnemyHealthBarsEnabled;
+        _effectTracker.Shake.Strength = _graphicsSettings.ScreenShakeEnabled ? 1f : 0f;
 
         // Direct user request ("в Baротравме... микрофон активируется") - only while the Settings
         // screen's own Audio tab is actually open, matching Barotrauma's own calibration-only
@@ -1430,9 +1498,21 @@ public partial class Game1 : Game
         // Direct user request ("сделай чтобы при заходе в него открывался серый экран с надписью
         // скоро") - same walk-up-and-E pattern as the two consoles just above; every JunctionBox
         // shares this one placeholder screen (ComingSoonPanel.cs's own doc comment).
-        if (interactPressed && myCharacter is not null && !_junctionComingSoonOpen &&
-            (_client.LatestSnapshot?.JunctionBoxes ?? Array.Empty<JunctionBox>()).Any(j =>
-                (new Vec2(myCharacter.X, myCharacter.Y) - j.Position).Length() < TurretInteractionRadius))
+        // W5: a box that's part of the wiring opens its connection panel instead.
+        var nearBox = myCharacter is null ? null : (_client.LatestSnapshot?.JunctionBoxes ?? Array.Empty<JunctionBox>()).FirstOrDefault(j =>
+            (new Vec2(myCharacter.X, myCharacter.Y) - j.Position).Length() < TurretInteractionRadius);
+        if (interactPressed && nearBox is not null && _openBlock.Kind != BlockKind.Connections
+            && _client.LatestSnapshot!.Wiring.Components.Any(c => c.Id == nearBox.Id && c.Kind == ComponentKind.Junction))
+        {
+            _openBlock = ClickTarget.ForConnections(nearBox.Id);
+            _junctionComingSoonOpen = false;
+        }
+        else if (interactPressed && myCharacter is not null && !_stationPowerOpen && nearBox is not null
+                 && _client.LatestSnapshot is { Station.Power: not null } stationSnapshot && IsStationFixtureId(stationSnapshot, nearBox.Id))
+        {
+            OpenStationPowerPanel(); // a junction box of the docked station: its power panel
+        }
+        else if (interactPressed && myCharacter is not null && !_junctionComingSoonOpen && !_stationPowerOpen && nearBox is not null)
         {
             _junctionComingSoonOpen = true;
             _shipStatusMonitorOpen = false;
@@ -1484,6 +1564,7 @@ public partial class Game1 : Game
         var keyboardAim = isManningTurret ? ReadAimDirection(keyboard, _keyBindings) : 0f;
         var aimDirection = keyboardAim != 0f || !isManningTurret ? keyboardAim : ReadTurretAimTowardCursor();
         var mouse = Mouse.GetState();
+        UpdateHealthInput(keyboard, mouse);
 
         // M55 follow-up - "экран изначально был отдален... чтобы было видно половину солнечной
         // системы": a freshly-started session used to leave the helm's schematic zoomed in at a
@@ -1560,20 +1641,12 @@ public partial class Game1 : Game
                 _shipOverviewPanOffset += new Vector2(mouse.Position.X - lastOverviewMouse.X, mouse.Position.Y - lastOverviewMouse.Y) / SceneZoom(shipOverviewSnapshot!);
             _shipOverviewPanLastMouse = mouse.Position;
         }
-        else if (_commsConsoleOpen && mouse.RightButton == ButtonState.Pressed)
-        {
-            // Screen-space drag, same shape as the helm's own free camera above - a read-only view
-            // with nothing ship-locked to hold still, so there's no compensation to solve for.
-            if (_commsConsoleMapPanLastMouse is { } lastCommsMouse)
-                _commsConsoleMapPanOffset += new Vector2(mouse.Position.X - lastCommsMouse.X, mouse.Position.Y - lastCommsMouse.Y);
-            _commsConsoleMapPanLastMouse = mouse.Position;
-        }
         else
         {
             _mapPanLastMouse = null;
             _shipOverviewPanLastMouse = null;
-            _commsConsoleMapPanLastMouse = null;
         }
+        UpdateCommsMapInput(mouse); // the comms console's own right-drag and right-click (Game1.Comms.cs)
         var scrollDelta = mouse.ScrollWheelValue - _prevScrollWheelValue;
         _prevScrollWheelValue = mouse.ScrollWheelValue;
         UpdateBuildToolInput(Keyboard.GetState(), scrollDelta);
@@ -1639,13 +1712,17 @@ public partial class Game1 : Game
             // blow it up past the screen entirely.
             _shipOverviewZoomMultiplier = Math.Clamp(_shipOverviewZoomMultiplier * MathF.Pow(1.1f, scrollDelta / 120f), 0.4f, 3f);
         }
+        else if (scrollDelta != 0 && _client.LatestSnapshot is { } turretZoomSnapshot && TurretViewActive(turretZoomSnapshot))
+        {
+            // Manning a turret: the wheel pulls the view back (up to 10x past the default) or brings it in again.
+            _turretZoomOut = Math.Clamp(_turretZoomOut * MathF.Pow(TurretZoomStep, -scrollDelta / 120f), 1f, TurretZoomOutMax);
+        }
         else if (_commsConsoleOpen && scrollDelta != 0)
         {
-            // Zooms toward screen-centre, not the cursor - this is a read-only stub view (direct
-            // user request, "пока просто... без какой-либо функции"), not worth the helm branch's
-            // own cursor-anchored solve-backward math above for a button that doesn't do anything
-            // yet either.
-            _commsConsoleMapZoom = Math.Clamp(_commsConsoleMapZoom * MathF.Pow(1.1f, scrollDelta / 120f), GalaxyMapPanel.MinConsoleZoom, 3f);
+            if (CommsTradeShown(_client.LatestSnapshot))
+                _tradeWindow.Scroll(-Math.Sign(scrollDelta));                  // the store's item grid
+            else if (!CommsLinked(_client.LatestSnapshot))
+                _commsZoom = Math.Clamp(_commsZoom * MathF.Pow(1.1f, scrollDelta / 120f), CommsMapPanel.MinZoom, CommsMapPanel.MaxZoom);
         }
 
         // Direct user request ("если курсор мыши около края экрана то экран начинал двигаться в ту
@@ -1729,18 +1806,18 @@ public partial class Game1 : Game
 
         // Galactic map camera - same right-drag/scroll gesture as the system map above, own
         // independent zoom/pan state (GalacticMapPanel.cs).
-        if (_galacticMapOpen && mouse.RightButton == ButtonState.Pressed)
+        if (_galacticMapOpen && _galacticMapUnlocked && mouse.RightButton == ButtonState.Pressed)
         {
             if (_galacticMapPanLastMouse is { } lastGalacticMouse)
-                _galacticMapPanOffset += new Vector2(mouse.Position.X - lastGalacticMouse.X, mouse.Position.Y - lastGalacticMouse.Y);
-            _galacticMapPanLastMouse = mouse.Position;
+                _galacticMapPanOffset += new Vector2(_designMouse.X - lastGalacticMouse.X, _designMouse.Y - lastGalacticMouse.Y);
+            _galacticMapPanLastMouse = _designMouse;
         }
         else
         {
             _galacticMapPanLastMouse = null;
         }
-        if (_galacticMapOpen && scrollDelta != 0)
-            _galacticMapZoom = Math.Clamp(_galacticMapZoom * MathF.Pow(1.1f, scrollDelta / 120f), 0.3f, 3f);
+        if (_galacticMapOpen && _galacticMapUnlocked && scrollDelta != 0 && _client.LatestSnapshot is { } zoomSnapshot)
+            _galacticMapPanel.ZoomAt(zoomSnapshot.StarSystems, Vector2.Zero, ref _galacticMapZoom, ref _galacticMapPanOffset, _designMouse.ToVector2(), scrollDelta / 120f);
 
         // Dragging gets first refusal on the button: a press that lands on an item slot starts a
         // drag instead of counting as a click, so releasing over the rack doesn't also read as
@@ -1774,7 +1851,7 @@ public partial class Game1 : Game
         // A confirmed trade cart goes out one buy/sell per tick, behind any click-driven one.
         if (_tradeQueue.Count > 0 && buyItemType is null && sellSlotIndex < 0)
             (buyItemType, sellSlotIndex) = _tradeQueue.Dequeue();
-        if (!IsTalkingToTrader(_client.LatestSnapshot))
+        if (!IsTalkingToTrader(_client.LatestSnapshot) && !CommsTradeShown(_client.LatestSnapshot))
             _tradeWindow.Reset();
 
         // Bail out of the rest of this frame immediately - _client is about to become null, and
@@ -1796,7 +1873,7 @@ public partial class Game1 : Game
 
         // Number-row hotkey for holding a slot's item, same edge-triggered field a hold-strip click
         // sends - only when nothing else already claimed this tick's toggle.
-        if (toggleHoldSlotIndex < 0 && !distributionOpen && ReadInventoryHotkeySlot(keyboard) is { } hotkeySlot)
+        if (toggleHoldSlotIndex < 0 && ReadInventoryHotkeySlot(keyboard) is { } hotkeySlot)
             toggleHoldSlotIndex = hotkeySlot;
         // Direct user request ("уберём возможность управлять кораблём игроку... автопилот") -
         // replaces the old manual stick reading entirely. AutopilotStop ("Стоп") is edge-triggered
@@ -1809,6 +1886,8 @@ public partial class Game1 : Game
         var autopilotStopKey = _keyBindings.Get(PlayerAction.AutopilotStop);
         var autopilotStopPressed = pilotControlsLive && keyboard.IsKeyDown(autopilotStopKey) && !_prevGameplayKeyboard.IsKeyDown(autopilotStopKey);
         var autopilotTarget = _pendingAutopilotTarget;
+        var shuttleRequest = _pendingShuttleRequest;
+        _pendingShuttleRequest = null;
         _pendingAutopilotTarget = null;
 
         // Direct user request ("при зажатом ПКМ возможность выбрать в какую сторону корабль должен
@@ -1867,8 +1946,24 @@ public partial class Game1 : Game
         _pendingPlaceDoor = null;
         var removeDoorId = _pendingRemoveDoorId;
         _pendingRemoveDoorId = null;
+        var healthTreat = _pendingTreat;
+        var healthSurgery = _pendingSurgery;
+        var healthCancel = _pendingCancelTreatment;
+        var giveUp = _pendingGiveUp;
+        var infiniteAmmo = _pendingInfiniteAmmo;
+        _pendingInfiniteAmmo = null;
+        var revealSystemMap = _pendingRevealSystemMap;
+        _pendingRevealSystemMap = false;
+        _pendingGiveUp = false;
+        _pendingTreat = null;
+        _pendingSurgery = null;
+        _pendingCancelTreatment = false;
         var questKind = _pendingQuestKind;
         var dockPressed = _pendingDock;
+        var hailPointId = _pendingHailPointId;
+        _pendingHailPointId = null;
+        var endComms = _pendingEndComms;
+        _pendingEndComms = false;
         var hireCandidateId = _pendingHireCandidateId;
         var toggleLandingPressed = toggleLandingKeyPressed || _pendingToggleLanding;
         // M57 - leaving the Engineer tab drops the remote-repair focus too, the same way standing
@@ -1892,6 +1987,12 @@ public partial class Game1 : Game
         _pendingTankDetach = null;
 
         var pinInteract = _pendingPinInteract;
+        var removeWireId = _pendingRemoveWireId;
+        _pendingRemoveWireId = null;
+        var componentSetting = _pendingComponentSetting;
+        _pendingComponentSetting = null;
+        var componentText = _pendingComponentText;
+        _pendingComponentText = null;
         var wireBendAt = _pendingWireBendAt;
         var componentMountInteractId = _pendingComponentMountInteractId;
         var sabotageDeviceId = _pendingSabotageDeviceId;
@@ -1930,6 +2031,13 @@ public partial class Game1 : Game
         var warpToSystemId = _pendingWarpToSystemId;
         _pendingWarpToSystemId = null;
 
+        // Leaving the galactic map puts the war back to real time, so it is never left racing while the ship is flown.
+        if (_galacticMapWasOpen && !_galacticMapOpen)
+            _pendingWarSpeedLevel = 1;
+        _galacticMapWasOpen = _galacticMapOpen;
+        var warSpeedLevel = _pendingWarSpeedLevel;
+        _pendingWarSpeedLevel = null;
+
         var setOwnRoleTo = _pendingSetOwnRoleTo;
         _pendingSetOwnRoleTo = null;
 
@@ -1954,6 +2062,10 @@ public partial class Game1 : Game
         var toggleDoorsLockedPressed = _pendingToggleDoorsLocked;
         _pendingToggleLights = false;
         _pendingToggleReactorEmergency = false;
+        var toggleShorePowerPressed = _pendingToggleShorePower;
+        _pendingToggleShorePower = false;
+        var toggleReactorRunningPressed = _pendingToggleReactorRunning;
+        _pendingToggleReactorRunning = false;
         _pendingToggleDoorsLocked = false;
 
         var jukeboxTogglePressed = _pendingJukeboxToggle;
@@ -2085,8 +2197,15 @@ public partial class Game1 : Game
             FabricatorCraftRecipeId: fabricatorCraftRecipeId, DeconstructItemType: deconstructItemType, ProductionCancelPressed: productionCancelPressed,
             Sprint: keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift),
             WeaponFireHeld: weaponFireHeld,
-            BuildCompartment: buildCompartment, PlaceDoor: placeDoor, RemoveDoorId: removeDoorId));
+            BuildCompartment: buildCompartment, PlaceDoor: placeDoor, RemoveDoorId: removeDoorId,
+            Treat: healthTreat, Surgery: healthSurgery, CprTargetId: _healthCprHeld ? _healthTargetId : null, CancelTreatment: healthCancel, GiveUp: giveUp, DebugInfiniteAmmo: infiniteAmmo, DebugRevealSystemMap: revealSystemMap, HailPointId: hailPointId, EndCommsPressed: endComms,
+            ToggleReactorRunningPressed: toggleReactorRunningPressed, RemoveWireId: removeWireId, WarSpeedLevel: warSpeedLevel, Shuttle: shuttleRequest,
+            ComponentSettingId: componentSetting?.ComponentId, ComponentSettingAction: componentSetting?.Action,
+            ComponentTextId: componentText?.ComponentId, ComponentText: componentText?.Text, ToggleShorePowerPressed: toggleShorePowerPressed,
+            LobbyLook: _pendingLookToSend));
+        _pendingLookToSend = null;
         _client.PollSnapshots();
+        _jumpAnimation.Observe(_client.LatestSnapshot);
         // Direct user request ("система достижений... как в Стиме") - checked every frame a real
         // snapshot exists, same as every other per-frame HUD read off _client.LatestSnapshot.
         if (_client.LatestSnapshot is { } achievementSnapshot)
@@ -2554,7 +2673,11 @@ public partial class Game1 : Game
             ? TurretViewRotationDegrees(rotSnapshot)
             : 0f;
         var screenPivot = (WorldViewportOrigin + WorldViewportSize / 2f) / sceneZoom;
+        // Blows, blasts and firing guns shudder the whole picture (CameraShake); the offset is in design pixels, so it is
+        // applied before the zoom and the render scale rather than being scaled by them.
+        var shake = _effectTracker.Shake.Offset();
         var sceneTransform =
+            Matrix.CreateTranslation(shake.X, shake.Y, 0f) *
             Matrix.CreateTranslation(-screenPivot.X, -screenPivot.Y, 0f) *
             Matrix.CreateRotationZ(MathHelper.ToRadians(sceneRotationDegrees)) *
             Matrix.CreateTranslation(screenPivot.X, screenPivot.Y, 0f) *
@@ -2594,7 +2717,7 @@ public partial class Game1 : Game
                 // overlay (ExternalCameraPanel needs its own scissored sub-batches per quadrant
                 // anyway, which this shared, rotated/masked scene batch has no room for).
             }
-            else if (_shipStatusMonitorOpen || _commsConsoleOpen || _junctionComingSoonOpen)
+            else if (_shipStatusMonitorOpen || _commsConsoleOpen || _junctionComingSoonOpen || _stationPowerOpen)
             {
                 // Direct user request ("монитор состояния корабля... консоль связи"; later "серый
                 // экран с надписью скоро" for the Junction) - same reasoning as the galactic map
@@ -2622,13 +2745,14 @@ public partial class Game1 : Game
                         // headed to fly it - same near-fullscreen map window 1 always showed,
                         // just now specifically the captain's own tab rather than shared with
                         // everyone at helm regardless of what they were doing.
-                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true, captainHelmView: true);
+                        _galaxyMapPanel.SelectedShuttleBayId = _selectedShuttleBayId;
+                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true, captainHelmView: true, pointer: _designMouse.ToVector2());
                         _helmButtonsWidget.Draw(_spriteBatch, snapshot, _helmWidgetPosition,
                             snapshot.Cameras.Count > 0 && ComputeShipPowerMood(snapshot).PowerFraction > 0.01f, _externalCameraMode);
                         _timeAccelerationWidget.Draw(_spriteBatch, snapshot.TimeAccelerationLevel, _helmWidgetPosition + new Vector2(0, -46));
                         break;
                     case HelmTab.Scientist:
-                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true);
+                        _galaxyMapPanel.Draw(_spriteBatch, snapshot, GalaxyMapPanelOrigin, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds, pilotView: true, pointer: _designMouse.ToVector2());
                         break;
                     case HelmTab.Engineer:
                         _engineerDevicePanel.Draw(_spriteBatch, snapshot, EngineerDevicePanelOrigin, _engineerFocusDeviceId);
@@ -2674,6 +2798,9 @@ public partial class Game1 : Game
                 // the ship visibly paints over a body it's flying above or landed on instead of the
                 // other way round (FieldRenderer.DrawCelestialBackground's own doc comment).
                 _fieldRenderer.DrawCelestialBackground(_spriteBatch, snapshot, origin, hullCenter);
+                ComponentRenderer.WiringMode = HoldingWireSpool() || HoldingScrewdriver();
+                // The docked station's own devices are painted by the station pass below (its floor would cover them here).
+                _shipRenderer.StationFixturePrefix = snapshot.Voyage.DockedPointId is { } dockedStationId ? dockedStationId + "-" : null;
                 _shipRenderer.Draw(_spriteBatch, snapshot, origin, _openBlock, totalSeconds, _effectTracker.Effects, atmosphere: _atmosphere.Particles);
                 // TEMP-DIAG-BEGIN
                 _diagShipMs = diagSubStopwatch.Elapsed.TotalMilliseconds;
@@ -2846,6 +2973,8 @@ public partial class Game1 : Game
             var alpha = 1f - MathF.Abs(progress * 2f - 1f);
             _spriteBatch.Draw(_pixel, new Rectangle(0, 0, DesignWidth, DesignHeight), Color.Black * alpha);
         }
+        if (_client.LatestSnapshot is { } reactorHistorySnapshot)
+            _reactorPanel.Record(reactorHistorySnapshot.Power, totalSeconds);
         if (_client.LatestSnapshot is { } hudSnapshot)
         {
             // Station dialogue is a HUD overlay on top of the physical scene (like the panels
@@ -2883,16 +3012,19 @@ public partial class Game1 : Game
             switch (_openBlock.Kind)
             {
                 case BlockKind.Distribution:
-                    _powerPanel.Draw(_spriteBatch, hudSnapshot.Power, hudSnapshot.SystemStates, _selectedPowerSystem, PowerPanelOrigin, totalSeconds);
+                    _powerPanel.Draw(_spriteBatch, hudSnapshot.Power, hudSnapshot.SystemStates, PowerPanelOrigin, totalSeconds);
                     break;
                 case BlockKind.Reactor:
-                    _reactorPanel.Draw(_spriteBatch, hudSnapshot.Reactor, PowerPanelOrigin, totalSeconds);
+                    _reactorPanel.Draw(_spriteBatch, hudSnapshot.Reactor, hudSnapshot.Power, PowerPanelOrigin, totalSeconds);
                     break;
                 case BlockKind.Jukebox when hudSnapshot.Jukebox is { } jukeboxState:
                     _jukeboxPanel.Draw(_spriteBatch, jukeboxState, PowerPanelOrigin, totalSeconds);
                     break;
+                case BlockKind.ShuttleBay:
+                    _shuttleBayPanel.Draw(_spriteBatch, hudSnapshot.Shuttles?.FirstOrDefault(s => s.BayId == _openBlock.TargetComponentId), PowerPanelOrigin, totalSeconds);
+                    break;
                 case BlockKind.Fabricator:
-                    _fabricatorPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, FabricatorPanelOrigin, _fabricatorOnlyAvailable, _fabricatorSortByName, _fabricatorSelectedRecipeId);
+                    _fabricatorPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, FabricatorPanelOrigin, _fabricatorOnlyAvailable, _fabricatorSortByName, _fabricatorSelectedRecipeId, _fabricatorCategory);
                     break;
                 case BlockKind.Deconstructor:
                     _deconstructorPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, DeconstructorPanelOrigin, _deconstructorSelectedItem);
@@ -2917,9 +3049,9 @@ public partial class Game1 : Game
                     // Height 0 asks the panel to size itself from its pin count; X is centred here
                     // because the width is fixed and known, Y follows the standard housing so it
                     // opens in the same place as every other terminal.
-                    _connectionsPanel.Draw(_spriteBatch, hudSnapshot, targetComponentId,
-                        new Rectangle((DesignWidth - ConnectionsPanel.Width) / 2,
-                            (int)PowerPanelOrigin.Y - DevicePanelChrome.OriginInsetY, ConnectionsPanel.Width, 0), totalSeconds);
+                    _connectionsPanel.Draw(_spriteBatch, hudSnapshot, targetComponentId, ConnectionsPanelBounds, totalSeconds,
+                        hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.LayingWireFromPin,
+                        HoldingWireSpool(), HoldingScrewdriver(), _designMouse);
                     break;
                 case BlockKind.SuitLocker when _openBlock.TargetComponentId is { } lockerId:
                     _suitLockerPanel.Draw(_spriteBatch, hudSnapshot, lockerId, _client.PlayerId, PowerPanelOrigin);
@@ -2930,14 +3062,17 @@ public partial class Game1 : Game
                 // overlay like every other terminal in this switch, so the ship interior/exterior
                 // keeps rendering normally behind it via the scene batch's own final `else` branch.
                 case BlockKind.Navigation:
-                    _galaxyMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin + _sonarPanelDragOffset, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds);
+                    _galaxyMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin + _sonarPanelDragOffset, _mapZoom, _mapPanOffset, _client.PlayerId, serverTotalSeconds,
+                        batchTransform: _renderScale, pointer: _designMouse.ToVector2());
                     if (hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { } scannerMe)
                         _scannerModeWidget.Draw(_spriteBatch, scannerMe.ScannerMode, scannerMe.ScannerCooldownRemaining, _scannerWidgetPosition);
                     break;
             }
 
             _combatPanel.Draw(_spriteBatch, hudSnapshot, _client.PlayerId, ComputeHint(hudSnapshot, _client.PlayerId), CombatPanelOrigin);
-            _chatPanel.Draw(_spriteBatch, hudSnapshot.ChatLog, _chatFocused, _chatInput, ChatPanelOrigin, (float)gameTime.ElapsedGameTime.TotalSeconds);
+            if (!_galacticMapOpen)
+                _jumpAnimation.DrawOverlay(_spriteBatch, _pixel, _font, hudSnapshot);
+            _chatPanel.Draw(_spriteBatch, hudSnapshot.ChatLog, _chatFocused && !_mapPasswordMode && !_partTextMode, _chatInput, ChatPanelOrigin, (float)gameTime.ElapsedGameTime.TotalSeconds);
             // Push-to-talk indicator (direct user request) - just player feedback that a mic is
             // actually recording right now, same font/scale/color convention as ChatPanel's own
             // text above. Plain text, no icon glyph - DebugFont.spritefont only covers Latin-1/
@@ -2952,7 +3087,7 @@ public partial class Game1 : Game
                 _spriteBatch.DrawString(_font, voiceLabel, ChatPanelOrigin + new Vector2(0, -20f),
                     _voiceCapture.IsRadio ? Color.OrangeRed : Color.LightGreen, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
             }
-            _playerHealthPanel.Draw(_spriteBatch, hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId), PlayerHealthPanelOrigin);
+            _playerHealthPanel.Draw(_spriteBatch, hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId), PlayerHealthPanelOrigin, totalSeconds);
             _voyagePanel.Draw(_spriteBatch, hudSnapshot, VoyagePanelOrigin);
 
             // The "ОБУЧЕНИЕ" run's own persistent banner (World.Tutorial.cs) - null on every other
@@ -3014,6 +3149,16 @@ public partial class Game1 : Game
                 {
                     if (character.DoorToolTargetId is not { } doorTargetId)
                         continue;
+                    // A doorway of an editor-built hull (door edge) has its own state list and sits on a tile seam.
+                    if (hudSnapshot.DoorEdgeStates?.FirstOrDefault(s => s.Id == doorTargetId) is { } edgeState
+                        && hudSnapshot.DoorEdges?.FirstOrDefault(e => e.Id == doorTargetId) is { } targetEdge)
+                    {
+                        var seam = targetEdge.Side == TileSide.East
+                            ? new Vector2(targetEdge.Coord.X + 1, targetEdge.Coord.Y + 0.5f)
+                            : new Vector2(targetEdge.Coord.X + 0.5f, targetEdge.Coord.Y + 1);
+                        _shipRenderer.DrawToolTargetBar(_spriteBatch, seam, edgeState.Fraction, wallToolOrigin);
+                        continue;
+                    }
                     var doorState = hudSnapshot.DoorStates.FirstOrDefault(s => s.DoorId == doorTargetId);
                     if (doorState is null)
                         continue;
@@ -3085,8 +3230,15 @@ public partial class Game1 : Game
             // from the sight-cone/room-lighting composite above, same reasoning as InfoPanel/Crew:
             // a full-screen overlay reachable from anywhere (the M key) shouldn't go dark just
             // because the ship interior underneath happens to be sitting in a blind spot right now.
-            if (_galacticMapOpen)
-                _galacticMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin, _galacticMapZoom, _galacticMapPanOffset);
+            if (_galacticMapOpen && !_galacticMapUnlocked)
+            {
+                DrawMapPasswordPrompt(totalSeconds);
+            }
+            else if (_galacticMapOpen)
+            {
+                _galacticMapPanel.OutputTransform = _renderScale;
+                _galacticMapPanel.Draw(_spriteBatch, hudSnapshot, Vector2.Zero, _galacticMapZoom, _galacticMapPanOffset, serverTotalSeconds, _designMouse.ToVector2());
+            }
 
             // External cameras (M46) - same HUD-batch overlay treatment as the galactic map right
             // above: a full takeover reachable from anywhere power allows it, not masked by sight/
@@ -3110,19 +3262,13 @@ public partial class Game1 : Game
             if (_shipStatusMonitorOpen)
                 _shipStatusMonitorPanel.Draw(_spriteBatch, hudSnapshot, new Rectangle(0, 0, DesignWidth, DesignHeight), _designMouse);
             if (_commsConsoleOpen)
-            {
-                // Reuses the SAME GalaxyMapPanel instance/origin the Scientist helm tab's own
-                // pilotView already draws full-screen with (GalaxyMapPanel.cs's own doc comment,
-                // "reused wholesale as the helm's own window 1") - just this console's own
-                // independent zoom/pan fields, so it never fights the helm's over shared state.
-                _galaxyMapPanel.Draw(_spriteBatch, hudSnapshot, GalaxyMapPanelOrigin, _commsConsoleMapZoom, _commsConsoleMapPanOffset,
-                    _client.PlayerId, serverTotalSeconds, pilotView: true);
-                _commsConsolePanel.DrawChrome(_spriteBatch, new Rectangle(0, 0, DesignWidth, DesignHeight), _designMouse);
-            }
+                DrawCommsConsole(hudSnapshot, totalSeconds); // the map with the radio waves, and the window of the station on the line (Game1.Comms.cs)
             // Direct user request ("серый экран с надписью скоро") - same HUD-batch overlay
             // treatment as the two panels just above.
             if (_junctionComingSoonOpen)
                 _comingSoonPanel.Draw(_spriteBatch, _pixel, _font, new Rectangle(0, 0, DesignWidth, DesignHeight));
+            if (_stationPowerOpen)
+                _stationPowerPanel.Draw(_spriteBatch, hudSnapshot, new Rectangle(0, 0, DesignWidth, DesignHeight), _designMouse);
 
             DrawTopBar(_spriteBatch, hudSnapshot);
             // Direct user request ("сверху пишется таймер и пишется его уменьшение до спавна
@@ -3183,6 +3329,9 @@ public partial class Game1 : Game
             if (MannedTurret(hudSnapshot) is not null)
                 TurretReticle.Draw(_spriteBatch, _pixel, new Vector2(_designMouse.X, _designMouse.Y), new Color(190, 225, 240));
 
+            _playerHealthPanel.DrawDownedOverlay(_spriteBatch, hudSnapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId), DesignWidth, DesignHeight, _designMouse);
+            DrawHealthWindow(hudSnapshot, totalSeconds);
+
             // Last of all - the one overlay that's meant to sit over literally everything else,
             // including the reticle (there's nothing to aim at while it's up). The death screen
             // takes priority over the pause menu - dying is the more urgent thing to react to.
@@ -3193,7 +3342,7 @@ public partial class Game1 : Game
             else if (_pauseMenuOpen)
                 _pauseMenuPanel.Draw(_spriteBatch, PauseMenuPanelOrigin, _designMouse, _sessionStartedFromEditor);
             else if (_cheatPanelOpen)
-                _cheatPanel.Draw(_spriteBatch, CheatPanelOrigin, _designMouse, _enemyInteriorCheat);
+                _cheatPanel.Draw(_spriteBatch, CheatPanelOrigin, _designMouse, _enemyInteriorCheat, _infiniteAmmoCheat);
         }
         // TEMP-DIAG-BEGIN
         _diagHudMs = diagPhaseStopwatch.Elapsed.TotalMilliseconds;
@@ -3234,6 +3383,7 @@ public partial class Game1 : Game
         // never show one without the other. Drawn dead last, after every panel, so the highlight
         // is never painted over and the cursor sits exactly where the OS's own (now hidden) one
         // would.
+        DrawEndingBanner();
         DrawVersionFooter();
         var hoveredRect = ComputeHoveredInteractable(_client.LatestSnapshot);
         if (hoveredRect is { } highlightRect)

@@ -33,7 +33,11 @@ public sealed class StationBuildPanel
         (RoomCategory.Weapons, "Оружие"),
         (RoomCategory.Shields, "Щиты"),
         (RoomCategory.Sensors, "Сенсоры"),
+        (RoomCategory.Outpost, "Аванпост"),
     };
+
+    // The outpost compartments' own colour - shared with the Ship Editor's catalog row, so they read as one family wherever they are listed.
+    public static readonly Color OutpostAccent = new(176, 128, 224);
 
     // Only the categories the catalog actually has something in.
     public static readonly (RoomCategory Category, string Label)[] Categories =
@@ -52,6 +56,7 @@ public sealed class StationBuildPanel
         RoomCategory.Weapons => new Color(190, 96, 84),
         RoomCategory.Shields => new Color(88, 190, 186),
         RoomCategory.Sensors => new Color(150, 190, 210),
+        RoomCategory.Outpost => OutpostAccent,
         _ => new Color(126, 138, 156), // Structural
     };
 
@@ -159,7 +164,7 @@ public sealed class StationBuildPanel
         {
             var entry = entries[i];
             var rect = GetModuleRect(i, panelOrigin);
-            var price = CompartmentPricing.Price(entry);
+            var price = CampaignModifiers.Scale(CompartmentPricing.Price(entry), snapshot.Modifiers?.ShipyardPrice ?? 1f);
             var affordable = snapshot.Credits >= price && snapshot.HullPlatingStock >= CompartmentPricing.PlatingCost(entry);
             var placing = entry.Id == placingId;
             var accent = CategoryColor(category);
@@ -185,7 +190,7 @@ public sealed class StationBuildPanel
             var lines = new List<(string Text, Color Color)>
             {
                 ($"{hovered.Width}×{hovered.Height} тайлов", Color.LightGray),
-                ($"{CompartmentPricing.Price(hovered)} кр / {CompartmentPricing.PlatingCost(hovered)} об", Color.LightGreen),
+                ($"{CampaignModifiers.Scale(CompartmentPricing.Price(hovered), snapshot.Modifiers?.ShipyardPrice ?? 1f)} кр / {CompartmentPricing.PlatingCost(hovered)} об", Color.LightGreen),
             };
             lines.AddRange(Contents(hovered).Select(c => (c, Color.LightSkyBlue)));
             DrawTooltip(spriteBatch, hovered.DisplayName, lines, new Vector2(hoveredRect.X, hoveredRect.Y));
@@ -198,7 +203,7 @@ public sealed class StationBuildPanel
         for (var span = 1; span <= 3; span++)
         {
             var rect = GetModuleRect(span - 1, panelOrigin);
-            var price = JunctionDoorBuilder.Price(span);
+            var price = CampaignModifiers.Scale(JunctionDoorBuilder.Price(span), snapshot.Modifiers?.ShipyardPrice ?? 1f);
             var affordable = snapshot.Credits >= price;
             var selected = span == selectedSpan;
             var face = selected ? Color.Lerp(DoorColor, Color.White, 0.35f) : affordable ? DoorColor * 0.6f : new Color(40, 40, 40);

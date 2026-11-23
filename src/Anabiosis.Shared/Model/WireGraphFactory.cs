@@ -23,6 +23,44 @@ public static class WireGraphFactory
         var wires = new List<Wire>();
         var systems = Enum.GetValues<PowerSystemId>();
 
+        // W4 of wiring-plan.md: the reactor and battery are real components on real wires now - the
+        // reactor feeds the distribution block, the battery both discharges into it and charges off
+        // its dedicated output (Barotrauma's battery: power_in and power_out on the same grid).
+        components.Add(new Component(ReactorId, ComponentKind.Reactor, ship.ReactorBlock.RoomId, ship.ReactorBlock.X, ship.ReactorBlock.Y));
+        components.Add(new Component(BatteryId, ComponentKind.Battery, ship.BatteryBlock.RoomId, ship.BatteryBlock.X, ship.BatteryBlock.Y));
+        var distributionIn = new PinRef("distribution", ComponentDefinitions.DistributionInPin().Id);
+        wires.Add(new Wire("feed-reactor", new PinRef(ReactorId, ComponentDefinitions.ReactorOutPin().Id), distributionIn));
+        wires.Add(new Wire("feed-battery", new PinRef(BatteryId, ComponentDefinitions.BatteryOutPin().Id), distributionIn));
+        wires.Add(new Wire("charge-battery",
+            new PinRef("distribution", ComponentDefinitions.DistributionBatteryPin().Id),
+            new PinRef(BatteryId, ComponentDefinitions.BatteryInPin().Id)));
+
+        // W6: every door and wall lamp is a component too - signal pins only, nothing wired to them
+        // until the player (or, from W10, a factory hull's standard automation) does it. Their ids
+        // are the door's/lamp's own.
+        foreach (var door in ship.Doors)
+            components.Add(new Component(door.Id, ComponentKind.Door, door.RoomAId, door.X, door.Y, TargetId: door.Id));
+        // A wide door is several edge segments sharing one id - one component for the whole door,
+        // at the middle of its segments.
+        foreach (var door in ship.DoorEdges.GroupBy(e => e.Id))
+        {
+            var centres = door.Select(e => e.Side == TileSide.East ? (X: e.Coord.X + 1f, Y: e.Coord.Y + 0.5f) : (X: e.Coord.X + 0.5f, Y: e.Coord.Y + 1f)).ToList();
+            var first = door.First();
+            components.Add(new Component(door.Key, ComponentKind.Door, first.RoomAId ?? first.RoomBId ?? "",
+                centres.Average(c => c.X), centres.Average(c => c.Y), TargetId: door.Key));
+        }
+        foreach (var lamp in ship.WallLamps)
+            components.Add(new Component(lamp.Id, ComponentKind.Lamp, lamp.RoomId, lamp.X, lamp.Y, TargetId: lamp.Id));
+
+        // A hull with junction boxes placed in it (the ship editor's "щиток", JunctionBox.cs) is
+        // wired through them, Barotrauma-style; one without any keeps the generated virtual boxes
+        // in the reactor room below.
+        if (ship.JunctionBoxes.Count > 0)
+        {
+            WireThroughJunctionBoxes(ship, components, wires);
+            return (components.DistinctBy(c => c.Id).ToList(), wires); // ids must be unique - first one wins
+        }
+
         // The room the distribution block itself sits in (the reactor room, on every hull) - each
         // junction now takes a spot along its left/right walls instead of stacking in a row right
         // next to the block, which read as one clump rather than separate physical boxes.
@@ -118,6 +156,49 @@ public static class WireGraphFactory
             ConnectDeviceNode(camera.Id, camera.RoomId, camera.X, camera.Y, junction, outputIndex: 0);
         }
 
-        return (components, wires);
+        return (components.DistinctBy(c => c.Id).ToList(), wires);
+    }
+
+    public const string ReactorId = "reactor";
+    public const string BatteryId = "battery";
+
+    // Every consumer (system device or hull camera) hangs off its nearest junction box, each on its
+    // own output pin; every box - including one with nothing on it yet, ready for the player's own
+    // wiring - gets a trunk back to the distribution block. Same one-corner routing as the virtual
+    // layout (Wire.Bends is cosmetic only).
+    private static void WireThroughJunctionBoxes(Ship ship, List<Component> components, List<Wire> wires)
+    {
+        var consumers = ship.SystemDevices.Select(d => (d.Id, d.RoomId, d.X, d.Y, d.System))
+            .Concat(ship.Cameras.Select(c => (c.Id, c.RoomId, c.X, c.Y, System: PowerSystemId.Secondary)));
+        var usedOutputs = ship.JunctionBoxes.ToDictionary(b => b.Id, _ => 0);
+        var firstSystem = new Dictionary<string, PowerSystemId>();
+
+        foreach (var consumer in consumers)
+        {
+            var box = ship.JunctionBoxes.MinBy(b => (b.X - consumer.X) * (b.X - consumer.X) + (b.Y - consumer.Y) * (b.Y - consumer.Y))!;
+            var outputIndex = usedOutputs[box.Id]++;
+            firstSystem.TryAdd(box.Id, consumer.System);
+            components.Add(new Component(consumer.Id, ComponentKind.Device, consumer.RoomId, consumer.X, consumer.Y));
+            wires.Add(new Wire($"drop-{consumer.Id}",
+                new PinRef(box.Id, ComponentDefinitions.JunctionOutPin(outputIndex).Id),
+                new PinRef(consumer.Id, "in"),
+                new[] { new Vec2(box.X, consumer.Y) }));
+        }
+
+        // Each trunk leaves on its first device's system output - or, once that pin already carries
+        // WireRules.MaxWiresPerPin wires, on the next distribution output that still has room.
+        var distributionOutputs = Enum.GetValues<PowerSystemId>().Select(ComponentDefinitions.DistributionOutPin).ToList();
+        foreach (var box in ship.JunctionBoxes)
+        {
+            components.Add(new Component(box.Id, ComponentKind.Junction, box.RoomId, box.X, box.Y));
+            var system = firstSystem.TryGetValue(box.Id, out var s) ? s : PowerSystemId.Secondary;
+            var preferred = ComponentDefinitions.DistributionOutPin(system);
+            var outPin = new[] { preferred }.Concat(distributionOutputs)
+                .FirstOrDefault(p => WireRules.CanAddWireTo(wires, new PinRef("distribution", p.Id))) ?? preferred;
+            wires.Add(new Wire($"trunk-{box.Id}",
+                new PinRef("distribution", outPin.Id),
+                new PinRef(box.Id, ComponentDefinitions.JunctionInPin().Id),
+                new[] { new Vec2(box.X, ship.DistributionBlock.Y) }));
+        }
     }
 }

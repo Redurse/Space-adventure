@@ -12,7 +12,10 @@ public sealed record CompartmentPlan(
     int Rotation,
     CustomShipDefinition Fragment,
     IReadOnlyList<TileCoord> Tiles,
-    RectF Bounds);
+    RectF Bounds,
+    // The doors of the hull this compartment's walls now stand in front of (they go), as canonical (tile, East/South) seams. The compartment's own
+    // doors that coincide with a door already on the hull are not in the fragment at all - they are that door, one door instead of two.
+    IReadOnlyList<(TileCoord Coord, TileSide Side)>? RemovedDoorEdges = null);
 
 public static class CompartmentBuilder
 {
@@ -49,6 +52,9 @@ public static class CompartmentBuilder
         var stamped = CompartmentPlacer.Stamp(liveTiles.Clone(), entry, anchor, rotation, FragmentInstance);
         if (!stamped.Success)
             return (null, "Место занято.");
+        // What the hull's doors look like after this compartment is in: its own new ones, and which old ones its walls have closed off.
+        var newEdgeKeys = (stamped.PlacedDoorEdges ?? Array.Empty<PlacedDoorEdge>()).Select(e => (e.Coord, e.Side)).ToHashSet();
+        var removedEdgeKeys = (stamped.RemovedDoorEdges ?? Array.Empty<PlacedDoorEdge>()).Select(e => (e.Coord, e.Side)).ToList();
 
         // It must touch the existing hull (a compartment floating on its own is no part of the ship): some footprint tile sits
         // right beside a tile that already has floor.
@@ -84,7 +90,37 @@ public static class CompartmentBuilder
 
         var bounds = new RectF(rects.Min(r => r.Left), rects.Min(r => r.Top),
             rects.Max(r => r.Right) - rects.Min(r => r.Left), rects.Max(r => r.Bottom) - rects.Min(r => r.Top));
-        return (new CompartmentPlan(entry, anchor, rotation, fragment, tiles, bounds), null);
+        // Only the doors that are really new: one that coincides with a door already on the hull is that door.
+        fragment = fragment with { DoorEdges = fragment.DoorEdges.Where(e => newEdgeKeys.Contains((new TileCoord(e.X, e.Y), e.Side))).ToList() };
+        return (new CompartmentPlan(entry, anchor, rotation, fragment, tiles, bounds, removedEdgeKeys), null);
+    }
+
+    // Where the compartment, put down near `anchor`, would line its doors up exactly with doors the hull already has facing out - the placement that
+    // makes them one door. Looks within `radius` tiles of the anchor and takes the closest that is a valid placement and has the most doors matching;
+    // returns `anchor` itself when no such placement exists (or the compartment has no doors).
+    public static TileCoord SnapToDoors(TileGrid liveTiles, IReadOnlySet<TileCoord> reserved, CompartmentCatalogEntry entry, TileCoord anchor, int rotation, int radius = 4)
+    {
+        if (entry.DoorEdges.Count == 0 || liveTiles.DoorEdges.Count == 0)
+            return anchor;
+        var rotated = CompartmentPlacer.Rotate(entry, rotation);
+        var best = anchor;
+        var bestMatches = 0;
+        var bestDistance = int.MaxValue;
+        for (var dx = -radius; dx <= radius; dx++)
+            for (var dy = -radius; dy <= radius; dy++)
+            {
+                var candidate = new TileCoord(anchor.X + dx, anchor.Y + dy);
+                var matches = rotated.DoorEdges.Count(e => liveTiles.DoorEdgeAt(new TileCoord(candidate.X + e.Position.X, candidate.Y + e.Position.Y), e.Side) is not null);
+                if (matches == 0)
+                    continue;
+                var distance = Math.Abs(dx) + Math.Abs(dy);
+                if (matches < bestMatches || (matches == bestMatches && distance >= bestDistance))
+                    continue;
+                if (Plan(liveTiles, reserved, entry, candidate, rotation).Plan is null)
+                    continue;
+                (best, bestMatches, bestDistance) = (candidate, matches, distance);
+            }
+        return best;
     }
 
     // The ship's definition with the compartment appended (under a fresh room id), or null if the result is not a valid ship.
@@ -93,6 +129,7 @@ public static class CompartmentBuilder
         var fragment = plan.Fragment;
         var room = fragment.Rooms[0] with { Id = roomId };
         var airlocks = fragment.Airlocks.Select(a => a with { RoomId = roomId });
+        var removed = plan.RemovedDoorEdges ?? Array.Empty<(TileCoord, TileSide)>();
         var merged = def with
         {
             Rooms = def.Rooms.Append(room).ToList(),
@@ -104,7 +141,12 @@ public static class CompartmentBuilder
             SupplementalWallTiles = def.SupplementalWallTiles.Concat(fragment.SupplementalWallTiles).ToList(),
             ForcedFloorTiles = def.ForcedFloorTiles.Concat(fragment.ForcedFloorTiles).ToList(),
             WallOpenSides = def.WallOpenSides.Concat(fragment.WallOpenSides).ToList(),
-            DoorEdges = def.DoorEdges.Concat(fragment.DoorEdges).ToList(),
+            // The hull's doors this compartment now blocks go; its own new doors come in under ids of its own room (so no two compartments'
+            // doors are ever taken for the segments of one wide door).
+            DoorEdges = def.DoorEdges
+                .Where(e => removed.All(r => r != (new TileCoord(e.X, e.Y), e.Side)))
+                .Concat(fragment.DoorEdges.Select(e => e with { Id = e.Id.Replace(FragmentInstance, roomId) }))
+                .ToList(),
         };
         return CustomShipValidator.Validate(merged).Count > 0 ? null : merged;
     }
@@ -161,6 +203,7 @@ public static class CompartmentPricing
         CompartmentType.Weapons => RoomCategory.Weapons,
         CompartmentType.LifeSupport or CompartmentType.Medical or CompartmentType.CrewQuarters => RoomCategory.Crew,
         CompartmentType.Cockpit => RoomCategory.Sensors,
+        CompartmentType.Outpost => RoomCategory.Outpost,
         _ => RoomCategory.Structural, // Docking
     };
 

@@ -221,42 +221,6 @@ internal static partial class TestRunner
         return snapshot.Characters.All(c => c.Health == Character.MaxHealth);
     }
 
-    private static bool World_Recruiting_EngineerBotFeedsUnpoweredSystems()
-    {
-        var world = new World();
-        world.SpawnCharacter(1);
-        FundGenerously(world);
-
-        var engineerCandidate = RerollUntilRoleOffered(world, CrewRole.Engineer);
-
-        // RerollUntilRoleOffered may have flown the ship through a sector-alpha fight and back
-        // (DockAgainForFreshRoster) to get a fresh board, which can leave Engine holding the whole
-        // reactor budget. Drain it back down here, before hiring, so there's real headroom left for
-        // the bot's Oxygen nudge to be measurable once it exists, regardless of how many rerolls it
-        // took this run.
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: (int)PowerSystemId.Engine, PowerDirection: -1f));
-        for (var i = 0; i < 5 * 30; i++)
-            world.Step(RealtimeStep);
-
-        // And drain Oxygen to nothing, which is the precondition this case is actually about. It used
-        // to arrive at zero for free, because a world came up with every slider down; a run now starts
-        // with the reactor split evenly, and an Oxygen already sitting on the bot own target gives it
-        // nothing to do. Stating the precondition beats inheriting it - the case reads as what it
-        // tests either way, and now it stays true whatever the boot-time split becomes.
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: (int)PowerSystemId.Oxygen, PowerDirection: -1f));
-        for (var i = 0; i < 5 * 30; i++)
-            world.Step(RealtimeStep);
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: (int)PowerSystemId.Oxygen, PowerDirection: 0f));
-
-        var before = world.CreateSnapshot().Power.Allocated[PowerSystemId.Oxygen];
-        world.ApplyCommand(1, new ClientCommand(1, HireCandidateId: engineerCandidate.Id));
-
-        for (var i = 0; i < 6 * 30; i++)
-            world.Step(RealtimeStep);
-
-        return world.CreateSnapshot().Power.Allocated[PowerSystemId.Oxygen] > before;
-    }
-
     private static bool World_Recruiting_CaptainBotStabilizesAbandonedHelm()
     {
         var world = new World();

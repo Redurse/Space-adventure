@@ -37,7 +37,7 @@ public static partial class ItemIcons
 
     public static void SetScrewdriverTexture(Texture2D texture) => _screwdriverTexture = texture;
 
-    public static bool HasIcon(ItemType type) => type is ItemType.Wrench or ItemType.Screwdriver
+    public static bool HasIcon(ItemType type) => ItemSkin.Has(type) || HasRevolverIcon(type) || type is ItemType.Wrench or ItemType.Screwdriver
         or ItemType.WeldingTool or ItemType.Cutter or ItemType.OxygenTank or ItemType.WeldingTank
         or ItemType.AmmoCrate or ItemType.Spacesuit or ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle
         or ItemType.FuelRod or ItemType.MedKit or ItemType.WireSpool or ItemType.Mineral or ItemType.Magazine
@@ -49,6 +49,7 @@ public static partial class ItemIcons
         // types that used to fall through to InventoryPanel's plain coloured square + label.
         or ItemType.Axe or ItemType.GoshaScrewdriver or ItemType.BeltBag or ItemType.IdCard or ItemType.Radio
         // Direct user request ("добавим множество предметов материалов") - ItemIcons.Materials.cs.
+        || HasMedicalIcon(type)
         || HasMaterialIcon(type);
 
     // rotation: the angle to actually draw the tool at, in the same frame ShipRenderer's
@@ -59,6 +60,23 @@ public static partial class ItemIcons
     public static void Draw(SpriteBatch spriteBatch, Texture2D pixel, ItemType type, Rectangle rect, float? rotation = null)
     {
         var angle = rotation ?? ToolTilt;
+
+        // Direct user request ("улучши все текущие текстуры предметов") - the painted art
+        // (ItemSkin) now draws every item; the procedural drawings below remain only as the
+        // fallback for anything it doesn't cover. The screwdriver's own raster texture, when
+        // loaded, still wins - it's a deliberate hand-made asset.
+        var defaultAngle = type is ItemType.Screwdriver or ItemType.GoshaScrewdriver ? ScrewdriverSlotTilt
+            : GunDefinitions.Of(type) is { Hands: 1 } ? 0f // a handgun lies level in its slot; a long gun needs the diagonal
+            : ToolTilt;
+        // The screwdriver's raster texture used to win here; user feedback ("всё размытое и слишком
+        // яркое") covered it too - it was the one bright, resampled-when-rotated picture left - so it
+        // goes through the painted art like everything else. The asset itself is still loaded.
+        // The four work tools were reverted to the old drawings once ("верни этим 4 предметам внешний вид"),
+        // then redrawn after Barotrauma's toolkit sheet on a later request ("переделай по аналогии
+        // инструменты игрока") - ItemSkin.WorkTools.cs - so they go through the painted art again too.
+        if (ItemSkin.TryDraw(spriteBatch, type, rect, rotation, defaultAngle))
+            return;
+
         if (ComponentDefinitions.ComponentKindFor(type) is { } componentKind)
         {
             DrawComponentChip(spriteBatch, pixel, rect, componentKind);
@@ -66,6 +84,12 @@ public static partial class ItemIcons
         }
 
         if (DrawMaterialIcon(spriteBatch, pixel, type, rect))
+            return;
+
+        if (DrawMedicalIcon(spriteBatch, pixel, type, rect))
+            return;
+
+        if (DrawRevolverIcon(spriteBatch, pixel, type, rect, rotation ?? 0f))
             return;
 
         switch (type)

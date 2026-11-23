@@ -34,7 +34,11 @@ public sealed partial class World
             _campaignStage,
             _storyLog.ToArray(),
             GalaxyMap.GeneratedProceduralCount,
-            _manualScannerMarkers.ToArray());
+            _manualScannerMarkers.ToArray(),
+            CreateWiringSave(),
+            WorldSeed,
+            CreateExplorationSave(),
+            _war?.Capture());
     }
 
     public void ClearAutosavePending() => AutosavePending = false;
@@ -44,10 +48,6 @@ public sealed partial class World
     // than trying to unwind whatever was happening.
     public void ApplySave(SaveGame save)
     {
-        // Slider positions are not in the save, so a loaded run would otherwise come up dead. The
-        // even split is the same thing a new campaign gets, and it beats the zero it used to be.
-        PowerGrid.SplitEvenly();
-
         // ShipKind is always Custom now (direct user request - "удали все текущие корабли...
         // полностью удалить из кода") - two different runs can share that one enum value while
         // still being different ships, so the Ship always gets rebuilt from whatever definition the
@@ -59,6 +59,10 @@ public sealed partial class World
         _turretRuntimes.Clear();
         foreach (var turret in Ship.Turrets)
             _turretRuntimes[turret.Id] = new TurretRuntime(turret);
+        // W4: the saved wiring replaces whatever the constructor generated for its default hull,
+        // then InitializeShipState reconciles it against the loaded one (no saved wiring = an
+        // empty slate, which reconciles into the standard wiring).
+        LoadWiring(save.Wiring);
         InitializeShipState();
 
         Credits = save.Credits;
@@ -85,6 +89,8 @@ public sealed partial class World
         _manualScannerMarkers.Clear();
         if (save.ManualScannerMarkers is { } markers)
             _manualScannerMarkers.AddRange(markers);
+        LoadExploration(save.Exploration);
+        _pendingWarSave = save.War;
 
         // Docked at the saved station, exactly as if the ship had just finished its approach.
         var point = GalaxyMap.Points.FirstOrDefault(p => p.Id == save.DockedPointId)
@@ -96,8 +102,7 @@ public sealed partial class World
 
         foreach (var character in _characters.Values)
         {
-            character.Position = Ship.SpawnPoint;
-            character.RoomId = Ship.SpawnRoomId;
+            (character.Position, character.RoomId) = Ship.RoleSpawn(character.Role);
             character.OnStation = false;
             character.OnEnemyShip = false;
             character.IsOutside = false;

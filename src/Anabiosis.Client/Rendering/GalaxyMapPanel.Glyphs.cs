@@ -23,7 +23,7 @@ public sealed partial class GalaxyMapPanel
                 break;
             case GalaxyPointKind.StoragePod:
                 spriteBatch.Draw(_pixel, new Rectangle(rect.X + rect.Width / 5, rect.Y + rect.Height / 4, rect.Width * 3 / 5, rect.Height / 2), color);
-                spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - 1, rect.Y + rect.Height / 4, 2, rect.Height / 2), Color.Black * 0.6f);
+                spriteBatch.Draw(_pixel, new Rectangle(rect.Center.X - 1, rect.Y + rect.Height / 4, 2, rect.Height / 2), Ink(Color.Black * 0.6f));
                 break;
             case GalaxyPointKind.AbandonedShip:
             case GalaxyPointKind.ShipGraveyard:
@@ -33,7 +33,7 @@ public sealed partial class GalaxyMapPanel
                 var wreck = new[] { c + new Vector2(r, 0), c + new Vector2(-r * 0.7f, -r * 0.6f), c + new Vector2(-r * 0.3f, 0), c + new Vector2(-r * 0.7f, r * 0.6f) };
                 Primitives.FillPolygon(spriteBatch, _pixel, c, wreck, color * 0.9f);
                 if (kind == GalaxyPointKind.ShipGraveyard)
-                    Primitives.StrokePolygon(spriteBatch, _pixel, wreck, Color.White * 0.6f, 1.5f);
+                    Primitives.StrokePolygon(spriteBatch, _pixel, wreck, Ink(Color.White * 0.6f), 1.5f);
                 break;
             }
             default: // HostileSector
@@ -55,8 +55,8 @@ public sealed partial class GalaxyMapPanel
             hex[i] = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * r;
         }
         Primitives.FillPolygon(spriteBatch, _pixel, center, hex, color * 0.85f);
-        Primitives.StrokePolygon(spriteBatch, _pixel, hex, Color.White * 0.6f, 1.5f);
-        HudIcons.FillCircle(spriteBatch, _pixel, center, r * 0.32f, Color.White * 0.75f);
+        Primitives.StrokePolygon(spriteBatch, _pixel, hex, Ink(Color.White * 0.6f), 1.5f);
+        HudIcons.FillCircle(spriteBatch, _pixel, center, r * 0.32f, Ink(Color.White * 0.75f));
         spriteBatch.Draw(_pixel, new Rectangle((int)(center.X - r * 1.3f), (int)center.Y - 1, (int)(r * 0.5f), 2), color);
         spriteBatch.Draw(_pixel, new Rectangle((int)(center.X + r * 0.8f), (int)center.Y - 1, (int)(r * 0.5f), 2), color);
     }
@@ -84,7 +84,7 @@ public sealed partial class GalaxyMapPanel
             points[i] = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius * wobble;
         }
         Primitives.FillPolygon(spriteBatch, _pixel, center, points, color);
-        Primitives.StrokePolygon(spriteBatch, _pixel, points, Color.Black * 0.35f, 1f);
+        Primitives.StrokePolygon(spriteBatch, _pixel, points, Ink(Color.Black * 0.35f), 1f);
     }
 
     // A jagged burst that pulses slightly - reads as a hazard, not a place you'd want to sit still.
@@ -101,6 +101,6 @@ public sealed partial class GalaxyMapPanel
             points[i] = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
         }
         Primitives.FillPolygon(spriteBatch, _pixel, center, points, color);
-        Primitives.StrokePolygon(spriteBatch, _pixel, points, Color.White * 0.5f, 1.2f);
+        Primitives.StrokePolygon(spriteBatch, _pixel, points, Ink(Color.White * 0.5f), 1.2f);
     }
 }

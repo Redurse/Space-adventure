@@ -266,6 +266,7 @@ internal static partial class TestRunner
         // character 2 (the unsuited control) isn't spawned until right before measuring — see why
         // in World_Decompression_DrainsHealthInBreachedRoom just above.
         EnterBattle(world);
+        CutPowerTo(world, PowerSystemId.Shields, PowerSystemId.Oxygen, PowerSystemId.WeaponCharger); // unshielded, no generator
 
         for (var i = 0; i < 600 * 30 && !RoomHasBreach(world.CreateSnapshot(), "engine"); i++)
             world.Step(RealtimeStep);
@@ -335,6 +336,7 @@ internal static partial class TestRunner
         // Flying there needs a hand on the helm first (no more autopilot) - man the laser turret
         // only once the fight has actually started.
         EnterBattle(world);
+        CutPowerTo(world, PowerSystemId.WeaponCharger); // only the capacitor's own stored charge, no recharge mid-test
         MoveCharacterTo(world, 1, 6.5f, 3f); // laser turret periscope, reactor room
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man it — no crate needed
 
@@ -362,10 +364,11 @@ internal static partial class TestRunner
         return before > 0 && after < before && snapshot.Enemy.Hp < 100f;
     }
 
-    private static bool World_LaserTurret_RechargesOnlyFromWeaponChargerAllocation()
+    private static bool World_LaserTurret_RechargesOnlyFromWeaponChargerPower()
     {
         var world = new World();
         world.SpawnCharacter(1);
+        world.PowerGrid.Reactor.EmergencyShutdown = true; // the grid starts dark (the battery starts empty)
         MoveCharacterTo(world, 1, 6.5f, 3f);
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // man
 
@@ -380,12 +383,11 @@ internal static partial class TestRunner
         }
         var depleted = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-laser").Charge;
 
-        for (var i = 0; i < 60; i++) // no power allocated to WeaponCharger -> should not recharge
+        for (var i = 0; i < 60; i++) // no power reaching WeaponCharger -> should not recharge
             world.Step(RealtimeStep);
         var stillDepleted = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-laser").Charge;
 
-        // PowerSystemId order: Oxygen, Engine, Shields, WeaponCharger(3), Secondary.
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 3, PowerDirection: 1f));
+        world.PowerGrid.Reactor.EmergencyShutdown = false; // the reactor comes back, the grid feeds the charger
         for (var i = 0; i < 90; i++)
             world.Step(RealtimeStep);
         var recharged = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-laser").Charge;

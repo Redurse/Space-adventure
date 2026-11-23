@@ -23,9 +23,10 @@ internal static partial class TestRunner
         if (world.Tutorial != TutorialStage.AllocatePower)
             return false;
 
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 1, PowerDirection: 1f)); // Engine
-        for (var i = 0; i < 30; i++) // allocation ramps up gradually, not instantly
-            world.Step(RealtimeStep);
+        var distribution = world.Ship.DistributionBlock.Position; // open the distribution block (F)
+        MoveCharacterTo(world, 1, (float)distribution.X, (float)distribution.Y);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.Step(RealtimeStep);
         if (world.Tutorial != TutorialStage.ManHelm)
             return false;
 

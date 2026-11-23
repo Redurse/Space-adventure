@@ -23,8 +23,9 @@ public sealed partial class World
     // itself is already covered end to end by TestRunner.Mining.cs.
     public void DebugGiveItem(int playerId, ItemType type) => _characters[playerId].Inventory.TryAdd(type);
 
+    // Workshop devices drawn into the docked station (Station.Fixtures.cs) work like the ship's own: a fabricator is a fabricator.
     private bool NearDeviceKind(Character character, CustomDeviceKind kind) =>
-        Ship.DecorativeDevices.Any(d => d.Kind == kind && d.RoomId == character.RoomId &&
+        Ship.DecorativeDevices.Concat(DockedFixtures.DecorativeDevices).Any(d => d.Kind == kind && d.RoomId == character.RoomId &&
             (d.Position - character.Position).Length() < InteractionRadius);
 
     private static bool HasIngredients(Inventory inventory, FabricatorRecipe recipe) =>
@@ -36,7 +37,7 @@ public sealed partial class World
     // until the moment it completes).
     private void TryCraftAtFabricator(Character character, string recipeId)
     {
-        if (character.IsOutside || character.OnStation || character.ProductionActionRemaining > 0)
+        if (character.IsOutside || character.ProductionActionRemaining > 0)
             return;
         if (FabricatorCatalog.Find(recipeId) is not { } recipe)
             return;
@@ -55,7 +56,7 @@ public sealed partial class World
     // and the character has to actually be holding one.
     private void TryDeconstructAt(Character character, ItemType itemType)
     {
-        if (character.IsOutside || character.OnStation || character.ProductionActionRemaining > 0)
+        if (character.IsOutside || character.ProductionActionRemaining > 0)
             return;
         if (FabricatorCatalog.FindByOutput(itemType) is not { } recipe)
             return;

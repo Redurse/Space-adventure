@@ -1,4 +1,4 @@
-namespace Anabiosis.Shared.Model;
+﻿namespace Anabiosis.Shared.Model;
 
 // Every station the ship can dock at shares this same physical layout and NPC roster for now
 // (game_design.md section 10 says stations differ by type/services, but that differentiation is a
@@ -86,15 +86,26 @@ public sealed partial class Station
 
     // True for a point given in the station's own (docked) frame - the approach physics converts
     // the ship's world position into it before asking.
+    // A dead station (PoiKind.AbandonedStation): the same rooms and doors with nobody and nothing of anyone's in it.
+    public bool IsAbandoned { get; private init; }
+
+    // What the author drew into the station besides its rooms (Station.Fixtures.cs) - only the drawn start outpost has any.
+    public StationFixtures Fixtures { get; private init; } = StationFixtures.Empty;
+    public StationTileFixes TileFixes { get; private set; } = StationTileFixes.Empty;
+
+    public Station AsAbandoned() =>
+        new(Rooms, Doors, ShipConnector, Array.Empty<StationNpc>(), Array.Empty<StationCrate>(), Position, DockRoomId) { IsAbandoned = true };
+
     public bool ContainsPoint(Vec2 point) => _roomsById.Values.Any(r => r.Contains(point));
 
     public Room GetRoom(string roomId) => _roomsById[roomId];
 
     // M73 - now backed by Tiles/TileMovement instead of the Rooms/Doors rectangle-clamp. isDoorOpen
     // is unused (baked into TileCell already) - kept so callers don't need to change.
-    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen)
+    public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen,
+        TileMovement.MoveMemory? memory = null)
     {
-        var next = TileMovement.MoveAlongAxis(Tiles, position, delta);
+        var next = TileMovement.MoveAlongAxis(Tiles, position, delta, null, memory);
         return (next, TileMovement.RoomIdAt(Rooms, next) ?? roomId);
     }
 

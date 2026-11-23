@@ -159,11 +159,11 @@ public sealed class VisibilityMask : IDisposable
 
     // Draws the mask's own render target as-is, with whatever blend state the caller has already
     // set up - used by RoomLighting to fold the player's own sight into the combined light/sight
-    // mask via a Max blend instead of this class's own multiply-onto-backbuffer Composite.
-    public void DrawRaw(SpriteBatch spriteBatch)
+    // mask (RoomLighting.SightScale) instead of this class's own multiply-onto-backbuffer Composite.
+    public void DrawRaw(SpriteBatch spriteBatch, Color? tint = null)
     {
         if (_target is not null)
-            spriteBatch.Draw(_target, Vector2.Zero, Color.White);
+            spriteBatch.Draw(_target, Vector2.Zero, tint ?? Color.White);
     }
 
     // Direct user request ("видимость не заканчивалась тут же на блоке стены, а немного проходила
@@ -291,11 +291,12 @@ public sealed class VisibilityMask : IDisposable
             if (MathF.Abs(distanceB - distanceA) < CornerShadowDistanceJumpThreshold)
                 continue;
 
-            // Whichever side is the NEARER one is the lit room approaching the shadow it's about to
-            // be cut off by; the farther one is whatever just became visible past the corner, which
-            // should also ease in rather than pop at full brightness. Both get dimmed the same way.
-            DimSample(i, baseVertex);
-            DimSample(j, baseVertex);
+            // Only the FARTHER one - whatever just became visible past the corner, which eases in
+            // rather than popping at full brightness. Dimming the nearer one too (the first version)
+            // also darkened the wall's own lit corner tip and the bleed BuildFringe takes from it - a
+            // dark bite out of a wall the player plainly sees (direct user report, "черные срезы на
+            // углах").
+            DimSample(distanceB > distanceA ? j : i, baseVertex);
             applied++;
         }
     }
@@ -311,20 +312,53 @@ public sealed class VisibilityMask : IDisposable
         _vertices[baseVertex + 1 + index].Color = dimmed;
     }
 
+    // (4) Direct user report (screenshots - "черные срезы на углах" of the walls): a straight chord
+    // between two fixed-angle samples only matches the fan's own rim while the rim between them is
+    // itself straight. Across a wall corner it isn't - the rim bends there (an inner corner), or
+    // jumps from the near wall to whatever lies past it (an outer one) - so the chord cut diagonally
+    // across the corner, and the wall's own bleed was simply missing from that wedge: a black slice
+    // out of the wall right at its corner. Fix: every corner ray (a CornerNudge triple -
+    // CollectRayOffsets' own exact geometric corner angles, so they don't swim as the player walks
+    // either) is a fringe sample too, alongside the fixed angles, so the chord bends exactly where
+    // the rim does; and across a near/far jump the fringe strip is broken instead of bridged (no
+    // fixed-angle sample interpolated across it, no quad spanning it).
+    private readonly List<(Vector2 Point, Color Color, bool BreakBefore)> _fringeSamples = new();
+
     private void BuildFringe(Vector2 eye, float span, float radius, Vector2 origin, bool full)
     {
-        var sampleCount = full ? FringeArcCap : FringeArcCap + 1;
-        var edgeCount = full ? sampleCount : sampleCount - 1;
+        var rayCount = _offsets.Count;
+        var fixedCount = full ? FringeArcCap : FringeArcCap + 1;
+        _fringeSamples.Clear();
+
+        var nextFixed = 0;
+        for (var i = 0; i < rayCount; i++)
+        {
+            var next = i + 1 < rayCount ? i + 1 : full ? 0 : -1;
+            var jumpBefore = i > 0 && IsCornerJump(eye, i - 1, i, span);
+            var jumpAfter = next >= 0 && IsCornerJump(eye, i, next, span);
+            if (IsCornerRay(i, span, full) || jumpBefore || jumpAfter)
+                _fringeSamples.Add((_raySamples[i].WorldPoint, _raySamples[i].Color, jumpBefore));
+
+            var intervalEnd = next < 0 ? float.MaxValue : next == 0 ? span : _offsets[next];
+            for (; nextFixed < fixedCount && span * nextFixed / FringeArcCap < intervalEnd; nextFixed++)
+            {
+                var targetOffset = span * nextFixed / FringeArcCap;
+                if (jumpAfter || targetOffset < _offsets[i])
+                    continue;
+                var (worldPoint, color) = GetBoundaryPoint(targetOffset, span, full);
+                _fringeSamples.Add((worldPoint, color, false));
+            }
+        }
+
+        var sampleCount = _fringeSamples.Count;
+        if (sampleCount < 2)
+            return;
         Grow(_vertexCount + sampleCount * 2);
-        GrowIndices(_indexCount + edgeCount * 6);
+        GrowIndices(_indexCount + sampleCount * 6);
 
         var baseVertex = _vertexCount;
-        var denom = full ? sampleCount : sampleCount - 1;
-        for (var i = 0; i < sampleCount; i++)
+        foreach (var (worldPoint, color, _) in _fringeSamples)
         {
-            var targetOffset = span * i / denom;
-            var (worldPoint, color) = GetBoundaryPoint(targetOffset, span, full);
-
             var toPoint = worldPoint - eye;
             var distance = toPoint.Length();
             var hitWall = distance < radius - 1e-3f;
@@ -335,8 +369,12 @@ public sealed class VisibilityMask : IDisposable
             _vertices[_vertexCount++] = new VertexPositionColor(new Vector3(origin + outerPoint * ShipRenderer.PixelsPerUnit, 0f), Shade(0f));
         }
 
+        var closesLoop = full && !IsCornerJump(eye, rayCount - 1, 0, span);
+        var edgeCount = closesLoop ? sampleCount : sampleCount - 1;
         for (var i = 1; i <= edgeCount; i++)
         {
+            if (i < sampleCount && _fringeSamples[i].BreakBefore)
+                continue;
             var prev = baseVertex + (i - 1) % sampleCount * 2;
             var cur = baseVertex + i % sampleCount * 2;
             var prevInner = (short)prev;
@@ -351,6 +389,29 @@ public sealed class VisibilityMask : IDisposable
             _indices[_indexCount++] = curOuter;
             _indices[_indexCount++] = curInner;
         }
+    }
+
+    // Angular gap from ray a to the next ray b, across the wrap seam when b is ray 0 again.
+    private float RayGap(int a, int b, float span) => b > a ? _offsets[b] - _offsets[a] : _offsets[b] + span - _offsets[a];
+
+    // Part of a CornerNudge triple - a ray CollectRayOffsets aimed at (or right beside) a wall corner.
+    private bool IsCornerRay(int i, float span, bool full)
+    {
+        var count = _offsets.Count;
+        if ((i > 0 || full) && RayGap(i > 0 ? i - 1 : count - 1, i, span) <= CornerShadowGapThreshold)
+            return true;
+        return (i + 1 < count || full) && RayGap(i, i + 1 < count ? i + 1 : 0, span) <= CornerShadowGapThreshold;
+    }
+
+    // Adjacent corner rays where the rim jumps from a near wall to something well past it - the
+    // same test ApplyCornerShadowFades uses.
+    private bool IsCornerJump(Vector2 eye, int a, int b, float span)
+    {
+        if (RayGap(a, b, span) > CornerShadowGapThreshold)
+            return false;
+        var distanceA = (_raySamples[a].WorldPoint - eye).Length();
+        var distanceB = (_raySamples[b].WorldPoint - eye).Length();
+        return MathF.Abs(distanceB - distanceA) >= CornerShadowDistanceJumpThreshold;
     }
 
     // Finds the point ON the base fan's own already-built boundary at `targetOffset` (an angle

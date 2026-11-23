@@ -24,4 +24,10 @@ public sealed record StationSnapshot(
     IReadOnlyList<WallBlockState> WallBlockStates,
     // The people walking around the docked station (World.StationResidents.cs) - null while undocked and
     // in every older save/test that never knew about them.
-    IReadOnlyList<StationResidentState>? Residents = null);
+    IReadOnlyList<StationResidentState>? Residents = null,
+    // A dead station (World.AbandonedStations.cs): dark, airless, nobody aboard.
+    bool IsAbandoned = false,
+    // The drawing's wall corrections (half-block walls, extra wall tiles) the client replays on its own copy of the tiles - null for a station with none.
+    StationTileFixes? TileFixes = null,
+    // The station's power plant and the shore connection to the ship - null for a station without a reactor.
+    StationPowerState? Power = null);

@@ -27,15 +27,17 @@ public sealed partial class World
 
         if (isLaser)
         {
-            if (turret.Charge < definition.ChargePerShot)
+            if (!_debugInfiniteAmmo && turret.Charge < definition.ChargePerShot)
                 return;
-            turret.Charge -= definition.ChargePerShot;
+            if (!_debugInfiniteAmmo)
+                turret.Charge -= definition.ChargePerShot;
         }
         else
         {
-            if (turret.AmmoRemaining < pellets)
+            if (!_debugInfiniteAmmo && turret.AmmoRemaining < pellets)
                 return;
-            turret.AmmoRemaining -= pellets;
+            if (!_debugInfiniteAmmo)
+                turret.AmmoRemaining -= pellets;
         }
 
         turret.CooldownRemaining = definition.CooldownSeconds;

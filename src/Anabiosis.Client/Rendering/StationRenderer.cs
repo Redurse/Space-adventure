@@ -43,13 +43,42 @@ public sealed partial class StationRenderer
     public static Rectangle GetResidentRect(StationResidentState resident, Vector2 origin) =>
         ShipRenderer.GetBlockRect(new Vec2(resident.X, resident.Y), NpcMarkerSize, origin);
 
+    // The station's wall tiles, rebuilt only when its rooms or doors change (the same rasterizer the server's Station.Tiles come from).
+    private TileGrid? _stationTiles;
+    private int _stationTilesFingerprint;
+
+    private TileGrid StationTiles(StationSnapshot station)
+    {
+        var doors = station.Doors.Append(station.ShipConnector).ToList();
+        var fingerprint = ClientTileGrid.ComputeStructuralFingerprint(station.Rooms, doors);
+        if (_stationTiles is null || _stationTilesFingerprint != fingerprint)
+        {
+            _stationTiles = TileGridRasterizer.FromRooms(station.Rooms, doors);
+            // The drawing's half-block walls and extra wall tiles, which no room rectangle can express - the same stamp the server's tiles got.
+            station.TileFixes?.Apply(_stationTiles);
+            _stationTilesFingerprint = fingerprint;
+        }
+        return _stationTiles;
+    }
+
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, string? talkingToNpcId, float totalSeconds = 0f,
         IReadOnlyDictionary<string, (string Text, float Alpha)>? residentBubbles = null)
     {
-        foreach (var room in snapshot.Station.Rooms)
-            _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin, StationAccent);
-        foreach (var room in snapshot.Station.Rooms)
-            _shipRenderer.DrawRoomWalls(spriteBatch, room, oxygen: 100f, origin, StationAccent);
+        if (snapshot.Station.Rooms.Any(r => r.Rects.Count > 1))
+        {
+            // Compartments with a drawn shape (cut corners), not rectangles: the floor piece by piece, the walls tile by tile.
+            foreach (var room in snapshot.Station.Rooms)
+                foreach (var rect in room.Rects)
+                    _shipRenderer.DrawRoomFloor(spriteBatch, new Room(room.Id, room.Name, new[] { rect }), oxygen: 100f, origin, StationAccent);
+            _shipRenderer.DrawWallTiles(spriteBatch, StationTiles(snapshot.Station), origin);
+        }
+        else
+        {
+            foreach (var room in snapshot.Station.Rooms)
+                _shipRenderer.DrawRoomFloor(spriteBatch, room, oxygen: 100f, origin, StationAccent);
+            foreach (var room in snapshot.Station.Rooms)
+                _shipRenderer.DrawRoomWalls(spriteBatch, room, oxygen: 100f, origin, StationAccent);
+        }
 
         foreach (var door in snapshot.Station.Doors)
             _shipRenderer.DrawDoor(spriteBatch, door.Left, door.Top, door.Width, door.Height, door.IsVertical, isOpen: true, origin);
@@ -78,23 +107,32 @@ public sealed partial class StationRenderer
             DrawCrate(spriteBatch, crate, origin);
         }
 
+        // What the author drew into the station (lamps, terminals, the reactor, the fabricator...): on top of the floor just painted.
+        _shipRenderer.DrawStationFixtures(spriteBatch, snapshot, origin, ClickTarget.None, totalSeconds);
+
         foreach (var npc in snapshot.Station.Npcs)
         {
-            // A guard shot dead stops being drawn - same convention as cleared enemy crew.
-            if (npc.Kind == NpcKind.Security &&
-                !(snapshot.Station.Guards.FirstOrDefault(g => g.NpcId == npc.Id)?.Alive ?? true))
+            // Anyone on the staff who has been shot dead stops being drawn - same convention as cleared enemy crew.
+            // The list carries every guard and whoever else has been hurt; someone missing from it is unharmed.
+            var hurt = snapshot.Station.Guards.FirstOrDefault(g => g.NpcId == npc.Id);
+            if (hurt is { Alive: false })
                 continue;
             DrawNpc(spriteBatch, npc, origin, npc.Id == talkingToNpcId, NearestStationVisitor(snapshot, npc));
+            var npcTop = RectCenter(GetNpcRect(npc, origin));
+            HealthBars.Draw(spriteBatch, _pixel, "npc:" + npc.Id, hurt is null ? 1f : hurt.Health / hurt.MaxHealth, new Vector2(npcTop.X, npcTop.Y - 54));
         }
 
         // The people walking about the station (World.StationResidents.cs). A name shows once one of your
         // crew is close enough to be introduced; a line they have just said floats above them.
         foreach (var resident in snapshot.Station.Residents ?? Array.Empty<StationResidentState>())
         {
+            if (!resident.Alive)
+                continue; // killed: gone until the next visit
             var at = new Vec2(resident.X, resident.Y);
             var nearest = NearestStationVisitor(snapshot, at);
             var center = RectCenter(GetResidentRect(resident, origin));
             _shipRenderer.DrawResident(spriteBatch, resident, center, nearest);
+            HealthBars.Draw(spriteBatch, _pixel, "res:" + resident.Id, resident.Health / resident.MaxHealth, new Vector2(center.X, center.Y - 24));
             if (nearest is { } visitor && Vector2.Distance(visitor, new Vector2(resident.X, resident.Y)) < 4f)
                 spriteBatch.DrawString(_font, resident.Name, new Vector2(center.X - 4 * resident.Name.Length, center.Y + 14), Color.LightGray * 0.9f, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
             if (residentBubbles is not null && residentBubbles.TryGetValue(resident.Id, out var bubble))

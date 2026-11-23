@@ -185,8 +185,16 @@ public sealed partial class ShipRenderer
     private TileGrid? _cachedShipTiles;
     private int? _cachedShipTilesFingerprint;
 
+    // The grid is a pure function of the snapshot, and it is asked for several times a frame (walls, doors, lighting, interaction) while the game draws
+    // more frames than the server makes snapshots - so the finished grid is reused for as long as the same snapshot object is on screen.
+    // (A snapshot as drawn is a new object every frame - SnapshotSmoother.cs - so one raw server snapshot is told by its Tick and its DoorStates list.)
+    private long _liveTilesTick = -1;
+    private IReadOnlyList<DoorState>? _liveTilesDoorStates;
+
     internal TileGrid GetLiveShipTiles(WorldSnapshot snapshot)
     {
+        if (snapshot.Tick == _liveTilesTick && ReferenceEquals(snapshot.DoorStates, _liveTilesDoorStates) && _cachedShipTiles is not null)
+            return _cachedShipTiles;
         var fingerprint = ClientTileGrid.ComputeStructuralFingerprint(snapshot.Rooms, snapshot.Doors);
         if (_cachedShipTiles is null || _cachedShipTilesFingerprint != fingerprint)
         {
@@ -207,13 +215,41 @@ public sealed partial class ShipRenderer
             _cachedShipTilesFingerprint = fingerprint;
         }
         ClientTileGrid.ApplyLiveDoorState(_cachedShipTiles, snapshot.Rooms, snapshot.Doors, snapshot.DoorStates);
+        // The doors that stand on a tile edge rather than fill a tile (door edges) were never added here, only in
+        // ClientTileGrid.Build - so sight and lamp light ignored them: a closed one did not block, and the
+        // doorway under an open one read as a door-less seam between two compartments, which the sight seams
+        // (Game1.BuildRoomSeams) then walled off (direct user report - "с открытой дверью не вижу соседний отсек").
+        ClientTileGrid.ApplyDoorEdges(_cachedShipTiles, snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>());
+        ClientTileGrid.ApplyLiveDoorEdgeState(_cachedShipTiles, snapshot.DoorEdges ?? Array.Empty<ShipDoorEdge>(),
+            snapshot.DoorEdgeStates ?? Array.Empty<DoorEdgeState>());
         ClientTileGrid.ApplyWallOpenSides(_cachedShipTiles, snapshot.Rooms, snapshot.WallBlocks);
         // Direct user bug report ("не вижу ничего через стену являющейся иллюминатором") - the real
         // material has to land on the cell itself (not just the separate materialByTile dictionary
         // DrawShipWalls already reads for tinting) before TileOccluders' own Window exception can see
         // it at all.
         ClientTileGrid.ApplyWallMaterials(_cachedShipTiles, snapshot.Rooms, snapshot.WallBlocks);
+        _liveTilesTick = snapshot.Tick;
+        _liveTilesDoorStates = snapshot.DoorStates;
         return _cachedShipTiles;
+    }
+
+    // Which wall tiles carry a non-standard material. Rebuilt only when the wall list or the rooms are a different object (building, a swapped hull) -
+    // materials do not change tick to tick, and this used to be a LINQ pass over every wall block each frame.
+    private IReadOnlyList<WallBlock>? _materialBlocks;
+    private IReadOnlyList<Room>? _materialRooms;
+    private Dictionary<TileCoord, WallMaterial> _materialByTile = new();
+
+    private Dictionary<TileCoord, WallMaterial> MaterialByTile(WorldSnapshot snapshot)
+    {
+        if (ReferenceEquals(snapshot.WallBlocks, _materialBlocks) && ReferenceEquals(snapshot.Rooms, _materialRooms))
+            return _materialByTile;
+        _materialByTile = snapshot.WallBlocks
+            .Where(b => b.Material != WallMaterial.Standard)
+            .Select(b => (Coord: TileGridRasterizer.WallBlockTileCoord(b, snapshot.Rooms, snapshot.Rooms.First(r => r.Id == b.RoomId)), b.Material))
+            .ToDictionary(x => x.Coord, x => x.Material);
+        _materialBlocks = snapshot.WallBlocks;
+        _materialRooms = snapshot.Rooms;
+        return _materialByTile;
     }
 
     internal void DrawShipWalls(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin)
@@ -224,16 +260,22 @@ public sealed partial class ShipRenderer
         // doc comment) - matched back to a tile coordinate via the same WallBlockTileCoord mapping
         // World.TileSync.cs already uses server-side, so this can never disagree with which block
         // actually owns that position.
-        var materialByTile = snapshot.WallBlocks
-            .Where(b => b.Material != WallMaterial.Standard)
-            .Select(b => (Coord: TileGridRasterizer.WallBlockTileCoord(b, snapshot.Rooms, snapshot.Rooms.First(r => r.Id == b.RoomId)), b.Material))
-            .ToDictionary(x => x.Coord, x => x.Material);
+        var materialByTile = MaterialByTile(snapshot);
         foreach (var (coord, cell) in tiles.Cells)
         {
             if (cell.Wall != TileWallKind.Solid)
                 continue; // None = no wall; Door is drawn separately by the existing DrawDoor calls
             DrawWallTile(spriteBatch, tiles, coord, origin, materialByTile.GetValueOrDefault(coord, WallMaterial.Standard));
         }
+    }
+
+    // The wall art of any tile grid (the hull's own is DrawShipWalls above): a station whose rooms are not plain rectangles - the start outpost's
+    // drawn compartments - is walled tile by tile, so its cut corners show.
+    internal void DrawWallTiles(SpriteBatch spriteBatch, TileGrid tiles, Vector2 origin)
+    {
+        foreach (var (coord, cell) in tiles.Cells)
+            if (cell.Wall == TileWallKind.Solid)
+                DrawWallTile(spriteBatch, tiles, coord, origin);
     }
 
     private void DrawWallTile(SpriteBatch spriteBatch, TileGrid tiles, TileCoord coord, Vector2 origin, WallMaterial material = WallMaterial.Standard)
@@ -265,12 +307,7 @@ public sealed partial class ShipRenderer
         // are unaffected either way (no rotation - a resized destination rect crops them correctly).
         if (openSide is { } forcedHalf)
         {
-            // Direct user request - match the Ship Editor's own look for this half-thick case
-            // (Game1.ShipEditor.Draw.cs's DrawEditorWallTile) instead of the detailed hull-plate
-            // texture every other wall tile gets: a flat tinted rectangle with a thin outline.
-            var forcedRect = HalfRect(center, unit, forcedHalf);
-            spriteBatch.Draw(_pixel, forcedRect, tint == Color.White ? new Color(120, 130, 150) : tint);
-            DrawRectOutline(spriteBatch, forcedRect, Color.Black, 1);
+            DrawHalfWall(spriteBatch, _pixel, _wallVerticalTexture, _wallHorizontalTexture, HalfRect(center, unit, forcedHalf), forcedHalf, tint);
             return;
         }
 
@@ -345,6 +382,46 @@ public sealed partial class ShipRenderer
     // `half` (North=top, South=bottom, West=left, East=right). Shared by DrawWallTile (the solid
     // half of a half-thick wall) and DrawTerminal (a recessed terminal's own free half, the
     // opposite side).
+    // Direct user request ("сделай текстуру полублочной стены чтобы она была похожа на текстуру
+    // обычной стены") - it used to be a flat grey rectangle with a black outline. Now it's literally
+    // the solid half of an ordinary straight wall: the half of the straight-run texture (vertical
+    // for a West/East half, horizontal for North/South) that lies on the solid side, drawn 1:1 into
+    // that half, so the wall's centre beam lands on the tile's centre line and carries straight on
+    // into the full corner/straight tiles beside it. A thin shadow along the cut edge reads as the
+    // wall's face onto the free half. Shared with the Ship Editor (DrawEditorWallTile), which draws
+    // the same tile the same way; `solidRect` is the tile's own solid half (HalfRect/EditorHalfRect).
+    internal static void DrawHalfWall(SpriteBatch spriteBatch, Texture2D pixel, Texture2D? vertical, Texture2D? horizontal,
+        Rectangle solidRect, TileSide solidSide, Color tint)
+    {
+        var texture = solidSide is TileSide.West or TileSide.East ? vertical : horizontal;
+        if (texture is null)
+        {
+            spriteBatch.Draw(pixel, solidRect, tint == Color.White ? new Color(120, 130, 150) : tint);
+            DrawRectOutline(spriteBatch, pixel, solidRect, Color.Black, 1);
+            return;
+        }
+
+        int w = texture.Width, h = texture.Height;
+        var source = solidSide switch
+        {
+            TileSide.West => new Rectangle(0, 0, w / 2, h),
+            TileSide.East => new Rectangle(w - w / 2, 0, w / 2, h),
+            TileSide.North => new Rectangle(0, 0, w, h / 2),
+            _ => new Rectangle(0, h - h / 2, w, h / 2),
+        };
+        spriteBatch.Draw(texture, solidRect, source, tint);
+
+        var shadow = Color.Black * 0.45f;
+        var cutEdge = solidSide switch
+        {
+            TileSide.West => new Rectangle(solidRect.Right - 1, solidRect.Y, 1, solidRect.Height),
+            TileSide.East => new Rectangle(solidRect.X, solidRect.Y, 1, solidRect.Height),
+            TileSide.North => new Rectangle(solidRect.X, solidRect.Bottom - 1, solidRect.Width, 1),
+            _ => new Rectangle(solidRect.X, solidRect.Y, solidRect.Width, 1),
+        };
+        spriteBatch.Draw(pixel, cutEdge, shadow);
+    }
+
     private static Rectangle HalfRect(Vector2 tileCenter, int unit, TileSide half) => half switch
     {
         TileSide.North => new Rectangle((int)tileCenter.X - unit / 2, (int)tileCenter.Y - unit / 2, unit, unit / 2),

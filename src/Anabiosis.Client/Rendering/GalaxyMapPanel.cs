@@ -33,7 +33,27 @@ public sealed partial class GalaxyMapPanel
     private readonly Texture2D _softCircle;
     private readonly Texture2D _shadedSphere;
     private readonly SpriteFont _font;
-    private readonly Starfield _starfield;
+    private readonly GraphicsDevice _device;
+    // The design-canvas area the helm's map fills.
+    private readonly Rectangle _bounds;
+    // Baked once at startup (MapArt.cs): glows, the star, planet rings, fog cloud, the round screen's shading.
+    private readonly Texture2D _glow;
+    private readonly Texture2D _flare;
+    private readonly Texture2D _corona;
+    private readonly Texture2D _sunDisc;
+    private readonly Texture2D _heatZone;
+    private readonly Texture2D _planetRing;
+    private readonly Texture2D _cloudPuff;
+    private readonly Texture2D _vignette;
+    // Set at the top of every Draw: which of the two looks is being drawn, where the pointer is, where the
+    // round screen's centre is, and where the ship is on the map.
+    private bool _sonar;
+    private readonly SnapshotAge _snapshotAge = new();
+    private const float MaxExtrapolationSeconds = 0.1f;
+    private Vector2? _pointer;
+    private Vector2 _radarCenter;
+    private Vec2 _shipMapPosition;
+    private WorldSnapshot _shown = null!;
     // Where pilotView's free-pan camera anchors the star at panOffset=(0,0) (M52 - "изначально
     // спавнилась в центре солнечной системы на солнце") - the same design-canvas centre the
     // starfield backdrop already fills, not a separately hand-picked point.
@@ -48,8 +68,17 @@ public sealed partial class GalaxyMapPanel
         _pixel.SetData(new[] { Color.White });
         _softCircle = HudIcons.CreateSoftCircleTexture(graphicsDevice);
         _shadedSphere = HudIcons.CreateShadedSphereTexture(graphicsDevice);
+        _device = graphicsDevice;
+        _bounds = backdrop;
+        _glow = MapArt.Glow(graphicsDevice);
+        _flare = MapArt.Flare(graphicsDevice);
+        _corona = MapArt.Corona(graphicsDevice);
+        _sunDisc = MapArt.SunDisc(graphicsDevice);
+        _heatZone = MapArt.HeatZone(graphicsDevice);
+        _planetRing = MapArt.PlanetRing(graphicsDevice);
+        _cloudPuff = MapArt.CloudPuff(graphicsDevice);
+        _vignette = MapArt.Vignette(graphicsDevice);
         _font = font;
-        _starfield = new Starfield(_pixel, backdrop, count: 200);
         _screenCenter = new Vector2(backdrop.Center.X, backdrop.Center.Y);
     }
 
@@ -83,309 +112,135 @@ public sealed partial class GalaxyMapPanel
         _ => Color.Gray,
     };
 
-    // pilotView: reused wholesale as the helm's own window 1 (M47 follow-up), where sweeping the
-    // beam/dropping a marker isn't available (that stays the scanner operator's own job at the
-    // console) and window 3 sits in the same top-right corner the faction-standings box used to
-    // have to itself - both get dropped/shortened here rather than fought over with an offset.
-    // captainHelmView: true only for the Captain tab's own copy of pilotView (Game1.cs) - RMB there
-    // now aims the ship's nose instead of panning the map (autopilot rework), so this copy's own hint
-    // text needs to say something different from the Scientist tab's still-panning copy.
+    // One panel drawn two ways. pilotView is the helm's map: the whole canvas, deep space behind it, dragged
+    // and zoomed freely, in full colour. Without it this is the navigation console's round screen: a compact
+    // instrument locked on the ship, drawn in phosphor green (GalaxyMapPanel.SonarScreen.cs), where the
+    // operator aims the scanner beam and drops marks.
+    // captainHelmView: true only for the Captain tab's copy of the helm map (Game1.cs) - right mouse there aims
+    //   the ship's nose instead of dragging the map, so its hint line says so.
+    // batchTransform: the matrix the caller began this SpriteBatch with. The console's screen needs it to clip
+    //   its content to the porthole (a scissor rectangle is in device pixels, and the batch has to be begun
+    //   again with the same matrix). Without it the content is only culled point by point.
+    // pointer: where the mouse is, in the same coordinates as panelOrigin - whatever it is over shows a fuller
+    //   name plate.
+    // showChrome: the helm's own title, scale bar and legend; off where another screen frames the map itself.
     public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 panelOrigin, float zoom, Vector2 panOffset,
-        int myPlayerId, float totalSeconds = 0f, bool pilotView = false, bool captainHelmView = false)
+        int myPlayerId, float totalSeconds = 0f, bool pilotView = false, bool captainHelmView = false,
+        Matrix? batchTransform = null, Vector2? pointer = null, bool showChrome = true)
     {
-        // M48 follow-up - "задний план это сам корабль, а не карта": the console is a HUD overlay
-        // widget now (Game1.cs's own BlockKind.Navigation case), drawn on top of the real ship
-        // interior/exterior scene rather than replacing it - a full-canvas starfield here would
-        // just paint over that real scene everywhere outside the widget's own small housing. The
-        // helm's still-full-screen reused copy (pilotView) keeps it exactly as before.
-        if (pilotView)
-            _starfield.Draw(spriteBatch, totalSeconds);
+        _sonar = !pilotView;
+        // The ship's ghost at the destination shows only while the pilot holds the right mouse button to aim the nose (Game1.cs), not all through the flight.
+        _aimingNose = captainHelmView && Microsoft.Xna.Framework.Input.Mouse.GetState().RightButton == Microsoft.Xna.Framework.Input.ButtonState.Pressed;
+        _pointer = pointer;
+        _hoverLabel = null;
+        _placedLabels.Clear();
+        _shown = snapshot;
+        _radarCenter = panelOrigin + RadarCircleLocalCenter;
+        _shipMapPosition = snapshot.Voyage.ShipMapPosition;
+        UpdateTrail(snapshot);
 
-        // M48 follow-up - "как будто просто открывается 2 панельки (аналогия - игрок заходит в
-        // стеллаж), а не начинает видеть всю карту": the circle, its own hint text and the faction
-        // standings used to be three separate things scattered across most of the screen's width,
-        // reading as "the real scene got replaced by a wall of map info" rather than "one compact
-        // instrument" the way RackPanel/ReactorPanel already read. One shared housing behind all
-        // three - drawn first, well before the circle's own content - fixes that without changing
-        // what any of them actually show.
-        if (!pilotView)
-            DrawPanelHousing(spriteBatch, panelOrigin);
-
-        // Moved in against the circle's own right edge, inside the shared housing above, rather
-        // than out at panelOrigin+700 in what used to be open real-scene space with nothing telling
-        // the eye it belonged to this instrument at all.
-        var hintOrigin = panelOrigin + new Vector2(pilotView ? 700 : 480, pilotView ? 12 : 20);
-        var hint = captainHelmView
-            ? $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}»\nЛКМ - курс, ПКМ (держать) - навести нос, колесо - масштаб"
-            : pilotView
-            ? $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}»\nПКМ тащить (сдвиг), колесо (масштаб)"
-            : $"Сканер системы «{snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId).Name}»\nтащить ручку по ободу (луч сканера)\nклик по своей метке (поставить на карту)\nза кольцом — прыжок (M), колесо (масштаб)\nE/Esc - войти/выйти";
-        // Drawn immediately for the pilot's own plain rectangular copy (no bezel there to cover it),
-        // but held back for the console's own round screen until AFTER DrawRadarBezel runs, below -
-        // the bezel mask paints full-width rows outside the circle, which used to paint right over
-        // this same text and silently hide it (M48 follow-up bug: the round screen swallowed its
-        // own hint text).
-        if (pilotView)
-            spriteBatch.DrawString(_font, hint, hintOrigin, Color.Yellow, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
-
-        // The console's own round screen is ship-locked (M48 follow-up - "привяжи сканер ровно к
-        // кораблю, чтобы в менюшке сканера в центре всегда был корабль"): the ship's own screen
-        // position is pinned to the circle's centre and everything else (points, planets, contacts)
-        // is placed relative to that, rather than the free-pan/bounding-box camera the pilot's own
-        // copy of this map (pilotView, still panned by hand at the helm) keeps using. panOffset is
-        // simply not read on this branch - right-drag has nothing left to move here. Game1.cs's own
-        // input code calls the same ComputeShipLockedMapOrigin so a click always lands on whatever
-        // is actually drawn under the cursor.
-        // The field's own centre (StarSystemSummary.Width/Height), not a bounding box of points -
-        // the sun sits exactly here (M47 - "солнце было в центре"), the same reference point
-        // CanWarpNow itself measures distance from AND (M52) the point pilotView's own free-pan
-        // camera anchors at screen-centre by default.
         var currentSystem = snapshot.StarSystems.First(s => s.Id == snapshot.CurrentSystemId);
+        // The field's own centre, not a bounding box of points: the star sits exactly here, it is what
+        // CanWarpNow measures distance from, and it is what the helm's free camera centres on by default.
         var fieldCenterReal = new Vec2(currentSystem.Width / 2f, currentSystem.Height / 2f);
+
+        if (pilotView)
+        {
+            DrawSpace(spriteBatch, currentSystem.Id, panOffset, totalSeconds);
+        }
+        else
+        {
+            // The console reads as one compact instrument - a single housing behind the screen, its help text
+            // and the faction standings - laid over the real ship scene, which stays visible around it.
+            DrawPanelHousing(spriteBatch, panelOrigin);
+            BeginSonarClip(spriteBatch, batchTransform);
+            DrawSonarBase(spriteBatch, zoom);
+        }
+
+        // The console's screen is locked on the ship: the ship is pinned to the centre of the circle and
+        // everything else is placed around it; panOffset is not read there. Game1.cs's input code calls the
+        // same ComputeShipLockedMapOrigin, so a click lands on whatever is drawn under the cursor.
         var mapOrigin = pilotView
             ? ComputeMapOrigin(_screenCenter, fieldCenterReal, zoom, panOffset)
             : ComputeShipLockedMapOrigin(panelOrigin, snapshot.Voyage.ShipMapPosition, zoom);
-        DrawSystemBackdrop(spriteBatch, mapOrigin, fieldCenterReal, zoom, totalSeconds, currentSystem.Id, panelOrigin, pilotView);
 
-        // The whole edge of the system, not one specific marker (game_design.md - "круг вокруг
-        // системы, откуда можно прыгать"): any position past GalaxyMap.WarpZoneRadius from the
-        // field's own centre arms the jump - colored gold once CanWarpNow actually agrees, dim
-        // purple otherwise.
+        DrawSystemBackdrop(spriteBatch, mapOrigin, fieldCenterReal, zoom, totalSeconds, currentSystem.Id, panelOrigin, pilotView);
+        DrawFog(spriteBatch, snapshot, mapOrigin, zoom, totalSeconds); // over the system, under everything the crew knows about
+
+        // The whole edge of the system, not one marker: any position past the warp radius arms the jump.
         var fieldCenterScreen = FieldToScreen(mapOrigin, fieldCenterReal, zoom);
         var warpZoneRadiusPixels = currentSystem.Width / 2f * StarSystem.WarpZoneRadiusFraction * PixelsPerUnit * zoom;
-        if (IsRingWithinRadarView(warpZoneRadiusPixels, pilotView))
+        if (_clipped || IsRingWithinRadarView(warpZoneRadiusPixels, pilotView))
             DrawWarpZoneRing(spriteBatch, fieldCenterScreen, warpZoneRadiusPixels, snapshot.CanWarpNow, totalSeconds);
 
-        // M48 follow-up - "оставь на картах в виде значков локаций только станции, все остальные
-        // убери": hostile sectors and the old single "asteroid field" marker keep working exactly
-        // as before server-side (still catch the ship, still gate battles/refusal), they just
-        // don't get a marker drawn for them any more - only known infrastructure (stations) does.
-        // Real asteroid presence is shown a different way now anyway (DrawLargestAsteroidMarkers).
-        foreach (var point in snapshot.GalaxyPoints)
-        {
-            if (SalvagePoints.IsSalvage(point.Kind))
-            {
-                if (snapshot.SalvagedPointIds?.Contains(point.Id) == true)
-                    continue;
-                var salvageScreen = FieldToScreen(mapOrigin, point.Position, zoom);
-                var salvageRect = new Rectangle((int)salvageScreen.X - PointMarkerSize / 2, (int)salvageScreen.Y - PointMarkerSize / 2, PointMarkerSize, PointMarkerSize);
-                if (!IsWithinRadarView(panelOrigin, new Vector2(salvageRect.Center.X, salvageRect.Center.Y), pilotView))
-                    continue;
-                DrawPointGlyph(spriteBatch, point.Kind, salvageRect, Color.Goldenrod, totalSeconds);
-                spriteBatch.DrawString(_font, point.Name, new Vector2(salvageRect.X - 10, salvageRect.Bottom + 2),
-                    Color.Goldenrod, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
-                continue;
-            }
+        DrawPointsOfInterest(spriteBatch, snapshot, mapOrigin, zoom, totalSeconds);
+        DrawStations(spriteBatch, snapshot, mapOrigin, zoom);
+        FlushLabels(spriteBatch);
 
-            if (point.Kind != GalaxyPointKind.Station)
-                continue;
-
-            // Every point is a plain fixed coordinate now (M59) - no host body to resolve against.
-            var pointScreen = FieldToScreen(mapOrigin, point.Position, zoom);
-            var rect = new Rectangle((int)pointScreen.X - PointMarkerSize / 2, (int)pointScreen.Y - PointMarkerSize / 2, PointMarkerSize, PointMarkerSize);
-            if (!IsWithinRadarView(panelOrigin, new Vector2(rect.Center.X, rect.Center.Y), pilotView))
-                continue;
-
-            var isDocked = point.Id == snapshot.Voyage.DockedPointId;
-            var color = Color.SteelBlue;
-
-            // Docked ship and station share the exact same map coordinate by design (World.cs's
-            // ShipMapPosition doc comment - there's no real map-space berth offset to plot). Drawn
-            // as-is, the two would sit exactly on top of each other once real schematics take over
-            // (M48 follow-up bug report - "корабль... налезает на станцию" / "не рисуется" once the
-            // ship's OWN marker was hidden instead - the wrong fix). Nudging the STATION's own
-            // drawn position aside here - not the ship's, which stays the one fixed point the
-            // console's whole camera is locked to - keeps both fully visible without pretending
-            // there's a real offset between them. Grows with zoom so it keeps pace with the
-            // station's own schematic, which also grows with zoom.
-            // Sideways rather than straight up (M48 follow-up - "показывалась сбоку станции где сам
-            // стыковочный порт") - reads as "docked alongside" the way the berth actually works,
-            // rather than as a station that's mysteriously floating above its own ship.
-            // Flush against the ship's own hull, not an arbitrary fixed gap (M48 follow-up - "чтобы
-            // выглядело как на 2 скриншоте"): half the ship's own schematic width plus half the
-            // station's own, both real world units scaled by the same PixelsPerUnit*zoom the
-            // schematics themselves draw at, so the two edges touch exactly at any zoom level.
-            var display = rect;
-            if (isDocked)
-            {
-                var shipHalfWidthPixels = ShipLocalFrame.GetHullHalfExtents(snapshot.Rooms).X * PixelsPerUnit * zoom;
-                var stationHalfWidthPixels = GetStationHalfWidth(point) * PixelsPerUnit * zoom;
-                display.X += (int)(shipHalfWidthPixels + stationHalfWidthPixels);
-            }
-
-            // The radius that actually catches the ship by proximity (World.Voyage.cs's
-            // TryEngageHostileSector/UpdateNearestStation) - drawn faint and behind the glyph so it
-            // reads as "the point's own reach" rather than another clickable marker.
-            var captureRadiusPixels = point.CaptureRadius * PixelsPerUnit * zoom;
-            HudIcons.DrawRingArc(spriteBatch, _pixel, new Vector2(display.Center.X, display.Center.Y), captureRadiusPixels, 0f, 360f, color * 0.35f, 24, 1.5f);
-
-            // "При приближении выдавали свою настоящую отсековую структуру" (M48 follow-up) - the
-            // real Rooms for this specific station (M49 - every station has its own generated
-            // shape now, not a shared per-kind template), the same way the ship's own hull
-            // schematic already replaces its simple marker once zoomed in far enough to read it.
-            if (zoom >= ShipSchematicZoomThreshold)
-                DrawStationSchematic(spriteBatch, point, new Vector2(display.Center.X, display.Center.Y), zoom);
-            else
-                DrawPointGlyph(spriteBatch, point.Kind, display, color, totalSeconds);
-
-            DrawRectOutline(spriteBatch, new Rectangle(display.X - 2, display.Y - 2, display.Width + 4, display.Height + 4), FactionColor(point.Faction), 2);
-            if (isDocked)
-                DrawRectOutline(spriteBatch, new Rectangle(display.X - 5, display.Y - 5, display.Width + 10, display.Height + 10), Color.LimeGreen, 2);
-
-            spriteBatch.DrawString(_font, $"{point.Name} (станция)", new Vector2(display.X - 10, display.Bottom + 2),
-                Color.LightGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
-        }
-
-        // M55 follow-up, second pass - "все еще дергается" even after totalSeconds itself became
-        // smooth: the ship's OWN reported position (snapshot.Voyage.ShipMapPosition) is nothing but
-        // whatever the last-received snapshot said, unchanged for however many render frames pass
-        // before the next one arrives (60fps render against a 30/s tick rate - every snapshot is
-        // shown for roughly two frames, then jumps a whole tick's worth of real motion at once). At
-        // ordinary zoom that jump is a fraction of a pixel; zoomed in on the ship's own hull
-        // schematic it can be tens of pixels, which reads exactly as "дергается". Extrapolating
-        // along the ship's own reported velocity for however long this exact snapshot has already
-        // been on screen (totalSeconds, now smooth, minus the tick this snapshot was actually
-        // taken at) turns that once-per-tick jump into the same continuous glide real client
-        // prediction always uses - cheap and correct to a small fraction of a tick, the only
-        // window this ever needs to cover. Skipped whenever ShipMapPosition is a substituted
-        // docked/landed position instead of the ship's own real coordinate - there is no
-        // meaningful velocity to extrapolate along in either state anyway.
-        const float serverTicksPerSecond = 30f;
+        // The ship's reported position only changes when a snapshot arrives (30 a second against 60 frames),
+        // which reads as a stutter once the map is zoomed in on the hull. Carrying it forward along its own
+        // velocity for as long as this snapshot has been on screen smooths that out. Only while flying free:
+        // docked or landed, the reported position is already exact and the velocity means something else.
+        // How long it has been on screen is measured here, from the moment this tick was first drawn - never from
+        // the difference between the server's tick count and a client clock: that difference carried a stale offset
+        // into the next game of the same process (and would drift with any slow server tick), so the marker ran
+        // ahead of the real ship by speed times the error - minutes of flight, the moment the ship left the berth.
+        // Capped at a few ticks, so nothing can make it run further ahead than that.
         var isFreeFlying = snapshot.Voyage.DockedPointId is null && snapshot.Voyage.LandedBodyId is null;
-        var extrapolationSeconds = isFreeFlying ? MathF.Max(0f, totalSeconds - snapshot.Tick / serverTicksPerSecond) : 0f;
+        var extrapolationSeconds = isFreeFlying ? _snapshotAge.Seconds(snapshot.Tick, totalSeconds, MaxExtrapolationSeconds) : 0f;
         var shipRealPosition = isFreeFlying
             ? snapshot.Voyage.ShipMapPosition + new Vec2(snapshot.ShipField.VelocityX, snapshot.ShipField.VelocityY) * extrapolationSeconds
             : snapshot.Voyage.ShipMapPosition;
-
         var shipCenter = FieldToScreen(mapOrigin, shipRealPosition, zoom);
 
-        // Shared with the whole crew (World.Scanner.cs, M44) - drawn before the ship/contacts so a
-        // pin sitting right on top of a live blip still reads as two separate marks.
-        foreach (var marker in snapshot.ManualScannerMarkers)
-        {
-            var markerScreen = FieldToScreen(mapOrigin, new Vec2(marker.X, marker.Y), zoom);
-            if (!IsWithinRadarView(panelOrigin, markerScreen, pilotView))
-                continue;
-            DrawGlowDiamond(spriteBatch, markerScreen, 10f, Color.Gold);
-            spriteBatch.DrawString(_font, "метка", markerScreen + new Vector2(8, -6), Color.Gold, 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
-        }
+        DrawTrail(spriteBatch, mapOrigin, zoom, shipCenter);
+        DrawManualMarkers(spriteBatch, snapshot, mapOrigin, zoom);
 
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == myPlayerId);
         if (me is not null)
         {
-            // Private to this player (World.Scanner.cs) - frozen at each hull's own last-known
-            // position, not necessarily where it actually is right now.
-            foreach (var contact in me.ScannerContacts ?? Array.Empty<ScannerContactState>())
-            {
-                var contactScreen = FieldToScreen(mapOrigin, new Vec2(contact.X, contact.Y), zoom);
-                if (!IsWithinRadarView(panelOrigin, contactScreen, pilotView))
-                    continue;
-                var color = contact.Kind switch
-                {
-                    NpcShipKind.Cargo => Color.SteelBlue,
-                    NpcShipKind.Scout => Color.LightGray,
-                    _ => Color.OrangeRed,
-                };
-                HudIcons.FillCircle(spriteBatch, _pixel, contactScreen, 5f, color * 0.85f);
-                HudIcons.DrawRingArc(spriteBatch, _pixel, contactScreen, 8f, 0f, 360f, color, 16, 1.5f);
-            }
-
-            // Aiming the dial is still free and continuous even though detecting isn't any more
-            // (M47 follow-up) - console-operator only, same as the pulse below - the pilot's own
-            // copy of this map (pilotView) doesn't aim (this whole block is skipped there).
-            // M48 follow-up - "лучевой сигнал как в баротравме, чтобы по границе круга можно было
-            // перетаскивать кнопку": the ray now always reaches exactly the rim (RadarCircleRadius,
-            // a fixed screen distance - the dial is a physical control on the console's own housing,
-            // not a world-space measurement, so it does NOT scale with the map's own zoom the way
-            // the pulse below still does), ending at the same draggable handle Game1.cs's own
-            // GetScannerHandleScreen hit-tests against.
+            DrawScannerContacts(spriteBatch, snapshot, me, mapOrigin, zoom);
+            // Aiming the beam is the console operator's job; the helm's copy of the map only shows results.
             if (!pilotView)
-            {
-                var isCircular = me.ScannerMode == ScannerMode.Circular;
-                var handleScreen = GetScannerHandleScreen(panelOrigin, me.ScannerSweepDegrees);
-                var aimColor = isCircular ? Color.DeepSkyBlue : Color.LimeGreen;
-                spriteBatch.Draw(_pixel, shipCenter, null, aimColor * 0.7f, me.ScannerSweepDegrees * (MathF.PI / 180f),
-                    new Vector2(0f, 0.5f), new Vector2((handleScreen - shipCenter).Length(), 2f), SpriteEffects.None, 0f);
-                DrawScannerHandle(spriteBatch, handleScreen, aimColor);
-
-                // The armed coverage - a wedge for Directional, a full ring for Circular (M48
-                // follow-up - "не лучевой а круговой... но по кругу") - small and close to the ship
-                // rather than reaching the rim, so it doesn't fight with the handle/ray for
-                // attention; this is "what shape will detect", not the pulse's own real range.
-                const float coverageRadius = 36f;
-                if (isCircular)
-                    HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, coverageRadius, 0f, 360f, aimColor * 0.3f, 32, 1.5f);
-                else
-                    HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, coverageRadius,
-                        me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees, me.ScannerSweepDegrees + ScannerSweepHalfAngleDegrees,
-                        aimColor * 0.35f, 12, 1.5f);
-
-                // The actual detecting pulse (World.Scanner.cs's FireScannerPing) - a sonar-style
-                // expanding wave, shown only for a moment right after the toggle switch fires it,
-                // not permanently. Derived from the cooldown alone (no separate "just fired" flag
-                // needed): elapsed-since-ping is simply how far the cooldown has already counted
-                // down from its own max. Circular reaches only half as far (World.Scanner.cs's
-                // CircularScannerRangeUnits) but spends the whole 360 degrees doing it.
-                var elapsedSincePing = ScannerPingCooldownSeconds - me.ScannerCooldownRemaining;
-                if (elapsedSincePing >= 0f && elapsedSincePing < ScannerPingPulseDurationSeconds)
-                {
-                    var pulseFraction = elapsedSincePing / ScannerPingPulseDurationSeconds;
-                    var pulseAlpha = 1f - pulseFraction;
-                    if (isCircular)
-                    {
-                        var pulseRadiusPixels = pulseFraction * (ScannerRangeUnits / 2f) * PixelsPerUnit * zoom;
-                        HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, pulseRadiusPixels, 0f, 360f,
-                            Color.DeepSkyBlue * pulseAlpha, 32, 3f);
-                    }
-                    else
-                    {
-                        var pulseRadiusPixels = pulseFraction * ScannerRangeUnits * PixelsPerUnit * zoom;
-                        HudIcons.DrawRingArc(spriteBatch, _pixel, shipCenter, pulseRadiusPixels,
-                            me.ScannerSweepDegrees - ScannerSweepHalfAngleDegrees, me.ScannerSweepDegrees + ScannerSweepHalfAngleDegrees,
-                            Color.LimeGreen * pulseAlpha, 16, 3f);
-                    }
-                }
-            }
+                DrawScannerAim(spriteBatch, me, shipCenter, panelOrigin, zoom, totalSeconds);
         }
 
-        // Everything actually close enough to matter without a scan (M47 follow-up - "в полной
-        // близости с кораблем на расстоянии как было раньше"): the same trio HelmPanel's own local
-        // radar used to plot before this screen absorbed it, now drawn on the system-wide map
-        // instead of a separate small dial. Rocks are still capped to CloseRangeUnits - the belt can
-        // hold hundreds of them, and at any zoom level far enough out to see a third of the system
-        // they'd be indistinguishable clutter - but an already-engaged squadron or a shell in flight
-        // is exactly as visible here as it always was, not something a sweep has to find first.
         DrawCloseRangeContacts(spriteBatch, snapshot, shipCenter, zoom, panelOrigin, pilotView);
         DrawLargestAsteroidMarkers(spriteBatch, snapshot, mapOrigin, zoom, panelOrigin, pilotView);
 
+        DrawSensorRing(spriteBatch, snapshot, shipCenter, zoom);
         DrawShipMarker(spriteBatch, snapshot, shipCenter, zoom);
+        DrawShuttles(spriteBatch, snapshot, mapOrigin, zoom, extrapolationSeconds, totalSeconds);
+        DrawCourse(spriteBatch, snapshot, mapOrigin, zoom, shipCenter, totalSeconds);
+        FlushHoverLabel(spriteBatch);
 
-        // Автопилот ("игрок сможет указать на карте точку куда корабль должен долететь") - a plain
-        // marker + line from the ship to its current destination, shown whenever World.Autopilot.cs
-        // still has one active. Drawn on both pilotView (helm) and the console's own screen, same as
-        // the ship marker itself, so anyone watching the map can see where the ship is actually headed.
-        if (snapshot.Autopilot is { IsActive: true, DestinationX: { } destX, DestinationY: { } destY })
+        if (pilotView)
         {
-            var destScreen = FieldToScreen(mapOrigin, new Vec2(destX, destY), zoom);
-            HudIcons.DrawLine(spriteBatch, _pixel, shipCenter, destScreen, Color.LimeGreen * 0.6f, 1.5f);
-            HudIcons.DrawRingArc(spriteBatch, _pixel, destScreen, 9f, 0f, 360f, Color.LimeGreen, 16, 2f);
-            spriteBatch.Draw(_pixel, new Vector2(destScreen.X - 1, destScreen.Y - 9), null, Color.LimeGreen, 0f, Vector2.Zero, new Vector2(2f, 18f), SpriteEffects.None, 0f);
-            spriteBatch.Draw(_pixel, new Vector2(destScreen.X - 9, destScreen.Y - 1), null, Color.LimeGreen, 0f, Vector2.Zero, new Vector2(18f, 2f), SpriteEffects.None, 0f);
-
-            DrawAutopilotGhostHull(spriteBatch, snapshot, destScreen, new Vec2(destX, destY), zoom, snapshot.Autopilot.PredictedFacingDegrees);
+            if (showChrome)
+                DrawHelmChrome(spriteBatch, currentSystem.Name, zoom, captainHelmView);
         }
-
-        // Masked down to a round porthole last (M48 follow-up - "круговой обзор был только на
-        // сканере а в штурвале его не было"): the console operator's own screen only - the pilot's
-        // reused copy (pilotView) keeps the plain rectangular view it always had, on top of
-        // everything drawn above but before the standings that sit on the console's own housing
-        // rather than behind its screen.
-        if (!pilotView)
+        else
         {
+            // The glass goes over the picture, then the clip ends and the rim covers the square corners of it.
+            // The help text is drawn after the rim: the rim's mask paints whole rows around the circle.
+            DrawSonarGlass(spriteBatch, totalSeconds);
+            EndSonarClip(spriteBatch);
             DrawRadarBezel(spriteBatch, panelOrigin, totalSeconds);
-            spriteBatch.DrawString(_font, hint, hintOrigin, Color.Yellow, 0f, Vector2.Zero, 0.65f, SpriteEffects.None, 0f);
+            DrawRectOutline(spriteBatch, HousingRect(panelOrigin), HousingEdge, 2); // the mask above runs over the housing edge
+            DrawConsoleText(spriteBatch, snapshot, panelOrigin + new Vector2(480, 20));
             DrawFactionStandings(spriteBatch, snapshot.FactionStandings, panelOrigin + new Vector2(480, 150));
         }
+    }
+
+    // Whether something centred here, reaching this far around itself, can show on the view being drawn.
+    private bool IsOnScreen(Vector2 point, float margin)
+    {
+        if (_sonar)
+            return Vector2.Distance(point, _radarCenter) <= RadarCircleRadius + (_clipped ? margin : 0f);
+        // The window can be a different shape from the design canvas, so the canvas is not a hard edge.
+        const float slack = 200f;
+        return point.X >= _bounds.Left - margin - slack && point.X <= _bounds.Right + margin + slack
+            && point.Y >= _bounds.Top - margin - slack && point.Y <= _bounds.Bottom + margin + slack;
     }
 
     // The whole console reads as ONE compact instrument (M48 follow-up - "как будто просто
@@ -395,19 +250,24 @@ public sealed partial class GalaxyMapPanel
     // first, well before anything else in this method, so everything else layers on top of it.
     private static readonly Rectangle PanelHousingLocal = new(-20, -20, 900, 520);
 
+    private static readonly Color HousingFill = new(14, 16, 14);
+    private static readonly Color HousingEdge = new(90, 100, 90);
+
+    private static Rectangle HousingRect(Vector2 panelOrigin) => new((int)(panelOrigin.X + PanelHousingLocal.X), (int)(panelOrigin.Y + PanelHousingLocal.Y),
+        PanelHousingLocal.Width, PanelHousingLocal.Height);
+
     private void DrawPanelHousing(SpriteBatch spriteBatch, Vector2 panelOrigin)
     {
-        var rect = new Rectangle((int)(panelOrigin.X + PanelHousingLocal.X), (int)(panelOrigin.Y + PanelHousingLocal.Y),
-            PanelHousingLocal.Width, PanelHousingLocal.Height);
-        spriteBatch.Draw(_pixel, rect, new Color(14, 16, 14) * 0.97f);
-        DrawRectOutline(spriteBatch, rect, new Color(90, 100, 90), 2);
+        var rect = HousingRect(panelOrigin);
+        spriteBatch.Draw(_pixel, rect, HousingFill * 0.97f);
+        DrawRectOutline(spriteBatch, rect, HousingEdge, 2);
     }
 
     // The number and its two known thresholds (FactionDefinitions.StandingLabel) already tell the
     // whole story - no separate legend needed for what "42" or "враждебны" means.
     private void DrawFactionStandings(SpriteBatch spriteBatch, IReadOnlyList<FactionStandingState> standings, Vector2 origin)
     {
-        spriteBatch.DrawString(_font, "Отношения фракций", origin, Color.Yellow, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, "Отношения фракций", origin, new Color(200, 240, 215), 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
 
         for (var i = 0; i < standings.Count; i++)
         {

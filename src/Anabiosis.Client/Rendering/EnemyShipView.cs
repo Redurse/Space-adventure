@@ -58,6 +58,10 @@ public sealed class EnemyShipView
             WallBlockStates = enemy.WallBlockStates,
             RoomOxygen = enemy.RoomOxygen,
             Characters = Array.Empty<CharacterState>(),
+            // Salvage on a wreck's decks (World.Wrecks.cs), drawn as ordinary things lying on the floor. Only this
+            // view carries them - the real snapshot's own dropped items belong to the player's ship.
+            DroppedItems = (enemy.Loot ?? Array.Empty<WreckLootState>())
+                .Select(l => new DroppedItem(l.Id, l.Item, l.X, l.Y, l.RoomId)).ToArray(),
             Power = power,
             // The player's wires and junctions must not appear on the enemy.
             Wiring = new WiringSnapshot(Array.Empty<Component>(), Array.Empty<ComponentState>(), Array.Empty<Wire>(),

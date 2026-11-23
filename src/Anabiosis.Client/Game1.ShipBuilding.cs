@@ -170,7 +170,7 @@ public partial class Game1
                     _buildMessage = JunctionFailureText(failure);
                     return true;
                 }
-                if (snapshot.Credits < JunctionDoorBuilder.Price(_doorSpan))
+                if (snapshot.Credits < CampaignModifiers.Scale(JunctionDoorBuilder.Price(_doorSpan), snapshot.Modifiers?.ShipyardPrice ?? 1f))
                 {
                     _buildMessage = "Не хватает кредитов.";
                     return true;
@@ -183,14 +183,16 @@ public partial class Game1
             default:
                 if (_placingCompartmentId is not { } id || CompartmentCatalog.Find(id) is not { } entry)
                     return false;
-                var anchor = CompartmentBuilder.AnchorForCursor(entry, _placingRotation, tile);
+                // Near a door of the hull the compartment's own door lines up with, it snaps there - the two doors become one.
+                var anchor = CompartmentBuilder.SnapToDoors(BuildTilesFor(snapshot), PendingBuildTiles(snapshot), entry,
+                    CompartmentBuilder.AnchorForCursor(entry, _placingRotation, tile), _placingRotation);
                 var (compartmentPlan, error) = CompartmentBuilder.Plan(BuildTilesFor(snapshot), PendingBuildTiles(snapshot), entry, anchor, _placingRotation);
                 if (compartmentPlan is null)
                 {
                     _buildMessage = error;
                     return true;
                 }
-                if (snapshot.Credits < CompartmentPricing.Price(entry) || snapshot.HullPlatingStock < CompartmentPricing.PlatingCost(entry))
+                if (snapshot.Credits < CampaignModifiers.Scale(CompartmentPricing.Price(entry), snapshot.Modifiers?.ShipyardPrice ?? 1f) || snapshot.HullPlatingStock < CompartmentPricing.PlatingCost(entry))
                 {
                     _buildMessage = "Не хватает кредитов или обшивки.";
                     return true;
@@ -259,7 +261,8 @@ public partial class Game1
                 if (_placingCompartmentId is not { } id || CompartmentCatalog.Find(id) is not { } entry)
                     break;
                 _buildOverlay.DrawGrid(_spriteBatch, tile, origin);
-                var anchor = CompartmentBuilder.AnchorForCursor(entry, _placingRotation, tile);
+                var anchor = CompartmentBuilder.SnapToDoors(tiles, PendingBuildTiles(snapshot), entry,
+                    CompartmentBuilder.AnchorForCursor(entry, _placingRotation, tile), _placingRotation);
                 var (compartmentPlan, error) = CompartmentBuilder.Plan(tiles, PendingBuildTiles(snapshot), entry, anchor, _placingRotation);
                 _buildOverlay.DrawCompartmentGhost(_spriteBatch, CompartmentBuilder.FootprintTiles(entry, anchor, _placingRotation), compartmentPlan is not null, origin);
                 message ??= error;

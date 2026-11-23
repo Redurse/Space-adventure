@@ -313,8 +313,12 @@ public sealed record CustomShipDefinition(
     // the one that created it. Defaults to empty for every call site that predates this feature.
     IReadOnlyList<RectF>? WreckPatchesRaw = null,
     // Half-block walls that an in-game junction door removed (so removing the door can put them back) - see JunctionDoorBuilder.
-    IReadOnlyList<CustomJunctionWallDef>? JunctionWallsRaw = null)
+    IReadOnlyList<CustomJunctionWallDef>? JunctionWallsRaw = null,
+    // W10 of wiring-plan.md - the power wires drawn in the editor's wiring mode (EditorWiring). Applied once, when a fresh ship is wired
+    // (World.Wiring.cs's InitializeWiring); an older save has none, which means "the standard wiring", exactly as before.
+    IReadOnlyList<CustomWireDef>? WiresRaw = null)
 {
+    public IReadOnlyList<CustomWireDef> Wires { get; init; } = WiresRaw ?? Array.Empty<CustomWireDef>();
     public IReadOnlyList<CustomWallMaterialDef> WallMaterials { get; init; } = WallMaterialsRaw ?? Array.Empty<CustomWallMaterialDef>();
     public IReadOnlyList<CustomEngineDef> Engines { get; init; } = EnginesRaw ?? Array.Empty<CustomEngineDef>();
     public IReadOnlyList<TileCoord> SupplementalWallTiles { get; init; } = SupplementalWallTilesRaw ?? Array.Empty<TileCoord>();

@@ -28,7 +28,7 @@ public sealed partial class World
     {
         if (CompartmentCatalog.Find(request.CatalogId) is not { } entry)
             return;
-        var price = CompartmentPricing.Price(entry);
+        var price = CampaignModifiers.Scale(CompartmentPricing.Price(entry), Modifiers.ShipyardPrice);
         var plating = CompartmentPricing.PlatingCost(entry);
         if (Credits < price || _hullPlatingStock < plating)
             return;
@@ -93,14 +93,14 @@ public sealed partial class World
     // not cut the hull in two - splitting off a whole part is what combat does, not what the shipwright will do for you.
     private void TryDemolishRoom(string roomId)
     {
-        if (!IsDocked || Station.Npcs.All(n => n.Kind != NpcKind.Shipwright))
+        if (!IsDocked || !HasLivingNpc(NpcKind.Shipwright))
             return;
         if (Ship.Rooms.FirstOrDefault(r => r.Id == roomId) is not { } room)
             return;
         if (!ShipDetachment.TryCompute(Ship, roomId, out var shrunk, out var detached) || detached.Count != 1)
             return;
 
-        var refund = CompartmentPricing.EntryForRoomName(room.Name) is { } entry ? CompartmentPricing.Refund(entry) : 0;
+        var refund = CompartmentPricing.EntryForRoomName(room.Name) is { } entry ? CampaignModifiers.Scale(CompartmentPricing.Refund(entry), Modifiers.ShipyardPrice) : 0;
         ApplyShipDefinition(shrunk);
         Credits += refund;
     }
@@ -111,7 +111,7 @@ public sealed partial class World
     {
         if (request.Passage is not (TileSide.East or TileSide.South) || request.Span is < 1 or > 3)
             return;
-        var price = JunctionDoorBuilder.Price(request.Span);
+        var price = CampaignModifiers.Scale(JunctionDoorBuilder.Price(request.Span), Modifiers.ShipyardPrice);
         if (Credits < price)
             return;
 
@@ -134,7 +134,7 @@ public sealed partial class World
             return;
 
         ApplyShipDefinition(updated);
-        Credits += JunctionDoorBuilder.Price(Math.Clamp(span, 1, 3)) / 2;
+        Credits += CampaignModifiers.Scale(JunctionDoorBuilder.Price(Math.Clamp(span, 1, 3)), Modifiers.ShipyardPrice) / 2;
     }
 
     // Test precondition: whether a junction door with this id exists on the ship.

@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
@@ -19,7 +19,7 @@ public sealed partial class World
 
     private void StepEnemyAtmospheres(double deltaSeconds)
     {
-        foreach (var enemy in _enemyShips)
+        foreach (var enemy in SimulatedHulls().ToList())
             if (enemy.Alive)
                 StepEnemyAtmosphere(enemy, deltaSeconds);
 
@@ -71,7 +71,7 @@ public sealed partial class World
                 continue;
 
             var damage = MaxSuffocationDamagePerSecond * (OxygenSafeThreshold - oxygen) / OxygenSafeThreshold;
-            crew.Health = Math.Max(0, crew.Health - damage * (float)deltaSeconds);
+            DamageBody(crew.Body, DamageKind.Suffocation, damage * (float)deltaSeconds);
         }
 
         CaptureIfCrewWiped(enemy);
@@ -81,7 +81,7 @@ public sealed partial class World
     // would clear it of crew and still leave it flying and shooting.
     private static void CaptureIfCrewWiped(EnemyShipRuntime enemy)
     {
-        if (enemy.Crew.Count > 0 && enemy.Crew.All(c => !c.Alive) && enemy.Ship.Hp > 0)
+        if (enemy.Crew.Count > 0 && enemy.Crew.All(c => !c.Alive || c.Downed) && enemy.Ship.Hp > 0)
             enemy.Ship.ApplyDamage(enemy.Ship.Hp);
     }
 
@@ -100,7 +100,7 @@ public sealed partial class World
                 continue;
 
             var damage = MaxSuffocationDamagePerSecond * (OxygenSafeThreshold - oxygen) / OxygenSafeThreshold;
-            character.Health = Math.Max(0, character.Health - damage * (float)deltaSeconds);
+            DamageCharacter(character, DamageKind.Suffocation, damage * (float)deltaSeconds);
         }
     }
 

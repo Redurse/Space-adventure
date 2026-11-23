@@ -10,8 +10,11 @@ namespace Anabiosis.Client.Rendering;
 // gets repaired, so no protocol change is needed to turn those edges into a brief client-only
 // visual (game_design.md Phase 3 visual pass - Barotrauma-style tool feedback on top of the
 // existing instant server actions).
-public sealed class EffectTracker
+public sealed partial class EffectTracker
 {
+    // Fed by the combat detection in EffectTracker.Combat.cs, applied to the scene transform by Game1.
+    public CameraShake Shake { get; } = new();
+
     private const float WeldEffectSeconds = 0.6f;
     private const float CutEffectSeconds = 0.3f;
     private const float RepairEffectSeconds = 0.5f;
@@ -26,6 +29,7 @@ public sealed class EffectTracker
         foreach (var effect in _effects)
             effect.RemainingSeconds -= deltaSeconds;
         _effects.RemoveAll(e => e.RemainingSeconds <= 0f);
+        Shake.Step(deltaSeconds);
     }
 
     public void Detect(WorldSnapshot? previous, WorldSnapshot current)
@@ -76,6 +80,9 @@ public sealed class EffectTracker
             if (current.EnemyShip.Ships.Any(e => e.Id == before.Id))
                 continue;
             _effects.Add(new TransientEffect(EffectKind.Explosion, new Vec2(before.X, before.Y), ExplosionEffectSeconds));
+            Shake.Add(ShipDestroyedTrauma);
         }
+
+        DetectCombat(previous, current);
     }
 }

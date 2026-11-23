@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
 
@@ -22,10 +22,10 @@ public sealed partial class World
     // we're not docked, the station has no Administrator, or its faction has been angered.
     private void TryAcceptQuest(QuestKind? preferred = null)
     {
-        if (!IsDocked || ActiveQuest is not null || _dockedPointId is not { } dockedId)
+        if (ActiveQuest is not null || ServicePointId is not { } dockedId)
             return;
 
-        if (Station.Npcs.All(n => n.Kind != NpcKind.Administrator))
+        if (!HasServiceNpc(NpcKind.Administrator))
             return; // not every station kind staffs one (game_design.md section 10)
 
         if (IsHostileHere)
@@ -101,7 +101,7 @@ public sealed partial class World
                 // one-size-fits-all Mineral, so this quest turns in Iron Ore specifically (the most
                 // common one - Quest.cs's own description stays the generic "добыть руду" either way).
                 var oreSlots = Enumerable.Range(0, Inventory.MainSlotCount)
-                    .Where(i => character.Inventory.ItemAt(i) == ItemType.IronOre)
+                    .Where(i => character.Inventory.ItemAt(i) is ItemType.RawIron or ItemType.IronOre) // raw ore, or iron already processed from it
                     .Take(quest.RequiredAmount)
                     .ToList();
                 if (oreSlots.Count < quest.RequiredAmount)
@@ -111,7 +111,7 @@ public sealed partial class World
                 break;
         }
 
-        Credits += quest.RewardCredits;
+        Credits += CampaignModifiers.Scale(quest.RewardCredits, Modifiers.Reward);
         AdjustStanding(DockedFaction, FactionDefinitions.StandingPerQuestTurnIn);
         if (FactionDefinitions.Rival(DockedFaction) is { } rival)
             AdjustStanding(rival, FactionDefinitions.RivalStandingPerQuestTurnIn);

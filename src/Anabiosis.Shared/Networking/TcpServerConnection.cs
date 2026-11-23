@@ -23,6 +23,7 @@ public sealed class TcpServerConnection : IServerConnection, IDisposable
     // *time* and then see the present, not replay a queue of stale worlds at the wrong speed -
     // exactly what IClientConnection.ReceiveLatestSnapshot already does at the other end.
     private WorldSnapshot? _outgoing;
+    private readonly SnapshotDeltaEncoder _deltaEncoder = new(); // only ever touched by the writer thread, so it sees frames in the order they are written
     private LobbySnapshot? _outgoingLobby;
 
     private volatile bool _closed;
@@ -104,7 +105,7 @@ public sealed class TcpServerConnection : IServerConnection, IDisposable
                     continue; // woken by Close, or both slots were already taken
 
                 if (snapshot is not null)
-                    Wire.WriteFrame(_stream, new ServerMessage(ServerMessageKind.Snapshot, 0, snapshot));
+                    Wire.WriteJsonFrame(_stream, _deltaEncoder.Encode(snapshot));
                 if (lobby is not null)
                     Wire.WriteFrame(_stream, new ServerMessage(ServerMessageKind.Lobby, 0, Lobby: lobby));
             }

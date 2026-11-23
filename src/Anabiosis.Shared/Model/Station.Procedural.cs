@@ -169,10 +169,13 @@ public sealed partial class Station
     // on any of the 4 walls - the layout below is built assuming the door faces east/Right (hull to
     // the west) and then re-oriented around connectorAnchor for the other 3 sides, rather than
     // re-deriving 4 separate coordinate formulas by hand (see ReorientPoint's own doc comment).
-    public static Station CreateProcedural(string pointId, StationKind kind, Vec2 connectorAnchor, EdgeSide airlockSide = EdgeSide.Right)
+    // shipwrightOnHand: an outpost (IsOutpostPoint) has a shipwright whatever its kind, so a ship can be built at any outpost.
+    public static Station CreateProcedural(string pointId, StationKind kind, Vec2 connectorAnchor, EdgeSide airlockSide = EdgeSide.Right, bool shipwrightOnHand = false)
     {
         var rng = new Random(SeedFrom(pointId));
         var mandatory = MandatoryModulesFor(kind);
+        if (shipwrightOnHand && !mandatory.Contains(StationModuleKind.Shipwright))
+            mandatory.Add(StationModuleKind.Shipwright);
         var secondary = PickSecondaryModules(kind, mandatory.Count, rng);
         var order = BuildZonedOrder(mandatory, secondary, rng);
 

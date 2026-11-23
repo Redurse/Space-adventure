@@ -8,8 +8,10 @@ using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Client.Rendering;
 
-// Debug/MVP view of the distribution block: reactor + battery readout, one bar per system.
-// Player picks a system with number keys (1-5) and adjusts it with Q/E — see Game1.Update.
+// The distribution block's readout: reactor + battery, and one bar per system showing how much power
+// it's actually getting. Read-only since W2 of wiring-plan.md - there are no sliders any more, the
+// ship's grid (World.Power.cs) feeds every wired device by itself, Barotrauma-style; a bar falls
+// short only when a wire is cut, a box is broken or the grid is short of power.
 public sealed class PowerPanel
 {
     private static readonly (PowerSystemId Id, string Label)[] SystemLabels =
@@ -20,6 +22,10 @@ public sealed class PowerPanel
         (PowerSystemId.WeaponCharger, "Орудия"),
         (PowerSystemId.Secondary, "Прочее"),
     };
+
+    // What a system draws at full power on the server (World.Power.cs's SystemDemand/EngineDemand) -
+    // a full bar.
+    private static float FullSystemPower(PowerSystemId system) => system == PowerSystemId.Engine ? 20f : 12f;
 
     private const float BarWidth = 220f;
     private const float BarHeight = 18f;
@@ -35,7 +41,7 @@ public sealed class PowerPanel
         _font = font;
     }
 
-    public void Draw(SpriteBatch spriteBatch, PowerState power, IReadOnlyList<ShipSystemState> systemStates, int selectedIndex, Vector2 origin, float totalSeconds)
+    public void Draw(SpriteBatch spriteBatch, PowerState power, IReadOnlyList<ShipSystemState> systemStates, Vector2 origin, float totalSeconds)
     {
         var bounds = DevicePanelChrome.StandardBounds(origin);
         var phosphor = new Color(122, 208, 236);
@@ -55,21 +61,21 @@ public sealed class PowerPanel
             var allocated = power.Allocated.TryGetValue(id, out var value) ? value : 0f;
             var damaged = systemStates.FirstOrDefault(s => s.System == id)?.Damaged ?? false;
             var rowOrigin = origin + new Vector2(0, 24 + i * RowSpacing);
-            var isSelected = i == selectedIndex;
-            var labelText = damaged ? $"[{i + 1}] {label} (повреждена)" : $"[{i + 1}] {label}";
+            var labelText = damaged ? $"{label} (повреждена)" : label;
 
             spriteBatch.DrawString(_font, labelText, rowOrigin,
-                damaged ? Color.Red : isSelected ? Color.Yellow : Color.LightGray, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
+                damaged ? Color.Red : Color.LightGray, 0f, Vector2.Zero, 0.7f, SpriteEffects.None, 0f);
 
             var barOrigin = rowOrigin + new Vector2(150, 2);
             spriteBatch.Draw(_pixel, new Rectangle((int)barOrigin.X, (int)barOrigin.Y, (int)BarWidth, (int)BarHeight), Color.DimGray);
 
-            // While damaged, effective output is 0 (see PowerGrid.GetAllocation) even though the
-            // slider itself still shows where the player left it — draw a slashed red bar instead
-            // of the normal fill so that's visible without hiding the player's chosen setting.
-            var fillRatio = power.ReactorMaxOutput > 0 ? Math.Clamp(allocated / power.ReactorMaxOutput, 0f, 1f) : 0f;
+            // A full bar is a system getting all it asks for; a short one is being starved (a cut
+            // wire, a broken box, or a grid short of power).
+            var fillRatio = Math.Clamp(allocated / FullSystemPower(id), 0f, 1f);
             spriteBatch.Draw(_pixel, new Rectangle((int)barOrigin.X, (int)barOrigin.Y, (int)(BarWidth * fillRatio), (int)BarHeight),
-                damaged ? Color.DarkRed : isSelected ? Color.Gold : Color.SteelBlue);
+                damaged ? Color.DarkRed : fillRatio < 0.99f ? new Color(232, 170, 70) : Color.SteelBlue);
+            spriteBatch.DrawString(_font, $"{allocated:0.0}", barOrigin + new Vector2(BarWidth + 6, 0),
+                Color.LightGray, 0f, Vector2.Zero, 0.6f, SpriteEffects.None, 0f);
         }
     }
 }

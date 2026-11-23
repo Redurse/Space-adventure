@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -212,9 +212,17 @@ internal static partial class TestRunner
         // perpendicular walls at once (both real, one-unit-thick tiles now, not the old zero-
         // thickness lines), not just the one this block's own edge is on - the plain single-axis
         // "in from the wall" stand position below only ever clears the one it's aiming at.
-        var block = world.CreateSnapshot().Station.WallBlocks.First(b => b.RoomId == room.Id &&
-            (b.Y == room.Top || b.Y == room.Bottom ? b.X > room.Left + 0.6f && b.X < room.Right - 0.6f
-                : b.Y > room.Top + 0.6f && b.Y < room.Bottom - 0.6f));
+        // The start station is a drawn compartment, not a rectangle: its room is a union of rects, so "on the bounding box edge"
+        // may be empty floor or the middle of another wall. Pick instead a block that has a clear two-tile run of floor in front of it
+        // (no other wall block there) and that stays inside the room.
+        var stationBlocks = world.CreateSnapshot().Station.WallBlocks;
+        bool Clear(float x, float y) => room.Contains(new Vec2(x, y)) &&
+            !stationBlocks.Any(o => MathF.Abs(o.X - x) < 0.9f && MathF.Abs(o.Y - y) < 0.9f);
+        var block = stationBlocks.First(b => b.RoomId == room.Id &&
+            (b.Y == room.Top ? Clear(b.X, b.Y + 1f) && Clear(b.X, b.Y + 1.5f)
+                : b.Y == room.Bottom ? Clear(b.X, b.Y - 1f) && Clear(b.X, b.Y - 1.5f)
+                : b.X == room.Left ? Clear(b.X + 1f, b.Y) && Clear(b.X + 1.5f, b.Y)
+                : b.X == room.Right && Clear(b.X - 1f, b.Y) && Clear(b.X - 1.5f, b.Y)));
 
         // Stand 1.5 in from whichever edge this block sits on (was 0.5 under the old zero-thickness
         // wall model) and aim straight at it - the same "walk up to the known block, look the one
@@ -329,6 +337,8 @@ internal static partial class TestRunner
 
         var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var room = world.CreateSnapshot().Rooms.FirstOrDefault(r => r.Contains(new Vec2(me.X, me.Y)));
-        return room?.Id == "reactor" && !me.IsOutside;
+        // Through the breach and on into the next room - not out into vacuum. (It used to stop in the reactor room: the character could not get past the
+        // reactor console; now it can turn sideways through the half-width gap beside it, so only "somewhere past the bulkhead" is asserted.)
+        return room is not null && !me.IsOutside && me.X > 5.5;
     }
 }

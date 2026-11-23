@@ -11,11 +11,14 @@ public sealed partial class World
 {
     private Dictionary<string, string?> _mountedComponent = new();
 
-    // Called from InitializeShipState (constructor + every ship purchase) - a bought hull starts
-    // with every socket empty, same reset already applied to wiring/turrets/doors.
+    // Called from InitializeShipState right after InitializeWiring. W4 of wiring-plan.md: a part
+    // installed in a mount that still exists stays installed (InitializeWiring kept its component
+    // and wires) - a new hull's sockets are simply all empty because nothing was kept for them.
     private void InitializeComponentMounts()
     {
-        _mountedComponent = Ship.ComponentMounts.ToDictionary(m => m.Id, _ => (string?)null);
+        var installed = _components.Select(c => c.Id).ToHashSet();
+        _mountedComponent = Ship.ComponentMounts.ToDictionary(m => m.Id,
+            m => installed.Contains($"{m.Id}-installed") ? $"{m.Id}-installed" : (string?)null);
     }
 
     private ComponentKind? HeldComponentKind(Character character) =>
@@ -29,6 +32,7 @@ public sealed partial class World
         _components.RemoveAll(c => c.Id == componentId);
         _wires.RemoveAll(w => w.FromPin.ComponentId == componentId || w.ToPin.ComponentId == componentId);
         _signalOutput.Remove(componentId);
+        ForgetValuePart(componentId);
     }
 
     // Three mutually exclusive rules at one physical mount: a wrench on an occupied mount takes the
@@ -66,6 +70,8 @@ public sealed partial class World
 
             if (installed.Kind == ComponentKind.Relay)
                 ToggleRelay(id);
+            else if (installed.Kind == ComponentKind.Button)
+                PressButton(id);
             return;
         }
 

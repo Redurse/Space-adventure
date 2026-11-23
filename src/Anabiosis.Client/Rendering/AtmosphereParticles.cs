@@ -11,6 +11,8 @@ public enum AtmosphereKind
     Steam,
     Spark,
     Ember,
+    // Dark smoke curling off a badly damaged plate.
+    Smoke,
 }
 
 // One drifting wisp/spark. Unlike TransientEffect (a one-shot flash for a moment that already
@@ -50,6 +52,8 @@ public sealed class AtmosphereField
     private const float SparkInterval = 0.35f;
     private const float EmberInterval = 0.18f;
     private const float ReactorCriticalFuelFraction = 0.15f;
+    private const float SmokeBelowFraction = 0.4f;
+    private const float SmokeInterval = 0.35f;
     // A runaway emitter (many breaches at once) still can't blow the frame budget - mutable (not
     // const) so the Settings screen's own "Максимальное количество частиц" slider (Game1.Settings.cs)
     // can lower it on a slower machine, same knob Barotrauma's own graphics tab exposes.
@@ -71,6 +75,8 @@ public sealed class AtmosphereField
             // sparks and embers just fly/drift on their own initial velocity.
             if (particle.Kind == AtmosphereKind.Steam)
                 particle.Velocity += new Vec2(0f, -1.4f) * deltaSeconds;
+            else if (particle.Kind == AtmosphereKind.Smoke)
+                particle.Velocity += new Vec2(0.15f, -0.7f) * deltaSeconds; // lazier than steam, with a little drift
         }
         _particles.RemoveAll(p => p.RemainingSeconds <= 0f);
 
@@ -89,7 +95,16 @@ public sealed class AtmosphereField
         foreach (var state in snapshot.WallBlockStates)
         {
             if (!state.Breached)
+            {
+                // A plate that is nearly gone smokes, the worse the thicker; it still holds air, so no steam yet.
+                if (state.Fraction < SmokeBelowFraction && _particles.Count < MaxParticles * 0.6f)
+                {
+                    var hurt = snapshot.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
+                    if (hurt is not null && !hurt.IsInterior)
+                        EmitIfReady($"smoke:{state.Id}", SmokeInterval + state.Fraction * 1.2f, () => SpawnSmoke(hurt.Position));
+                }
                 continue;
+            }
             var block = snapshot.WallBlocks.FirstOrDefault(b => b.Id == state.Id);
             // Interior bulkheads (WallBlock.IsInterior) don't vent - both sides are already
             // pressurized rooms, so there's no decompression steam to show even once it's broken.
@@ -104,6 +119,16 @@ public sealed class AtmosphereField
             var device = snapshot.SystemDevices.FirstOrDefault(d => d.Id == state.DeviceId);
             if (device is not null)
                 EmitIfReady($"spark:{state.DeviceId}", SparkInterval, () => SpawnSpark(device.Position));
+        }
+
+        // W9: a junction box carrying too much sparks and smokes before it burns out.
+        foreach (var junctionId in snapshot.Wiring.OverheatingJunctions ?? Array.Empty<string>())
+        {
+            var box = snapshot.Wiring.Components.FirstOrDefault(c => c.Id == junctionId);
+            if (box is null)
+                continue;
+            EmitIfReady($"overload:{junctionId}", SparkInterval * 0.4f, () => SpawnSpark(box.Position));
+            EmitIfReady($"overload-smoke:{junctionId}", SmokeInterval, () => SpawnSmoke(box.Position));
         }
 
         // The reactor's own dying embers - present even with the room lights fully out, same trigger
@@ -129,6 +154,14 @@ public sealed class AtmosphereField
         var velocity = new Vec2(MathF.Cos((float)angle), MathF.Sin((float)angle)) * speed;
         _particles.Add(new AtmosphereParticle(AtmosphereKind.Steam, position, velocity,
             0.22f + (float)_random.NextDouble() * 0.3f, 1.1f + (float)_random.NextDouble() * 0.7f));
+    }
+
+    private void SpawnSmoke(Vec2 position)
+    {
+        var jitter = new Vec2((float)_random.NextDouble() - 0.5f, (float)_random.NextDouble() - 0.5f) * 0.3f;
+        var velocity = new Vec2(((float)_random.NextDouble() - 0.5f) * 0.3f, -0.3f - (float)_random.NextDouble() * 0.3f);
+        _particles.Add(new AtmosphereParticle(AtmosphereKind.Smoke, position + jitter, velocity,
+            0.3f + (float)_random.NextDouble() * 0.25f, 1.8f + (float)_random.NextDouble() * 1.0f));
     }
 
     private void SpawnSpark(Vec2 position)

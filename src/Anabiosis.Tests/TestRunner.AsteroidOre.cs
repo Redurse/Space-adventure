@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
@@ -6,7 +6,7 @@ internal static partial class TestRunner
 {
     private static bool AsteroidOre_HotAsteroids_SitInsideTheSunZoneCarryingRichOre()
     {
-        var rich = new[] { ItemType.UraniumOre, ItemType.TitaniumOre, ItemType.PlastalloyOre, ItemType.Hyperium };
+        var rich = AsteroidOre.RichOres;
         foreach (var systemId in new[] { "sol", "sys-001", "sys-017" })
         {
             var bodies = CelestialBodyGenerator.Generate(systemId);

@@ -36,7 +36,7 @@ public sealed partial class World
     {
         foreach (var (playerId, held) in _cutInput)
         {
-            if (!held || !_characters.TryGetValue(playerId, out var character) || character.Health <= 0)
+            if (!held || !_characters.TryGetValue(playerId, out var character) || character.Health <= 0 || character.IsDowned || !character.Body.HandsUsable)
                 continue;
 
             var slot = character.Inventory.HeldSlotOf(ItemType.Cutter);

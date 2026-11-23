@@ -18,6 +18,8 @@ public sealed partial class World
     private const float EjectClearRadius = 6f; // clear of the hull entirely, not just past the plating
 
     private readonly Dictionary<int, float> _weaponCooldowns = new();
+    // How far below zero a weapon cooldown is allowed to run: a little over one tick (see TryFirePersonalWeapon).
+    private const float WeaponCooldownCarry = 0.04f;
     private float _crewAttackCooldown = CrewAttackIntervalSeconds;
 
     // The hull a boarding party would find themselves in: whichever ship of the squadron is still
@@ -74,6 +76,8 @@ public sealed partial class World
     // a ship room by room.
     private void TryFirePersonalWeapon(Character character)
     {
+        if (character.IsDowned || !character.Body.HandsUsable)
+            return; // out cold, or both arms broken - nothing to hold a weapon with
         var heldWeapons = character.Inventory.HeldSlotIndices
             .Select(i => character.Inventory.MainSlots[i])
             .OfType<ItemType>()
@@ -83,15 +87,21 @@ public sealed partial class World
             return;
         var weapon = heldWeapons[0];
 
-        if (_weaponCooldowns.TryGetValue(character.PlayerId, out var cooldown) && cooldown > 0)
+        if (_weaponCooldowns.TryGetValue(character.PlayerId, out var cooldown) && cooldown > 0.0001f)
             return;
 
         // Aimed, not auto-targeted: the shot leaves along the cursor direction and hits whatever it
         // reaches (World.PersonalShots.cs). Missing is now a thing that can happen, which is the
         // point - the old version picked the nearest defender in the room and could not miss.
         var aim = character.LookDirection.Length() > 0.01f ? character.LookDirection : character.FacingDirection;
-        if (FireHeldWeapon(character, weapon, aim))
-            _weaponCooldowns[character.PlayerId] = WeaponDefinitions.CooldownSeconds(weapon);
+        if (!FireHeldWeapon(character, weapon, aim))
+            return;
+        var pace = GunDefinitions.Of(weapon) is { } gun ? gun.ReloadFor(character.WeaponsSkill) : WeaponDefinitions.CooldownSeconds(weapon);
+        // A trigger held down fires at exactly the pace of the gun, not at that pace rounded up to whole ticks: what the
+        // last wait overshot by (it ran out part of the way through a tick) comes off the next one. A cooldown that
+        // ran out longer ago than that carries nothing over.
+        var overshoot = cooldown < 0f && cooldown > -WeaponCooldownCarry ? cooldown : 0f;
+        _weaponCooldowns[character.PlayerId] = pace + overshoot;
     }
 
     private void StepBoarding(double deltaSeconds)
@@ -100,33 +110,73 @@ public sealed partial class World
         StepEnemyCrews(deltaSeconds);
 
         foreach (var playerId in _weaponCooldowns.Keys.ToList())
-            _weaponCooldowns[playerId] = Math.Max(0, _weaponCooldowns[playerId] - (float)deltaSeconds);
+            _weaponCooldowns[playerId] = Math.Max(-WeaponCooldownCarry, _weaponCooldowns[playerId] - (float)deltaSeconds);
 
-        var boarders = _characters.Values.Where(c => c.OnEnemyShip && c.Health > 0).ToList();
-        if (boarders.Count == 0)
-            return;
-
-        _crewAttackCooldown -= (float)deltaSeconds;
-        if (_crewAttackCooldown > 0)
-            return;
-        _crewAttackCooldown = CrewAttackIntervalSeconds;
-
-        // Defenders shoot back on the same interval-timer model the ship-scale enemy AI already uses (World.EnemyAi.cs);
-        // they close in on a boarder by walking (World.EnemyCrew.cs) and fire once they share a room and are in range.
         if (BoardableEnemy is not { } enemy)
             return;
-        foreach (var crew in enemy.Crew.Where(c => c.Alive))
+        var boarders = DebugEnemyCrewHoldsFire
+            ? new List<Character>()
+            : _characters.Values.Where(c => c.OnEnemyShip && c.Health > 0 && !c.Body.Unconscious && !c.Body.InArrest).ToList();
+        var dt = (float)deltaSeconds;
+
+        // Defenders shoot back the way a gun is actually worked: each keeps its own pace - the pace of the gun in its
+        // hands - takes a moment to bring it up on a fresh target, and stops to reload when the gun runs dry. They close
+        // in by walking (World.EnemyCrew.cs) and fire at whoever is in range with nothing solid in between; a boarder
+        // who is already down is left alone.
+        foreach (var crew in enemy.Crew)
         {
-            var victim = boarders.FirstOrDefault(b =>
-                b.RoomId == crew.RoomId &&
-                (crew.Position - b.Position).Length() <= WeaponDefinitions.Range(crew.Spawn.Weapon));
+            crew.FireCooldown = Math.Max(0f, crew.FireCooldown - dt);
+            var victim = crew.Alive && !crew.Downed ? CrewTarget(crew, boarders) : null;
             if (victim is null)
+            {
+                crew.AimSeconds = 0f;
+                continue;
+            }
+            crew.AimSeconds += dt;
+            if (crew.AimSeconds < CrewAimSeconds || crew.FireCooldown > 0f)
                 continue;
 
-            // They shoot the same way the boarders do now - a round that crosses the room and can
-            // be walked out of, rather than damage applied at range.
             FireCrewShot(crew, victim);
+            if (GunDefinitions.Of(crew.Spawn.Weapon) is { } gun)
+            {
+                if (crew.RoundsLeft < 0)
+                    crew.RoundsLeft = gun.Capacity;
+                crew.RoundsLeft--;
+                crew.FireCooldown = crew.RoundsLeft > 0 ? gun.ReloadFor(crew.WeaponsSkill) : CrewReloadSeconds;
+                if (crew.RoundsLeft <= 0)
+                    crew.RoundsLeft = gun.Capacity;
+            }
+            else
+            {
+                crew.FireCooldown = CrewAttackIntervalSeconds;
+            }
         }
+    }
+
+    // How long a defender takes to bring its gun up on a target it has just got a line on, and to reload an empty gun.
+    private const float CrewAimSeconds = 0.6f;
+    // Tests that measure something else aboard a hostile ship (a knife fight, cutting a wall) switch the defenders off.
+    public bool DebugEnemyCrewHoldsFire { get; set; }
+    private const float CrewReloadSeconds = 2.5f;
+
+    // The nearest boarder in range of this defender with a clear line to them: no wall and no closed door between.
+    private Character? CrewTarget(EnemyCrewRuntime crew, IReadOnlyList<Character> boarders)
+    {
+        var range = WeaponDefinitions.Range(crew.Spawn.Weapon);
+        Character? best = null;
+        var bestDistance = double.MaxValue;
+        foreach (var boarder in boarders)
+        {
+            var toBoarder = boarder.Position - crew.Position;
+            var distance = toBoarder.Length();
+            if (distance > range || distance >= bestDistance)
+                continue;
+            if (distance > 0.05 && ShotTrace.ToWall(EnemyShipLayout.Tiles, crew.Position, toBoarder * (1.0 / distance), (float)distance).Distance < distance - ShotTrace.Step)
+                continue;
+            best = boarder;
+            bestDistance = distance;
+        }
+        return best;
     }
 
     // Ship -> enemy ship now works exactly like ship -> vacuum on the player's own hull: magnetize
@@ -165,7 +215,7 @@ public sealed partial class World
     private IReadOnlyList<EnemyCrewState> CreateEnemyCrewStates() =>
         BoardableEnemy is { } enemy
             ? enemy.Crew
-                .Select(c => new EnemyCrewState(c.Spawn.Id, c.Spawn.Name, c.RoomId, (float)c.Position.X, (float)c.Position.Y, c.Health, c.Alive, c.Spawn.Role))
+                .Select(c => new EnemyCrewState(c.Spawn.Id, c.Spawn.Name, c.RoomId, (float)c.Position.X, (float)c.Position.Y, c.Health, c.Alive, c.Spawn.Role, c.Downed))
                 .ToArray()
             : Array.Empty<EnemyCrewState>();
 }

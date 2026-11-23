@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Shared.Protocol;
 
@@ -17,4 +17,10 @@ public sealed record NpcShipFieldState(
     FactionId FactionId,
     double X,
     double Y,
-    float RotationDegrees);
+    float RotationDegrees,
+    // The ship as a simulated hull (World.NpcHulls.cs): how hurt it is, which compartments it still has (null while it is only
+    // a point far from anyone) and whether the player has fired on it. Appended last, same reasoning as every other field above.
+    float Hp = 0f,
+    float MaxHp = 0f,
+    IReadOnlyList<Room>? Rooms = null,
+    bool IsProvoked = false);

@@ -19,7 +19,13 @@ public sealed record Component(
     float Y,
     string? TargetId = null,
     PowerSystemId? TargetPowerSystem = null,
-    float TimerSeconds = 1f)
+    float TimerSeconds = 1f,
+    // W7/W8 settings (ComponentSettings): Mode picks the operation (comparison, maths, function), Value is the constant / target /
+    // channel the part works with. Appended last, so older saves load with the defaults.
+    int Mode = 0,
+    float Value = 0f,
+    // The regular expression's pattern / the terminal's last message (ComponentSettings.MaxTextLength at most).
+    string? Text = null)
 {
     public Vec2 Position => new(X, Y);
 }

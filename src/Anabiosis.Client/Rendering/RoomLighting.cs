@@ -38,6 +38,24 @@ public sealed class RoomLighting : IDisposable
         AlphaBlendFunction = BlendFunction.Max,
     };
 
+    // How lit an area the player cannot see stays, as a fraction of the light really falling on it. Sight
+    // is not a light source (Barotrauma's rule): lamps light the ship, and line of sight decides what the
+    // player gets to see of it. Direct user correction - 0.4 left the whole hull readable outside the sight
+    // zone ("я не должен видеть всё, а только в зоне видимости"); outside it is dark again.
+    public const float UnseenFraction = 0f;
+
+    // light * (Unseen + (1 - Unseen) * sight): DestinationColor scales the light by the drawn sight (tinted
+    // by 1 - Unseen), BlendFactor adds back the Unseen share of it.
+    private static readonly BlendState SightScale = new()
+    {
+        ColorSourceBlend = Blend.DestinationColor,
+        ColorDestinationBlend = Blend.BlendFactor,
+        ColorBlendFunction = BlendFunction.Add,
+        AlphaSourceBlend = Blend.Zero,
+        AlphaDestinationBlend = Blend.One,
+        BlendFactor = new Color(UnseenFraction, UnseenFraction, UnseenFraction, 1f),
+    };
+
     // Lower than VisibilityMask's own falloff start: a room lamp is meant to fill the compartment
     // evenly rather than read as a tight hotspot in the middle of it.
     private const float FalloffStart = 0.45f;
@@ -101,10 +119,16 @@ public sealed class RoomLighting : IDisposable
         var wallsHash = HashWalls(walls);
         if (wallsHash != _fansWallsHash || _fans.Count > MaxCachedFans)
         {
-            _fans.Clear();
+            // Opening a door changes a handful of wall segments, but throwing away EVERY lamp's fan recast all of them in one frame - a visible
+            // hitch (direct user report, "при открытии двери резко проседает фпс"), worse the more lamps the ship and the docked station have.
+            // Only the fans whose reach touches a segment that changed are dropped; the rest were cast against exactly the same walls.
+            if (_fans.Count > MaxCachedFans || !DropFansNearChangedWalls(walls))
+                StaleAllFans();
             _fansWallsHash = wallsHash;
+            _fanWalls = new List<WallSegment>(walls);
         }
         _wallGrid.Reset(walls);
+        _recastClock.Restart();
 
         if (_lightEffect is not null && Enabled)
         {
@@ -160,6 +184,13 @@ public sealed class RoomLighting : IDisposable
         var key = new LightKey(light.Position.X, light.Position.Y, light.Radius);
         if (_fans.TryGetValue(key, out var cached))
             return cached;
+        // Out of budget for this frame: keep drawing the old fan (it is recast in a later frame, and a lamp that never had one is cast at once).
+        if (_staleFans.TryGetValue(key, out var stale))
+        {
+            if (_recastClock.Elapsed.TotalMilliseconds >= RecastBudgetMilliseconds)
+                return stale;
+            _staleFans.Remove(key);
+        }
 
         // A wall farther than the lamp's own radius could never be hit by this lamp's own cast
         // anyway, so it never needs to reach CollectRayOffsets/Cast at all - same reasoning
@@ -187,6 +218,71 @@ public sealed class RoomLighting : IDisposable
         return new VertexPositionColor(
             new Vector3(origin + fan.Rim[index] * ShipRenderer.PixelsPerUnit, 0f),
             light.Color * fade);
+    }
+
+    // The walls the cached fans were cast against.
+    private List<WallSegment> _fanWalls = new();
+    private const int MaxChangedSegmentsForPartialDrop = 256;
+
+    // Compares the new walls with those the cached fans were cast against and drops only the fans that could see a difference. False when
+    // the change is too big to be worth it (the caller then drops them all).
+    private bool DropFansNearChangedWalls(IReadOnlyList<WallSegment> walls)
+    {
+        if (_fans.Count == 0)
+            return true;
+        var before = new HashSet<WallSegment>(_fanWalls);
+        var after = new HashSet<WallSegment>(walls);
+        var changed = new List<WallSegment>();
+        foreach (var wall in before)
+            if (!after.Contains(wall))
+                changed.Add(wall);
+        foreach (var wall in after)
+            if (!before.Contains(wall))
+                changed.Add(wall);
+        if (changed.Count > MaxChangedSegmentsForPartialDrop)
+            return false;
+        if (changed.Count == 0)
+            return true; // only the order or the duplicates differ - the same geometry
+
+        List<LightKey>? stale = null;
+        foreach (var key in _fans.Keys)
+            foreach (var wall in changed)
+            {
+                // Distance from the lamp to the segment's bounding box, with a margin: a ray that ends exactly on a wall must be recast too.
+                var nearestX = Math.Clamp(key.X, MathF.Min(wall.Ax, wall.Bx), MathF.Max(wall.Ax, wall.Bx));
+                var nearestY = Math.Clamp(key.Y, MathF.Min(wall.Ay, wall.By), MathF.Max(wall.Ay, wall.By));
+                var dx = key.X - nearestX;
+                var dy = key.Y - nearestY;
+                if (dx * dx + dy * dy > (key.Radius + 1f) * (key.Radius + 1f))
+                    continue;
+                (stale ??= new List<LightKey>()).Add(key);
+                break;
+            }
+        if (stale is not null)
+            foreach (var key in stale)
+            {
+                _staleFans[key] = _fans[key];
+                _fans.Remove(key);
+            }
+        return true;
+    }
+
+    // A fan that has to be recast is not thrown away at once: it is kept as "stale" and used until it has been recast, which is spread over a few
+    // frames (RecastBudgetMilliseconds) instead of all happening in the frame a door opens - the pool of light through the new doorway catches up a few
+    // frames later rather than the whole game hitching.
+    private readonly Dictionary<LightKey, LightFan> _staleFans = new();
+    // A big lamp's fan costs several milliseconds, a wall sconce's a fraction of one - so the budget is time, not a count: recasting goes on until
+    // this much of the frame has been spent (the fan that crosses the line is finished, so a frame can overshoot by one).
+    private const double RecastBudgetMilliseconds = 3.0;
+    private readonly System.Diagnostics.Stopwatch _recastClock = new();
+
+    private void StaleAllFans()
+    {
+        foreach (var (key, fan) in _fans)
+            _staleFans[key] = fan;
+        _fans.Clear();
+        if (_staleFans.Count > MaxCachedFans)
+            _staleFans.Clear();
     }
 
     private static int HashWalls(IReadOnlyList<WallSegment> walls)
@@ -272,9 +368,9 @@ public sealed class RoomLighting : IDisposable
         _device.SetRenderTarget(null);
     }
 
-    // Folds `sight` (the player's own vision, which can go all the way to black) into this target
-    // via a per-pixel Max, so whichever of "the room is lit" and "you can personally see it" is
-    // brighter wins. Must be called before the backbuffer is drawn into, same as Build - it switches
+    // Folds `sight` (the player's own vision, which can go all the way to black) into this target: what
+    // the player cannot see keeps UnseenFraction of its light (SightScale). It used to be a per-pixel Max,
+    // which made sight itself a floodlight. Must be called before the backbuffer is drawn into, same as Build - it switches
     // render targets, and the backbuffer discards its contents on a render target switch (its
     // RenderTargetUsage defaults to DiscardContents), so doing this after the scene is drawn would
     // silently blank the whole frame instead of just multiplying it.
@@ -284,8 +380,8 @@ public sealed class RoomLighting : IDisposable
             return;
 
         _device.SetRenderTarget(_target);
-        spriteBatch.Begin(SpriteSortMode.Deferred, Max, SamplerState.LinearClamp);
-        sight.DrawRaw(spriteBatch);
+        spriteBatch.Begin(SpriteSortMode.Deferred, SightScale, SamplerState.LinearClamp);
+        sight.DrawRaw(spriteBatch, new Color(1f - UnseenFraction, 1f - UnseenFraction, 1f - UnseenFraction, 1f));
         spriteBatch.End();
         _device.SetRenderTarget(null);
     }
@@ -320,7 +416,10 @@ public sealed class RoomLighting : IDisposable
         // target everything clamps at 1, which is why bloom here used to need a fudge factor to
         // notice a lamp at all. With headroom above 1 the pool of light around a lamp is genuinely
         // brighter than the wall it falls on, and the bright pass can just look at it.
-        _target = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None);
+        // PreserveContents: MergeSight binds this target a second time to fold the sight in, and the default
+        // DiscardContents wiped every lamp, device light and the dusk floor on that rebind - the frame only ever
+        // showed the sight cone (found during the Barotrauma lighting pass: the mask was black outside sight).
+        _target = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
         return true;
     }
 

@@ -8,9 +8,10 @@ namespace Anabiosis.Shared.Model;
 // missing a device simply has no wires for it.
 public sealed partial class Ship
 {
-    public static Ship FromCustomDefinition(CustomShipDefinition def)
+    public static Ship FromCustomDefinition(CustomShipDefinition def, bool validate = true)
     {
-        var errors = CustomShipValidator.Validate(def);
+        // validate: false is for a drawing that is not a flyable ship at all (the start outpost, Station.OutpostStart.cs) - only its device lists are wanted.
+        var errors = validate ? CustomShipValidator.Validate(def) : new List<string>();
         if (errors.Count > 0)
             throw new InvalidOperationException("Invalid custom ship definition: " + string.Join("; ", errors));
 
@@ -189,7 +190,7 @@ public sealed partial class Ship
             engines: engines,
             supplementalWallTiles: def.SupplementalWallTiles, forcedFloorTiles: def.ForcedFloorTiles,
             wallOpenSideOverrides: def.WallOpenSides, wallMaterialOverrides: def.WallMaterials, doorEdges: doorEdges, isCustomBuilt: true,
-            wreckPatches: def.WreckPatches, junctionWalls: def.JunctionWalls);
+            wreckPatches: def.WreckPatches, junctionWalls: def.JunctionWalls, customWires: def.Wires);
 
         // TileShipBuilder.BuildDefinition's own step 3.6 - extra wall tiles a T-junction's own
         // private ring needed that couldn't safely be folded into any room's Rects (see that step's
@@ -244,6 +245,7 @@ public sealed partial class Ship
         // construction, at the cost of not surviving World.ShipBuilding.cs's own build-onto-ship
         // round-trip (same known limitation CustomShipDefinition.SupplementalWallTiles/WallOpenSides
         // already carry for every other one-shot tile correction, not new).
+        ship.OccupyDeviceTiles(def.Devices);
         return ship;
     }
 

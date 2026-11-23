@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
@@ -207,7 +207,9 @@ public sealed partial class World
             ? Ship.WallBlocks.FirstOrDefault(b => b.RoomId == character.RoomId && !b.IsInterior && IsPassableBreach(b) &&
                 (b.Position - next).Length() <= RoomLayout.BreachCrossingRadius)
             : null;
-        if (outerDoor is null && breachBlock is null)
+        // Neither a rectangular airlock door nor a breach: an airlock that is a door placed onto open space (World.Eva.EdgeAirlock.cs).
+        var edgeExit = outerDoor is null && breachBlock is null ? FindVacuumEdgeExit(character, next, moveDelta) : null;
+        if (outerDoor is null && breachBlock is null && edgeExit is null)
             return false;
 
         var (hullCenter, _) = GetHullLocalBounds();
@@ -222,8 +224,9 @@ public sealed partial class World
         // occasionally popping the character out through a different wall than the one they just
         // walked at, which read exactly like a teleport. The door/block's wall is fixed hull
         // layout, never a guess.
-        var crossingAt = outerDoor?.Position ?? breachBlock!.Position;
-        var exitLocalOffset = ExitPositionAt(room, crossingAt, next, HullWalkClearance) - hullCenter;
+        var exitLocalOffset = edgeExit is { } through
+            ? OutsideAirlockEdge(through, next, HullWalkClearance) - hullCenter
+            : ExitPositionAt(room, outerDoor?.Position ?? breachBlock!.Position, next, HullWalkClearance) - hullCenter;
         // Boots off means boots off the instant you step through, same as everywhere else
         // (TryAutoAttach) - walking out doesn't grab you onto the hull for free; EvaLocalOffset's
         // meaning flips from a hull-local offset to an absolute world position the moment there's
@@ -309,7 +312,7 @@ public sealed partial class World
     private void StepMagnetizedWalk(Character character, Vec2 moveDelta, in EvaSurface surface,
         IReadOnlyList<Door> outerDoors, Func<string, bool> isDoorPassable,
         IReadOnlyList<WallBlock> wallBlocks, Func<WallBlock, bool> isBlockPassable,
-        bool crossesOntoEnemyShip)
+        bool crossesOntoEnemyShip, bool ownShip = false)
     {
         var candidateOffset = character.EvaLocalOffset + surface.ToLocalDelta(moveDelta);
         var absoluteLocalPos = surface.LocalCenter + candidateOffset;
@@ -332,6 +335,17 @@ public sealed partial class World
         var breachBlock = steppingInward && outerDoor is null
             ? wallBlocks.FirstOrDefault(b => !b.IsInterior && isBlockPassable(b) && (b.Position - absoluteLocalPos).Length() <= RoomLayout.BreachCrossingRadius)
             : null;
+        // The own ship's airlock that is a door placed onto open space: back in through it, into the tile it opens from.
+        var edgeEntry = steppingInward && outerDoor is null && breachBlock is null && ownShip ? FindVacuumEdgeEntry(absoluteLocalPos) : null;
+        if (edgeEntry is { } enteredEdge)
+        {
+            character.IsOutside = false;
+            character.RoomId = enteredEdge.RoomId;
+            character.Position = InsideAirlockEdge(enteredEdge, absoluteLocalPos);
+            character.EvaAttachedTo = EvaAttachment.None;
+            character.EvaLocalOffset = Vec2.Zero;
+            return;
+        }
         if (outerDoor is null && breachBlock is null)
         {
             character.EvaLocalOffset = surface.Snap(candidateOffset);
@@ -390,6 +404,16 @@ public sealed partial class World
             return;
         }
 
+        if (FindVacuumEdgeEntry(absoluteLocalPos) is { } edgeDoor)
+        {
+            character.IsOutside = false;
+            character.RoomId = edgeDoor.RoomId;
+            character.Position = InsideAirlockEdge(edgeDoor, absoluteLocalPos);
+            character.EvaAttachedTo = EvaAttachment.None;
+            character.EvaLocalOffset = Vec2.Zero;
+            return;
+        }
+
         character.EvaLocalOffset = candidate;
     }
 
@@ -410,7 +434,9 @@ public sealed partial class World
     private bool IsFullyExposedToVacuum(Character character) =>
         character.IsOutside ||
         (!IsDocked && Ship.VacuumDoors.Any(d => d.RoomAId == character.RoomId && IsDoorOpen(d.Id))) ||
-        Ship.WallBlocks.Any(b => b.RoomId == character.RoomId && !b.IsInterior && IsPassableBreach(b));
+        (!IsDocked && VacuumDoorEdges().Any(e => IsOpenVacuumEdgeOf(e, character.RoomId))) ||
+        Ship.WallBlocks.Any(b => b.RoomId == character.RoomId && !b.IsInterior && IsPassableBreach(b)) ||
+        IsShuttleBayOpenIn(character.RoomId);
 
     // Direct user request ("при выходе начинается дамаг игрока и через 3 секунды игрок мгновенно
     // умирает") - a linear ramp, not the old flat "counter, then snap Health to 0 on the final tick"
@@ -434,7 +460,7 @@ public sealed partial class World
         }
 
         character.UnsuitedVacuumSeconds += deltaSeconds;
-        character.Health = Math.Max(0, character.Health - UnsuitedDamagePerSecond * (float)deltaSeconds);
+        DamageCharacter(character, DamageKind.Vacuum, UnsuitedDamagePerSecond * (float)deltaSeconds);
     }
 
     private void StepEvaCharacter(Character character, Vec2 moveInputDirection, double deltaSeconds)
@@ -458,7 +484,7 @@ public sealed partial class World
         {
             StepMagnetizedWalk(character, delta, ShipSurface(),
                 Ship.VacuumDoors, IsDoorOpen, Ship.WallBlocks, IsPassableBreach,
-                crossesOntoEnemyShip: false);
+                crossesOntoEnemyShip: false, ownShip: true);
             return;
         }
 
@@ -531,6 +557,8 @@ public sealed partial class World
         // crossed, not whatever it happened to land on - this is what makes the station's own
         // plating (TryAutoAttach's own Station branch) grab magnetic boots on contact and bounce
         // a boots-off drifter straight back off it, the same as the ship's hull already does.
+        if (TryEnterOpenAirlockWhileDrifting(character, from, worldPos))
+            return;
         TryAutoAttachAlong(character, from, worldPos);
 
         // Defensive only: the sampling above should always catch the crossing first (it's fine

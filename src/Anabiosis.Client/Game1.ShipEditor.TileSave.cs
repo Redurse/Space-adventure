@@ -63,7 +63,8 @@ public partial class Game1
                 .ToList()))
             .ToList();
         return new CustomShipTileCanvas(tiles, devices, zones, engines, ManualHalfBlockWalls: true, DoorEdgesRaw: doorEdges,
-            CompartmentInstancesRaw: compartmentInstances, JunctionDoorsRaw: junctionDoors);
+            CompartmentInstancesRaw: compartmentInstances, JunctionDoorsRaw: junctionDoors,
+            WiresRaw: LiveEditorWires().Select(w => new CustomShipTileCanvas.WireRecord(w.A.X, w.A.Y, w.B.X, w.B.Y)).ToList());
     }
 
     // Replays the saved data through the SAME TileGrid mutators the editor's own tools use (floors
@@ -89,6 +90,7 @@ public partial class Game1
         _editorCompartmentProtected.Clear();
         _editorCompartmentEntryId.Clear();
         _editorCompartmentPlacement.Clear();
+        ClearEditorWires();
 
         foreach (var t in canvas.Tiles)
             _editorTiles.SetFloor(new TileCoord(t.X, t.Y), true);
@@ -151,7 +153,22 @@ public partial class Game1
             // for a shaped kind (turrets), which ignores this parameter entirely.
             var halfSide = PlanSideFor(d.Kind, d.HalfSide, d.Rotated);
             var plan = BuildFootprintPlan(d.Kind, anchor, halfSide, width, height);
-            PlaceDeviceFootprint(plan, deviceId);
+            // A saved design can have a wall over part of a device's footprint (compartments stamped flush against each other, a half-block wall of the
+            // neighbour reaching under a workbench - the saved "аванпост1" has one): such a tile is skipped instead of crashing the whole load. A fresh
+            // placement stays strict (CanPlaceDeviceFootprint refuses it up front).
+            foreach (var step in plan)
+            {
+                if (_editorTiles.CellAt(step.Coord) is not { HasFloor: true } stepCell || (step.HalfSide is null && stepCell.Wall != TileWallKind.None))
+                    continue;
+                try
+                {
+                    PlaceDeviceFootprint(new[] { step }, deviceId);
+                }
+                catch (System.InvalidOperationException)
+                {
+                    // the tile cannot take it after all (e.g. a half-block that does not match) - leave it empty
+                }
+            }
             foreach (var (occupied, _) in plan)
                 RecordDeviceFootprintTile(occupied, anchor);
             _editorDeviceKinds[anchor] = d.Kind;
@@ -202,6 +219,14 @@ public partial class Game1
         }
         foreach (var z in canvas.Zones)
             _editorZones.Add(new EditorZone(z.Name, z.Tiles.Select(p => new TileCoord(p.X, p.Y)).ToHashSet(), z.Kind));
+        // The wiring-tool wires (W10), by the anchors of devices that are all back by now.
+        foreach (var w in canvas.Wires)
+        {
+            var a = new TileCoord(w.AX, w.AY);
+            var b = new TileCoord(w.BX, w.BY);
+            if (_editorDeviceKinds.ContainsKey(a) && _editorDeviceKinds.ContainsKey(b))
+                _editorWires.Add((a, b));
+        }
 
         // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - restores
         // _editorCompartmentAt/Tiles/Protected the same way HandleCompartmentToolInput's own

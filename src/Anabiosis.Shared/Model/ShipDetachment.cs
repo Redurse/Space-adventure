@@ -161,10 +161,10 @@ public static class ShipDetachment
     private static TileCoord DeviceTileCoord(float x, float y) => new((int)MathF.Floor(x), (int)MathF.Floor(y));
 
     // M77 - real tile ownership instead of bounding-box math: a device belongs to whichever region
-    // its own tile is in, and is kept iff that region is still reachable. ship.Tiles never actually
-    // tags a live device's own tile with TileCell.DeviceId (only the offline Ship Editor's own
-    // separate scratch grid ever calls PlaceDevice - Ship's own TileGridRasterizer/TileSync never
-    // do), so this looks the device's tile up by its own position instead, which is exactly the same
+    // its own tile is in, and is kept iff that region is still reachable. A detached
+    // definition is rebuilt from scratch, and its live TileCell.DeviceId stamps (ShipDeviceOccupancy)
+    // are anonymous and only exist on editor-built ships, so this looks the device's
+    // tile up by its own position instead, which is exactly the same
     // point-containment idea DeviceId would have encoded. Falls back to the OLD bounding-box check
     // (against the now-detached rooms) whenever the device's own tile isn't a region member right
     // now - a wall-mounted device (camera/turret periscope/terminal-adjacent console) sitting exactly

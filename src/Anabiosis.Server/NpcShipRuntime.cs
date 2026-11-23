@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
 
@@ -12,9 +12,28 @@ public sealed class NpcShipRuntime
     public string Id { get; }
     public NpcShipKind Kind { get; }
     public FactionId FactionId { get; }
-    public Vec2 Position { get; set; }
-    public Vec2 Velocity { get; set; }
-    public float RotationDegrees { get; set; }
+    // Where this hull is and how it moves. Once a real simulated hull is attached (Hull) it is the authority - a blast that
+    // shifts the hull's own centre moves the ship with it - so these read and write through to it.
+    private Vec2 _position;
+    private Vec2 _velocity;
+    private float _rotationDegrees;
+    public Vec2 Position { get => Hull?.Position ?? _position; set { _position = value; if (Hull is not null) Hull.Position = value; } }
+    public Vec2 Velocity { get => Hull?.Velocity ?? _velocity; set { _velocity = value; if (Hull is not null) Hull.Velocity = value; } }
+    public float RotationDegrees { get => Hull?.RotationDegrees ?? _rotationDegrees; set { _rotationDegrees = value; if (Hull is not null) Hull.RotationDegrees = value; } }
+
+    // The ship itself: real compartments, walls, engines, turrets and a crew at their posts (the same simulated hull a raider is).
+    // Built lazily the first time the player comes near or a shot lands (World.NpcHulls.cs) - far from anyone it is only a point.
+    public EnemyShipRuntime? Hull { get; private set; }
+    // The player has fired on it: it flies at the player and fights back.
+    public bool Provoked { get; set; }
+
+    public void AttachHull(EnemyShipRuntime hull)
+    {
+        hull.Position = _position;
+        hull.Velocity = _velocity;
+        hull.RotationDegrees = _rotationDegrees;
+        Hull = hull;
+    }
     // Where this hull is currently headed - re-picked on arrival (World.NpcShips.cs's
     // StepNpcShip). For Cargo this alternates between RouteA/RouteB; Military/Scout just get a
     // fresh random patrol point each time and leave RouteA/RouteB at their starting value, unused.
@@ -45,7 +64,7 @@ public sealed class NpcShipRuntime
         Id = id;
         Kind = kind;
         FactionId = factionId;
-        Position = position;
+        _position = position;
         RouteA = routeA;
         RouteAStationId = routeAStationId;
         RouteB = routeB;

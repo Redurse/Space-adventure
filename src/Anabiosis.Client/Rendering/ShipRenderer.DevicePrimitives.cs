@@ -22,12 +22,42 @@ public sealed partial class ShipRenderer
         {
             AtmosphereKind.Steam => Color.WhiteSmoke * (alpha * 0.32f),
             AtmosphereKind.Spark => Color.Lerp(Color.Yellow, Color.OrangeRed, particle.Progress) * alpha,
+            AtmosphereKind.Smoke => new Color(48, 46, 44) * (MathF.Min(1f, particle.Progress * 6f) * alpha * 0.5f),
             _ => Color.Lerp(Color.Orange, new Color(90, 20, 10), particle.Progress) * alpha,
         };
         // Steam swells as it disperses; sparks and embers shrink towards nothing.
-        var scale = particle.Kind == AtmosphereKind.Steam ? 1f + particle.Progress * 1.6f : 1f - particle.Progress * 0.6f;
+        var scale = particle.Kind is AtmosphereKind.Steam or AtmosphereKind.Smoke ? 1f + particle.Progress * 1.6f : 1f - particle.Progress * 0.6f;
         var size = particle.Size * PixelsPerUnit * scale;
         spriteBatch.Draw(_pixel, center, null, color, 0f, new Vector2(0.5f, 0.5f), new Vector2(size, size), SpriteEffects.None, 0f);
+    }
+
+    // A shell landing on the plating: a hard white flash that dies in a few frames, a ring of hot sparks thrown outward
+    // and a puff of grey where the metal buckled.
+    private void DrawHullHit(SpriteBatch spriteBatch, Vector2 center, float progress)
+    {
+        var alpha = 1f - progress;
+        var flash = MathF.Max(0f, 1f - progress * 3.5f);
+        if (flash > 0f)
+        {
+            var size = PixelsPerUnit * (1.4f + progress * 2f);
+            spriteBatch.Draw(_pixel, center, null, Color.White * (flash * 0.9f), 0f, new Vector2(0.5f), new Vector2(size, size), SpriteEffects.None, 0f);
+            spriteBatch.Draw(_pixel, center, null, new Color(255, 190, 90) * (flash * 0.6f), 0f, new Vector2(0.5f), new Vector2(size * 2f, size * 2f), SpriteEffects.None, 0f);
+        }
+
+        const int sparkCount = 9;
+        for (var i = 0; i < sparkCount; i++)
+        {
+            // Fixed per-index spread so a spark keeps its path for the whole effect.
+            var angle = i * MathF.PI * 2f / sparkCount + MathF.Sin(i * 12.9898f) * 0.35f;
+            var speed = 22f + 18f * (0.5f + 0.5f * MathF.Sin(i * 78.233f));
+            var spark = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * (speed * progress);
+            var length = 7f * (1f - progress) + 1f;
+            spriteBatch.Draw(_pixel, spark, null, Color.Lerp(Color.Yellow, Color.OrangeRed, progress) * alpha, angle, new Vector2(0f, 0.5f),
+                new Vector2(length, 2f), SpriteEffects.None, 0f);
+        }
+
+        var puff = PixelsPerUnit * (0.6f + progress * 1.6f);
+        spriteBatch.Draw(_pixel, center, null, new Color(70, 66, 62) * (alpha * 0.35f), 0f, new Vector2(0.5f), new Vector2(puff, puff), SpriteEffects.None, 0f);
     }
 
     // Barotrauma-style brief spark burst for a tool action that just landed (welding a breach,
@@ -115,8 +145,7 @@ public sealed partial class ShipRenderer
 
         // Same "bolted on, not painted on" drop shadow DrawPanel's plain rect gets, just clipped
         // short of the two chamfered corners it would otherwise poke past.
-        spriteBatch.Draw(_pixel, new Rectangle(rect.X + chamfer, rect.Bottom, rect.Width - chamfer * 2, 2), Color.Black * 0.28f);
-        spriteBatch.Draw(_pixel, new Rectangle(rect.Right, rect.Y + chamfer, 2, rect.Height - chamfer * 2), Color.Black * 0.28f);
+        CastShadow(rect); // the soft drop shadow, drawn under all devices (ShipRenderer.Shadows.cs)
     }
 
     // A small dark backing sized to the text, drawn just under it - keeps a label legible over

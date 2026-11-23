@@ -14,4 +14,6 @@ public sealed record InventoryState(
     float? WornSuitTank,
     // A worn BeltBag's own small sub-inventory (Inventory.BeltBagSlots) - always sent, empty or
     // not, the same way MainSlots always sends all 10 regardless of how many are actually full.
-    IReadOnlyList<ItemType?> BeltBagSlots);
+    IReadOnlyList<ItemType?> BeltBagSlots,
+    // Parallel to MainSlotTanks for guns: the kind of round loaded, when it is not the gun's ordinary one.
+    IReadOnlyList<ItemType?>? MainSlotTankTypes = null);

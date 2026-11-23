@@ -9,13 +9,14 @@ public static class AsteroidOre
     // magnitude less likely than a common one.
     private static readonly (ItemType Ore, float Weight)[] Table =
     {
-        (ItemType.IronOre, 12f), (ItemType.CopperOre, 10f), (ItemType.Carbon, 7f), (ItemType.Silicon, 7f),
-        (ItemType.ZincOre, 6f), (ItemType.AluminumOre, 5f), (ItemType.Hyperium, 4f),
-        (ItemType.NickelOre, 3f), (ItemType.TitaniumOre, 2f), (ItemType.PlastalloyOre, 1.5f), (ItemType.UraniumOre, 1f),
+        (ItemType.RawIron, 12f), (ItemType.RawCopper, 10f), (ItemType.RawCarbon, 7f), (ItemType.RawSilicon, 7f),
+        (ItemType.RawZinc, 6f), (ItemType.RawAluminum, 5f), (ItemType.RawHyperium, 4f),
+        (ItemType.RawNickel, 3f), (ItemType.RawTitanium, 2f), (ItemType.RawPlastalloy, 1.5f), (ItemType.RawUranium, 1f),
     };
 
-    private static readonly ItemType[] RichOres =
-        { ItemType.UraniumOre, ItemType.TitaniumOre, ItemType.PlastalloyOre, ItemType.Hyperium };
+    // Asteroids give raw ore (ItemType.Raw*); the fabricator processes it into the materials (ItemDefinitions.RefiningPairs).
+    public static readonly ItemType[] RichOres =
+        { ItemType.RawUranium, ItemType.RawTitanium, ItemType.RawPlastalloy, ItemType.RawHyperium };
 
     private const float BeltAsteroidOreChance = 0.35f;
     private const float DepositMaxHp = 100f;
@@ -75,7 +76,7 @@ public static class AsteroidOre
         return (rocks, deposits);
     }
 
-    private static void AddBlocks(List<OreDeposit> into, Asteroid rock, int blocks, Random random, Func<ItemType> pickOre)
+    internal static void AddBlocks(List<OreDeposit> into, Asteroid rock, int blocks, Random random, Func<ItemType> pickOre)
     {
         var firstAngle = random.NextDouble() * 2 * Math.PI;
         for (var b = 0; b < blocks; b++)

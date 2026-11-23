@@ -12,7 +12,7 @@ namespace Anabiosis.Server;
 // Failures are swallowed on purpose. A missing, corrupt, or version-mismatched file means "start a
 // new run", and a save that can't be written (locked file, read-only directory) must never take
 // the game down mid-play - losing progress is bad, crashing on a routine dock is worse.
-public static class SaveStore
+public static partial class SaveStore
 {
     private static readonly JsonSerializerOptions Options = new()
     {

@@ -38,6 +38,7 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1); // position doesn't matter for this test
         EnterBattle(world);
+        CutPowerTo(world, PowerSystemId.Shields, PowerSystemId.Oxygen, PowerSystemId.WeaponCharger); // unshielded, as this test assumes
         var sectorPosition = world.GalaxyMap.GetPoint("sector-alpha").Position;
 
         // Re-pinned every few seconds rather than left to drift freely - this test is about
@@ -65,6 +66,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1); // pilot — only sends commands, its health is never checked
+        world.PowerGrid.Reactor.EmergencyShutdown = true; // a dark ship: no generator, nothing powered (what a fresh World was before W2 of wiring-plan.md)
 
         BreachRoom(world, "corridor");
         if (!RoomHasBreach(world.CreateSnapshot(), "corridor"))

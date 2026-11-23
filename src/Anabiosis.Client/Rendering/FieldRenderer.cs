@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -54,8 +54,6 @@ public sealed partial class FieldRenderer
     // Same pattern, same reason, for a celestial body's own surface (PlanetTexture, M55 follow-up
     // - "почему на месте планет пустота") - a body only ever needs baking once per session (its
     // radius never changes), so keyed by id alone rather than "id:radius" the way a belt rock is.
-    private readonly Dictionary<string, PlanetTexture.Skin> _planetSkins = new();
-    private readonly Dictionary<string, Task<(Color[] Pixels, int Side, float HalfExtentUnits)>> _pendingPlanetBakes = new();
     // The engine glow's own displayed intensity, separate from the ship's actual instantaneous
     // thrust - snaps up the moment real thrust appears, but decays on its own once it drops back
     // to zero instead of cutting out the same instant the throttle is released, so easing off the
@@ -126,8 +124,15 @@ public sealed partial class FieldRenderer
             foreach (var deposit in snapshot.Field.OreDeposits)
             {
                 var state = snapshot.Field.OreDepositStates.FirstOrDefault(s => s.DepositId == deposit.Id);
-                if (state is not null && state.Hp > 0f)
-                    DrawOreBlock(spriteBatch, deposit, state, WorldToScreen(deposit.Position), totalSeconds);
+                if (state is null || state.Hp <= 0f)
+                    continue;
+                var screenAt = WorldToScreen(deposit.Position);
+                var axis = WorldToScreen(deposit.Position + new Vec2(1f, 0f)) - screenAt;
+                // the formation grows away from the rock: its "up" is the direction from the asteroid's centre out to the deposit
+                var rock = snapshot.Field.Asteroids.FirstOrDefault(a => a.Id == deposit.AsteroidId);
+                var outward = rock is null ? new Vec2(0f, -1f) : deposit.Position - rock.Position;
+                var outwardAngle = MathF.Atan2((float)outward.Y, (float)outward.X) + MathF.Atan2(axis.Y, axis.X);
+                DrawOreBlock(spriteBatch, deposit, state, screenAt, outwardAngle + MathF.PI / 2f, axis.Length(), totalSeconds);
             }
         }
 
@@ -257,8 +262,19 @@ public sealed partial class FieldRenderer
             var npcScreen = WorldToScreen(npcWorld);
             if ((npcWorld - shipPosition).Length() <= ShipDetailRenderDistance)
             {
-                DrawNpcShipExterior(spriteBatch, npcScreen, npc, snapshot.FactionStandings,
-                    rotation + (npc.RotationDegrees * MathF.PI / 180f));
+                var npcRotation = rotation + (npc.RotationDegrees * MathF.PI / 180f);
+                if (npc.Rooms is { Count: > 0 })
+                {
+                    // A real ship: the same hull a raider is, tinted a little toward its faction's colour.
+                    var accent = Color.Lerp(Color.White, NpcShipMarkerColor(npc, snapshot.FactionStandings), 0.3f);
+                    DrawEnemyShipExterior(spriteBatch, npcScreen,
+                        new EnemyShipFieldState(npc.Id, npc.X, npc.Y, npc.RotationDegrees, npc.Hp, npc.MaxHp, false, false, npc.Rooms),
+                        -1, npcRotation, totalSeconds, accent);
+                }
+                else
+                {
+                    DrawNpcShipExterior(spriteBatch, npcScreen, npc, snapshot.FactionStandings, npcRotation);
+                }
             }
             else
             {
@@ -276,6 +292,8 @@ public sealed partial class FieldRenderer
         if (snapshot.ShipDebris is { Count: > 0 } debrisFragments)
             foreach (var fragment in debrisFragments)
                 DrawShipDebris(spriteBatch, fragment, WorldToScreen, rotation);
+
+        DrawShuttles(spriteBatch, snapshot, WorldToScreen, rotation, totalSeconds);
 
         foreach (var shot in snapshot.Projectiles)
             DrawProjectile(spriteBatch, shot, WorldToScreen(new Vec2(shot.X, shot.Y)), rotation);
@@ -302,6 +320,8 @@ public sealed partial class FieldRenderer
                 DrawSparkBurst(spriteBatch, WorldToScreen(effect.Position), effect.Progress);
             foreach (var effect in effects.Where(e => e.Kind == EffectKind.Explosion))
                 DrawExplosion(spriteBatch, WorldToScreen(effect.Position), effect.Progress);
+            foreach (var effect in effects.Where(e => e.Kind == EffectKind.Impact))
+                DrawImpact(spriteBatch, WorldToScreen(effect.Position), effect.Progress);
         }
     }
 
@@ -422,28 +442,12 @@ public sealed partial class FieldRenderer
     // for however many frames the bake takes, same "waiting its turn" shape as an unbaked rock.
     private void DrawPlanetSkin(SpriteBatch spriteBatch, CelestialBody body, Vector2 screen, float radiusPx, Color color, float rotation)
     {
-        if (!_planetSkins.TryGetValue(body.Id, out var skin))
+        if (!PlanetSkins.TryGet(_graphicsDevice, body, out var skin))
         {
-            if (!_pendingPlanetBakes.TryGetValue(body.Id, out var pending))
-            {
-                pending = Task.Run(() => PlanetTexture.BakePixels(body));
-                _pendingPlanetBakes[body.Id] = pending;
-            }
-
-            if (!pending.IsCompletedSuccessfully)
-            {
-                HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen, radiusPx, color);
-                HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen + new Vector2(radiusPx * 0.18f, radiusPx * 0.18f), radiusPx * 0.92f, color * 0.8f);
-                HudIcons.DrawRingArc(spriteBatch, _pixel, screen, radiusPx, 0f, 360f, Color.Black * 0.35f, 96, 2f);
-                return;
-            }
-
-            var (pixels, side, halfExtentUnits) = pending.Result;
-            var texture = new Texture2D(_graphicsDevice, side, side);
-            texture.SetData(pixels);
-            skin = new PlanetTexture.Skin(texture, halfExtentUnits);
-            _planetSkins[body.Id] = skin;
-            _pendingPlanetBakes.Remove(body.Id);
+            HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen, radiusPx, color);
+            HudIcons.DrawScaledCircle(spriteBatch, _softCircle, screen + new Vector2(radiusPx * 0.18f, radiusPx * 0.18f), radiusPx * 0.92f, color * 0.8f);
+            HudIcons.DrawRingArc(spriteBatch, _pixel, screen, radiusPx, 0f, 360f, Color.Black * 0.35f, 96, 2f);
+            return;
         }
 
         var scale = skin.HalfExtentUnits * 2f * ShipRenderer.PixelsPerUnit / skin.Texture.Width;
@@ -460,6 +464,29 @@ public sealed partial class FieldRenderer
         BodyMassTier.GasGiant => new Color(200, 160, 110),
         _ => new Color(180, 180, 180), // Moon
     };
+
+    // A shell striking another ship's hull: a quick white flash, a short ring and sparks thrown off the plating.
+    private void DrawImpact(SpriteBatch spriteBatch, Vector2 center, float progress)
+    {
+        var alpha = 1f - progress;
+        var flash = MathF.Max(0f, 1f - progress * 3f);
+        if (flash > 0f)
+        {
+            HudIcons.FillCircle(spriteBatch, _pixel, center, 9f * flash + 2f, Color.White * (flash * 0.9f));
+            HudIcons.FillCircle(spriteBatch, _pixel, center, 16f * flash + 3f, new Color(255, 180, 80) * (flash * 0.45f));
+        }
+        HudIcons.DrawRingArc(spriteBatch, _pixel, center, 4f + progress * 20f, 0f, 360f, new Color(255, 210, 130) * (alpha * 0.6f), 16, 2f);
+
+        const int sparkCount = 7;
+        for (var i = 0; i < sparkCount; i++)
+        {
+            var angle = i * MathF.PI * 2f / sparkCount + MathF.Sin(i * 12.9898f) * 0.4f;
+            var speed = 40f + 30f * (0.5f + 0.5f * MathF.Sin(i * 78.233f));
+            var spark = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * (speed * progress);
+            spriteBatch.Draw(_pixel, spark, null, Color.Lerp(Color.Yellow, Color.OrangeRed, progress) * alpha, angle, new Vector2(0f, 0.5f),
+                new Vector2(6f * (1f - progress) + 1f, 2f), SpriteEffects.None, 0f);
+        }
+    }
 
     // A bigger, longer-lived burst than DrawSparkBurst's tool feedback - an expanding shockwave
     // ring plus a scatter of hull-chunk debris flung outward, for the one moment a whole ship
@@ -725,7 +752,7 @@ public sealed partial class FieldRenderer
     }
 
     private void DrawEnemyShipExterior(SpriteBatch spriteBatch, Vector2 screenCenter,
-        EnemyShipFieldState enemy, int crewAlive, float rotation, float totalSeconds)
+        EnemyShipFieldState enemy, int crewAlive, float rotation, float totalSeconds, Color? accent = null)
     {
         // The hull's own real footprint: every enemy is the same ship, minus whatever compartments it has lost.
         var rooms = enemy.Rooms ?? EnemyShipLayout.Default.Rooms;
@@ -741,7 +768,7 @@ public sealed partial class FieldRenderer
         // The armour baked for exactly these compartments (EnemyHullSkin); until the bake for a freshly changed shape is
         // ready (it is made between frames) the last known shape is drawn rather than nothing.
         var baked = _enemyHulls.Get(rooms) ?? _enemyHulls.Get(EnemyShipLayout.Default.Rooms);
-        var tint = enemy.IsRetreating ? new Color(150, 138, 128) : Color.White;
+        var tint = enemy.IsRetreating ? new Color(150, 138, 128) : accent ?? Color.White; // accent: an ambient ship flies its faction's colour
         if (baked is { } hullSprite)
             spriteBatch.Draw(hullSprite.Texture, screenCenter, null, tint, rotation, hullSprite.Origin, 1f, SpriteEffects.None, 0f);
 
@@ -770,7 +797,7 @@ public sealed partial class FieldRenderer
             var nozzle = LocalPoint(engine.NozzlePosition);
             var worldDirection = new Vector2(direction.X * cos - direction.Y * sin, direction.X * sin + direction.Y * cos);
             var power = enemy.IsRetreating ? 0.5f : 1f;
-            for (var i = 0; i < 4; i++)
+            for (var i = 0; i < 4 && !enemy.IsDerelict; i++) // a wreck's engines are cold
             {
                 var along = nozzle + worldDirection * (12f + i * 11f) * power * pulse;
                 HudIcons.FillCircle(spriteBatch, _pixel, along, (11f - i * 2.2f) * pulse, new Color(255, 150 - i * 25, 50) * (0.6f - i * 0.1f));
@@ -778,7 +805,7 @@ public sealed partial class FieldRenderer
         }
 
         // Windows lit in every surviving compartment, so a hull that is up and running looks lived in and a dark one doesn't.
-        foreach (var room in rooms)
+        foreach (var room in enemy.IsDerelict ? Array.Empty<Room>() : rooms) // ...and its windows dark
         {
             var window = LocalPoint(new Vec2(room.Center.X, room.Center.Y));
             HudIcons.FillCircle(spriteBatch, _pixel, window, 5f, new Color(255, 220, 140) * 0.55f);
@@ -795,7 +822,8 @@ public sealed partial class FieldRenderer
             HudIcons.FillCircle(spriteBatch, _pixel, position, sizePx * 0.012f, new Color(255, 100, 40) * 0.3f);
         }
 
-        DrawEnemyHealthBar(spriteBatch, screenCenter, sizePx, enemy);
+        if (!enemy.IsDerelict) // a wreck is not a target
+            DrawEnemyHealthBar(spriteBatch, screenCenter, sizePx, enemy);
 
         if (crewAlive >= 0)
         {
@@ -1018,20 +1046,35 @@ public sealed partial class FieldRenderer
     // A block of ore: a real body sitting on the rock, with the bar showing how much of it is left
     // to cut. It used to be a pulsing diamond with a number of "cuts" beside it - a marker, not a
     // thing - and there was nothing to aim a torch at.
-    private void DrawOreBlock(SpriteBatch spriteBatch, OreDeposit deposit, OreDepositState state, Vector2 screenCenter, float totalSeconds)
+    private void DrawOreBlock(SpriteBatch spriteBatch, OreDeposit deposit, OreDepositState state, Vector2 screenCenter,
+        float rotation, float pixelsPerUnit, float totalSeconds)
     {
         var half = deposit.Radius * ShipRenderer.PixelsPerUnit;
         var body = new Rectangle((int)(screenCenter.X - half), (int)(screenCenter.Y - half), (int)(half * 2), (int)(half * 2));
 
-        spriteBatch.Draw(_pixel, body, new Color(96, 78, 44));
-        spriteBatch.Draw(_pixel, new Rectangle(body.X, body.Y, body.Width, 3), new Color(150, 126, 74));
-        spriteBatch.Draw(_pixel, new Rectangle(body.X, body.Bottom - 3, body.Width, 3), Color.Black * 0.4f);
-
-        // Veins of the actual mineral, glinting - what makes it read as ore rather than as a crate.
-        var glint = 0.65f + 0.35f * MathF.Sin(totalSeconds * 2f + screenCenter.X * 0.05f);
-        var inset = body.Width / 4;
-        spriteBatch.Draw(_pixel, new Rectangle(body.X + inset, body.Y + inset, body.Width - inset * 2, body.Height / 6), Color.Goldenrod * glint);
-        spriteBatch.Draw(_pixel, new Rectangle(body.Center.X - 2, body.Y + inset, 4, body.Height - inset * 2), Color.Goldenrod * (glint * 0.7f));
+        if (OreArt.Has(deposit.OreType))
+        {
+            // The formation of its own ore (OreArt): it dwindles through three stages as the flame eats it.
+            var stage = state.Fraction >= 0.67f ? 2 : state.Fraction >= 0.34f ? 1 : 0;
+            var variant = Math.Abs(deposit.Id.GetHashCode());
+            var texture = OreArt.Deposit(_graphicsDevice, deposit.OreType, stage, variant);
+            // the base of the stone sits at 80% of the picture's height, on the rock's surface
+            var origin = new Vector2(OreArt.DepositSize / 2f, OreArt.DepositSize * 0.80f);
+            var scale = 2.4f * pixelsPerUnit / OreArt.DepositSize;
+            var glow = deposit.OreType is ItemType.RawUranium or ItemType.RawHyperium
+                ? 0.9f + 0.1f * MathF.Sin(totalSeconds * 2.2f + screenCenter.X * 0.05f) : 1f;
+            spriteBatch.Draw(texture, screenCenter, null, Color.White * glow, rotation, origin, scale, SpriteEffects.None, 0f);
+        }
+        else
+        {
+            spriteBatch.Draw(_pixel, body, new Color(96, 78, 44));
+            spriteBatch.Draw(_pixel, new Rectangle(body.X, body.Y, body.Width, 3), new Color(150, 126, 74));
+            spriteBatch.Draw(_pixel, new Rectangle(body.X, body.Bottom - 3, body.Width, 3), Color.Black * 0.4f);
+            var glint = 0.65f + 0.35f * MathF.Sin(totalSeconds * 2f + screenCenter.X * 0.05f);
+            var inset = body.Width / 4;
+            spriteBatch.Draw(_pixel, new Rectangle(body.X + inset, body.Y + inset, body.Width - inset * 2, body.Height / 6), Color.Goldenrod * glint);
+            spriteBatch.Draw(_pixel, new Rectangle(body.Center.X - 2, body.Y + inset, 4, body.Height - inset * 2), Color.Goldenrod * (glint * 0.7f));
+        }
 
         // Progress bar: only once it has actually been worked, so an untouched field isn't a wall
         // of bars.
@@ -1140,7 +1183,7 @@ public sealed partial class FieldRenderer
         _crewSkin.Draw(spriteBatch, screenCenter, ShipRenderer.PixelsPerUnit, character.PlayerId,
             new Vector2((float)character.X, (float)character.Y),
             CrewSkin.UniformFor(character.Role, character.IsBot), CrewSkin.AccentFor(character.IsBot), true, facing,
-            armsForward: held.Count > 0);
+            armsForward: held.Count > 0, look: character.Look);
 
         // Same held-item chip as indoors (ShipRenderer.DrawHeldItems) - a suited EVA crewmate holding
         // a cutter still reads as holding something, not just glowing from an invisible tool.

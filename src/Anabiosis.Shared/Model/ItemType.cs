@@ -80,4 +80,26 @@ public enum ItemType
     // The rifle's magazine: plugs into a Rifle like a tank into a cutter and is worn down by firing
     // (MagazineDefinitions, World.PersonalShots.cs). Appended last so saved enum values stay valid.
     Magazine,
+    // Medicine (World.Treatment.cs, MedicalTreatment.cs) - used on a body part through the health window (H); appended last so saved enum values stay valid.
+    Bandage, Tourniquet, Antiseptic, Splint, PlasterCast, Painkiller, Antibiotic, BurnGel, Adrenaline, Defibrillator, SurgeryKit,
+    // The revolver (RevolverDefinitions.cs): a one-handed single-shot sidearm that carries its own six rounds, as in Barotrauma. RevolverRounds are loaded
+    // into it by dragging them on (a stack of up to six, shown as "x6"); appended last so saved enum values stay valid.
+    Revolver, RevolverRounds,
+    // The rest of the firearms after Barotrauma (GunDefinitions.cs) and what they fire: loose rounds in stacks, or magazines.
+    // Appended last so saved enum values stay valid.
+    Handcannon, MachinePistol, Smg, Shotgun, AutoShotgun, BoltRifle, Hmg, HarpoonGun,
+    HandcannonRounds, SmgMagazine, ShotgunShells, RifleRounds, HmgMagazine, Harpoons,
+    // Armour after Barotrauma (ArmorDefinitions.cs): the vest goes where a suit would, the helmet on the head.
+    BodyArmor, BallisticHelmet,
+    // Other rounds the same guns take (GunDefinitions.Variants): a gun remembers which kind is loaded in it.
+    RevolverRoundsDepleted, SmgMagazineDepleted, ShotgunShellsRubber, ShotgunSlugs, HarpoonsHeavy, HarpoonsExplosive,
+    // Raw, unprocessed ore: what an asteroid deposit actually yields (OreDeposit.OreType). The fabricator's "Переработка"
+    // recipes turn each one into the matching material above (IronOre, NickelOre ... Hyperium - see ItemDefinitions.RefinedFrom).
+    // Appended last so saved enum values stay valid.
+    RawIron, RawNickel, RawZinc, RawCopper, RawTitanium, RawUranium, RawSilicon, RawCarbon, RawAluminum, RawPlastalloy, RawHyperium,
+    // Wiring parts, W7/W8 of wiring-plan.md (ComponentKind.Delay ... Wireless): one item per kind like the ones above. Appended last so
+    // saved enum values stay valid.
+    Delay, Oscillator, Comparator, SignalCheck, Button, MathPart, FunctionPart, WirelessPart,
+    // The two parts with a text setting: the regular expression and the terminal (typed messages).
+    RegexPart, TerminalPart,
 }

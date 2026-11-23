@@ -40,10 +40,10 @@ public static class EnemyCrewPlanner
             next++;
         }
 
-        Add(EnemyCrewRole.Captain, "Капитан", ship.HelmConsole.Position, ItemType.LaserRifle, suited: false);
+        Add(EnemyCrewRole.Captain, "Капитан", ship.HelmConsole.Position, ItemType.Revolver, suited: false);
 
         foreach (var turret in ship.Turrets.Take(2))
-            Add(EnemyCrewRole.Scientist, "Учёный", turret.PeriscopePosition, ItemType.Knife, suited: false, postId: turret.Id);
+            Add(EnemyCrewRole.Scientist, "Учёный", turret.PeriscopePosition, ItemType.Revolver, suited: false, postId: turret.Id);
 
         // Engineers go to the engineering compartments (by name), falling back to the largest rooms.
         var engineeringRooms = ship.Rooms.Where(r => r.Name.Contains("нжинер", StringComparison.OrdinalIgnoreCase)).ToList();
@@ -51,7 +51,7 @@ public static class EnemyCrewPlanner
             engineeringRooms = engineeringRooms.Concat(ship.Rooms.Except(engineeringRooms)
                 .OrderByDescending(r => r.Width * r.Height)).Take(2).ToList();
         foreach (var room in engineeringRooms.Take(2))
-            Add(EnemyCrewRole.Engineer, "Инженер", room.Center, ItemType.Knife, suited: true); // they go into breached, airless compartments to patch them
+            Add(EnemyCrewRole.Engineer, "Инженер", room.Center, ItemType.HarpoonGun, suited: true); // they go into breached, airless compartments to patch them
 
         // Fighters: the reactor, the cockpit, and the airlock (or whatever is left) - the places a boarding party heads for.
         var reactorRoom = ship.Devices.FirstOrDefault(d => d.Kind == DeviceKind.Reactor)?.RoomId;
@@ -66,7 +66,7 @@ public static class EnemyCrewPlanner
             if (fighterRooms.Count < 3 && !fighterRooms.Contains(room))
                 fighterRooms.Add(room);
         for (var i = 0; i < fighterRooms.Count; i++)
-            Add(EnemyCrewRole.Fighter, "Боец", fighterRooms[i].Center, i == 0 ? ItemType.Rifle : ItemType.LaserRifle, suited: true);
+            Add(EnemyCrewRole.Fighter, "Боец", fighterRooms[i].Center, (i % 3) switch { 0 => ItemType.Rifle, 1 => ItemType.Smg, _ => ItemType.Shotgun }, suited: true);
 
         return crew;
     }

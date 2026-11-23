@@ -97,6 +97,7 @@ internal static partial class TestRunner
             return false;
 
         // Jump straight back - CanWarpNow is already armed the instant a jump lands (World.StarSystems.cs).
+        world.DebugClearWarpCooldown(); // a jump needs a minute to recharge; this test is about the way back, not about the wait
         world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "sol"));
         if (world.CreateSnapshot().CurrentSystemId != "sol")
             return false;

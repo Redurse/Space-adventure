@@ -24,6 +24,12 @@ public sealed partial class World
             return;
 
         var equipping = !character.WearingSuit;
+        if (equipping && character.Inventory.Equipped[EquipSlot.Suit] is { } wornArmor)
+        {
+            if (!character.Inventory.TryAdd(wornArmor))
+                return;
+            character.Inventory.Equipped[EquipSlot.Suit] = null;
+        }
         if (equipping != SuitLockerHasSuit(locker.Id))
             return;
 
@@ -141,7 +147,7 @@ public sealed partial class World
         if (blockKind is { } kind)
         {
             var block = RepairableBlock(kind);
-            if (block.RoomId == character.RoomId && (block.Position - character.Position).Length() < InteractionRadius &&
+            if (block.RoomId == character.RoomId && (block.Position - character.Position).Length() < BlockReach(kind) &&
                 IsBlockBroken(kind))
                 AttemptSystemRepair(block.Id);
             return;
@@ -177,9 +183,7 @@ public sealed partial class World
         var door = AllShipDoors().FirstOrDefault(d => d.Id == deviceId);
         if (door.Id is not null)
         {
-            if (door.Connects(character.RoomId) && (door.Position - character.Position).Length() < InteractionRadius &&
-                IsDoorDestroyed(door.Id))
-                AttemptSystemRepair(door.Id);
+            StartDoorRepair(character, door.Id);
         }
     }
 }

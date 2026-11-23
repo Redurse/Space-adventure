@@ -13,7 +13,16 @@ public static class AsteroidShape
 {
     public const int VertexCount = 14;
 
-    public static float[] RadiusFactors(string id)
+    // The factors of a rock never change, and it is asked for on every collision test, every frame it is drawn and every avoidance pass: computed once
+    // per id (a seeded Random and two arrays each time was most of the ship physics step). Callers must not modify the returned array.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float[]> FactorCache = new();
+
+    // No rock reaches further than this multiple of its Radius (0.74 + 0.42 before smoothing, which only averages).
+    public const float MaxRadiusFactor = 1.16f;
+
+    public static float[] RadiusFactors(string id) => FactorCache.GetOrAdd(id, ComputeRadiusFactors);
+
+    private static float[] ComputeRadiusFactors(string id)
     {
         var factors = new float[VertexCount];
         var seed = StableHash(id);

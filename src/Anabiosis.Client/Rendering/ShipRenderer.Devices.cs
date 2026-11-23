@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -44,7 +44,12 @@ public sealed partial class ShipRenderer
         var center = origin + new Vector2(storage.X, storage.Y) * PixelsPerUnit;
         var rect = new Rectangle((int)center.X - width / 2, (int)center.Y - height / 2, width, height);
         var empty = remaining <= 0;
-        DrawChamferedHousing(spriteBatch, rect, Color.SaddleBrown * (empty ? 0.35f : 0.85f), empty ? Color.OrangeRed : Color.SaddleBrown, 1);
+        // Crates with brass in them (DeviceSkin.Furniture.cs's AmmoCrates) - dull and outlined red
+        // once the stock runs out.
+        spriteBatch.Draw(_deviceSkin.Get(DeviceSkin.Face.AmmoCrates, rect.Width, rect.Height, !empty), rect, Color.White);
+        CastShadow(rect);
+        if (empty)
+            DrawRectOutline(spriteBatch, rect, Color.OrangeRed * 0.8f, 1);
         var ammoLabelPos = new Vector2(rect.X + 3, rect.Bottom + 1);
         var ammoLabel = remaining.ToString();
         DrawLabelBacking(spriteBatch, ammoLabel, ammoLabelPos, 0.5f);
@@ -59,7 +64,7 @@ public sealed partial class ShipRenderer
         var center = origin + new Vector2(locker.X, locker.Y) * PixelsPerUnit;
         var (lockerWidth, lockerHeight) = FootprintPixelSize(CustomDeviceKind.SuitLocker);
         var rect = GetBlockRect(locker.Position, lockerWidth, lockerHeight, origin);
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Locker, hasSuit, Color.LightSteelBlue, 1);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Locker, hasSuit, DeviceRim, 1);
 
         const int lightSize = 4;
         var lightColor = hasSuit ? Color.CadetBlue : new Color(60, 70, 68);
@@ -112,7 +117,7 @@ public sealed partial class ShipRenderer
             _ => DeviceSkin.Face.Auxiliary,
         };
         DrawDeviceFace(spriteBatch, rect, face, powered && !damaged,
-            damaged ? Color.Red : isOpen ? Color.Gold : Color.LightSteelBlue, isOpen ? 3 : 2);
+            damaged ? Color.Red : isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : damaged ? 2 : 1);
         if (damaged)
             DrawScorch(spriteBatch, rect);
         if (damaged)
@@ -136,7 +141,7 @@ public sealed partial class ShipRenderer
         var (camWidth, camHeight) = FootprintPixelSize(CustomDeviceKind.Camera);
         var rect = GetBlockRect(camera.InteriorPosition, camWidth, camHeight, origin);
         DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Auxiliary, powered && !damaged,
-            damaged ? Color.Red : Color.LightSteelBlue, 2);
+            damaged ? Color.Red : DeviceRim, damaged ? 2 : 1);
         if (damaged)
         {
             DrawScorch(spriteBatch, rect);
@@ -209,12 +214,12 @@ public sealed partial class ShipRenderer
         {
             spriteBatch.Draw(bulkheadTex, CenterAnchored(bulkheadRect), null, engine.BulkheadBroken ? new Color(255, 130, 130) : Color.White,
                 EngineArtRotation(engine.Facing), new Vector2(bulkheadTex.Width / 2f, bulkheadTex.Height / 2f), SpriteEffects.None, 0f);
-            DrawRectOutline(spriteBatch, bulkheadRect, engine.BulkheadBroken ? Color.Red : new Color(150, 155, 165), engine.BulkheadBroken ? 3 : 2);
+            DrawRectOutline(spriteBatch, bulkheadRect, engine.BulkheadBroken ? Color.Red : DeviceRim, engine.BulkheadBroken ? 3 : 1);
         }
         else
         {
             DrawDeviceFace(spriteBatch, bulkheadRect, DeviceSkin.Face.Engine, lit: false,
-                engine.BulkheadBroken ? Color.Red : new Color(150, 155, 165), engine.BulkheadBroken ? 3 : 2);
+                engine.BulkheadBroken ? Color.Red : DeviceRim, engine.BulkheadBroken ? 3 : 1);
         }
         if (engine.BulkheadBroken)
         {
@@ -231,12 +236,12 @@ public sealed partial class ShipRenderer
         {
             spriteBatch.Draw(controlTex, CenterAnchored(controlRect), null, engine.ControlBroken ? new Color(255, 130, 130) : Color.White,
                 EngineArtRotation(engine.Facing), new Vector2(controlTex.Width / 2f, controlTex.Height / 2f), SpriteEffects.None, 0f);
-            DrawRectOutline(spriteBatch, controlRect, engine.ControlBroken ? Color.Red : Color.LightSteelBlue, engine.ControlBroken ? 3 : 2);
+            DrawRectOutline(spriteBatch, controlRect, engine.ControlBroken ? Color.Red : DeviceRim, engine.ControlBroken ? 3 : 1);
         }
         else
         {
             DrawDeviceFace(spriteBatch, controlRect, DeviceSkin.Face.Helm, !engine.ControlBroken,
-                engine.ControlBroken ? Color.Red : Color.LightSteelBlue, engine.ControlBroken ? 3 : 2);
+                engine.ControlBroken ? Color.Red : DeviceRim, engine.ControlBroken ? 3 : 1);
         }
         if (engine.ControlBroken)
         {
@@ -261,12 +266,12 @@ public sealed partial class ShipRenderer
         {
             spriteBatch.Draw(controlTex, CenterAnchored(controlRect), null, eitherControlBroken ? new Color(255, 130, 130) : Color.White,
                 EngineArtRotation(anyTwin.Facing), new Vector2(controlTex.Width / 2f, controlTex.Height / 2f), SpriteEffects.None, 0f);
-            DrawRectOutline(spriteBatch, controlRect, eitherControlBroken ? Color.Red : Color.LightSteelBlue, eitherControlBroken ? 3 : 2);
+            DrawRectOutline(spriteBatch, controlRect, eitherControlBroken ? Color.Red : DeviceRim, eitherControlBroken ? 3 : 1);
         }
         else
         {
             DrawDeviceFace(spriteBatch, controlRect, DeviceSkin.Face.Helm, !eitherControlBroken,
-                eitherControlBroken ? Color.Red : Color.LightSteelBlue, eitherControlBroken ? 3 : 2);
+                eitherControlBroken ? Color.Red : DeviceRim, eitherControlBroken ? 3 : 1);
         }
         if (eitherControlBroken)
         {
@@ -276,28 +281,6 @@ public sealed partial class ShipRenderer
                 Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
         }
         DrawDeviceLabel(spriteBatch, controlRect, "Двойной двигатель");
-    }
-
-    // A sustained rocket exhaust, not a torch - widens AWAY from the nozzle rather than narrowing to
-    // a point the way DrawToolFlame's cutting/welding beam does, and flickers slowly enough to read
-    // as a steady burn rather than a shower of sparks. `seed` staggers multiple engines' flicker
-    // phase apart so a hull with several of them doesn't pulse in obvious unison.
-    private void DrawEngineExhaust(SpriteBatch spriteBatch, Vector2 nozzleCenter, Vector2 direction, float totalSeconds, float seed)
-    {
-        if (direction.LengthSquared() < 0.001f)
-            return;
-        var rotation = MathF.Atan2(direction.Y, direction.X);
-        var flicker = 0.85f + 0.15f * MathF.Sin(totalSeconds * 14f + seed);
-        var length = PixelsPerUnit * (1.05f + 0.35f * flicker);
-
-        void Layer(Color color, float lengthFraction, float width) =>
-            spriteBatch.Draw(_pixel, nozzleCenter, null, color, rotation, new Vector2(0f, 0.5f),
-                new Vector2(length * lengthFraction, width * flicker), SpriteEffects.None, 0f);
-
-        Layer(new Color(255, 120, 20) * 0.30f, 1f, 26f);
-        Layer(new Color(255, 170, 60) * 0.55f, 0.75f, 15f);
-        Layer(new Color(255, 225, 140) * 0.85f, 0.42f, 7f);
-        Layer(Color.White * 0.9f, 0.18f, 3f);
     }
 
     // Every marching engine's Nozzle, drawn as its OWN pass after the scene composite - the same
@@ -329,12 +312,12 @@ public sealed partial class ShipRenderer
                 var tint = engine.NozzleBroken ? new Color(255, 130, 130) : engine.IsThrusting ? Color.White : new Color(160, 160, 160);
                 spriteBatch.Draw(nozzleTex, CenterAnchored(nozzleRect), null, tint, EngineArtRotation(engine.Facing),
                     new Vector2(nozzleTex.Width / 2f, nozzleTex.Height / 2f), SpriteEffects.None, 0f);
-                DrawRectOutline(spriteBatch, nozzleRect, engine.NozzleBroken ? Color.Red : new Color(230, 140, 70), engine.NozzleBroken ? 3 : 2);
+                DrawRectOutline(spriteBatch, nozzleRect, engine.NozzleBroken ? Color.Red : DeviceRim, engine.NozzleBroken ? 3 : 1);
             }
             else
             {
                 DrawDeviceFace(spriteBatch, nozzleRect, DeviceSkin.Face.Engine, engine.IsThrusting,
-                    engine.NozzleBroken ? Color.Red : new Color(230, 140, 70), engine.NozzleBroken ? 3 : 2);
+                    engine.NozzleBroken ? Color.Red : DeviceRim, engine.NozzleBroken ? 3 : 1);
             }
             if (engine.NozzleBroken)
             {
@@ -344,24 +327,17 @@ public sealed partial class ShipRenderer
         }
         spriteBatch.End();
 
-        // The flame itself in its own additive-blended pass, same convention DrawRcsPlume's own
-        // exhaust puffs use - a glow has no business being darkened by alpha-blended overdraw, and
-        // additive over the housing just drawn above reads as the housing catching its own light.
-        var anyThrusting = false;
-        foreach (var engine in engines)
-            if (engine.IsThrusting) { anyThrusting = true; break; }
-        if (!anyThrusting)
-            return;
-
+        // The flame itself (EngineExhaustFx: Cosmoteer-style particle stream + plume + glow + sparks) in its own
+        // additive pass, same convention DrawRcsPlume's puffs use. Every engine is fed every frame, thrusting or not,
+        // so a burn spools up and its particles finish fading after the engine stops.
         spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, transformMatrix: sceneTransform);
         foreach (var engine in engines)
         {
-            if (!engine.IsThrusting)
-                continue;
             var step = EngineFacingStep(engine.Facing);
             var nozzlePos = new Vec2(engine.X + step.X * 2, engine.Y + step.Y * 2);
             var nozzleRect = GetBlockRect(nozzlePos, BigBlockSize, origin);
-            DrawEngineExhaust(spriteBatch, new Vector2(nozzleRect.Center.X, nozzleRect.Center.Y), step, totalSeconds, engine.X + engine.Y * 7f);
+            _engineExhaust.Draw(spriteBatch, engine.Id, engine.IsThrusting,
+                new Vector2(nozzleRect.Center.X, nozzleRect.Center.Y), step, BigBlockSize, totalSeconds);
         }
         spriteBatch.End();
     }
@@ -375,7 +351,7 @@ public sealed partial class ShipRenderer
     // and reads as a second, disconnected object in the middle of the room. This version is a
     // single circle centred on block.Position (matching Ship.DeviceObstacles' own centre exactly),
     // sized to fill its own square rect - simple enough to actually scale.
-    private void DrawReactorBlock(SpriteBatch spriteBatch, ReactorBlock block, ReactorState reactor, ReactorLeverState levers, bool isOpen, Vector2 origin, float totalSeconds, string? roomName)
+    private void DrawReactorBlock(SpriteBatch spriteBatch, ReactorBlock block, ReactorState reactor, ReactorLeverState levers, bool isOpen, Vector2 origin, float totalSeconds, string? roomName, PowerState power, float integrity, bool drawLevers = true)
     {
         // A catalog/editor room with its own reference art already draws the whole machine baked
         // into the room's own texture (RoomDecor's own "texture doubles as the device" rule, same
@@ -395,10 +371,13 @@ public sealed partial class ShipRenderer
         {
             var artRect = GetBlockRect(block.Position, ReactorSize(block), origin);
             DrawComplexReactorOutline(spriteBatch, artRect, isOpen ? Color.Gold : Color.White * 0.85f, isOpen ? 3f : 2f);
-            DrawReactorLever(0, spriteBatch, GetReactorLeverRect(0, block, origin), levers.LightsOn, Color.Gold, totalSeconds);
-            DrawReactorLever(1, spriteBatch, GetReactorLeverRect(1, block, origin), !levers.EmergencyShutdown,
-                reactor.CurrentOutput > 0 ? new Color(63, 184, 232) : new Color(40, 50, 55), totalSeconds);
-            DrawReactorLever(2, spriteBatch, GetReactorLeverRect(2, block, origin), !levers.DoorsLocked, Color.OrangeRed, totalSeconds);
+            if (drawLevers)
+            {
+                DrawReactorLever(0, spriteBatch, GetReactorLeverRect(0, block, origin), levers.LightsOn, Color.Gold, totalSeconds);
+                DrawReactorLever(1, spriteBatch, GetReactorLeverRect(1, block, origin), !levers.EmergencyShutdown,
+                    reactor.CurrentOutput > 0 ? new Color(63, 184, 232) : new Color(40, 50, 55), totalSeconds);
+                DrawReactorLever(2, spriteBatch, GetReactorLeverRect(2, block, origin), !levers.DoorsLocked, Color.OrangeRed, totalSeconds);
+            }
             return;
         }
 
@@ -415,7 +394,28 @@ public sealed partial class ShipRenderer
         // game. Its own glowing cells already read as "running"; when the reactor is off, tinting it
         // down (rather than trying to fake a separate lit/unlit texture) reads as "the same machine,
         // powered down" - same idea the old procedural glowColor swap already used.
-        if (_reactorTexture is { } reactorTex)
+        if (_reactorArt is { } art)
+        {
+            // Worn stage from the room's integrity; the light is a separate additive mask on top
+            // (teal while running, sliding to a pulsing red as the plasma runs hot).
+            var stage = ReactorTexture.StageFor(integrity);
+            spriteBatch.Draw(art.Stages[stage], rect, running ? Color.White : new Color(170, 170, 170));
+            CastShadow(rect);
+            if (running)
+            {
+                var margin = (int)MathF.Round(rect.Width * ReactorTexture.GlowMargin / 64f);
+                var glowRect = new Rectangle(rect.X - margin, rect.Y - margin, rect.Width + 2 * margin, rect.Height + 2 * margin);
+                var load = MathHelper.Clamp(reactor.CurrentOutput / Math.Max(1f, reactor.MaxOutput), 0f, 1f);
+                var heat = MathHelper.Clamp((power.PlasmaTemperature - 125f) / 25f, 0f, 1f);
+                var flicker = 0.95f + 0.05f * MathF.Sin(totalSeconds * 13f) * MathF.Sin(totalSeconds * 3.1f);
+                var pulse = 1f - heat * 0.25f * (0.5f + 0.5f * MathF.Sin(totalSeconds * 5f));
+                var strength = (0.5f + 0.5f * load) * flicker * pulse * (stage == 2 ? 0.8f : 1f);
+                var tone = Vector3.Lerp(new Vector3(0.30f, 0.86f, 0.80f), new Vector3(1f, 0.22f, 0.15f), heat) * strength;
+                spriteBatch.Draw(art.GlowFor(stage), glowRect, new Color(tone.X, tone.Y, tone.Z, 0f));
+            }
+            if (isOpen) DrawRectOutline(spriteBatch, rect, Color.Gold, 3);
+        }
+        else if (_reactorTexture is { } reactorTex)
         {
             var tint = running ? Color.White : new Color(90, 90, 90);
             spriteBatch.Draw(reactorTex, rect, tint);
@@ -458,6 +458,8 @@ public sealed partial class ShipRenderer
         // the handle now visibly SWINGS between the two poses over a fraction of a second (DrawLever
         // eases toward whichever pose is current) rather than snapping instantly, on top of the
         // brighter/dimmer tip colour it already had.
+        if (!drawLevers)
+            return; // an extra reactor shares the first one's levers, which are on the first
         DrawReactorLever(0, spriteBatch, GetReactorLeverRect(0, block, origin), levers.LightsOn, Color.Gold, totalSeconds);
         DrawReactorLever(1, spriteBatch, GetReactorLeverRect(1, block, origin), !levers.EmergencyShutdown, glowColor, totalSeconds);
         DrawReactorLever(2, spriteBatch, GetReactorLeverRect(2, block, origin), !levers.DoorsLocked, Color.OrangeRed, totalSeconds);
@@ -551,7 +553,7 @@ public sealed partial class ShipRenderer
     {
         var (distWidth, distHeight) = FootprintPixelSize(CustomDeviceKind.Distribution);
         var rect = GetBlockRect(block.Position, distWidth, distHeight, origin);
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Distribution, powered, isOpen ? Color.Gold : Color.Plum, isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Distribution, powered, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1);
         DrawDeviceLabel(spriteBatch, rect, "Щиток");
     }
 
@@ -561,7 +563,7 @@ public sealed partial class ShipRenderer
     {
         var (batteryWidth, batteryHeight) = FootprintPixelSize(CustomDeviceKind.Battery);
         var rect = GetBlockRect(block.Position, batteryWidth, batteryHeight, origin);
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Battery, powered, isOpen ? Color.Gold : Color.LightGreen, isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Battery, powered, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1);
 
         // The charge column, live, in the recess the baked face leaves open for it. Segments rather
         // than one continuous bar: a length has to be measured against something, while six lit
@@ -596,7 +598,7 @@ public sealed partial class ShipRenderer
     {
         var (rackWidth, rackHeight) = FootprintPixelSize(CustomDeviceKind.StorageRack);
         var rect = GetBlockRect(rack.Position, rackWidth, rackHeight, origin);
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Rack, true, isOpen ? Color.Gold : Color.Peru, isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Rack, true, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1);
         DrawHandle(spriteBatch, rect);
 
         var used = 0;
@@ -617,11 +619,16 @@ public sealed partial class ShipRenderer
         }
     }
 
+    // Every device's resting outline - a dark steel edge rather than a saturated ring in each device's
+    // own colour (direct user requests, DeviceSkin.BridgeConsoles.cs, then every other device): the colour
+    // now lives on the machine itself; gold still marks an open panel and red a damaged one.
+    private static readonly Color DeviceRim = new(26, 29, 35);
+
     // Bridge console (game_design.md section 5) — click it to bring up the galaxy map.
     private void DrawNavigationConsole(SpriteBatch spriteBatch, NavigationConsole console, bool isOpen, Vector2 origin, bool powered)
     {
         DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.Navigation,
-            DeviceSkin.Face.Navigation, powered, isOpen ? Color.Gold : Color.LightSeaGreen, isOpen ? 3 : 2, "Сканер", origin);
+            DeviceSkin.Face.Navigation, powered, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1, "Сканер", origin);
     }
 
     // Pilot's console (game_design.md Phase 3, M15) — click it to man it and bring up the helm's
@@ -629,7 +636,7 @@ public sealed partial class ShipRenderer
     private void DrawHelmConsole(SpriteBatch spriteBatch, HelmConsole console, bool isOpen, Vector2 origin, bool powered)
     {
         DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.Helm,
-            DeviceSkin.Face.Helm, powered, isOpen ? Color.Gold : Color.Goldenrod, isOpen ? 3 : 2, "Навигационная панель", origin);
+            DeviceSkin.Face.Helm, powered, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1, "Навигационная панель", origin);
     }
 
     // Direct user request ("монитор состояния корабля... консоль связи... свои уникальные
@@ -639,13 +646,13 @@ public sealed partial class ShipRenderer
     private void DrawShipStatusMonitor(SpriteBatch spriteBatch, ShipStatusMonitor console, bool isOpen, Vector2 origin, bool powered)
     {
         DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.ShipStatusMonitor,
-            DeviceSkin.Face.ShipStatusMonitor, powered, isOpen ? Color.Gold : new Color(120, 220, 150), isOpen ? 3 : 2, "Монитор состояния", origin);
+            DeviceSkin.Face.ShipStatusMonitor, powered, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1, "Монитор состояния", origin);
     }
 
     private void DrawCommsConsole(SpriteBatch spriteBatch, CommsConsole console, bool isOpen, Vector2 origin, bool powered)
     {
         DrawHelmOrNavigationConsole(spriteBatch, console.Position, console.HalfSide, CustomDeviceKind.CommsConsole,
-            DeviceSkin.Face.CommsConsole, powered, isOpen ? Color.Gold : new Color(220, 170, 90), isOpen ? 3 : 2, "Связь", origin);
+            DeviceSkin.Face.CommsConsole, powered, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1, "Связь", origin);
     }
 
     // Direct user bug report ("они должны быть вплотную это раз, а во вторых само устройство должно
@@ -699,7 +706,10 @@ public sealed partial class ShipRenderer
     {
         var (tableWidth, tableHeight) = FootprintPixelSize(CustomDeviceKind.CardTable);
         var rect = GetBlockRect(table.Position, tableWidth, tableHeight, origin);
-        DrawChamferedHousing(spriteBatch, rect, new Color(24, 90, 52) * 0.75f, inUse ? Color.Gold : new Color(90, 140, 100), inUse ? 3 : 2);
+        spriteBatch.Draw(_deviceSkin.Get(DeviceSkin.Face.CardTable, rect.Width, rect.Height, inUse), rect, Color.White);
+        CastShadow(rect);
+        if (inUse)
+            DrawRectOutline(spriteBatch, rect, Color.Gold, 2);
         var cardTableLabelPos = new Vector2(rect.X + 1, rect.Y + 7);
         DrawLabelBacking(spriteBatch, "Карты", cardTableLabelPos, 0.42f);
         spriteBatch.DrawString(_font, "Карты", cardTableLabelPos, Color.White, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
@@ -712,10 +722,9 @@ public sealed partial class ShipRenderer
     {
         var (jukeboxWidth, jukeboxHeight) = FootprintPixelSize(CustomDeviceKind.Jukebox);
         var rect = GetBlockRect(jukebox.Block.Position, jukeboxWidth, jukeboxHeight, origin);
-        var accent = isOpen ? Color.Gold : jukebox.On ? new Color(224, 196, 120) : new Color(140, 120, 90);
         // Lit means playing: the arch, the window and one pressed key all come up together, so the
         // machine says whether it is running without anybody reading a label.
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Jukebox, jukebox.On, accent, isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Jukebox, jukebox.On, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1);
         DrawDeviceLabel(spriteBatch, rect, "Музыка");
     }
 
@@ -739,7 +748,7 @@ public sealed partial class ShipRenderer
     {
         var otherAxisTiles = CustomDeviceFootprint.Size(CustomDeviceKind.Junction).Height;
         var rect = HalfWidthDeviceRect(box.Position, box.HalfSide, otherAxisTiles, origin);
-        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Junction, powered, isOpen ? Color.Gold : new Color(210, 200, 80), isOpen ? 3 : 2);
+        DrawDeviceFace(spriteBatch, rect, DeviceSkin.Face.Junction, powered, isOpen ? Color.Gold : DeviceRim, isOpen ? 3 : 1);
     }
 
     // Direct user bug report ("некоторые устройства в игре не отображаются а в редакторе они
@@ -759,6 +768,39 @@ public sealed partial class ShipRenderer
         [CustomDeviceKind.Bed] = DeviceSkin.Face.Bed,
         [CustomDeviceKind.ShuttleHangar] = DeviceSkin.Face.ShuttleHangar,
         [CustomDeviceKind.TripleDoor] = DeviceSkin.Face.TripleDoor,
+        // Direct user request ("обнови текстуры для всех устройств") - every kind that was still a
+        // tinted square with a letter gets real art: machinery borrows the closest existing machine
+        // (an engine is an engine, a shield generator the shield emitter), furniture and floor kit
+        // get their own free-standing faces (DeviceSkin.Furniture.cs).
+        [CustomDeviceKind.EngineSmall] = DeviceSkin.Face.Engine,
+        [CustomDeviceKind.EngineMedium] = DeviceSkin.Face.Engine,
+        [CustomDeviceKind.EngineLarge] = DeviceSkin.Face.Engine,
+        [CustomDeviceKind.WarpEngine] = DeviceSkin.Face.Engine,
+        [CustomDeviceKind.DroneHangar] = DeviceSkin.Face.ShuttleHangar,
+        [CustomDeviceKind.SmallStorage] = DeviceSkin.Face.Rack,
+        [CustomDeviceKind.LargeStorage] = DeviceSkin.Face.Rack,
+        [CustomDeviceKind.Morgue] = DeviceSkin.Face.Locker,
+        [CustomDeviceKind.FuelRodStorage] = DeviceSkin.Face.Weapons,
+        [CustomDeviceKind.PowerConduit] = DeviceSkin.Face.Junction,
+        [CustomDeviceKind.ShieldGeneratorSmall] = DeviceSkin.Face.Shields,
+        [CustomDeviceKind.ShieldGeneratorLarge] = DeviceSkin.Face.Shields,
+        [CustomDeviceKind.WeaponPanel] = DeviceSkin.Face.Weapons,
+        [CustomDeviceKind.Table] = DeviceSkin.Face.Table,
+        [CustomDeviceKind.Chair] = DeviceSkin.Face.Chair,
+        [CustomDeviceKind.Sofa] = DeviceSkin.Face.Sofa,
+        [CustomDeviceKind.Nightstand] = DeviceSkin.Face.Nightstand,
+        [CustomDeviceKind.DecorativePlant] = DeviceSkin.Face.Plant,
+        [CustomDeviceKind.Lamp] = DeviceSkin.Face.FloorLamp,
+        [CustomDeviceKind.Spotlight] = DeviceSkin.Face.Spotlight,
+    };
+
+    // Free-standing on the deck rather than a machine on a plate: drawn without the device outline
+    // and drop shadow (their own baked art carries a soft shadow on a transparent canvas).
+    private static readonly HashSet<DeviceSkin.Face> FreeStandingFaces = new()
+    {
+        DeviceSkin.Face.Table, DeviceSkin.Face.Chair, DeviceSkin.Face.Sofa, DeviceSkin.Face.Nightstand,
+        DeviceSkin.Face.Plant, DeviceSkin.Face.FloorLamp, DeviceSkin.Face.Spotlight,
+        DeviceSkin.Face.CardTable, DeviceSkin.Face.AmmoCrates, DeviceSkin.Face.ShuttleHangar,
     };
 
     private void DrawDecorativeDevice(SpriteBatch spriteBatch, DecorativeDevice device, Vector2 origin)
@@ -776,9 +818,31 @@ public sealed partial class ShipRenderer
             var (width, height) = FootprintPixelSize(device.Kind, device.Rotated);
             rect = GetBlockRect(device.Position, width, height, origin);
         }
+        // A defensive turret's mount reads as the same Space Haven gun base the periscope station
+        // uses (DeviceSkin.Periscope.cs), square in the middle of its wider footprint.
+        if (device.Kind == CustomDeviceKind.DefensiveTurret)
+        {
+            var side = Math.Min(rect.Width, rect.Height);
+            var square = new Rectangle(rect.Center.X - side / 2, rect.Center.Y - side / 2, side, side);
+            spriteBatch.Draw(_deviceSkin.Get(DeviceSkin.Face.Periscope, side, side, true), square, Color.White);
+            CastShadow(square);
+            return;
+        }
+        if (TryDrawWorkshopMachine(spriteBatch, device.Kind, rect,
+                MachineArt.StageFor(_frameRoomIntegrity.TryGetValue(device.RoomId, out var integrity) ? integrity : 1f), _framePowered))
+        {
+            CastShadow(rect);
+            return;
+        }
         if (DecorativeDeviceFaces.TryGetValue(device.Kind, out var face))
         {
-            DrawDeviceFace(spriteBatch, rect, face, lit: true, CustomDeviceCatalog.Tint(device.Kind), 2);
+            if (FreeStandingFaces.Contains(face))
+            {
+                spriteBatch.Draw(_deviceSkin.Get(face, rect.Width, rect.Height, true), rect, Color.White);
+                CastShadow(rect);
+            }
+            else
+                DrawDeviceFace(spriteBatch, rect, face, lit: true, DeviceRim, 1);
             return;
         }
         spriteBatch.Draw(_pixel, rect, CustomDeviceCatalog.Tint(device.Kind));
@@ -804,16 +868,123 @@ public sealed partial class ShipRenderer
     // just a different tint on the same shape. Always lit at full brightness - WallLamp has no
     // on/off of its own, Game1.Lighting.cs is what actually dims the SCENE when the ship's own
     // lamps are off, not this.
-    private static readonly Color WallLampHousing = new(40, 36, 30);
-    private static readonly Color WallLampGlow = new(255, 220, 140);
-    private void DrawWallLamp(SpriteBatch spriteBatch, WallLamp lamp, Vector2 origin)
+    // Then (direct user request, "сделай нормальную текстуру настенной лампы, чтобы она была похожа
+    // как в баротравме или space haven") the dark slab with a power glyph on it gave way to an
+    // actual light fitting seen from above: a bolted steel mounting strip on the wall face, a
+    // top-lit housing standing off it, a bright tube behind a protective cage, and a soft pool of
+    // light spilling onto the deck in front - with the floor of the free half left visible round it
+    // instead of covered by a plate.
+    private static readonly Color[] WallLampHousingBands = { new(150, 158, 170), new(124, 132, 146), new(100, 108, 122), new(82, 88, 100) };
+    private static readonly Color WallLampMount = new(62, 68, 78);
+    private static readonly Color WallLampTube = new(255, 236, 188);
+    private static readonly Color WallLampCore = new(255, 251, 236);
+    private static readonly Color WallLampCage = new(44, 48, 56);
+    private static readonly Color WallLampGlow = new(255, 220, 150);
+
+    // Then ("сделай чтобы было видно что она излучает свет как в баротравме") it also has to read
+    // as a light SOURCE, not just a fitting: a broad warm falloff thrown across the deck in front
+    // of it and a hot core over the tube that the bloom pass picks up - on top of the real shadowed
+    // PointLight Game1.Lighting.cs's BuildWallLampLights casts from the same spot. `lit` follows
+    // that light: with the ship's light lever off or no power, the tube goes dark and so does the
+    // glow.
+    private static readonly Color WallLampTubeOff = new(92, 90, 84);
+    private Texture2D? _lampGlowTexture;
+
+    // A radial falloff (bright centre easing to nothing at the rim, squared so it holds near the
+    // centre and dies softly) - HudIcons' soft circle is solid out to 85% and reads as a disc.
+    private Texture2D LampGlowTexture()
+    {
+        if (_lampGlowTexture is not null)
+            return _lampGlowTexture;
+        const int size = 64;
+        var data = new Color[size * size];
+        var c = (size - 1) / 2f;
+        for (var y = 0; y < size; y++)
+            for (var x = 0; x < size; x++)
+            {
+                var d = MathF.Sqrt((x - c) * (x - c) + (y - c) * (y - c)) / (size / 2f);
+                var a = MathHelper.Clamp(1f - d, 0f, 1f);
+                data[y * size + x] = Color.White * (a * a);
+            }
+        _lampGlowTexture = new Texture2D(_pixel.GraphicsDevice, size, size);
+        _lampGlowTexture.SetData(data);
+        return _lampGlowTexture;
+    }
+
+    private void DrawLampGlow(SpriteBatch spriteBatch, Vector2 center, Vector2 size, Color color)
+    {
+        var glow = LampGlowTexture();
+        spriteBatch.Draw(glow, center, null, color, 0f, new Vector2(glow.Width / 2f, glow.Height / 2f),
+            new Vector2(size.X / glow.Width, size.Y / glow.Height), SpriteEffects.None, 0f);
+    }
+
+    private void DrawWallLamp(SpriteBatch spriteBatch, WallLamp lamp, Vector2 origin, bool lit)
     {
         var center = origin + new Vector2((float)lamp.Position.X * PixelsPerUnit, (float)lamp.Position.Y * PixelsPerUnit);
         var rect = HalfRect(center, (int)PixelsPerUnit, lamp.FacingSide);
-        spriteBatch.Draw(_pixel, rect, WallLampHousing);
-        var glyphCenter = new Vector2(rect.Center.X, rect.Center.Y);
-        HudIcons.FillCircle(spriteBatch, _pixel, glyphCenter, 7f, WallLampGlow * 0.35f);
-        HudIcons.DrawPowerGlyph(spriteBatch, _pixel, glyphCenter, 1f, WallLampGlow);
+        var facing = lamp.FacingSide;
+        var horizontal = facing is TileSide.North or TileSide.South; // the fitting runs along X
+        var length = horizontal ? rect.Width : rect.Height;
+        var outward = facing switch
+        {
+            TileSide.North => new Vector2(0, -1),
+            TileSide.South => new Vector2(0, 1),
+            TileSide.East => new Vector2(1, 0),
+            _ => new Vector2(-1, 0),
+        };
+        Vector2 Sized(float along, float across) => horizontal ? new Vector2(along, across) : new Vector2(across, along);
+
+        // Laid out once in fitting-local terms: `along` the wall, and `out` from the wall face (the
+        // free half's far edge, where the solid half ends) toward the room.
+        Rectangle Part(int along, int alongLength, int outFrom, int outLength) => facing switch
+        {
+            TileSide.South => new Rectangle(rect.X + along, rect.Y + outFrom, alongLength, outLength),
+            TileSide.North => new Rectangle(rect.X + along, rect.Bottom - outFrom - outLength, alongLength, outLength),
+            TileSide.East => new Rectangle(rect.X + outFrom, rect.Y + along, outLength, alongLength),
+            _ => new Rectangle(rect.Right - outFrom - outLength, rect.Y + along, outLength, alongLength),
+        };
+
+        // The light it throws on the deck first, so the fitting sits on top of it: a wide soft pool
+        // reaching well out into the room, and a tighter, brighter one right under the fitting.
+        var lensCenter = new Vector2(Part(11, length - 22, 6, 6).Center.X, Part(11, length - 22, 6, 6).Center.Y);
+        if (lit)
+        {
+            DrawLampGlow(spriteBatch, lensCenter + outward * length * 0.8f, Sized(length * 3.4f, length * 2.8f), WallLampGlow * 0.42f);
+            DrawLampGlow(spriteBatch, lensCenter + outward * length * 0.3f, Sized(length * 1.8f, length * 1.2f), WallLampGlow * 0.55f);
+        }
+
+        // Mounting strip along the wall face, a bolt head at each end.
+        var mount = Part(3, length - 6, 0, 5);
+        spriteBatch.Draw(_pixel, mount, WallLampMount);
+        DrawRectOutline(spriteBatch, mount, Color.Black * 0.55f, 1);
+        foreach (var bolt in new[] { Part(5, 2, 2, 2), Part(length - 7, 2, 2, 2) })
+        {
+            spriteBatch.Draw(_pixel, bolt, Color.Black * 0.5f);
+            spriteBatch.Draw(_pixel, new Rectangle(bolt.X, bolt.Y, 1, 1), Color.White * 0.45f);
+        }
+
+        // The housing standing off the strip, top-lit like every other steel surface on the deck,
+        // with a cast shadow on the room side.
+        var housing = Part(8, length - 16, 3, 10);
+        spriteBatch.Draw(_pixel, Part(9, length - 16, 4, 10), Color.Black * 0.35f);
+        DrawTopLitBands(spriteBatch, housing, horizontal, WallLampHousingBands);
+        DrawRectOutline(spriteBatch, housing, Color.Black * 0.6f, 1);
+
+        // The tube behind its cage: warm lens, a hotter core line, cage bars across it.
+        var lens = Part(11, length - 22, 6, 6);
+        spriteBatch.Draw(_pixel, lens, lit ? WallLampTube : WallLampTubeOff);
+        if (lit)
+            spriteBatch.Draw(_pixel, Part(11, length - 22, 8, 2), WallLampCore);
+        for (var along = 14; along < length - 12; along += 5)
+            spriteBatch.Draw(_pixel, Part(along, 1, 6, 6), WallLampCage * 0.85f);
+        DrawRectOutline(spriteBatch, lens, WallLampCage, 1);
+
+        // The hot core bleeding out over the cage - bright enough for the bloom pass to catch.
+        if (lit)
+        {
+            DrawLampGlow(spriteBatch, lensCenter, Sized(length * 1.0f, length * 0.6f), WallLampCore * 0.7f);
+            DrawLampGlow(spriteBatch, lensCenter, Sized(length * 0.55f, length * 0.25f), Color.White * 0.9f);
+        }
     }
 
     private static string SystemLabel(PowerSystemId system) => system switch
@@ -908,91 +1079,58 @@ public sealed partial class ShipRenderer
     // cs/Game1.Input.cs) is updated to the same 3x3 footprint alongside this.
     private const float PeriscopeStationScale = 4f;
 
-    // A real periscope station instead of a flat marker square: a bolted octagonal floor block,
-    // two handle grips a gunner would actually hold, cable stubs feeding into the deck, and a wide
-    // flat terminal on top whose "screen" is a glowing blue-cyan projector lens - the thing the
-    // gunner actually looks into - rather than a flat readout. Colour/glow carries the same idle/
-    // manned/damaged read the old marker did, just on a model that looks like real hardware.
+    // The station is a baked model now (DeviceSkin.Periscope.cs - a Space Haven-style gun base with
+    // the periscope head on its hub, direct user request); only what changes is drawn live over it:
+    // the eyepiece's glow (dim cyan idle, a brighter pulse while someone looks through it, a red
+    // pulse when damaged), the hub's status lamp, a gold rim round the hub while manned, the faint
+    // beam out of the lens, and soot plus a warning mark when damaged.
     private void DrawPeriscopeStation(SpriteBatch spriteBatch, Vector2 center, bool manned, bool damaged, float totalSeconds)
     {
         const float s = PeriscopeStationScale;
-        var baseColor = new Color(58, 64, 70);
-        var baseEdge = new Color(23, 26, 29);
-        var octagon = Octagon(center, 9f * s);
-        Primitives.FillPolygon(spriteBatch, _pixel, center, octagon, baseColor);
-        Primitives.StrokePolygon(spriteBatch, _pixel, octagon, baseEdge, 1.5f * s);
-        foreach (var vertex in octagon)
-            spriteBatch.Draw(_pixel, new Rectangle((int)vertex.X - (int)s, (int)vertex.Y - (int)s, (int)(2 * s), (int)(2 * s)), baseEdge);
+        var boxSize = (int)(PixelsPerUnit * 2.85f);
+        var rect = new Rectangle((int)(center.X - boxSize / 2f), (int)(center.Y - boxSize / 2f), boxSize, boxSize);
+        spriteBatch.Draw(_deviceSkin.Get(DeviceSkin.Face.Periscope, boxSize, boxSize, !damaged), rect, Color.White);
+        CastShadow(rect);
 
-        // Handle grips, one on each side - lit gold while manned, same as the barrel it steers.
-        foreach (var side in new[] { -1f, 1f })
-        {
-            var handleCenter = center + new Vector2(side * 13f * s, 0f);
-            var handleRect = new Rectangle((int)(handleCenter.X - 4f * s), (int)(handleCenter.Y - 4f * s), (int)(8f * s), (int)(8f * s));
-            spriteBatch.Draw(_pixel, handleRect, new Color(51, 56, 61));
-            DrawRectOutline(spriteBatch, handleRect, baseEdge, (int)s);
-            if (manned)
-                HudIcons.DrawRingArc(spriteBatch, _pixel, handleCenter, 5f * s, 0f, 360f, Color.Gold * 0.7f, 8, s);
-        }
+        var lens = new Vector2(rect.X + rect.Width * DeviceSkin.PeriscopeLensX, rect.Y + rect.Height * DeviceSkin.PeriscopeLensY);
+        var lensRadius = rect.Width * DeviceSkin.PeriscopeLensRadius;
+        var lamp = new Vector2(rect.Center.X, rect.Y + rect.Height * (0.5f + 0.27f * 0.62f));
 
-        // Cable stubs trailing off toward the deck it's bolted into.
-        HudIcons.DrawLine(spriteBatch, _pixel, center + new Vector2(-6f * s, 6f * s), center + new Vector2(-4f * s, 12f * s), baseEdge, 1.5f * s);
-        HudIcons.DrawLine(spriteBatch, _pixel, center + new Vector2(6f * s, 6f * s), center + new Vector2(4f * s, 12f * s), baseEdge, 1.5f * s);
-
-        // The wide flat terminal, offset slightly toward the "front".
-        var terminalCenter = center + new Vector2(0f, -1f * s);
-        var terminalRect = new Rectangle((int)(terminalCenter.X - 12f * s), (int)(terminalCenter.Y - 9f * s), (int)(24f * s), (int)(16f * s));
-        spriteBatch.Draw(_pixel, terminalRect, new Color(49, 54, 60));
-        DrawRectOutline(spriteBatch, terminalRect, baseEdge, (int)s);
-        DrawRivets(spriteBatch, terminalRect);
-        spriteBatch.Draw(_pixel, new Rectangle((int)(terminalRect.X + 3 * s), (int)(terminalRect.Bottom - 4 * s), (int)(6 * s), (int)(3 * s)), new Color(32, 36, 40));
-        spriteBatch.Draw(_pixel, new Rectangle((int)(terminalRect.Right - 9 * s), (int)(terminalRect.Bottom - 4 * s), (int)(6 * s), (int)(3 * s)), new Color(32, 36, 40));
-
-        var wellRect = new Rectangle((int)(terminalRect.X + 3 * s), (int)(terminalRect.Y + 2 * s), terminalRect.Width - (int)(6 * s), terminalRect.Height - (int)(7 * s));
-        spriteBatch.Draw(_pixel, wellRect, new Color(10, 13, 16));
-        var glowCenter = new Vector2(wellRect.Center.X, wellRect.Center.Y);
-
-        Color outerGlow, midGlow, coreGlow;
+        Color outerGlow, midGlow, coreGlow, lampColor;
         if (damaged)
         {
             var pulse = 0.5f + 0.5f * MathF.Sin(totalSeconds * 6f);
-            outerGlow = new Color(90, 38, 30) * (0.3f + 0.2f * pulse);
-            midGlow = new Color(161, 56, 42) * (0.5f + 0.3f * pulse);
-            coreGlow = new Color(255, 138, 106) * (0.6f + 0.4f * pulse);
-            HudIcons.DrawLine(spriteBatch, _pixel, glowCenter + new Vector2(-4f * s, -3f * s), glowCenter + new Vector2(4f * s, 3f * s), baseEdge, s);
-            HudIcons.DrawLine(spriteBatch, _pixel, glowCenter + new Vector2(3f * s, -3f * s), glowCenter + new Vector2(-3f * s, 2f * s), baseEdge, s);
-            spriteBatch.DrawString(_font, "!", center + new Vector2(12f * s, -20f * s), Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
+            outerGlow = new Color(150, 46, 34) * (0.25f + 0.2f * pulse);
+            midGlow = new Color(200, 64, 46) * (0.4f + 0.3f * pulse);
+            coreGlow = new Color(255, 138, 106) * (0.5f + 0.4f * pulse);
+            lampColor = new Color(240, 70, 50) * (0.5f + 0.5f * pulse);
+            DrawScorch(spriteBatch, rect);
+            spriteBatch.DrawString(_font, "!", new Vector2(rect.Right - 14f, rect.Y + 4f), Color.Red, 0f, Vector2.Zero, 0.9f, SpriteEffects.None, 0f);
         }
         else if (manned)
         {
             var pulse = 0.7f + 0.3f * MathF.Sin(totalSeconds * 3f);
-            outerGlow = new Color(30, 122, 144) * 0.5f;
-            midGlow = new Color(51, 182, 214) * 0.7f;
-            coreGlow = new Color(143, 236, 255) * pulse;
+            outerGlow = new Color(40, 150, 180) * 0.45f;
+            midGlow = new Color(70, 200, 230) * 0.65f;
+            coreGlow = new Color(170, 244, 255) * pulse;
+            lampColor = new Color(255, 206, 90);
             // A faint beam projecting "up" out of the lens - only shows while someone's actually
             // looking through it.
-            Primitives.FillTriangle(spriteBatch, _pixel, glowCenter, glowCenter + new Vector2(-6f * s, -14f * s), glowCenter + new Vector2(6f * s, -14f * s), coreGlow * 0.18f);
+            Primitives.FillTriangle(spriteBatch, _pixel, lens, lens + new Vector2(-6f * s, -14f * s), lens + new Vector2(6f * s, -14f * s), coreGlow * 0.14f);
+            HudIcons.DrawRingArc(spriteBatch, _pixel, new Vector2(rect.Center.X, rect.Center.Y), rect.Width * 0.275f, 0f, 360f, Color.Gold * 0.55f, 48, 2f);
         }
         else
         {
-            outerGlow = new Color(30, 90, 102) * 0.35f;
-            midGlow = new Color(47, 164, 194) * 0.55f;
-            coreGlow = new Color(127, 224, 255) * 0.9f;
+            outerGlow = new Color(30, 110, 130) * 0.3f;
+            midGlow = new Color(50, 170, 200) * 0.45f;
+            coreGlow = new Color(127, 224, 255) * 0.75f;
+            lampColor = new Color(100, 230, 120);
         }
 
-        HudIcons.FillCircle(spriteBatch, _pixel, glowCenter, 4.5f * s, outerGlow);
-        HudIcons.FillCircle(spriteBatch, _pixel, glowCenter, 3f * s, midGlow);
-        HudIcons.FillCircle(spriteBatch, _pixel, glowCenter, 1.6f * s, coreGlow);
-    }
-
-    private static Vector2[] Octagon(Vector2 center, float radius)
-    {
-        var points = new Vector2[8];
-        for (var i = 0; i < 8; i++)
-        {
-            var angle = i * MathF.PI / 4f;
-            points[i] = center + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
-        }
-        return points;
+        DrawLampGlow(spriteBatch, lens, new Vector2(lensRadius * 6.5f), outerGlow);
+        DrawLampGlow(spriteBatch, lens, new Vector2(lensRadius * 3.4f), midGlow);
+        DrawLampGlow(spriteBatch, lens, new Vector2(lensRadius * 1.8f), coreGlow);
+        DrawLampGlow(spriteBatch, lamp, new Vector2(rect.Width * 0.09f), lampColor * 0.45f);
+        HudIcons.FillCircle(spriteBatch, _pixel, lamp, Math.Max(1.5f, rect.Width * 0.016f), lampColor);
     }
 }

@@ -6,7 +6,7 @@ using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
 
-public sealed class GameServer
+public sealed partial class GameServer
 {
     private const int TicksPerSecond = 30;
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1.0 / TicksPerSecond);
@@ -37,8 +37,12 @@ public sealed class GameServer
         public string? Nickname;
         public CrewRole? Role;
         public bool IsReady;
+        public bool IsAfk;
+        public bool IsSpectator;
+        public CharacterLook? Look;
+        public int KitIndex;
     }
-    private readonly string? _lobbyServerName;
+    private string? _lobbyServerName;
     private readonly int _lobbyMaxPlayers;
     private int? _lobbyHostPlayerId;
     private readonly Dictionary<int, LobbyRosterEntry> _lobbyRoster = new();
@@ -66,7 +70,12 @@ public sealed class GameServer
     public GameServer(ShipKind shipKind = ShipKind.Custom, SaveGame? loadFrom = null, string? savePath = null,
         CustomShipDefinition? customShip = null, bool isTutorial = false)
     {
-        _world = new World(shipKind, customShip ?? loadFrom?.CustomShip);
+        // A real, persisted game rolls its own world (hidden places differ every playthrough) and keeps it in
+        // the save; tests and the tutorial (no save path) stay on the fixed seed-0 world.
+        _world = new World(shipKind, customShip ?? loadFrom?.CustomShip,
+            loadFrom?.WorldSeed ?? (savePath is null || isTutorial ? 0 : NewWorldSeed()),
+            // A real new game starts with the ship free beside the station, in its base position; a loaded save restores its own state, tests and the tutorial dock.
+            startDocked: !(loadFrom is null && !isTutorial && savePath is not null));
         _savePath = savePath;
         _phase = SessionPhase.Running;
         Current = this;
@@ -76,6 +85,9 @@ public sealed class GameServer
             _world.ApplySave(loadFrom);
         else
             _world.StartCampaign();
+        // The galactic war runs in a real game only: a test world or the tutorial would pay for a whole galaxy for nothing.
+        if (savePath is not null && !isTutorial)
+            _world.EnableWar();
     }
 
     // Direct user request (screenshot 3 of the Barotrauma reference set - a real pre-game waiting
@@ -90,6 +102,7 @@ public sealed class GameServer
         _lobbyServerName = lobbyServerName;
         _lobbyMaxPlayers = maxPlayers;
         _savePath = savePath;
+        LoadBans();
         Current = this;
     }
 
@@ -140,6 +153,7 @@ public sealed class GameServer
     {
         var tickStopwatch = Stopwatch.StartNew(); // TEMP-DIAG
 
+        RunAdminActions(); // the dedicated server's console (GameServer.Lobby.cs) - on this thread, between ticks
         while (_joining.TryDequeue(out var joiner))
         {
             _connections.Add(joiner);
@@ -160,17 +174,22 @@ public sealed class GameServer
             var leavingId = _connections[i].PlayerId;
             if (_phase == SessionPhase.Running)
                 _world!.RemoveCharacter(leavingId);
-            else
-                _lobbyRoster.Remove(leavingId);
+            _lobbyRoster.Remove(leavingId); // a player held in the waiting room during a round has a row too
+            lock (_banLock)
+                _addresses.Remove(leavingId);
             (_connections[i].Connection as IDisposable)?.Dispose();
             _connections.RemoveAt(i);
+            if (_phase == SessionPhase.Lobby)
+                PassLobbyHostIfNeeded(leavingId);
         }
+        DropKickedConnections();
 
         foreach (var (connection, playerId) in _connections)
         {
             foreach (var command in connection.ReceiveCommands())
             {
-                if (_phase == SessionPhase.Running)
+                // In a round, a player who is away still sits in the waiting room: what they send is the lobby's business, not the world's.
+                if (_phase == SessionPhase.Running && !_lobbyRoster.ContainsKey(playerId))
                     _world!.ApplyCommand(playerId, command);
                 else
                     ApplyLobbyCommand(playerId, command);
@@ -178,11 +197,25 @@ public sealed class GameServer
         }
 
         if (_phase == SessionPhase.Lobby)
+            CheckAutoStart();
+        else
+            ReleaseHeldPlayers();
+
+        if (_phase == SessionPhase.Lobby)
         {
             var lobbySnapshot = BuildLobbySnapshot();
             foreach (var (connection, _) in _connections)
                 connection.SendLobby(lobbySnapshot);
+            MarkKickedForDropping(); // sent once more with their ids in it; their sockets close at the start of the next tick
+            UpdateStatusText();
             LastTickTotalMs = tickStopwatch.Elapsed.TotalMilliseconds; // TEMP-DIAG
+            return;
+        }
+
+        // A dedicated server with nobody on it does not run the world: it waits, as a closed shop does not heat the rooms.
+        if (Dedicated && _connections.Count == 0)
+        {
+            UpdateStatusText();
             return;
         }
 
@@ -206,7 +239,11 @@ public sealed class GameServer
         {
             _world.ClearAutosavePending();
             if (_savePath is not null)
-                SaveStore.Save(_world.CreateSave(), _savePath);
+            {
+                var save = _world.CreateSave();
+                SaveStore.Save(save, _savePath);
+                SaveStore.SaveSlot(save, SaveStore.SlotsDirectoryFor(_savePath)); // also kept as this campaign's own slot (the lobby's "Загр. кампанию")
+            }
         }
 
         var snapshotStopwatch = Stopwatch.StartNew(); // TEMP-DIAG
@@ -215,68 +252,19 @@ public sealed class GameServer
         // REVERTED (WorldSnapshot.cs's own doc comment has the full story) - used to send Doors/
         // Turrets only on a connection's first tick, relying on every tick's snapshot eventually
         // reaching the client, which the "latest tick wins" connection types don't guarantee.
-        foreach (var (connection, _) in _connections)
-            connection.Send(snapshot);
+        // Those held in the waiting room (away) keep seeing the lobby; everyone else gets the world.
+        var heldLobby = _lobbyRoster.Count > 0 ? BuildLobbySnapshot() : null;
+        foreach (var (connection, playerId) in _connections)
+        {
+            if (heldLobby is not null && _lobbyRoster.ContainsKey(playerId))
+                connection.SendLobby(heldLobby);
+            else
+                connection.Send(snapshot);
+        }
 
+        UpdateStatusText();
         LastTickTotalMs = tickStopwatch.Elapsed.TotalMilliseconds; // TEMP-DIAG
     }
 
-    // Everything a lobby-phase client can do: update their own roster row (Nickname/SetOwnRoleTo
-    // are the same fields an in-round Character already reads every tick - see ClientCommand's own
-    // doc comments - LobbyReady is the lobby-only addition), and, host only, change the selected
-    // ship or actually start the round.
-    private void ApplyLobbyCommand(int playerId, ClientCommand command)
-    {
-        if (!_lobbyRoster.TryGetValue(playerId, out var entry))
-            return;
-        if (!string.IsNullOrEmpty(command.Nickname))
-            entry.Nickname = command.Nickname;
-        if (command.SetOwnRoleTo is { } role)
-            entry.Role = role;
-        entry.IsReady = command.LobbyReady;
-
-        if (playerId != _lobbyHostPlayerId)
-            return; // everything below is host-only
-
-        if (command.LobbySelectCustomShip is not null)
-        {
-            _lobbyCustomShip = command.LobbySelectCustomShip;
-            _lobbyCustomShipName = command.LobbySelectCustomShipName;
-            _lobbyShipKind = ShipKind.Custom;
-        }
-
-        if (command.LobbyStartRoundPressed)
-            StartRoundFromLobby();
-    }
-
-    // The lobby's own "НАЧАТЬ" - builds the World for real (everything StartHostedSession's own
-    // non-lobby path already does synchronously in the constructor, just deferred to this moment
-    // instead) and spawns every player already sitting in the roster at once. _lobbyCustomShip
-    // staying null is not an error - it falls back to the frozen default hull exactly like
-    // ShipKind.Custom with customShip: null already does everywhere else in this project.
-    private void StartRoundFromLobby()
-    {
-        _world = new World(_lobbyShipKind, _lobbyCustomShip);
-        _phase = SessionPhase.Running;
-        _world.StartCampaign();
-        foreach (var playerId in _lobbyRoster.Keys)
-            _world.SpawnCharacter(playerId);
-        // Nickname/Role aren't copied from the roster onto the freshly spawned Characters here -
-        // every client (host included) already resends both every tick via ordinary
-        // ClientCommand.Nickname/SetOwnRoleTo, so they re-arrive within a tick or two on their own,
-        // the exact same path a non-lobby join already relies on.
-        _lobbyRoster.Clear();
-    }
-
-    private LobbySnapshot BuildLobbySnapshot()
-    {
-        var players = new List<LobbyPlayerState>(_connections.Count);
-        foreach (var (_, playerId) in _connections)
-        {
-            if (!_lobbyRoster.TryGetValue(playerId, out var entry))
-                continue; // just despawned/dropped this same tick - CreateSnapshot's own idea of "no stale rows" mirrored here
-            players.Add(new LobbyPlayerState(playerId, entry.Nickname, entry.Role, playerId == _lobbyHostPlayerId, entry.IsReady));
-        }
-        return new LobbySnapshot(_lobbyServerName ?? "Сервер", _lobbyMaxPlayers, players, _lobbyShipKind, _lobbyCustomShipName);
-    }
+    private static int NewWorldSeed() => Random.Shared.Next(1, int.MaxValue);
 }

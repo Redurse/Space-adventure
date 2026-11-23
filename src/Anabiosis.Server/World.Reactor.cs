@@ -11,7 +11,7 @@ public sealed partial class World
         if (slotIndex < 0 || slotIndex >= Reactor.RodSlotCount)
             return;
 
-        if ((Ship.ReactorBlock.Position - character.Position).Length() >= InteractionRadius)
+        if ((Ship.ReactorBlock.Position - character.Position).Length() >= ReactorReach)
             return;
 
         var reactor = PowerGrid.Reactor;

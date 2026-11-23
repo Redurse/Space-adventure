@@ -22,8 +22,8 @@ public sealed partial class World
     private static float ShotSpeed(ItemType weapon) => weapon switch
     {
         ItemType.LaserRifle => 40f, // a bolt: fast enough to feel instant at room scale
-        ItemType.Rifle => 26f,
-        _ => 14f, // a thrown knife's worth of reach, and slow enough to dodge
+        _ when GunDefinitions.Of(weapon) is { } gun => gun.ShotSpeed,
+        _ => 14f, // the reach of a thrown knife, and slow enough to dodge
     };
 
     private void FirePersonalShot(Character shooter, ItemType weapon, Vec2 direction)
@@ -39,7 +39,7 @@ public sealed partial class World
             shooter.RoomId,
             SceneOf(shooter),
             fromEnemy: false,
-            weapon));
+            weapon) { Shooter = new Shooter(SceneOf(shooter), FromEnemy: false, shooter.PlayerId, CrewId: null, shooter.WeaponsSkill, DamageBonus: 0f) });
     }
 
     // A defender shooting back, drawn and travelling exactly like the boarders' own fire - the
@@ -49,6 +49,14 @@ public sealed partial class World
         var direction = victim.Position - crew.Position;
         if (direction.Length() < 0.01f)
             return;
+
+        // A defender with a gun fires it the way a boarder does: the same round, the same pellets, a trained hand.
+        if (GunDefinitions.Of(crew.Spawn.Weapon) is { } gun)
+        {
+            FireGunRound(new Shooter(ShotScene.EnemyShip, FromEnemy: true, PlayerId: null, CrewId: crew.Spawn.Id, crew.WeaponsSkill, DamageBonus: 0f),
+                crew.Position, crew.RoomId, gun, direction);
+            return;
+        }
 
         _personalShots.Add(new PersonalShotRuntime(
             $"shot-{_nextPersonalShotId++}",
@@ -63,12 +71,37 @@ public sealed partial class World
 
     private void StepPersonalShots(double deltaSeconds)
     {
-        StepBursts(deltaSeconds);
         StepLaserBeams(deltaSeconds);
         for (var i = _personalShots.Count - 1; i >= 0; i--)
         {
             var shot = _personalShots[i];
             var from = shot.Position;
+            if (shot.Spent)
+            {
+                // The streak of a bullet: it runs out to where the bullet stopped and waits there until a snapshot has
+                // carried it to the clients at least once (a short shot would otherwise be gone before anyone saw it).
+                var left = Math.Max(0f, shot.MaxAge - shot.Age);
+                shot.Position += shot.Velocity * Math.Min((float)deltaSeconds, left);
+                shot.Age += (float)deltaSeconds;
+                if (shot.Age >= shot.MaxAge && (shot.Shown || shot.Age >= shot.MaxAge + 0.25f))
+                    _personalShots.RemoveAt(i);
+                continue;
+            }
+            if (shot.Gun is { Hitscan: false })
+            {
+                // The harpoon: a thing that flies, stopped by the same walls, doors and bodies as a bullet.
+                var step = shot.Velocity * (float)deltaSeconds;
+                var length = (float)step.Length();
+                shot.Age += (float)deltaSeconds;
+                if (length < 0.0001f)
+                    continue;
+                var flight = step * (1.0 / length);
+                var (stopped, distance) = ResolveGunSegment(shot, from, flight, length);
+                shot.Position = from + flight * distance;
+                if (stopped || shot.Age > ShotLifetimeSeconds)
+                    _personalShots.RemoveAt(i);
+                continue;
+            }
             shot.Position += shot.Velocity * (float)deltaSeconds;
             shot.Age += (float)deltaSeconds;
 
@@ -92,7 +125,17 @@ public sealed partial class World
                     c.OnEnemyShip && c.Health > 0 && c.RoomId == shot.RoomId && (c.Position - point).Length() <= BulletRadius);
                 if (victim is null)
                     continue;
-                victim.Health = Math.Max(0, victim.Health - shot.Damage);
+                HurtWithShot(victim.Body, shot);
+                return true;
+            }
+
+            // A knife or a laser bolt hurts whoever it reaches, crewmates included - only the one who threw it is spared.
+            var bystander = _characters.Values.FirstOrDefault(c =>
+                !c.IsDead && !c.IsOutside && c.PlayerId != shot.Shooter.PlayerId && SceneOf(c) == shot.Scene
+                && c.RoomId == shot.RoomId && (c.Position - point).Length() <= BulletRadius);
+            if (bystander is not null)
+            {
+                DamageCharacter(bystander, DamageKind.Bullet, shot.Damage);
                 return true;
             }
 
@@ -104,7 +147,7 @@ public sealed partial class World
                 if (target is null)
                     continue;
 
-                target.Health = Math.Max(0, target.Health - shot.Damage);
+                HurtWithShot(target.Body, shot);
                 // Clearing the last defender captures the ship, the same as suffocating them does
                 // (World.EnemyAtmosphere.cs).
                 if (BoardableEnemy is { } hull)
@@ -119,6 +162,16 @@ public sealed partial class World
                 return true;
         }
         return false;
+    }
+
+    // A round from a gun leaves exactly the wound of that round (GunDefinitions); anything else - a thrown
+    // knife, a laser bolt - hurts the way a bullet always has here.
+    private void HurtWithShot(BodyHealth body, PersonalShotRuntime shot)
+    {
+        if (shot.Gun is { } gun)
+            ShootBody(body, shot.Damage, gun.HitBleeding, gun.StunSeconds);
+        else
+            DamageBody(body, DamageKind.Bullet, shot.Damage);
     }
 
     // Walls stop bullets: once the shot is outside the compartment it was fired in, it's gone. The
@@ -144,6 +197,7 @@ public sealed partial class World
 
     private IReadOnlyList<PersonalShotState> CreatePersonalShotStates() =>
         _personalShots
+            .Select(s => { s.Shown = true; return s; })
             .Select(s => new PersonalShotState(s.Id, (float)s.Position.X, (float)s.Position.Y, s.FromEnemy, s.Scene, s.Weapon, (float)s.Velocity.X, (float)s.Velocity.Y))
             .ToArray();
 }
@@ -159,6 +213,15 @@ internal sealed class PersonalShotRuntime
     public bool FromEnemy { get; }
     public ItemType Weapon { get; }
     public float Age { get; set; }
+    // The gun this round came out of, when it came out of one: its bleeding and stun ride along with the wound.
+    public GunSpec? Gun { get; init; }
+    // Rounds from a gun (World.GunShots.cs): who fired, a number to roll by, and - for a bullet, which is decided the
+    // moment it is fired - Spent: what is left is only the streak, which flies for MaxAge seconds and hurts nothing.
+    internal World.Shooter Shooter { get; init; }
+    public int Serial { get; init; }
+    public bool Spent { get; set; }
+    public bool Shown { get; set; }
+    public float MaxAge { get; set; }
 
     public PersonalShotRuntime(string id, Vec2 position, Vec2 velocity, float damage, string roomId,
         ShotScene scene, bool fromEnemy, ItemType weapon)

@@ -167,6 +167,9 @@ public sealed partial class World
         if (from.Kind == ItemSlotKind.Main && to.Kind == ItemSlotKind.Main)
             (character.Inventory.MainSlotTanks[to.Index], character.Inventory.MainSlotTanks[from.Index]) =
                 (character.Inventory.MainSlotTanks[from.Index], character.Inventory.MainSlotTanks[to.Index]);
+        if (from.Kind == ItemSlotKind.Main && to.Kind == ItemSlotKind.Main)
+            (character.Inventory.MainSlotTankTypes[to.Index], character.Inventory.MainSlotTankTypes[from.Index]) =
+                (character.Inventory.MainSlotTankTypes[from.Index], character.Inventory.MainSlotTankTypes[to.Index]);
 
         // Anything that moved leaves the character's hands: the held-hand list is keyed by slot
         // index, and quietly re-pointing it at whatever landed in that slot would be worse than

@@ -135,7 +135,7 @@ public sealed partial class World
         if (_enemyShips.Count(e => e.Alive) >= MaxEnemyShipsInField)
             return; // the field is full
 
-        if (_battleSectorPointId is null && _battleNpcShipId is null)
+        if (_battleSectorPointId is null && _battleNpcShipId is null && !_battleWar)
         {
             // _battleSectorPointId has to be a real GalaxyPoint id - StepVoyage's own battle
             // bookkeeping (ResolveEnemyLosses, HasFledTheSector) looks it up every tick regardless
@@ -190,7 +190,7 @@ public sealed partial class World
         // track and no dependency on which specific shot might be headed for which raider.
         var isPlayerFiring = _projectiles.Any(p => !p.FromEnemy);
 
-        var alive = _enemyShips.Where(e => e.Alive).ToList();
+        var alive = _enemyShips.Where(e => e.Alive && !e.Derelict).ToList();
 
         for (var i = 0; i < alive.Count; i++)
         {
@@ -354,7 +354,17 @@ public sealed partial class World
             enemy.Velocity = Vec2.Zero;
         }
 
-        foreach (var other in _enemyShips)
+        // Stations are solid too (World.Solidity.cs).
+        var pushed = enemy.Position;
+        PushCircleOutOfStations(ref pushed, enemy.HullRadius);
+        if (pushed != enemy.Position)
+        {
+            enemy.Position = pushed;
+            enemy.Velocity = Vec2.Zero;
+        }
+
+        // Raiders and ambient ships alike: no two hulls share the same space.
+        foreach (var other in SimulatedHulls().ToList())
         {
             if (ReferenceEquals(other, enemy) || !other.Alive)
                 continue;
@@ -384,7 +394,7 @@ public sealed partial class World
     private bool HullOverlapsEnemy(Vec2 candidateCenter)
     {
         var (_, halfExtents) = GetHullLocalBounds();
-        foreach (var enemy in _enemyShips)
+        foreach (var enemy in SimulatedHulls())
         {
             if (!enemy.Alive)
                 continue;
@@ -488,7 +498,7 @@ public sealed partial class World
         return _enemyShips
             .Where(e => e.Alive)
             .Select(e => new EnemyShipFieldState(e.Id, e.Position.X, e.Position.Y, e.RotationDegrees,
-                e.Ship.Hp, e.Ship.MaxHp, e.Ship.IsRetreating, ReferenceEquals(e, boardable), e.Layout.Rooms))
+                e.Ship.Hp, e.Ship.MaxHp, e.Ship.IsRetreating, ReferenceEquals(e, boardable), e.Layout.Rooms, e.Derelict))
             .ToArray();
     }
 }

@@ -151,16 +151,26 @@ public sealed class BoardingRenderer
             ? (shot.FromEnemy ? Color.MediumPurple : Color.Cyan)
             : (shot.FromEnemy ? Color.OrangeRed : Color.Gold);
 
-        // A rifle bullet is a tracer: a short bright streak lying along its flight, so a burst reads as a
-        // line of rounds rather than a row of dots. Anything without a known direction stays a round dot.
+        // A round from a gun is a tracer: a short bright streak lying along its flight, so automatic fire reads as a
+        // line of rounds rather than a row of dots - heavier for the big calibres, a speck for a pellet of shot.
+        // A harpoon is the thing itself: a steel shaft. Anything without a known direction stays a round dot.
         var velocity = new Vector2(shot.VelocityX, shot.VelocityY);
-        if (shot.Weapon == ItemType.Rifle && velocity.LengthSquared() > 0.01f)
+        if (GunDefinitions.Of(shot.Weapon) is { } gun && velocity.LengthSquared() > 0.01f)
         {
             var angle = MathF.Atan2(velocity.Y, velocity.X);
-            var origin1 = new Vector2(1f, 0.5f); // the tail end is the pivot, so the head sits on the shot's position
-            spriteBatch.Draw(pixel, center, null, color * 0.3f, angle, origin1, new Vector2(24f, 6f), SpriteEffects.None, 0f);
-            spriteBatch.Draw(pixel, center, null, color, angle, origin1, new Vector2(16f, 3f), SpriteEffects.None, 0f);
-            spriteBatch.Draw(pixel, center, null, Color.White, angle, origin1, new Vector2(6f, 3f), SpriteEffects.None, 0f);
+            var origin1 = new Vector2(1f, 0.5f); // the tail end is the pivot, so the head sits on the position of the shot
+            if (shot.Weapon == ItemType.HarpoonGun)
+            {
+                var steel = shot.FromEnemy ? new Color(214, 150, 138) : new Color(188, 194, 202);
+                spriteBatch.Draw(pixel, center, null, Color.Black * 0.4f, angle, origin1, new Vector2(32f, 5f), SpriteEffects.None, 0f);
+                spriteBatch.Draw(pixel, center, null, steel, angle, origin1, new Vector2(30f, 2f), SpriteEffects.None, 0f);
+                spriteBatch.Draw(pixel, center, null, Color.White, angle, origin1, new Vector2(7f, 4f), SpriteEffects.None, 0f);
+                return;
+            }
+            var weight = gun.Pellets > 1 ? 0.5f : gun.HitWound >= 50f ? 1.35f : gun.HitWound >= 20f ? 1f : 0.8f;
+            spriteBatch.Draw(pixel, center, null, color * 0.3f, angle, origin1, new Vector2(24f, 6f) * weight, SpriteEffects.None, 0f);
+            spriteBatch.Draw(pixel, center, null, color, angle, origin1, new Vector2(16f, 3f) * weight, SpriteEffects.None, 0f);
+            spriteBatch.Draw(pixel, center, null, Color.White, angle, origin1, new Vector2(6f, 3f) * weight, SpriteEffects.None, 0f);
             return;
         }
 
@@ -180,6 +190,15 @@ public sealed class BoardingRenderer
             return;
         var angle = MathF.Atan2(delta.Y, delta.X);
         var life = MathHelper.Clamp(beam.Life, 0f, 1f);
+        if (beam.Tracer)
+        {
+            // A bullet: a thin bright line with a faint glow, and a spark where it stopped.
+            var tracer = beam.FromEnemy ? Color.OrangeRed : Color.Gold;
+            spriteBatch.Draw(pixel, start, null, tracer * (0.22f * life), angle, new Vector2(0f, 0.5f), new Vector2(length, 5f * beam.Weight), SpriteEffects.None, 0f);
+            spriteBatch.Draw(pixel, start, null, Color.Lerp(tracer, Color.White, 0.5f) * (0.85f * life), angle, new Vector2(0f, 0.5f), new Vector2(length, 1.6f * beam.Weight), SpriteEffects.None, 0f);
+            HudIcons.FillCircle(spriteBatch, pixel, end, 2f + 3f * life * beam.Weight, Color.White * (0.6f * life));
+            return;
+        }
         var red = new Color(255, 40, 40);
 
         spriteBatch.Draw(pixel, start, null, red * (0.22f * life), angle, new Vector2(0f, 0.5f), new Vector2(length, 18f), SpriteEffects.None, 0f);
@@ -215,16 +234,7 @@ public sealed class BoardingRenderer
         _shipRenderer.DrawEnemyCrewman(spriteBatch, crew, new Vector2(rect.Center.X, rect.Center.Y), lookToward);
 
         // Health bar above the head - the only readout that matters while clearing a room.
-        if (ShowHealthBars)
-        {
-            const int barWidth = 30;
-            const int barHeight = 4;
-            var barX = rect.Center.X - barWidth / 2;
-            var barY = rect.Y - 10;
-            spriteBatch.Draw(_pixel, new Rectangle(barX, barY, barWidth, barHeight), Color.Black * 0.7f);
-            var fraction = MathHelper.Clamp(crew.Health / 60f, 0f, 1f); // EnemyCrewRuntime.MaxHealth
-            spriteBatch.Draw(_pixel, new Rectangle(barX, barY, (int)(barWidth * fraction), barHeight), Color.Red);
-        }
+        HealthBars.Draw(spriteBatch, _pixel, "crew:" + crew.Id, crew.Health / 60f, new Vector2(rect.Center.X, rect.Y - 10)); // 60 = EnemyCrewRuntime.MaxHealth
 
         var label = crew.Role switch
         {

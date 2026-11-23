@@ -16,7 +16,7 @@ internal static partial class TestRunner
     // indoors on the player's own ship - TakeFromRack walks there via WalkAcrossShipTo, which only
     // makes sense before crossing over, so a test that wants to cut/weld aboard the enemy hull has
     // to ask for the tool here rather than trying to fetch it afterward.
-    private static void BoardEnemyShip(World world, ItemType weapon, bool withCutter = false, bool withWelder = false)
+    private static void BoardEnemyShip(World world, ItemType weapon, bool withCutter = false, bool withWelder = false, string? throughBlockId = null)
     {
         EnterBattle(world);
         // Every interior ship door now starts closed by default (direct user request, "сделай
@@ -50,7 +50,10 @@ internal static partial class TestRunner
         }
 
         var localCenter = world.EnemyShipLayout.GetLocalBounds().Center;
-        var block = world.EnemyShipLayout.WallBlocks.First(b => b.RoomId == world.EnemyShipLayout.BoardingRoomId);
+        // `throughBlockId` cuts in through that particular hull block instead of the usual boarding room.
+        var block = throughBlockId is null
+            ? world.EnemyShipLayout.WallBlocks.First(b => b.RoomId == world.EnemyShipLayout.BoardingRoomId)
+            : world.EnemyShipLayout.WallBlocks.First(b => b.Id == throughBlockId);
         world.DebugBreachEnemyWallBlock(block.Id);
         var localOffset = block.Position - localCenter;
         world.DebugPlaceEvaCharacter(1, EnemyHullBlockWorldPosition(world, localOffset), attachToEnemyShip: true);
@@ -264,16 +267,20 @@ internal static partial class TestRunner
     // returns that defender's id. The defender is picked once (the nearest at the start) and kept - re-picking "nearest"
     // every tick while the crew are walking about thrashes between whoever is briefly closer. The crew move too (fighters
     // come for a boarder), so the path is re-planned every tick toward wherever the target is now.
-    private static string WalkBoarderToMeleeRangeOfNearestDefender(World world)
+    // Devices are solid and the cruiser's are allowed to wall parts of it off, so "nearest" means nearest you can
+    // actually walk to (NearestReachableDefender); a target that gets cut off mid-walk is dropped and re-picked.
+    private static string WalkBoarderToMeleeRangeOfNearestDefender(World world, string? targetId = null)
     {
-        string? targetId = null;
         for (var i = 0; i < 25 * 30; i++)
         {
             var snapshot = world.CreateSnapshot();
             var me = snapshot.Characters.Single(c => c.PlayerId == 1);
             var mePos = new Vec2(me.X, me.Y);
             var alive = snapshot.EnemyShip.Crew.Where(c => c.Alive).ToList();
+            if (alive.Count == 0)
+                break; // nobody left standing
             var target = alive.FirstOrDefault(c => c.Id == targetId)
+                ?? alive.FirstOrDefault(c => c.Id == NearestReachableDefender(world))
                 ?? alive.OrderBy(c => (new Vec2(c.X, c.Y) - mePos).Length()).First();
             targetId = target.Id;
             var targetPos = new Vec2(target.X, target.Y);
@@ -281,6 +288,8 @@ internal static partial class TestRunner
                 break;
 
             var path = TilePathfinder.FindPath(world.EnemyShipLayout.Tiles, TilePathfinder.TileAt(mePos), TilePathfinder.TileAt(targetPos));
+            if (path is null && TilePathfinder.TileAt(mePos) != TilePathfinder.TileAt(targetPos))
+                targetId = null; // walled off from here now - pick again next tick
             var waypoint = path is { Count: > 0 } ? TilePathfinder.CenterOf(path[0]) : targetPos;
             // The last tile before the target: walk straight at it rather than at the tile centre.
             if (path is { Count: <= 1 })
@@ -291,6 +300,42 @@ internal static partial class TestRunner
         }
 
         return targetId!;
+    }
+
+    // An outer hull block of a fighter's own compartment from which that fighter can actually be walked to.
+    private static string HullBlockWithAWalkToAFighter(World world)
+    {
+        var layout = world.EnemyShipLayout;
+        foreach (var fighter in layout.CrewSpawns.Where(s => s.Role == EnemyCrewRole.Fighter))
+        {
+            var fighterTile = TilePathfinder.TileAt(fighter.Position);
+            foreach (var block in layout.WallBlocks.Where(b => b.RoomId == fighter.RoomId && !b.IsInterior))
+                if (TilePathfinder.NearestPassable(layout.Tiles, TilePathfinder.TileAt(block.Position), null, 2) is { } inside
+                    && (inside == fighterTile || TilePathfinder.FindPath(layout.Tiles, inside, fighterTile) is not null))
+                    return block.Id;
+        }
+        throw new InvalidOperationException("no fighter can be reached from its own hull");
+    }
+
+    // The living defender closest by walking distance from the boarder, or null if none can be reached.
+    private static string? NearestReachableDefender(World world, EnemyCrewRole? role = null)
+    {
+        var snapshot = world.CreateSnapshot();
+        var me = snapshot.Characters.Single(c => c.PlayerId == 1);
+        var myTile = TilePathfinder.TileAt(new Vec2(me.X, me.Y));
+        string? best = null;
+        var bestSteps = int.MaxValue;
+        foreach (var crew in snapshot.EnemyShip.Crew.Where(c => c.Alive && (role is null || c.Role == role)))
+        {
+            var tile = TilePathfinder.TileAt(new Vec2(crew.X, crew.Y));
+            var steps = tile == myTile ? 0 : TilePathfinder.FindPath(world.EnemyShipLayout.Tiles, myTile, tile)?.Count ?? int.MaxValue;
+            if (steps < bestSteps)
+            {
+                bestSteps = steps;
+                best = crew.Id;
+            }
+        }
+        return best;
     }
 
     // Pulls the trigger aimed straight at one defender (the aim is the cursor, not the walking direction).
@@ -306,6 +351,7 @@ internal static partial class TestRunner
     private static bool World_Boarding_FireWeaponDamagesCrewInSameRoom()
     {
         var world = new World();
+        world.DebugEnemyCrewHoldsFire = true; // this is about the knife landing, not about surviving the walk up
         world.SpawnCharacter(1);
         BoardEnemyShip(world, ItemType.Knife); // knife is melee-only - has to close in
 
@@ -361,19 +407,24 @@ internal static partial class TestRunner
             return false;
 
         // Eight armed people are not something a lone boarder clears with a rifle, so the rest are put down directly and the
-        // last one is really hunted: walk to them and shoot. The kill that empties the ship is what takes it.
-        var last = world.EnemyShipLayout.CrewSpawns.Last().Id;
+        // last one is really hunted: walk to them and shoot. The kill that empties the ship is what takes it. The hunted one
+        // is someone the boarder can actually walk to - the cruiser's devices wall parts of it off.
+        var last = NearestReachableDefender(world) ?? world.EnemyShipLayout.CrewSpawns.Last().Id;
         foreach (var spawn in world.EnemyShipLayout.CrewSpawns.Where(s => s.Id != last))
             world.DebugDamageEnemyCrew(spawn.Id, EnemyCrewHealthForTests);
 
-        var targetId = WalkBoarderToMeleeRangeOfNearestDefender(world);
-        for (var i = 0; i < 6 * 30 && (world.CreateSnapshot().EnemyShip.Crew.FirstOrDefault(c => c.Id == targetId)?.Alive ?? false); i++)
+        var targetId = WalkBoarderToMeleeRangeOfNearestDefender(world, last);
+        for (var i = 0; i < 12 * 30 && (world.CreateSnapshot().EnemyShip.Crew.FirstOrDefault(c => c.Id == targetId) is { Alive: true, Downed: false }); i++)
         {
+            // A wounded crewman runs - keep after them between shots (returns at once while still in reach).
+            WalkBoarderToMeleeRangeOfNearestDefender(world, targetId);
+            if (world.CreateSnapshot().EnemyShip.Crew.FirstOrDefault(c => c.Id == targetId) is not { Alive: true, Downed: false })
+                break; // a round already in flight finished them on the way
             FireAtCrew(world, targetId);
             world.Step(RealtimeStep);
         }
 
-        return world.CreateSnapshot().EnemyShip.Crew.All(c => !c.Alive) && world.CreateSnapshot().Enemy.Hp <= 0;
+        return world.CreateSnapshot().EnemyShip.Crew.All(c => !c.Alive || c.Downed) && world.CreateSnapshot().Enemy.Hp <= 0;
     }
 
 
@@ -408,7 +459,7 @@ internal static partial class TestRunner
         for (var i = 0; i < 100 * 30; i++)
             world.Step(RealtimeStep);
 
-        bool Alive(string crewId) => world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == crewId).Alive;
+        bool Alive(string crewId) => world.CreateSnapshot().EnemyShip.Crew.First(c => c.Id == crewId) is { Alive: true, Downed: false };
         var anyAir = layout.Rooms.Any(r => Oxygen(r.Id) >= OxygenSafeThresholdForTests);
         var unsuitedGone = layout.CrewSpawns.Where(s => !s.Suited).All(s => !Alive(s.Id));
         var suitedHolding = layout.CrewSpawns.Where(s => s.Suited && s.Role != EnemyCrewRole.Engineer).All(s => Alive(s.Id)); // the engineers were killed above
@@ -441,13 +492,18 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        BoardEnemyShip(world, ItemType.Knife);
+        world.DebugEnemyCrewHoldsFire = true; // the walk up is not what is measured - defenders with guns would end it early
+        // Only fighters go for a boarder, and the cruiser's devices wall some compartments off from others - so cut in
+        // through the hull of a compartment a fighter is posted in, where one can actually come at you.
+        BoardEnemyShip(world, ItemType.Knife, throughBlockId: HullBlockWithAWalkToAFighter(world));
 
         if (!world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).OnEnemyShip)
             return false;
 
-        WalkBoarderToMeleeRangeOfNearestDefender(world);
+        // Only fighters go for a boarder - walk up to the nearest one that can be reached.
+        WalkBoarderToMeleeRangeOfNearestDefender(world, NearestReachableDefender(world, EnemyCrewRole.Fighter));
 
+        world.DebugEnemyCrewHoldsFire = false;
         var healthBefore = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health;
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0));
         for (var i = 0; i < 5 * 30; i++) // outlast the defenders' attack interval, taking no action

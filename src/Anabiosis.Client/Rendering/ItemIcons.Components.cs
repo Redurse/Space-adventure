@@ -34,9 +34,10 @@ public static partial class ItemIcons
     private static (Color Fill, Color Border) ChipColors(ComponentKind kind) => kind switch
     {
         ComponentKind.GateAnd or ComponentKind.GateOr or ComponentKind.GateNot or ComponentKind.GateXor
+            or ComponentKind.Comparator or ComponentKind.SignalCheck or ComponentKind.Math or ComponentKind.Function or ComponentKind.Regex
             => (new Color(70, 70, 130), new Color(130, 130, 210)),
-        ComponentKind.Timer or ComponentKind.Memory => (new Color(90, 55, 110), new Color(170, 115, 200)),
-        ComponentKind.Relay => (new Color(120, 92, 30), new Color(215, 175, 55)),
+        ComponentKind.Timer or ComponentKind.Memory or ComponentKind.Delay or ComponentKind.Oscillator => (new Color(90, 55, 110), new Color(170, 115, 200)),
+        ComponentKind.Relay or ComponentKind.Button or ComponentKind.Keyboard => (new Color(120, 92, 30), new Color(215, 175, 55)),
         ComponentKind.OxygenSensor or ComponentKind.BreachSensor or ComponentKind.PowerLossSensor or ComponentKind.MotionSensor
             => (new Color(35, 95, 70), new Color(95, 185, 145)),
         ComponentKind.AutoDoorController or ComponentKind.AlarmKlaxon or ComponentKind.LightToggle
@@ -118,6 +119,64 @@ public static partial class ItemIcons
             case ComponentKind.LightToggle:
                 Circle(spriteBatch, pixel, origin, 0f, scale, 0f, -0.05f, 0.10f, color); // bulb
                 Bar(spriteBatch, pixel, origin, 0f, scale, 0f, 0.08f, 0.07f, 0.07f, color); // base
+                break;
+
+            case ComponentKind.Delay:
+                Bar(spriteBatch, pixel, origin, 0f, scale, -0.09f, 0f, 0.05f, 0.18f, color); // two bars: a pause
+                Bar(spriteBatch, pixel, origin, 0f, scale, 0.09f, 0f, 0.05f, 0.18f, color);
+                break;
+
+            case ComponentKind.Oscillator:
+                Bar(spriteBatch, pixel, origin, 0f, scale, -0.12f, 0.05f, 0.08f, 0.025f, color); // a square wave
+                Bar(spriteBatch, pixel, origin, 0f, scale, -0.08f, 0f, 0.025f, 0.10f, color);
+                Bar(spriteBatch, pixel, origin, 0f, scale, -0.02f, -0.05f, 0.12f, 0.025f, color);
+                Bar(spriteBatch, pixel, origin, 0f, scale, 0.04f, 0f, 0.025f, 0.10f, color);
+                Bar(spriteBatch, pixel, origin, 0f, scale, 0.10f, 0.05f, 0.12f, 0.025f, color);
+                break;
+
+            case ComponentKind.Comparator:
+                Primitives.FillTriangle(spriteBatch, pixel, Point(origin, 0f, scale, -0.10f, 0f),
+                    Point(origin, 0f, scale, 0.10f, -0.10f), Point(origin, 0f, scale, 0.10f, -0.07f), color); // ">" upper stroke
+                Primitives.FillTriangle(spriteBatch, pixel, Point(origin, 0f, scale, -0.10f, 0f),
+                    Point(origin, 0f, scale, 0.10f, 0.10f), Point(origin, 0f, scale, 0.10f, 0.07f), color); // ">" lower stroke
+                break;
+
+            case ComponentKind.SignalCheck:
+                Bar(spriteBatch, pixel, origin, 0f, scale, 0f, -0.04f, 0.20f, 0.03f, color); // "=" over a tick
+                Bar(spriteBatch, pixel, origin, 0f, scale, 0f, 0.04f, 0.20f, 0.03f, color);
+                break;
+
+            case ComponentKind.Button:
+                Circle(spriteBatch, pixel, origin, 0f, scale, 0f, 0f, 0.14f, color); // a round push button
+                Circle(spriteBatch, pixel, origin, 0f, scale, 0f, 0f, 0.09f, Color.Black * 0.25f);
+                break;
+
+            case ComponentKind.Math:
+                Bar(spriteBatch, pixel, origin, 0f, scale, 0f, 0f, 0.22f, 0.04f, color); // a plus
+                Bar(spriteBatch, pixel, origin, 0f, scale, 0f, 0f, 0.04f, 0.22f, color);
+                break;
+
+            case ComponentKind.Function:
+                RingArc(spriteBatch, pixel, origin, 0f, scale, -0.05f, 0f, 0.10f, 180f, 360f, color, 0.03f, 8); // a curve
+                RingArc(spriteBatch, pixel, origin, 0f, scale, 0.05f, 0f, 0.10f, 0f, 180f, color, 0.03f, 8);
+                break;
+
+            case ComponentKind.Regex:
+                RingArc(spriteBatch, pixel, origin, 0f, scale, -0.09f, 0f, 0.10f, 90f, 270f, color, 0.03f, 8); // "( )" with a star: a pattern
+                RingArc(spriteBatch, pixel, origin, 0f, scale, 0.09f, 0f, 0.10f, -90f, 90f, color, 0.03f, 8);
+                Circle(spriteBatch, pixel, origin, 0f, scale, 0f, 0f, 0.035f, color);
+                break;
+
+            case ComponentKind.Keyboard:
+                for (var row = 0; row < 2; row++) // two rows of keys
+                    for (var key = 0; key < 3; key++)
+                        Bar(spriteBatch, pixel, origin, 0f, scale, -0.10f + key * 0.10f, -0.04f + row * 0.09f, 0.07f, 0.06f, color);
+                break;
+
+            case ComponentKind.Wireless:
+                Circle(spriteBatch, pixel, origin, 0f, scale, 0f, 0.07f, 0.03f, color); // an antenna with waves
+                RingArc(spriteBatch, pixel, origin, 0f, scale, 0f, 0.07f, 0.09f, -60f, 60f, color, 0.025f, 6);
+                RingArc(spriteBatch, pixel, origin, 0f, scale, 0f, 0.07f, 0.15f, -60f, 60f, color, 0.022f, 8);
                 break;
         }
     }

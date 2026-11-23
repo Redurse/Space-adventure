@@ -31,11 +31,11 @@ public sealed class GameSounds
     public const string UiDeny = "ui_deny";
     public const string PanelOpen = "panel_open";
     public const string PanelClose = "panel_close";
-    public const string DoorOpen = "door_open";
-    public const string DoorClose = "door_close";
     public const string AirlockCycle = "airlock_cycle";
-    public const string ItemPickup = "item_pickup";
-    public const string ItemDrop = "item_drop";
+    public const string ItemPickup = "pick_item";
+    public const string ItemDrop = "drop_item";
+    public const string ChatSent = "chat_msg"; // a chat message sent (in a round or in the waiting room)
+    public const string ItemFail = "pick_item_fail"; // the action cannot be done: a drop that is refused, a pick-up with no room
     public const string HullBreach = "hull_breach";
     public const string Explosion = "explosion";
     public const string ExplosionBig = "explosion_big";
@@ -46,10 +46,15 @@ public sealed class GameSounds
     public const string CutterLoop = "cutter_loop";
     public const string AlarmLoop = "alarm_loop";
     public const string JetpackLoop = "jetpack_loop";
+    public const string RepairLoop = "repair_loop"; // the melody that plays while someone mends a device or a door
     public const string SteamVent = "steam_vent";
     public const string ReactorHumLoop = "reactor_hum_loop";
 
     private readonly GameAudioEngine _engine;
+
+    // Told of every one-shot sound asked for (after the repeat throttle): for diagnostics, and for smoke checks that want to know what the soundscape did without listening.
+    public event Action<string, float>? Played;
+
     private readonly Dictionary<string, double> _lastPlayed = new();
     private readonly Random _random = new();
 
@@ -80,6 +85,7 @@ public sealed class GameSounds
     {
         if (_lastPlayed.TryGetValue(name, out var last) && nowSeconds - last < MinRepeatSeconds)
             return;
+        Played?.Invoke(name, volume);
         if (AudioFile.TryOpen(PathFor(name)) is not { } opened)
             return;
 

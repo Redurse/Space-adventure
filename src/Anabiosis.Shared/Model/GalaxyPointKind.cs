@@ -9,4 +9,7 @@ public enum GalaxyPointKind
     StoragePod,
     ShipGraveyard,
     AbandonedShip,
+    // A dead station (PoiKind.AbandonedStation): dockable like a station, but NOT one for anything that looks
+    // for stations - trade routes, quests, patrols, the charts. Only the docking code opts it in.
+    AbandonedStation,
 }

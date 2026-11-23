@@ -24,11 +24,11 @@ public sealed partial class World
     // elsewhere, nothing needs to walk.
     private void StepStationResidents(double deltaSeconds, List<Character> onStation)
     {
-        if (!IsDocked)
+        if (!IsDocked || DockedAtAbandonedStation)
             return;
         ResidentSim().Step(deltaSeconds, _stationAlerted, onStation.Select(c => c.Position).ToList());
     }
 
     private IReadOnlyList<StationResidentState>? CreateStationResidentStates() =>
-        IsDocked ? ResidentSim().States : null;
+        IsDocked && !DockedAtAbandonedStation ? ResidentSim().States : null;
 }

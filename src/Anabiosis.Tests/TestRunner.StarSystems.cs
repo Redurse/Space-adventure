@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -91,6 +91,7 @@ internal static partial class TestRunner
         var landedInWarpZone = (alphaCentauriCenter - new Vec2(shipField.X, shipField.Y)).Length() >= world.GalaxyMap.GetSystem("alpha-centauri").WarpZoneRadius - 0.01f;
         var canContinueImmediately = world.CanWarpNow;
 
+        world.DebugClearWarpCooldown(); // the minute of recharge between jumps is its own test below
         world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "tau-ceti"));
 
         return landedInWarpZone && canContinueImmediately && world.CreateSnapshot().CurrentSystemId == "tau-ceti";
@@ -149,12 +150,11 @@ internal static partial class TestRunner
         return visited.Count == map.Systems.Count && map.Systems.Count > 4;
     }
 
-    // "Большая галактическая карта на 200 солнечных систем" - the 6 hand-authored systems plus
-    // GalaxyMap.CreateStarter's ProceduralSystemCount (194) generated ones. Every system warps from
+    // The galaxy of 4000 stars - the 6 hand-authored systems plus GalaxyMap.MaxProceduralSystems generated ones. Every system warps from
     // anywhere past its own field's WarpZoneRadius (no dedicated marker needed per system anymore),
     // so the only thing left to prove at this scale is that the whole thing stays one
     // warp-reachable component, not just "generated without crashing".
-    private static bool World_StarSystem_GalaxyHas200SystemsAllReachable()
+    private static bool World_StarSystem_GalaxyHas4000SystemsAllReachable()
     {
         var world = new World();
         var map = world.GalaxyMap;
@@ -162,7 +162,7 @@ internal static partial class TestRunner
         // impossible neighbour target forces it to roll out every remaining system before this
         // test's own full-reachability sweep below.
         map.EnsureGenerated(map.Systems[0].Id, int.MaxValue);
-        if (map.Systems.Count != 200)
+        if (map.Systems.Count != GalaxyMap.TotalSystemCount)
             return false;
 
         var visited = new HashSet<string> { map.Systems[0].Id };
@@ -176,7 +176,7 @@ internal static partial class TestRunner
                     frontier.Enqueue(neighbor);
         }
 
-        return visited.Count == 200;
+        return visited.Count == GalaxyMap.TotalSystemCount;
     }
 
     // Most of the procedural tail answers to somebody (GalaxyMap.cs's ControlledSystemChance),
@@ -214,12 +214,12 @@ internal static partial class TestRunner
     private static bool World_StarSystem_ChunkedGenerationMatchesWhicheverPacingReachesIt()
     {
         var mapA = GalaxyMap.CreateStarter();
-        mapA.EnsureAtLeast(194);
+        mapA.EnsureAtLeast(400);
 
         var mapB = GalaxyMap.CreateStarter();
-        for (var target = mapB.GeneratedProceduralCount + 7; target <= 194; target += 7)
+        for (var target = mapB.GeneratedProceduralCount + 7; target <= 400; target += 7)
             mapB.EnsureAtLeast(target);
-        mapB.EnsureAtLeast(194); // covers any remainder the loop's own step size didn't land on exactly
+        mapB.EnsureAtLeast(400); // covers any remainder the loop's own step size didn't land on exactly
 
         if (mapA.Systems.Count != mapB.Systems.Count)
             return false;
@@ -243,8 +243,11 @@ internal static partial class TestRunner
     {
         var map = GalaxyMap.CreateStarter();
         var before = map.SystemsWithinWarpRange("sol").Count;
+        var generatedBefore = map.GeneratedProceduralCount;
         map.EnsureGenerated("sol", before + 1);
-        return map.SystemsWithinWarpRange("sol").Count >= before + 1;
+        // Either the target was met, or the whole tail was rolled out looking for it: in the three-armed spiral Sol's own
+        // neighbourhood can be too sparse to ever reach +1, and what matters is that the galaxy grew on demand.
+        return map.SystemsWithinWarpRange("sol").Count >= before + 1 || map.GeneratedProceduralCount > generatedBefore;
     }
 
     // A station's own controlling faction stands down peacefully unless the crew has actually made
@@ -300,5 +303,53 @@ internal static partial class TestRunner
         world.Step(RealtimeStep);
 
         return world.IsInBattle;
+    }
+}
+
+// ---- the recharge between jumps (World.StarSystems.cs) ----
+internal static partial class TestRunner
+{
+    // A jump starts a minute of recharge: the next jump is refused until the minute has run down, and the snapshot carries what is left.
+    private static bool World_StarSystem_JumpNeedsAMinuteToRecharge()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        FlyToSolWarpZoneAndStop(world);
+        if (!world.CanWarpNow || world.WarpCooldownRemaining != 0f)
+            return false; // ready before the first jump
+
+        world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "alpha-centauri"));
+        if (world.CreateSnapshot() is not { CurrentSystemId: "alpha-centauri" } first || first.WarpCooldownRemaining < World.WarpCooldownSeconds - 0.01f)
+            return false;
+
+        // Straight on to tau-ceti is refused while the drive recharges, and says so.
+        world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "tau-ceti"));
+        var refused = world.CreateSnapshot();
+        if (refused.CurrentSystemId != "alpha-centauri" || refused.SalvageNotice?.Contains("перезаряжается") != true)
+            return false;
+
+        // 59 seconds later: still refused. A minute: allowed.
+        for (var i = 0; i < 59 * 30; i++)
+            world.Step(1.0 / 30);
+        world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "tau-ceti"));
+        if (world.CreateSnapshot().CurrentSystemId != "alpha-centauri")
+            return false;
+        for (var i = 0; i < 2 * 30; i++)
+            world.Step(1.0 / 30);
+        if (world.WarpCooldownRemaining != 0f || !world.CanWarpNow)
+            return false;
+        world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "tau-ceti"));
+        return world.CreateSnapshot().CurrentSystemId == "tau-ceti" && world.WarpCooldownRemaining > World.WarpCooldownSeconds - 0.01f;
+    }
+
+    // A refused jump (not at the system's edge, or out of range) does not start the recharge.
+    private static bool World_StarSystem_RefusedJumpDoesNotStartTheRecharge()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "alpha-centauri")); // docked: not allowed
+        FlyToSolWarpZoneAndStop(world);
+        world.ApplyCommand(1, new ClientCommand(1, WarpToSystemId: "tau-ceti")); // out of range
+        return world.WarpCooldownRemaining == 0f && world.CreateSnapshot().CurrentSystemId == "sol";
     }
 }

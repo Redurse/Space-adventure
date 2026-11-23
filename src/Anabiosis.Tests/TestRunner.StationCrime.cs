@@ -105,6 +105,7 @@ internal static partial class TestRunner
         // (World.PersonalShots.cs), not damage applied the instant the button goes down.
         var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1);
         var aim = new Vec2(guard.X - me.X, guard.Y - me.Y).Normalized();
+        var healthBefore = me.Health; // before the first shot: the guards answer within a second now
         world.ApplyCommand(1, new ClientCommand(1, FirePressed: true, LookX: (float)aim.X, LookY: (float)aim.Y));
         for (var i = 0; i < 30; i++)
             world.Step(RealtimeStep);
@@ -113,7 +114,6 @@ internal static partial class TestRunner
         if (!world.IsStationAlerted || guardAfterShot.Health >= guardAfterShot.MaxHealth)
             return false;
 
-        var healthBefore = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Health;
         world.ApplyCommand(1, new ClientCommand(1, MoveX: 0, MoveY: 0));
         for (var i = 0; i < 5 * 30; i++) // stand there and take it
             world.Step(RealtimeStep);

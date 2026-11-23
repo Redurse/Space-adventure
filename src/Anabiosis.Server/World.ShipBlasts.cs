@@ -147,7 +147,7 @@ public sealed partial class World
                     continue;
                 var distance = (float)(character.Position - center).Length();
                 if (distance < radius)
-                    character.Health = Math.Max(0f, character.Health - BlastCrewDamage * (1f - distance / radius));
+                    DamageCharacter(character, DamageKind.Blast, BlastCrewDamage * (1f - distance / radius));
             }
         }
         finally

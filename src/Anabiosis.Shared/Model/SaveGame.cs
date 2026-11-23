@@ -34,7 +34,18 @@ public sealed record SaveGame(
     int? GeneratedProceduralSystemCount = null,
     // Manually placed scanner markers, shared by the whole crew (World.Scanner.cs, M44) - absent
     // in older files, restoring as empty, the same additive pattern every field above follows.
-    IReadOnlyList<Vec2>? ManualScannerMarkers = null)
+    IReadOnlyList<Vec2>? ManualScannerMarkers = null,
+    // The ship's wiring as it stands (W4 of wiring-plan.md) - components, wires (the player's own
+    // included) and which wires are cut. Absent in older files: the hull then gets the standard
+    // wiring, the same additive pattern as every field above.
+    ShipWiringSave? Wiring = null,
+    // What every system's hidden places are rolled from (PoiGenerator.cs). Null in a save from before this
+    // existed - such a run gets a fresh seed on load and keeps it from then on.
+    int? WorldSeed = null,
+    IReadOnlyList<SystemExplorationSave>? Exploration = null,
+    // The galactic war as it stood (Anabiosis.Shared/War/WarSave.cs). Null in a save from before it existed, or when no war was
+    // running: the war then starts afresh on load, the same additive pattern as every field above.
+    Anabiosis.Shared.War.WarSave? War = null)
 {
     // Bumped whenever the shape changes incompatibly; SaveStore refuses anything it doesn't know,
     // so an old file fails to load cleanly instead of half-restoring into a broken run.

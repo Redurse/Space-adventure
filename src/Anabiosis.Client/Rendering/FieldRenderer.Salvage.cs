@@ -15,16 +15,17 @@ public sealed partial class FieldRenderer
     private void DrawSalvagePoints(SpriteBatch spriteBatch, WorldSnapshot snapshot, Func<Vec2, Vector2> worldToScreen,
         Vector2 viewportOrigin, Vector2 viewportSize)
     {
-        var looted = snapshot.SalvagedPointIds;
-        foreach (var point in snapshot.GalaxyPoints)
+        // Only the loot finds the crew has identified (World.Exploration.cs) - a place still under the fog, or
+        // known only as a sonar signal, is not drawn out here; an asteroid cluster is its own real rocks.
+        foreach (var point in snapshot.PointsOfInterest ?? Array.Empty<PoiState>())
         {
-            if (!SalvagePoints.IsSalvage(point.Kind) || (looted is not null && looted.Contains(point.Id)))
+            if (point.Kind is not { } kind || !PoiCatalog.IsLootOnApproach(kind) || point.Looted)
                 continue;
 
             var screen = worldToScreen(point.Position);
-            var ringPx = point.CaptureRadius * ShipRenderer.PixelsPerUnit;
+            var ringPx = point.Radius * ShipRenderer.PixelsPerUnit;
             HudIcons.DrawRingArc(spriteBatch, _pixel, screen, ringPx, 0f, 360f, Color.Goldenrod * 0.45f, 40, 1.5f);
-            DrawSalvageGlyph(spriteBatch, point.Kind, screen, MathF.Max(10f, ringPx * 0.45f));
+            DrawSalvageGlyph(spriteBatch, GalaxyMapPanel.GlyphKindFor(kind), screen, MathF.Max(10f, ringPx * 0.45f));
             spriteBatch.DrawString(_font, point.Name, screen + new Vector2(-point.Name.Length * 3.2f, ringPx + 4f),
                 Color.Goldenrod, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
             DrawOffScreenMarker(spriteBatch, screen, viewportOrigin, viewportSize, point.Name, Color.Goldenrod);

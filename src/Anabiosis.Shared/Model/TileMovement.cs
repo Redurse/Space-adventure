@@ -1,4 +1,4 @@
-namespace Anabiosis.Shared.Model;
+﻿namespace Anabiosis.Shared.Model;
 
 // M73 (humble-soaring-cat.md) - replaces RoomLayout.MoveAlongAxis's room-rectangle clamp with a
 // direct per-tile walkability check against a TileGrid (M70/TileGrid.cs). Movement no longer needs
@@ -24,11 +24,33 @@ public static class TileMovement
 {
     public const float CharacterRadius = RoomLayout.CharacterRadius;
 
-    public static Vec2 MoveAlongAxis(TileGrid tiles, Vec2 position, Vec2 delta, IReadOnlyList<RoomLayout.RoomObstacle>? obstacles = null)
+    // What one character remembers between moves: whether they are in the middle of squeezing through a gap. In that state a spot where the
+    // full clearance box does not fit is a slot they are standing IN, not a wall they are stuck inside - the old "stuck in a wall, let them out in
+    // any direction" rule must not fire there (it let them walk straight through the slot's walls).
+    public sealed class MoveMemory
+    {
+        public bool Squeezed;
+    }
+
+    public static Vec2 MoveAlongAxis(TileGrid tiles, Vec2 position, Vec2 delta, IReadOnlyList<RoomLayout.RoomObstacle>? obstacles = null,
+        MoveMemory? memory = null)
     {
         var next = position + delta;
         if (IsClear(tiles, position, next) && !BlocksPosition(obstacles, next))
+        {
+            if (memory is not null)
+                memory.Squeezed = false;
             return next;
+        }
+
+        // Not through the front door: a person can turn sideways. The free half of a half-block wall (and any other gap about half a tile
+        // wide) is narrower than the clearance box, but not narrower than a body seen edge-on - see TrySqueeze.
+        if (TrySqueeze(tiles, position, delta, obstacles) is { } squeezed)
+        {
+            if (memory is not null)
+                memory.Squeezed = true;
+            return squeezed;
+        }
 
         // A wall is now a genuine, full 1-unit-thick tile (not the old model's zero-width line at
         // the room's own rectangle edge), so a position the OLD system considered perfectly legal -
@@ -40,8 +62,17 @@ public static class TileMovement
         // fails the clearance check, don't also refuse to move away from it - that would trap the
         // character in the wall forever, since every subsequent move would fail the same check for
         // the same reason. Only enforce "stay clear" once the character is actually in a clear spot.
+        // (A spot that is only clear sideways - the character is in the middle of squeezing through a gap - is not "inside the wall".)
+        // Narrow in EITHER direction counts: in a slot only half a tile wide the character is clear sideways along the slot, and pressing the
+        // other way must find them blocked by its walls - not "stuck inside a wall", which is let out in any direction (that was walking through textures).
         if (!IsClear(tiles, position, position))
-            return next;
+        {
+            // Mid-squeeze, in a slot: not stuck in a wall - the slot's own walls still hold, and the way out is the squeeze above.
+            var inSlot = memory is { Squeezed: true }
+                && (IsClear(tiles, position, position, (SqueezeCrossRadius, CharacterRadius)) || IsClear(tiles, position, position, (CharacterRadius, SqueezeCrossRadius)));
+            if (!inSlot)
+                return next;
+        }
 
         // Slide as close to the wall as this move can get, rather than freezing at the pre-move
         // position outright - binary search the farthest fraction of `delta` that stays clear, the
@@ -74,10 +105,53 @@ public static class TileMovement
     // specific crossing must also clear TileGrid.IsWalkableAcrossEdge. Passing anchor == position
     // (both "is my current spot clear" checks in MoveAlongAxis do this) naturally skips the edge
     // check entirely - nothing crosses if nothing moved.
-    private static bool IsClear(TileGrid tiles, Vec2 anchor, Vec2 position)
+    private static bool IsClear(TileGrid tiles, Vec2 anchor, Vec2 position) => IsClear(tiles, anchor, position, (CharacterRadius, CharacterRadius));
+
+    // Sideways: the box is as deep as ever along the way of travel, but only SqueezeRadius wide across it.
+    private const float SqueezeCrossRadius = 0.2f;     // 0.4 across: fits the 0.5 free half of a half-block wall
+    private const float SqueezeMaxNudge = 0.32f;       // how far off the line of travel an opening may lie and still be found
+    private const float SqueezeNudgeStep = 0.05f;      // how far one move may slide toward it
+
+    private static (float X, float Y) SqueezeRadius(Vec2 delta, bool narrow) =>
+        !narrow ? (CharacterRadius, CharacterRadius)
+        : Math.Abs(delta.X) >= Math.Abs(delta.Y) ? (CharacterRadius, SqueezeCrossRadius) : (SqueezeCrossRadius, CharacterRadius);
+
+    // The move that goes through a gap too narrow for the clearance box but wide enough for a body turned sideways: straight on if the
+    // narrow box is clear, or - when the gap lies a little to one side - a small slide toward it, so that holding the key against the
+    // edge of a half-block wall brings the character to the opening instead of leaving them stuck on its corner. Null when there is no gap.
+    private static Vec2? TrySqueeze(TileGrid tiles, Vec2 position, Vec2 delta, IReadOnlyList<RoomLayout.RoomObstacle>? obstacles)
     {
-        foreach (var (dx, dy) in Corners)
+        if (delta.X == 0 && delta.Y == 0)
+            return null;
+        var radius = SqueezeRadius(delta, narrow: true);
+        var next = position + delta;
+        if (IsClear(tiles, position, next, radius) && !BlocksPosition(obstacles, next))
+            return next;
+
+        // Only from a spot that is itself clear (full or sideways): a character stuck inside a wall is for MoveAlongAxis to free.
+        if (!IsClear(tiles, position, position, radius))
+            return null;
+
+        var across = Math.Abs(delta.X) >= Math.Abs(delta.Y) ? new Vec2(0, 1) : new Vec2(1, 0);
+        for (var offset = SqueezeNudgeStep; offset <= SqueezeMaxNudge + 1e-4f; offset += SqueezeNudgeStep)
+            foreach (var sign in new[] { 1f, -1f })
+            {
+                var target = next + across * (sign * offset);
+                if (!IsClear(tiles, position, target, radius) || BlocksPosition(obstacles, target))
+                    continue;
+                var slide = position + across * (sign * Math.Min(offset, SqueezeNudgeStep));
+                if (IsClear(tiles, position, slide, radius) && !BlocksPosition(obstacles, slide))
+                    return slide;
+            }
+        return null;
+    }
+
+    private static bool IsClear(TileGrid tiles, Vec2 anchor, Vec2 position, (float X, float Y) radius)
+    {
+        foreach (var (sx, sy) in Samples)
         {
+            var dx = sx * radius.X;
+            var dy = sy * radius.Y;
             var cx = position.X + dx;
             var cy = position.Y + dy;
             var coord = new TileCoord((int)Math.Floor(cx), (int)Math.Floor(cy));
@@ -93,10 +167,19 @@ public static class TileMovement
         return true;
     }
 
-    private static readonly (float, float)[] Corners =
+    // Corners alone are NOT enough (direct user bug report - "через малую сторону полублочной стены
+    // можно пройти внутрь"): a half-block wall's solid half (or a half-width device's) is only 0.5
+    // units thick, thinner than the 0.7-wide clearance box, so walking head-on into its narrow end
+    // with the box centred on it put one corner column either side of the strip and none inside it.
+    // A 3x3 grid (corners + edge midpoints + centre) spaces samples 0.35 apart on each axis - less
+    // than the thinnest blocked region (0.5) - so any blocked region the box overlaps always
+    // contains at least one sample.
+    // Unit offsets of the 3x3 samples, scaled by the box's half-width and half-depth.
+    private static readonly (float, float)[] Samples =
     {
-        (-CharacterRadius, -CharacterRadius), (CharacterRadius, -CharacterRadius),
-        (-CharacterRadius, CharacterRadius), (CharacterRadius, CharacterRadius),
+        (-1f, -1f), (0f, -1f), (1f, -1f),
+        (-1f, 0f), (0f, 0f), (1f, 0f),
+        (-1f, 1f), (0f, 1f), (1f, 1f),
     };
 
     // Ship.DeviceObstacles (the reactor console in catalog-built rooms) isn't represented as a

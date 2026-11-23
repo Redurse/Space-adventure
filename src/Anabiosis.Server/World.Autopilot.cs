@@ -94,6 +94,13 @@ public sealed partial class World
     // signal ComputeTurnInput can actually settle against, without touching that bang-bang's own
     // already-tuned logic.
     private const float AutopilotFacingSmoothingPerTick = 0.12f;
+    // A hull must be able to stop: the arrival speed profile is capped by how fast the hull can actually shed speed (BrakeAcceleration below),
+    // not just by a fixed slowing radius. A hull whose engines cannot push against its own motion (a lone rear engine, say) can only lean on
+    // auto-stabilize's drag, which is far weaker than the thrust the old fixed radius assumed - it used to sail straight past the point at
+    // full speed and pin itself against the edge of the map. Margin leaves room for the final settling; tolerance is how far over the profile
+    // the ship may drift before the drag brake is used instead of thrust.
+    private const float AutopilotBrakingMargin = 0.85f;
+    private const float AutopilotOverspeedTolerance = 1.1f;
 
     private Vec2? _autopilotDestination;
     // Non-null only for the tick(s) the player actually holds RMB - World.cs's own command handler
@@ -225,6 +232,15 @@ public sealed partial class World
         // every tick recomputes, rather than a one-time "start braking now" decision (this file's own
         // top-of-file doc comment has the full reasoning for dropping that older approach).
         var desiredSpeed = MathF.Min(ShipMaxSpeed, (float)distance / AutopilotSlowingRadius * ShipMaxSpeed);
+        var enginePowerScale = Math.Min(2f, GetEffectivePower(PowerSystemId.Engine) / ShipEngineReferencePower);
+        var dragBrake = AutoStabilizeDeceleration(enginePowerScale);
+        var thrustBrake = speed > 0.5 ? ThrustBrakeAcceleration(-_shipVelocity.Normalized(), enginePowerScale) : 0f;
+        var brakeAcceleration = MathF.Max(1f, MathF.Max(dragBrake, thrustBrake));
+        desiredSpeed = MathF.Min(desiredSpeed, AutopilotBrakingMargin * MathF.Sqrt(2f * brakeAcceleration * MathF.Max(0f, (float)distance - AutopilotArriveRadius)));
+        // Thrust cannot slow this hull faster than the drag brake can, so when it is running over the profile, let the drag do it.
+        // Also when the ship is drifting away from the point and nothing it has can turn it round.
+        var drifting = speed > 0.05 && _shipVelocity.X * seek.X + _shipVelocity.Y * seek.Y < 0;
+        var brakeWithDrag = (speed > desiredSpeed * AutopilotOverspeedTolerance + 0.5f || drifting) && dragBrake >= thrustBrake;
         var desiredVelocity = travelDirection * desiredSpeed;
         var steering = desiredVelocity - _shipVelocity;
         var steeringMagnitude = steering.Length();
@@ -306,6 +322,15 @@ public sealed partial class World
         }
         else if (hasRealEngines)
         {
+            // Stopped short with no engine able to push toward the point from this heading (it overshot, or the committed nose points away from
+            // where its engines work): aim again rather than sit there forever.
+            if (_autopilotCommittedFacingDegrees is not null && speed < AutopilotArriveSpeed && distance > AutopilotArriveRadius
+                && ThrustBrakeAcceleration(seek, enginePowerScale) < 1f)
+            {
+                _autopilotCommittedFacingDegrees = null;
+                if (BestRotationToPush(seek, enginePowerScale) is { } bestRotation)
+                    _autopilotCommittedFacingDegrees = bestRotation + Ship.ForwardDegrees;
+            }
             _autopilotCommittedFacingDegrees ??=
                 MathF.Atan2((float)headingReferenceDirection.Y, (float)headingReferenceDirection.X) * (180f / MathF.PI);
             desiredBearingDegrees = _autopilotCommittedFacingDegrees.Value;
@@ -327,7 +352,55 @@ public sealed partial class World
         var throttle = (float)(throttleVector.X * noseWorld.X + throttleVector.Y * noseWorld.Y);
         var strafe = (float)(throttleVector.X * rightWorld.X + throttleVector.Y * rightWorld.Y);
 
-        SetHelmInput(throttle, strafe, turn);
+        if (brakeWithDrag)
+            EngageAutoStabilize();
+        else
+            SetHelmInput(throttle, strafe, turn);
+    }
+
+    // The hull rotation (degrees) at which its engines push hardest toward `direction`; null for a hull with no engine fixtures, which can simply
+    // turn its nose where it likes.
+    private float? BestRotationToPush(Vec2 direction, float enginePowerScale)
+    {
+        if (Ship.Engines.Count == 0)
+            return null;
+        float? best = null;
+        var bestScore = 1f;
+        for (var rotation = 0f; rotation < 360f; rotation += 10f)
+        {
+            var score = ThrustBrakeAcceleration(direction, enginePowerScale, rotation);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = rotation;
+            }
+        }
+        return best;
+    }
+
+    // How hard the hull's own engines can push in `direction` (a world unit vector) right now: every working marching engine contributes its
+    // thrust along that direction scaled by how well it lines up (an engine fires at its alignment with the demanded direction, so the useful
+    // part is alignment squared). A hull with no engine fixtures answers with the flat thrust, since it turns its nose to push where needed.
+    private float ThrustBrakeAcceleration(Vec2 direction, float enginePowerScale, float? rotationDegrees = null)
+    {
+        var mass = ShipCatalog.Mass(CurrentShipKind);
+        if (Ship.Engines.Count == 0)
+        {
+            var thrustBonus = Ship.SystemDevices.Where(d => d.System == PowerSystemId.Engine).Sum(d => d.ThrustBonus);
+            return (ShipThrustForcePerSecond + thrustBonus) / mass * enginePowerScale;
+        }
+
+        var total = 0f;
+        foreach (var engine in Ship.Engines)
+        {
+            if (engine.Role == EngineRole.Rcs || IsEngineNozzleBroken(engine.Id))
+                continue;
+            var push = RotateLocalToWorld(-engine.FacingUnitVector, rotationDegrees ?? _shipRotationDegrees);
+            var alignment = (float)(push.X * direction.X + push.Y * direction.Y);
+            if (alignment > 0f)
+                total += engine.MaxThrust * alignment * alignment;
+        }
+        return total / mass;
     }
 
     // Steers the seek direction away from any asteroid that actually threatens the straight-line

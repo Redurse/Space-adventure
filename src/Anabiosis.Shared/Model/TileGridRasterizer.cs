@@ -49,6 +49,7 @@ public static class TileGridRasterizer
         IReadOnlyList<Door> doors)
     {
         var grid = new TileGrid();
+        grid.BeginBulkBuild(); // regions are computed once at the end, not after every tile (TileGrid.BeginBulkBuild)
 
         // Floor first - TileGrid.SetWall requires a floor already at the target coordinate, and a
         // wall/door tile is always also a floor tile in the new model (walls sit ON TOP of floor).
@@ -137,6 +138,7 @@ public static class TileGridRasterizer
         foreach (var door in doors)
             RasterizeDoor(grid, RoomsForDoor(rooms, door), door.X, door.Y, door.Width, door.Height);
 
+        grid.EndBulkBuild();
         return grid;
     }
 

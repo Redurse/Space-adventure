@@ -38,6 +38,11 @@ float BloomStrength = 0.85;
 // scene colours exactly as the renderer produced them.
 float GradeStrength = 1.0;
 
+// Colour saturation after the grade: 1 leaves it, below 1 pulls toward grey. Barotrauma's machinery look is
+// a muted, nearly monochrome steel under coloured lamps - the lamps and screens carry the colour, the
+// metal does not.
+float Saturation = 1.0;
+
 // How much the frame darkens toward the corners, as a fraction at the very corner.
 float Vignette = 0.18;
 
@@ -265,9 +270,13 @@ float4 CompositePS(VertexShaderOutput input) : COLOR
     float shadow = saturate(1.0 - luma * 2.0) * GradeStrength;
     float highlight = saturate((luma - 0.55) * 2.0) * GradeStrength;
     scene.b += 0.035 * shadow;
+    scene.g += 0.012 * shadow; // toward teal rather than plain blue: the cold of a hull at depth
     scene.r -= 0.012 * shadow;
     scene.r += 0.035 * highlight;
     scene.b -= 0.022 * highlight;
+
+    float graded = dot(scene, LumaWeights);
+    scene = lerp(float3(graded, graded, graded), scene, Saturation);
 
     scene *= 1.0 - Vignette * r2;
 

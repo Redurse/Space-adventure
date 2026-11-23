@@ -50,7 +50,9 @@ public sealed class NetworkHost : IDisposable
 
             try
             {
-                if (_server.PlayerCount >= _maxPlayers)
+                var address = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString();
+                var banned = address is not null && _server.IsBanned(address);
+                if (banned || _server.PlayerCount >= _maxPlayers)
                 {
                     // Rejected before Connect ever runs - no player id is handed out and no seat is
                     // reserved, so a refused joiner costs the server nothing. Shutdown(Send) before
@@ -59,7 +61,7 @@ public sealed class NetworkHost : IDisposable
                     // socket tearing down - a real flake under the test suite's own parallel load
                     // (Coop_NetworkHost_RejectsJoinerPastMaxPlayers) traced back to exactly this.
                     var rejectStream = client.GetStream();
-                    Wire.WriteFrame(rejectStream, new ServerMessage(ServerMessageKind.Rejected, Reason: "сервер заполнен"));
+                    Wire.WriteFrame(rejectStream, new ServerMessage(ServerMessageKind.Rejected, Reason: banned ? "вы в чёрном списке сервера" : "сервер заполнен"));
                     client.Client.Shutdown(SocketShutdown.Send);
                     rejectStream.Dispose();
                     client.Dispose();
@@ -68,7 +70,7 @@ public sealed class NetworkHost : IDisposable
 
                 var connection = new TcpServerConnection(client);
                 // Connect first, Start second: the welcome frame carries the id Connect hands out.
-                connection.Start(_server.Connect(connection));
+                connection.Start(_server.Connect(connection, address));
             }
             catch (Exception)
             {

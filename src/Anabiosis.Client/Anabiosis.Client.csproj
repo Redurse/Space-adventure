@@ -13,7 +13,7 @@
     <ApplicationIcon>Icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.*" />
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.6" />
     <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
     <!-- Real output-device selection (direct user request, "как в Baротравме") - MonoGame's own
          SoundEffect/MediaPlayer always play through whichever device was the OS default at engine

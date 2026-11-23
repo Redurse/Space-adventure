@@ -13,6 +13,18 @@ namespace Anabiosis.Server;
 public sealed partial class World
 {
     private const float WarpMaxSpeed = 2f;
+    // After a jump the drive needs a minute to recharge before the next one (direct user request). Counted in the world's own seconds, so it runs down only while the
+    // game does; a world that has not jumped yet (a new game, a loaded save) has none to wait for.
+    public const float WarpCooldownSeconds = 60f;
+    private float _warpCooldownRemaining;
+
+    // What the galactic map shows on the jump button, and what the snapshot carries.
+    public float WarpCooldownRemaining => _warpCooldownRemaining;
+
+    private void StepWarpCooldown(double deltaSeconds) =>
+        _warpCooldownRemaining = MathF.Max(0f, _warpCooldownRemaining - (float)deltaSeconds);
+
+    public void DebugClearWarpCooldown() => _warpCooldownRemaining = 0f;
     // A small safety margin past the exact WarpZoneRadius boundary so the arrival point reliably
     // still reads as ">= WarpZoneRadius" (CanWarpNow) afterward - landing EXACTLY on the boundary
     // is fragile to float/double rounding in the heading-times-radius multiply below (confirmed
@@ -27,7 +39,7 @@ public sealed partial class World
 
     // What arms the helm's "Прыжок" button - the client mirrors this to decide whether to draw it.
     public bool CanWarpNow =>
-        !IsDocked && !IsInBattle &&
+        !IsDocked && !IsInBattle && AllShuttlesHome &&
         (_shipFieldPosition - GalaxyMap.GetSystem(_currentSystemId).Field.Center).Length() >= GalaxyMap.GetSystem(_currentSystemId).WarpZoneRadius &&
         _shipVelocity.Length() < WarpMaxSpeed;
 
@@ -81,11 +93,17 @@ public sealed partial class World
         GalaxyMap.EnsureGenerated(_currentSystemId, MinReachableNeighborsWhileExploring);
         if (!GalaxyMap.IsWithinWarpRange(_currentSystemId, systemId))
             return;
+        if (_warpCooldownRemaining > 0f)
+        {
+            Notify($"Прыжковый двигатель перезаряжается: ещё {(int)MathF.Ceiling(_warpCooldownRemaining)} с");
+            return;
+        }
 
         var cost = GalaxyMap.HyperiumCost(_currentSystemId, systemId);
         if (HyperiumAboard < cost)
             return;
         ConsumeHyperium(cost);
+        _warpCooldownRemaining = WarpCooldownSeconds;
 
         // Arrives on the same side of the new system's field (relative to its own centre) the ship
         // left the old one from, rather than some arbitrary fixed spot regardless of heading - a

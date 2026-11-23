@@ -8,6 +8,10 @@ public enum EffectKind
     Cut,
     Repair,
     Explosion,
+    // A shell landing on the player's own plating (ship-local space), and one landing on somebody else's hull
+    // (field space, like Explosion).
+    HullHit,
+    Impact,
 }
 
 // A brief client-only visual (Barotrauma-style spark/flash) spawned at the moment a tool action

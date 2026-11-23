@@ -32,6 +32,9 @@ public sealed record PlacedEngine(TileCoord ControlCoord, TileSide Facing, float
 // The Docking compartment's own airlock door tile, absolute.
 public sealed record PlacedAirlock(TileCoord DoorCoord, TileSide Side);
 
+// A door on a tile seam, absolute and canonical (Side is East or South).
+public sealed record PlacedDoorEdge(TileCoord Coord, TileSide Side, string Id);
+
 // The result of one Stamp call. ProtectedTiles is every tile a later milestone's outfit-mode UI must
 // refuse to let the player remove once placed (M80 itself never enforces that refusal - see
 // CompartmentCatalog.cs's own doc comment on IsCore) - the core device tile(s), the whole engine
@@ -43,7 +46,12 @@ public sealed record CompartmentPlacementResult(
     IReadOnlyList<PlacedDevice> Devices,
     IReadOnlyList<PlacedEngine> Engines,
     PlacedAirlock? Airlock,
-    IReadOnlyList<TileCoord> ProtectedTiles)
+    IReadOnlyList<TileCoord> ProtectedTiles,
+    // The doors this stamp made on tile seams, and the ones that were already there where its own coincided (merged into one door),
+    // and the ones it took away because its walls now stand where such a door opened.
+    IReadOnlyList<PlacedDoorEdge>? PlacedDoorEdges = null,
+    IReadOnlyList<PlacedDoorEdge>? MergedDoorEdges = null,
+    IReadOnlyList<PlacedDoorEdge>? RemovedDoorEdges = null)
 {
     public static CompartmentPlacementResult Fail(string error) =>
         new(false, error, Array.Empty<PlacedDevice>(), Array.Empty<PlacedEngine>(), null, Array.Empty<TileCoord>());
@@ -67,7 +75,9 @@ public static class CompartmentPlacer
         // Direct user request ("я хочу чтобы ты сделал отсек таким каким я его сохранил") - see
         // CompartmentExtraWallSpec/CompartmentWallDeviceSpec's own doc comments (CompartmentCatalog.cs).
         IReadOnlyList<TileCoord> ExtraWalls,
-        IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind)> WallDevices);
+        IReadOnlyList<(TileCoord Position, CustomDeviceKind Kind, bool Recessed, TileSide? MountSide)> WallDevices,
+        // Door edges as (tile, side, group), the side already canonical (East or South), turned with the compartment.
+        IReadOnlyList<(TileCoord Position, TileSide Side, string Group)> DoorEdges);
 
     // Rotates a whole catalog entry (authored at 0 deg) by rotationSteps * 90 deg clockwise. Screen
     // convention (Y grows downward, same as everywhere else in this project - see TileSideExtensions.
@@ -91,7 +101,8 @@ public static class CompartmentPlacer
             .Select(o => (o.RelativePosition, o.Side))
             .ToList();
         var extraWalls = entry.ExtraWalls.Select(w => w.RelativePosition).ToList();
-        var wallDevices = entry.WallDevices.Select(d => (d.RelativePosition, d.Kind)).ToList();
+        var wallDevices = entry.WallDevices.Select(d => (d.RelativePosition, d.Kind, d.Recessed, d.MountSide)).ToList();
+        var doorEdges = entry.DoorEdges.Select(e => (e.RelativePosition, e.Side, e.Group)).ToList();
 
         TileCoord? airlockDoor = entry.Airlock is { } authoredAirlock
             ? RingCenter(authoredAirlock.Side, w, h)
@@ -151,7 +162,18 @@ public static class CompartmentPlacer
             for (var i = 0; i < extraWalls.Count; i++)
                 extraWalls[i] = RotatePointClockwise(extraWalls[i], h);
             for (var i = 0; i < wallDevices.Count; i++)
-                wallDevices[i] = (RotatePointClockwise(wallDevices[i].RelativePosition, h), wallDevices[i].Kind);
+                wallDevices[i] = (RotatePointClockwise(wallDevices[i].RelativePosition, h), wallDevices[i].Kind, wallDevices[i].Recessed,
+                    wallDevices[i].MountSide is { } mount ? RotateSideClockwise(mount) : null);
+
+            // A door on a seam turns with its two flank tiles, then is put back in the canonical form (the smaller tile, East or South).
+            for (var i = 0; i < doorEdges.Count; i++)
+            {
+                var (edgePosition, edgeSide, edgeGroup) = doorEdges[i];
+                var a = RotatePointClockwise(edgePosition, h);
+                var b = RotatePointClockwise(edgeSide.Offset(edgePosition), h);
+                var (canonicalCoord, canonicalSide) = CanonicalEdge(a, b);
+                doorEdges[i] = (canonicalCoord, canonicalSide, edgeGroup);
+            }
 
             (w, h) = (h, w);
         }
@@ -160,7 +182,24 @@ public static class CompartmentPlacer
             ? (finalSide, finalDoor)
             : null;
 
-        return new RotatedCompartment(w, h, footprintRects, devices, engines, airlock, wallOpenSides, extraWalls, wallDevices);
+        // The authored edges are kept as given when there is no turn: normalise them the same way so a seam is always East or South.
+        for (var i = 0; i < doorEdges.Count; i++)
+        {
+            var (seamPosition, seamSide, seamGroup) = doorEdges[i];
+            var (canonicalCoord, canonicalSide) = CanonicalEdge(seamPosition, seamSide.Offset(seamPosition));
+            doorEdges[i] = (canonicalCoord, canonicalSide, seamGroup);
+        }
+
+        return new RotatedCompartment(w, h, footprintRects, devices, engines, airlock, wallOpenSides, extraWalls, wallDevices, doorEdges);
+    }
+
+    // The seam between two orthogonally adjacent tiles, as (the smaller tile, East or South) - TileGrid's own canonical key.
+    private static (TileCoord Coord, TileSide Side) CanonicalEdge(TileCoord a, TileCoord b)
+    {
+        if (b.Y == a.Y && b.X == a.X + 1) return (a, TileSide.East);
+        if (b.Y == a.Y && b.X == a.X - 1) return (b, TileSide.East);
+        if (b.X == a.X && b.Y == a.Y + 1) return (a, TileSide.South);
+        return (b, TileSide.South); // b is directly above a
     }
 
     private static TileCoord RotatePointClockwise(TileCoord point, int heightBeforeRotation) =>
@@ -288,6 +327,10 @@ public static class CompartmentPlacer
                 return CompartmentPlacementResult.Fail($"Cannot place '{entry.DisplayName}' - engine nozzle at {nozzle} would open into occupied floor.");
         }
 
+        // The doors the grid had before this stamp (the grid itself drops a door when a wall appears on one of its flanks, so what was removed is
+        // told at the end by comparing).
+        var edgesBefore = grid.DoorEdges.ToDictionary(kv => kv.Key, kv => kv.Value.Id);
+
         // 3) Stamp the floor for the whole footprint.
         foreach (var local in footprintTiles)
             grid.SetFloor(Abs(local), true);
@@ -307,11 +350,19 @@ public static class CompartmentPlacer
         // with the free-tile editor's own Wall tool afterward (Game1.ShipEditor.cs), never inferred
         // automatically from footprint shape here.
         var airlockDoorAbs = rotated.Airlock is { } airlockSpec ? Abs(airlockSpec.DoorPosition) : (TileCoord?)null;
+        // The footprint-side tile of every door drawn on a seam stays plain floor - it is the doorway (the outpost compartments have them).
+        var doorwayTiles = new HashSet<TileCoord>();
+        foreach (var (edgePosition, edgeSide, _) in rotated.DoorEdges)
+            foreach (var flank in new[] { edgePosition, edgeSide.Offset(edgePosition) })
+                if (footprintTiles.Contains(flank))
+                    doorwayTiles.Add(flank);
         foreach (var local in footprintTiles)
         {
             if (!IsRingTile(local, footprintTiles))
                 continue; // interior tile - no wall here at all (includes an internal seam tile
                           // whose every neighbor, orthogonal or diagonal, is part of this same footprint)
+            if (doorwayTiles.Contains(local))
+                continue; // a doorway: open floor, the door itself is a seam door (step 8)
 
             var coord = Abs(local);
             var isAirlockDoor = airlockDoorAbs is { } doorCoord && doorCoord == coord;
@@ -347,10 +398,14 @@ public static class CompartmentPlacer
         // itself never distinguishes the two). MountSide is never picked here - PlaceRecessedWallDevice
         // computes it from the wall's own WallOpenSide.
         var wallDeviceIndex = 0;
-        foreach (var (position, kind) in rotated.WallDevices)
+        foreach (var (position, kind, recessed, mountSide) in rotated.WallDevices)
         {
             var deviceId = $"{instanceId}-walldevice-{wallDeviceIndex++}";
-            grid.PlaceRecessedWallDevice(Abs(position), kind, deviceId);
+            if (recessed)
+                grid.PlaceRecessedWallDevice(Abs(position), kind, deviceId);
+            else
+                // Standing on a floor tile against a full wall (the data was valid when drawn; no re-check, as when a saved ship is reloaded).
+                grid.RestoreWallDevice(Abs(position), kind, deviceId, mountSide ?? TileSide.North, recessed: false);
         }
 
         // 5) Devices - every tile of the device's own REAL footprint (CustomDeviceFootprint.Size,
@@ -445,6 +500,48 @@ public static class CompartmentPlacer
             protectedTiles.Add(finalDoorAbs);
         }
 
-        return new CompartmentPlacementResult(true, null, placedDevices, placedEngines, placedAirlock, protectedTiles);
+        // 8) Doors on tile seams. Where the same seam already has a door (a neighbouring compartment's own, on the very boundary this one's
+        // opens onto) the two are ONE door - nothing is added; where the outside is open space it is an airlock; where the outside is a wall
+        // or anything else it is simply not made. A door of an earlier compartment that this one's walls now stand in front of goes too.
+        var placedEdges = new List<PlacedDoorEdge>();
+        var mergedEdges = new List<PlacedDoorEdge>();
+        var removedEdges = new List<PlacedDoorEdge>();
+        foreach (var (position, side, group) in rotated.DoorEdges)
+        {
+            var edgeCoord = Abs(position);
+            if (grid.DoorEdgeAt(edgeCoord, side) is { } existing)
+            {
+                mergedEdges.Add(new PlacedDoorEdge(edgeCoord, side, existing.Id));
+                continue;
+            }
+            if (!grid.CanPlaceDoorEdge(edgeCoord, side))
+                continue;
+            var edgeId = $"{instanceId}-door-{group}";
+            grid.AddDoorEdge(edgeCoord, side, edgeId);
+            placedEdges.Add(new PlacedDoorEdge(edgeCoord, side, edgeId));
+        }
+
+        var footprintAbs = footprintTiles.Select(Abs).ToHashSet();
+        var placedKeys = placedEdges.Select(e => (e.Coord, e.Side)).ToHashSet();
+        foreach (var key in grid.DoorEdges.Keys.ToList())
+        {
+            if (placedKeys.Contains(key) || mergedEdges.Any(m => (m.Coord, m.Side) == key))
+                continue;
+            var other = key.Side.Offset(key.Coord);
+            if (!footprintAbs.Contains(key.Coord) && !footprintAbs.Contains(other))
+                continue; // nowhere near this compartment
+            bool Floor(TileCoord c) => grid.CellAt(c) is { HasFloor: true, Wall: TileWallKind.None, DeviceId: null };
+            bool Space(TileCoord c) => grid.CellAt(c) is null or { HasFloor: false, Wall: TileWallKind.None, DeviceId: null };
+            var supported = (Floor(key.Coord) && Floor(other)) || (Floor(key.Coord) && Space(other)) || (Floor(other) && Space(key.Coord));
+            if (supported)
+                continue;
+            grid.RemoveDoorEdge(key.Coord, key.Side);
+        }
+        // Every door that was there before and is not now.
+        foreach (var (key, id) in edgesBefore)
+            if (!grid.DoorEdges.ContainsKey(key))
+                removedEdges.Add(new PlacedDoorEdge(key.Coord, key.Side, id));
+
+        return new CompartmentPlacementResult(true, null, placedDevices, placedEngines, placedAirlock, protectedTiles, placedEdges, mergedEdges, removedEdges);
     }
 }

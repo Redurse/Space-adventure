@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -37,10 +37,71 @@ public partial class Game1
     // count as "near enough", not just the one exact point ReactorBlock.Position sits at.
     private static Rectangle? ReactorRectIfNear(ReactorBlock reactor, Vec2 myPosition, Vector2 origin)
     {
-        var halfWorldSize = ShipRenderer.BigBlockSize * reactor.SizeScale / ShipRenderer.PixelsPerUnit / 2f;
-        if ((myPosition - reactor.Position).Length() >= InteractionConstants.DeviceInteractionRadius + halfWorldSize)
+        // The whole drawn machine is the click target - the same 4x4 footprint it is drawn at and
+        // collides with - reachable from its edge (InteractionConstants.ReactorReach).
+        if ((myPosition - reactor.Position).Length() >= InteractionConstants.ReactorReach(reactor.SizeScale))
             return null;
-        return ShipRenderer.GetBlockRect(reactor.Position, (int)(ShipRenderer.BigBlockSize * reactor.SizeScale), origin);
+        return ShipRenderer.GetBlockRect(reactor.Position, ShipRenderer.ReactorSize(reactor), origin);
+    }
+
+    // A device drawn into the docked station (Station.Fixtures.cs): its id starts with the station point's id.
+    private static bool IsStationFixtureId(WorldSnapshot snapshot, string id) =>
+        snapshot.Voyage.DockedPointId is { } stationPointId && id.StartsWith(stationPointId + "-", StringComparison.Ordinal);
+
+    // The station's own reactor, power box, battery or junction box under the mouse, in reach - they open the station's power panel.
+    private Rectangle? StationPowerRectUnderMouse(WorldSnapshot snapshot, Vec2 myPosition, Vector2 origin)
+    {
+        if (snapshot.Station.Power is null)
+            return null;
+        foreach (var reactor in (snapshot.ExtraReactors ?? Array.Empty<ReactorBlock>()).Where(r => IsStationFixtureId(snapshot, r.Id)))
+            if (ReactorRectIfNear(reactor, myPosition, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        var (distributionWidth, distributionHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Distribution);
+        foreach (var box in (snapshot.ExtraDistributions ?? Array.Empty<PowerDistributionBlock>()).Where(b => IsStationFixtureId(snapshot, b.Id)))
+            if (BlockRectIfNear(box.Position, myPosition, distributionWidth, distributionHeight, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        var (batteryWidth, batteryHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Battery);
+        foreach (var battery in (snapshot.ExtraBatteries ?? Array.Empty<BatteryBlock>()).Where(b => IsStationFixtureId(snapshot, b.Id)))
+            if (BlockRectIfNear(battery.Position, myPosition, batteryWidth, batteryHeight, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        foreach (var junction in (snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>()).Where(j => IsStationFixtureId(snapshot, j.Id)))
+        {
+            var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Junction, junction.Rotated);
+            if (BlockRectIfNear(junction.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        }
+        return null;
+    }
+
+    private void OpenStationPowerPanel()
+    {
+        _stationPowerOpen = true;
+        _shipStatusMonitorOpen = false;
+        _commsConsoleOpen = false;
+        _junctionComingSoonOpen = false;
+        _openBlock = ClickTarget.None;
+        _infoPanelOpen = false;
+        _shipEditorOpen = false;
+        _galacticMapOpen = false;
+    }
+
+    // The reactor (or an extra one - Ship.ExtraReactorBlocks, all the same grid reactor) the mouse is over, if any is in reach.
+    private Rectangle? ReactorRectUnderMouse(WorldSnapshot snapshot, Vec2 myPosition, Vector2 origin)
+    {
+        foreach (var reactor in new[] { snapshot.ReactorBlock }.Concat(snapshot.ExtraReactors ?? Array.Empty<ReactorBlock>()).Where(r => !IsStationFixtureId(snapshot, r.Id)))
+            if (ReactorRectIfNear(reactor, myPosition, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        return null;
+    }
+
+    // Same for the power distribution box and its extras.
+    private Rectangle? DistributionRectUnderMouse(WorldSnapshot snapshot, Vec2 myPosition, Vector2 origin)
+    {
+        var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Distribution);
+        foreach (var box in new[] { snapshot.DistributionBlock }.Concat(snapshot.ExtraDistributions ?? Array.Empty<PowerDistributionBlock>()).Where(b => !IsStationFixtureId(snapshot, b.Id)))
+            if (BlockRectIfNear(box.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
+                return rect;
+        return null;
     }
 
     // Direct user report ("не могу нажать на рычаги... хитбокс текстуры как с остальными
@@ -50,7 +111,7 @@ public partial class Game1
     // clickable spot" that every other device relies on to be aimable. Same GetReactorLeverRect the
     // click-test and the drawing itself already share, so this can never disagree with either.
     private static Rectangle? ReactorLeverRectIfNear(ReactorBlock reactor, Vec2 myPosition, Vector2 origin, int index) =>
-        NearEnough(reactor.Position, myPosition) ? ShipRenderer.GetReactorLeverRect(index, reactor, origin) : null;
+        (myPosition - reactor.Position).Length() < InteractionConstants.ReactorReach(reactor.SizeScale) ? ShipRenderer.GetReactorLeverRect(index, reactor, origin) : null;
 
     private static Rectangle? SystemDeviceRectIfNear(ShipSystemDevice device, Vec2 myPosition, Vector2 origin) =>
         BlockRectIfNear(device.Position, myPosition,
@@ -143,14 +204,16 @@ public partial class Game1
         for (var leverIndex = 0; leverIndex < 3; leverIndex++)
             if (ReactorLeverRectIfNear(snapshot.ReactorBlock, myPosition, origin, leverIndex) is { } leverRect && leverRect.Contains(_designMouse))
                 return leverRect;
-        if (ReactorRectIfNear(snapshot.ReactorBlock, myPosition, origin) is { } reactorRect && reactorRect.Contains(_designMouse))
+        if (StationPowerRectUnderMouse(snapshot, myPosition, origin) is { } stationPowerRect)
+            return stationPowerRect;
+        if (ReactorRectUnderMouse(snapshot, myPosition, origin) is { } reactorRect)
             return reactorRect;
-        var (distWidth, distHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Distribution);
-        if (BlockRectIfNear(snapshot.DistributionBlock.Position, myPosition, distWidth, distHeight, origin) is { } distributionRect && distributionRect.Contains(_designMouse))
+        if (DistributionRectUnderMouse(snapshot, myPosition, origin) is { } distributionRect)
             return distributionRect;
         var (batteryWidth, batteryHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Battery);
-        if (BlockRectIfNear(snapshot.BatteryBlock.Position, myPosition, batteryWidth, batteryHeight, origin) is { } batteryRect && batteryRect.Contains(_designMouse))
-            return batteryRect;
+        foreach (var battery in new[] { snapshot.BatteryBlock }.Concat(snapshot.ExtraBatteries ?? Array.Empty<BatteryBlock>()).Where(b => !IsStationFixtureId(snapshot, b.Id)))
+            if (BlockRectIfNear(battery.Position, myPosition, batteryWidth, batteryHeight, origin) is { } batteryRect && batteryRect.Contains(_designMouse))
+                return batteryRect;
         var (helmWidth, helmHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Helm, snapshot.HelmConsole.Rotated);
         if (BlockRectIfNear(snapshot.HelmConsole.Position, myPosition, helmWidth, helmHeight, origin) is { } helmRect && helmRect.Contains(_designMouse))
             return helmRect;

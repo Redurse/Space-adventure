@@ -55,10 +55,9 @@ internal static partial class TestRunner
         MoveCharacterTo(world, 1, 4.9f, 3f); // right at the door, cockpit side
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // starts the repair
 
-        // World.SystemRepair.cs's own real 12-hour elapsed-time timer - see
-        // World_RepairSystem_RequiresWrenchHeldInHand's own comment on DebugFastForwardAllRepairs.
-        world.DebugFastForwardAllRepairs(13.0 * 3600.0);
-        world.Step(RealtimeStep);
+        // A door mends in seconds with the wrench (World.Doors.cs, DoorRepairHpPerSecond), not on the device timer of World.SystemRepair.cs.
+        for (var i = 0; i < 10 * 30; i++)
+            world.Step(RealtimeStep);
 
         var repaired = !world.IsDoorDestroyed("door-cockpit-reactor");
 

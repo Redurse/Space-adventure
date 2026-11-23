@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
 
@@ -35,10 +35,12 @@ public sealed partial class World
     // convention the Trader/Shipwright's stock already follows. Only a station with a Recruiter
     // offers anyone; the rest show an empty board, same as an Outpost with no Shipwright sells no
     // hulls.
-    private void RegenerateRecruitRoster()
+    private void RegenerateRecruitRoster(Station? station = null, string? pointId = null)
     {
         _recruitRoster = new List<BotCandidate>();
-        if (Station.Npcs.All(n => n.Kind != NpcKind.Recruiter))
+        _rosterPointId = pointId ?? _dockedPointId;
+        var forStation = station ?? Station;
+        if (!forStation.Npcs.Any(n => n.Kind == NpcKind.Recruiter && IsNpcAlive(n)))
             return;
 
         var roles = Enum.GetValues<CrewRole>().OrderBy(_ => _random.Next()).Take(3).ToList();
@@ -56,7 +58,7 @@ public sealed partial class World
 
     private void TryHireCandidate(string? candidateId)
     {
-        if (candidateId is null || !IsDocked)
+        if (candidateId is null || ServicePointId is null)
             return;
 
         if (IsHostileHere)
@@ -110,18 +112,6 @@ public sealed partial class World
     // ReactorBlock fields (each of these kinds is still always exactly one, per RepairableBlockKinds's
     // own doc comment - the FirstOrDefault fallback exists for uniformity with Security, not because
     // it's expected to ever actually miss).
-    private (Vec2 Position, string RoomId) CrewPostFor(CrewRole role) => role switch
-    {
-        CrewRole.Captain => PostForKind(DeviceKind.Helm),
-        CrewRole.Engineer => PostForKind(DeviceKind.Distribution),
-        CrewRole.Mechanic => PostForKind(DeviceKind.Reactor),
-        CrewRole.Security => PostForKind(DeviceKind.TurretBallistic, DeviceKind.TurretLaser, DeviceKind.TurretMachineGun),
-        _ => (Ship.SpawnPoint, Ship.SpawnRoomId), // Scientist: no sickbay/scanner fixture exists, tends the crew from wherever it stands
-    };
-
-    private (Vec2 Position, string RoomId) PostForKind(params DeviceKind[] kinds)
-    {
-        var device = Ship.Devices.FirstOrDefault(d => kinds.Contains(d.Kind));
-        return device is not null ? (device.Position, device.RoomId) : (Ship.SpawnPoint, Ship.SpawnRoomId);
-    }
+    private (Vec2 Position, string RoomId) CrewPostFor(CrewRole role) =>
+        Ship.RoleSpawn(role); // beside the role's own device, in its compartment - devices are solid now
 }

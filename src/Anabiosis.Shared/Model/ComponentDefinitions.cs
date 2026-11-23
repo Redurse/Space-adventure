@@ -26,12 +26,26 @@ public static class ComponentDefinitions
         },
         ComponentKind.Relay => new[] { new Pin("out", PinKind.SignalOut) },
 
+        // W7/W8: the value parts. Pins "in-a"/"in-b" take numbers (or on/off), "out" gives back "1"/"0" or a number.
+        ComponentKind.Delay or ComponentKind.SignalCheck or ComponentKind.Function or ComponentKind.Wireless
+            or ComponentKind.Regex or ComponentKind.Keyboard =>
+            new[] { new Pin("in", PinKind.SignalIn), new Pin("out", PinKind.SignalOut) },
+        ComponentKind.Comparator or ComponentKind.Math => new[]
+        {
+            new Pin("in-a", PinKind.SignalIn), new Pin("in-b", PinKind.SignalIn), new Pin("out", PinKind.SignalOut),
+        },
+        // Runs while "enable" is true - or always, when nothing is wired to it.
+        ComponentKind.Oscillator => new[] { new Pin("enable", PinKind.SignalIn), new Pin("out", PinKind.SignalOut) },
+        ComponentKind.Button => new[] { new Pin("out", PinKind.SignalOut) },
+
         ComponentKind.OxygenSensor or ComponentKind.BreachSensor
             or ComponentKind.PowerLossSensor or ComponentKind.MotionSensor =>
             new[] { new Pin("out", PinKind.SignalOut) },
 
         ComponentKind.AutoDoorController => new[] { new Pin("open", PinKind.SignalIn) },
         ComponentKind.AlarmKlaxon or ComponentKind.LightToggle => new[] { new Pin("on", PinKind.SignalIn) },
+
+        ComponentKind.Door or ComponentKind.Lamp => DeviceSignalPins(kind),
 
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind,
             "Distribution/Junction pins are hull-dependent - use DistributionPins/JunctionPins instead."),
@@ -47,6 +61,56 @@ public static class ComponentDefinitions
     // device's own junction only ever needs its single "out-0" pin.
     public static Pin JunctionInPin() => new("in", PinKind.PowerIn);
     public static Pin JunctionOutPin(int deviceIndex) => new($"out-{deviceIndex}", PinKind.PowerOut);
+
+    // W4 of wiring-plan.md - the power sources as real wire ends. Distribution gets an input (the
+    // reactor's feed and the battery's discharge both land on it) and a dedicated output that
+    // charges the battery; the battery has one of each, the reactor only an output.
+    public static Pin DistributionInPin() => new("in", PinKind.PowerIn);
+    public static Pin DistributionBatteryPin() => new("out-battery", PinKind.PowerOut);
+    public static Pin ReactorOutPin() => new("out", PinKind.PowerOut);
+    public static Pin BatteryInPin() => new("in", PinKind.PowerIn);
+    public static Pin BatteryOutPin() => new("out", PinKind.PowerOut);
+
+    // The ship's own power backbone - generated per hull (WireGraphFactory), never bought or
+    // installed; everything else is a signal-logic part sitting in a ComponentMount.
+    public static bool IsPowerBackbone(ComponentKind kind) =>
+        kind is ComponentKind.Distribution or ComponentKind.Junction or ComponentKind.Device
+            or ComponentKind.Reactor or ComponentKind.Battery;
+
+    // Everything generated per hull rather than installed by the player: the power backbone plus
+    // the doors and lamps (W6) - kept by InitializeWiring's reconcile as long as it still stands.
+    public static bool IsShipFixture(ComponentKind kind) =>
+        IsPowerBackbone(kind) || kind is ComponentKind.Door or ComponentKind.Lamp;
+
+    // W6 of wiring-plan.md - Barotrauma's signal pins on the ship's own devices (alongside their
+    // power pins, for those that have any): readings out, commands in.
+    //  - reactor: what it gives and is asked for, plasma temperature, fuel, whether it's running;
+    //    toggle/set_state work its start button;
+    //  - battery: charge in percent and in units;
+    //  - distribution block, junction box: the power and load of the grid they're on;
+    //  - door: toggle, set_state (1 open / 0 closed), state_out;
+    //  - lamp: toggle, set_state (1 on / 0 off).
+    public static IReadOnlyList<Pin> DeviceSignalPins(ComponentKind kind) => kind switch
+    {
+        ComponentKind.Reactor => new[]
+        {
+            new Pin("toggle", PinKind.SignalIn), new Pin("set_state", PinKind.SignalIn),
+            new Pin("power_value_out", PinKind.SignalOut), new Pin("load_value_out", PinKind.SignalOut),
+            new Pin("temperature_out", PinKind.SignalOut), new Pin("fuel_out", PinKind.SignalOut),
+            new Pin("state_out", PinKind.SignalOut),
+        },
+        ComponentKind.Battery => new[] { new Pin("charge_%", PinKind.SignalOut), new Pin("charge", PinKind.SignalOut) },
+        ComponentKind.Distribution or ComponentKind.Junction => new[]
+        {
+            new Pin("power_value_out", PinKind.SignalOut), new Pin("load_value_out", PinKind.SignalOut),
+        },
+        ComponentKind.Door => new[]
+        {
+            new Pin("toggle", PinKind.SignalIn), new Pin("set_state", PinKind.SignalIn), new Pin("state_out", PinKind.SignalOut),
+        },
+        ComponentKind.Lamp => new[] { new Pin("toggle", PinKind.SignalIn), new Pin("set_state", PinKind.SignalIn) },
+        _ => Array.Empty<Pin>(),
+    };
 
     // 1:1 with the 14 purchasable ItemType values (World.ComponentMounts.cs, M23) - Distribution/
     // Junction/Device are never purchasable, so they have no ItemType counterpart.
@@ -66,6 +130,16 @@ public static class ComponentDefinitions
         ComponentKind.AutoDoorController => ItemType.AutoDoorController,
         ComponentKind.AlarmKlaxon => ItemType.AlarmKlaxon,
         ComponentKind.LightToggle => ItemType.LightToggle,
+        ComponentKind.Delay => ItemType.Delay,
+        ComponentKind.Oscillator => ItemType.Oscillator,
+        ComponentKind.Comparator => ItemType.Comparator,
+        ComponentKind.SignalCheck => ItemType.SignalCheck,
+        ComponentKind.Button => ItemType.Button,
+        ComponentKind.Math => ItemType.MathPart,
+        ComponentKind.Function => ItemType.FunctionPart,
+        ComponentKind.Wireless => ItemType.WirelessPart,
+        ComponentKind.Regex => ItemType.RegexPart,
+        ComponentKind.Keyboard => ItemType.TerminalPart,
         _ => null,
     };
 
@@ -85,6 +159,16 @@ public static class ComponentDefinitions
         ItemType.AutoDoorController => ComponentKind.AutoDoorController,
         ItemType.AlarmKlaxon => ComponentKind.AlarmKlaxon,
         ItemType.LightToggle => ComponentKind.LightToggle,
+        ItemType.Delay => ComponentKind.Delay,
+        ItemType.Oscillator => ComponentKind.Oscillator,
+        ItemType.Comparator => ComponentKind.Comparator,
+        ItemType.SignalCheck => ComponentKind.SignalCheck,
+        ItemType.Button => ComponentKind.Button,
+        ItemType.MathPart => ComponentKind.Math,
+        ItemType.FunctionPart => ComponentKind.Function,
+        ItemType.WirelessPart => ComponentKind.Wireless,
+        ItemType.RegexPart => ComponentKind.Regex,
+        ItemType.TerminalPart => ComponentKind.Keyboard,
         _ => null,
     };
 
@@ -93,6 +177,10 @@ public static class ComponentDefinitions
         ComponentKind.Distribution => "распределительный блок",
         ComponentKind.Junction => "щиток",
         ComponentKind.Device => "потребитель",
+        ComponentKind.Reactor => "реактор",
+        ComponentKind.Battery => "батарея",
+        ComponentKind.Door => "дверь",
+        ComponentKind.Lamp => "лампа",
         ComponentKind.GateAnd => "логический элемент И",
         ComponentKind.GateOr => "логический элемент ИЛИ",
         ComponentKind.GateNot => "логический элемент НЕ",
@@ -107,6 +195,16 @@ public static class ComponentDefinitions
         ComponentKind.AutoDoorController => "контроллер двери",
         ComponentKind.AlarmKlaxon => "сирена",
         ComponentKind.LightToggle => "переключатель света",
+        ComponentKind.Delay => "линия задержки",
+        ComponentKind.Oscillator => "генератор",
+        ComponentKind.Comparator => "компаратор",
+        ComponentKind.SignalCheck => "проверка сигнала",
+        ComponentKind.Button => "кнопка",
+        ComponentKind.Math => "математический блок",
+        ComponentKind.Function => "функциональный блок",
+        ComponentKind.Wireless => "беспроводной модуль",
+        ComponentKind.Regex => "регулярное выражение",
+        ComponentKind.Keyboard => "терминал",
         _ => kind.ToString(),
     };
 
@@ -126,6 +224,16 @@ public static class ComponentDefinitions
         ComponentKind.AutoDoorController => "DOOR",
         ComponentKind.AlarmKlaxon => "ALM",
         ComponentKind.LightToggle => "LT",
+        ComponentKind.Delay => "DEL",
+        ComponentKind.Oscillator => "OSC",
+        ComponentKind.Comparator => "CMP",
+        ComponentKind.SignalCheck => "TST",
+        ComponentKind.Button => "BTN",
+        ComponentKind.Math => "MAT",
+        ComponentKind.Function => "FUN",
+        ComponentKind.Wireless => "WRL",
+        ComponentKind.Regex => "REX",
+        ComponentKind.Keyboard => "TRM",
         _ => "?",
     };
 }

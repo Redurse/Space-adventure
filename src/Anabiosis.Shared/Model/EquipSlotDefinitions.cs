@@ -10,6 +10,8 @@ public static class EquipSlotDefinitions
         ItemType.BeltBag => EquipSlot.BeltBag,
         ItemType.IdCard => EquipSlot.IdCard,
         ItemType.Radio => EquipSlot.Headset,
+        ItemType.BodyArmor => EquipSlot.Suit,
+        ItemType.BallisticHelmet => EquipSlot.Headwear,
         _ => null,
     };
 }

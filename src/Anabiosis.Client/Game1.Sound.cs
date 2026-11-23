@@ -13,6 +13,8 @@ namespace Anabiosis.Client;
 public partial class Game1
 {
     private GameSounds? _sounds;
+    // The ship's own soundscape: beds, alarms, footsteps, work loops, creaks (Audio/ShipAmbience.cs).
+    private ShipAmbience? _ambience;
 
     // Panels are pure client state, so this is remembered here rather than diffed off a snapshot.
     private BlockKind _soundLastOpenBlock = BlockKind.None;
@@ -29,6 +31,9 @@ public partial class Game1
         if (_sounds is null)
             return;
 
+        // The ship's own soundscape follows the newest snapshot every frame (it works out for itself what is new).
+        _ambience?.Update(current, _client.PlayerId, nowSeconds);
+
         // Doors. Only the ones that actually changed state, and the throttle inside GameSounds keeps
         // a whole bank of them cycling at once from stacking into distortion.
         if (previous is not null)
@@ -36,9 +41,8 @@ public partial class Game1
             foreach (var state in current.DoorStates)
             {
                 var before = previous.DoorStates.FirstOrDefault(s => s.DoorId == state.DoorId);
-                if (before is null || before.IsOpen == state.IsOpen)
-                    continue;
-                _sounds.Play(state.IsOpen ? GameSounds.DoorOpen : GameSounds.DoorClose, nowSeconds, volume: 0.75f);
+                if (before is not null)
+                    PlayDoorChange(before.IsOpen, before.Destroyed, state.IsOpen, state.Destroyed, nowSeconds);
             }
 
             // Direct user report ("добавь звук при открытии двери как это было раньше") - M-doors-
@@ -49,9 +53,8 @@ public partial class Game1
             foreach (var state in current.DoorEdgeStates ?? Array.Empty<DoorEdgeState>())
             {
                 var before = (previous.DoorEdgeStates ?? Array.Empty<DoorEdgeState>()).FirstOrDefault(s => s.Id == state.Id);
-                if (before is null || before.IsOpen == state.IsOpen)
-                    continue;
-                _sounds.Play(state.IsOpen ? GameSounds.DoorOpen : GameSounds.DoorClose, nowSeconds, volume: 0.75f);
+                if (before is not null)
+                    PlayDoorChange(before.IsOpen, before.Destroyed, state.IsOpen, state.Destroyed, nowSeconds);
             }
 
             // A new hole in the hull. Counting rather than matching ids: a breach is loud enough that
@@ -68,6 +71,8 @@ public partial class Game1
                     _sounds.Play(blast.Kind == ShipBlastKind.Reactor ? GameSounds.ExplosionBig : GameSounds.Explosion, nowSeconds, pitchSpread: 0.04f);
             if (_soundHeardBlasts.Count > 64)
                 _soundHeardBlasts.Clear();
+
+            UpdateCombatSounds(previous, current, nowSeconds);
         }
 
         // The player's own suit, not the ship's: everyone hears their own air running out.
@@ -102,4 +107,47 @@ public partial class Game1
     // inside HandleMouseClick) that doesn't have a GameTime in scope, and GameSounds.PlayInternal's
     // own repeat-throttle only needs a steadily-increasing clock, not the simulation's own one.
     private void PlayUiClick() => _sounds?.PlayUi(GameSounds.UiClick, Environment.TickCount64 / 1000.0);
+}
+
+// Item sounds fired from input handling (which has no GameTime in scope).
+public partial class Game1
+{
+    private void PlayItemSound(string name, float volume) =>
+        _sounds?.Play(name, Environment.TickCount64 / 1000.0, volume: volume, pitchSpread: 0.04f);
+
+    // Taking something up off the floor: the pick-up sound, or the refusal when there is nowhere to put it.
+    private void PlayFloorPickupSound(CharacterState me)
+    {
+        var inventory = me.Inventory;
+        var room = inventory is null || inventory.MainSlots.Any(slot => slot is null) || inventory.BeltBagSlots.Any(slot => slot is null);
+        PlayItemSound(room ? GameSounds.ItemPickup : GameSounds.ItemFail, 0.6f);
+    }
+}
+
+// Doors: opening and closing play one of four recordings (never the same twice in a row), a door that has just been destroyed plays one of two breaking sounds.
+public partial class Game1
+{
+    private const int DoorSoundVariants = 4;
+    private const int DoorBreakVariants = 2;
+    private int _lastDoorVariant;
+    private readonly Random _doorSoundRandom = new();
+
+    private void PlayDoorChange(bool wasOpen, bool wasDestroyed, bool isOpen, bool isDestroyed, double nowSeconds)
+    {
+        if (_sounds is null)
+            return;
+        if (isDestroyed)
+        {
+            if (!wasDestroyed)
+                _sounds.Play($"door_break_{_doorSoundRandom.Next(1, DoorBreakVariants + 1)}", nowSeconds, volume: 0.9f, pitchSpread: 0.05f);
+            return; // a broken door has no more movement to hear
+        }
+        if (wasOpen == isOpen)
+            return;
+        var variant = _doorSoundRandom.Next(1, DoorSoundVariants + 1);
+        if (variant == _lastDoorVariant)
+            variant = variant % DoorSoundVariants + 1;
+        _lastDoorVariant = variant;
+        _sounds.Play($"door_{variant}", nowSeconds, volume: isOpen ? 0.75f : 0.65f, pitchSpread: 0.05f);
+    }
 }

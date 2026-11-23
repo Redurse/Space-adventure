@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Anabiosis.Client.Rendering;
@@ -29,7 +29,7 @@ internal static partial class TestRunner
     {
         var plain = new TradeCart();
         var mining = new TradeCart { MiningStation = true };
-        return mining.SellPriceOf(ItemType.IronOre) > plain.SellPriceOf(ItemType.IronOre)
+        return mining.SellPriceOf(ItemType.RawIron) > plain.SellPriceOf(ItemType.RawIron)
             && mining.SellPriceOf(ItemType.Wrench) == plain.SellPriceOf(ItemType.Wrench);
     }
 

@@ -27,4 +27,31 @@ public enum ComponentKind
     AutoDoorController,
     AlarmKlaxon,
     LightToggle,
+
+    // W4 of wiring-plan.md - the reactor and the battery become real ends of real wires (reactor ->
+    // distribution, distribution <-> battery) instead of being hooked up implicitly. Appended, not
+    // grouped with the backbone above, so every existing value keeps its number.
+    Reactor,
+    Battery,
+
+    // W6 - the ship's doors and wall lamps as wiring components: they carry signal pins only
+    // (toggle / set_state, a door's state_out), generated per hull like the backbone above.
+    Door,
+    Lamp,
+
+    // W7 of wiring-plan.md - more logic: a delay line, a generator, a comparison, a value check, a push button.
+    // W8 - signal maths, a function of one value, and the wireless module with channels. Appended so every
+    // existing value keeps its number.
+    Delay,
+    Oscillator,
+    Comparator,
+    SignalCheck,
+    Button,
+    Math,
+    Function,
+    Wireless,
+
+    // Parts with a text setting (Component.Text): "1" when the signal matches the pattern, and a keyboard that sends what was typed.
+    Regex,
+    Keyboard,
 }

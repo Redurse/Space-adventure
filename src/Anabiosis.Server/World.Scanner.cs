@@ -99,6 +99,9 @@ public sealed partial class World
             contacts[npc.Id] = new ScannerContactState(
                 npc.Id, npc.Kind, npc.FactionId, npc.Position.X, npc.Position.Y, npc.RotationDegrees, Tick);
         }
+
+        // The same sweep clears the fog of war and picks up hidden places as unknown signals (World.Exploration.cs).
+        RevealBySonar(isCircular ? null : character.ScannerSweepDegrees, ScannerSweepHalfAngleDegrees, range);
     }
 
     // Ticks every character's own personal cooldown down, regardless of where they currently are -

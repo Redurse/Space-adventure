@@ -127,7 +127,8 @@ public sealed partial class World
     {
         if (RoomCatalog.Find(request.CatalogId) is not { } entry)
             return;
-        if (Credits < entry.Price || _hullPlatingStock < entry.PlatingCost)
+        var entryPrice = CampaignModifiers.Scale(entry.Price, Modifiers.ShipyardPrice);
+        if (Credits < entryPrice || _hullPlatingStock < entry.PlatingCost)
             return;
 
         var def = Ship.ToDefinition();
@@ -162,7 +163,7 @@ public sealed partial class World
         if (newRoom is null)
             return; // no valid placement right now
 
-        Credits -= entry.Price;
+        Credits -= entryPrice;
         _hullPlatingStock -= entry.PlatingCost;
         _pendingRoomBuilds.Add(new PendingRoomBuild { Room = newRoom, Devices = RoomCatalog.DevicesFor(entry, newRoom), Engines = RoomCatalog.EnginesFor(entry, newRoom) });
     }
@@ -336,8 +337,7 @@ public sealed partial class World
                 // not teleport the whole crew to the cockpit); only a character whose room is gone falls back.
                 if (newShip.Rooms.Any(r => r.Id == character.RoomId))
                     continue;
-                character.Position = newShip.SpawnPoint;
-                character.RoomId = newShip.SpawnRoomId;
+                (character.Position, character.RoomId) = newShip.RoleSpawn(character.Role);
             }
             return;
         }
@@ -347,6 +347,11 @@ public sealed partial class World
         // removed ids, default new ones the same way InitializeShipState always has. This is what
         // actually closes the "building/demolishing a room heals every wire/wall/door on the ship"
         // exploit for M60's own placeholder catalog.
+        // W4 of wiring-plan.md: the wiring reconciles itself (World.Wiring.cs's InitializeWiring) -
+        // a compartment that brought or took away a junction box gets it wired in or out, and every
+        // other wire, the player's own included, stays exactly as it was.
+        InitializeWiring();
+
         var newBlockIds = newShip.WallBlocks.Select(b => b.Id).ToHashSet();
         foreach (var key in _wallBlockHp.Keys.Where(k => !newBlockIds.Contains(k)).ToList())
             _wallBlockHp.Remove(key);
@@ -394,8 +399,7 @@ public sealed partial class World
         // the only per-character safety net still needed once the heavier reset above is skipped.
         foreach (var character in _characters.Values.Where(c => !c.OnStation && !c.IsOutside && !newRoomIds.Contains(c.RoomId)))
         {
-            character.Position = newShip.SpawnPoint;
-            character.RoomId = newShip.SpawnRoomId;
+            (character.Position, character.RoomId) = newShip.RoleSpawn(character.Role);
         }
     }
 }

@@ -41,4 +41,7 @@ public sealed record EnemyShipSnapshot(
     IReadOnlyList<string>? NotWorkingIds = null,
     bool ReactorBroken = false,
     bool DistributionBroken = false,
-    bool HelmBroken = false);
+    bool HelmBroken = false,
+    // The boardable hull is a wreck (World.Wrecks.cs): nobody aboard, and Loot is the salvage on its decks.
+    bool IsDerelict = false,
+    IReadOnlyList<WreckLootState>? Loot = null);

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -150,6 +150,7 @@ public partial class Game1
             if (target.TankAttach is { } attach)
             {
                 _pendingTankAttach = attach;
+                _sounds?.Play(GameSounds.ItemDrop, nowSeconds, volume: 0.7f);
                 return (null, null, true);
             }
 
@@ -157,9 +158,11 @@ public partial class Game1
             {
                 _invalidDropSlot = target.Slot;
                 _invalidDropFlashUntil = nowSeconds + InvalidDropFlashSeconds;
+                _sounds?.Play(GameSounds.ItemFail, nowSeconds, volume: 0.6f);
                 return (null, null, true); // rejected - the item snaps back to `from`
             }
 
+            _sounds?.Play(GameSounds.ItemDrop, nowSeconds, volume: 0.7f);
             return (from, target.Slot, true);
         }
 
@@ -186,7 +189,10 @@ public partial class Game1
         {
             var toolSlot = HoveredToolSlotIndex(inventory, InventoryRowOrigin(inventory.MainSlots.Count));
             if (toolSlot is { } ts && ts != from.Index && inventory.MainSlots[ts] is { } toolItem &&
-                TankSockets.AcceptedTank(toolItem) == draggedItem && inventory.MainSlotTanks[ts] is null)
+                TankSockets.Accepts(toolItem, draggedItem) &&
+                // an empty socket; loose rounds top a gun up; a magazine offered to a loaded gun swaps with the one in it
+                (inventory.MainSlotTanks[ts] is null
+                    || (TankSockets.IsStack(draggedItem) ? inventory.MainSlotTanks[ts] < TankSockets.CapacityOf(toolItem) : GunDefinitions.Of(toolItem) is not null)))
                 return new DropTarget(new SlotRef(ItemSlotKind.Main, ts), true, (from.Index, ts));
         }
 
@@ -204,6 +210,12 @@ public partial class Game1
 
         if (HitTestItemSlot(snapshot) is not { } to || to == from)
             return null;
+
+        // A tank (a welding tank, a magazine, an oxygen cylinder) dropped on something that has a socket but does not take THIS tank - a welding tank on a
+        // rifle - is refused: it neither loads nor swaps places with the tool.
+        if (from.Kind == ItemSlotKind.Main && TankSockets.IsTank(draggedItem) && to.Kind == ItemSlotKind.Main
+            && inventory.MainSlots[to.Index] is { } socketOwner && TankSockets.HasSocket(socketOwner) && !TankSockets.Accepts(socketOwner, draggedItem))
+            return new DropTarget(to, false, null);
 
         var valid = IsClientReachable(me, from) && IsClientReachable(me, to);
         return new DropTarget(to, valid, null);
@@ -349,7 +361,7 @@ public partial class Game1
 
     private bool HoldingFirearm() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
-        && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] is ItemType.Rifle or ItemType.LaserRifle);
+        && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] is { } held && WeaponDefinitions.IsFirearm(held));
 
     private bool HoldingAxe() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
@@ -365,6 +377,10 @@ public partial class Game1
 
     // Gates ConnectionsPanel everywhere it opens (Junction/Distribution/SystemDevice/ComponentMount) -
     // wrench touches the hardware, screwdriver reads the wiring (World.ComponentMounts.cs).
+    // W5: either wiring tool opens a component's connection panel - the spool to wire it, the
+    // screwdriver to take wires off.
+    private bool HoldingWiringTool() => HoldingScrewdriver() || HoldingWireSpool();
+
     private bool HoldingScrewdriver() =>
         _client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId)?.Inventory is { } inventory
         && inventory.HeldMainSlotIndices.Any(i => inventory.MainSlots[i] == ItemType.Screwdriver);
@@ -502,19 +518,8 @@ public partial class Game1
         return vec.Length() > 0.0001f ? vec.Normalized() : Vec2.Zero;
     }
 
-    private static int? ReadPowerSystemSelection(KeyboardState keyboard)
-    {
-        if (keyboard.IsKeyDown(Keys.D1)) return 0;
-        if (keyboard.IsKeyDown(Keys.D2)) return 1;
-        if (keyboard.IsKeyDown(Keys.D3)) return 2;
-        if (keyboard.IsKeyDown(Keys.D4)) return 3;
-        if (keyboard.IsKeyDown(Keys.D5)) return 4;
-        return null;
-    }
-
     // 1-9 then 0 for the tenth slot - the same row of number keys Barotrauma binds its hotbar to.
-    // Edge-triggered (a held key doesn't keep re-toggling), and only read where the distribution
-    // block isn't open, since 1-5 already mean something else there (ReadPowerSystemSelection).
+    // Edge-triggered (a held key doesn't keep re-toggling).
     private static readonly Keys[] InventoryHotkeys =
         { Keys.D1, Keys.D2, Keys.D3, Keys.D4, Keys.D5, Keys.D6, Keys.D7, Keys.D8, Keys.D9, Keys.D0 };
 
@@ -543,14 +548,6 @@ public partial class Game1
         // starts back at 1x, the same "current" the 1/3x..3x clamp is measured from every time
         // spectating begins, not wherever a previous spectating session happened to leave it.
         _spectatorZoom = 1f;
-    }
-
-    private static float ReadPowerDirection(KeyboardState keyboard)
-    {
-        float direction = 0;
-        if (keyboard.IsKeyDown(Keys.Q)) direction -= 1;
-        if (keyboard.IsKeyDown(Keys.E)) direction += 1;
-        return direction;
     }
 
     // One left click handles, in priority order: (1) the Barotrauma-style hold strip under an
@@ -584,6 +581,21 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, null);
         }
 
+        // A stopped heart: the only thing left to do is give up.
+        if (_client.LatestSnapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId) is { Health: > 0f, Body.ArrestSecondsLeft: > 0f })
+        {
+            if (PlayerHealthPanel.GiveUpButtonRect(DesignWidth, DesignHeight).Contains(_designMouse))
+            {
+                PlayUiClick();
+                _pendingGiveUp = true;
+            }
+            return (-1, -1, null, -1, false, false, null, null);
+        }
+
+        // The health window (H) takes its own clicks.
+        if (_client.LatestSnapshot is { } healthSnapshot && HandleHealthWindowClick(healthSnapshot))
+            return (-1, -1, null, -1, false, false, null, null);
+
         // The dev cheat panel (Ё key) sits over everything else too, same reasoning as the pause
         // menu right below - its one button is read via a side-effect field (Game1.cs's Update)
         // rather than this tuple, since it's not part of the game's own action set.
@@ -602,6 +614,17 @@ public partial class Game1
             {
                 PlayUiClick();
                 _enemyInteriorCheat = !_enemyInteriorCheat;
+            }
+            else if (CheatPanel.GetInfiniteAmmoButtonRect(CheatPanelOrigin).Contains(_designMouse))
+            {
+                PlayUiClick();
+                _infiniteAmmoCheat = !_infiniteAmmoCheat;
+                _pendingInfiniteAmmo = _infiniteAmmoCheat;
+            }
+            else if (CheatPanel.GetRevealMapButtonRect(CheatPanelOrigin).Contains(_designMouse))
+            {
+                PlayUiClick();
+                _pendingRevealSystemMap = true;
             }
             return (-1, -1, null, -1, false, false, null, null);
         }
@@ -719,9 +742,17 @@ public partial class Game1
         if (_shipStatusMonitorOpen)
             return (-1, -1, null, -1, false, false, null, null);
         if (_commsConsoleOpen)
-            return (-1, -1, null, -1, false, false, null, null);
+            return HandleCommsClick(snapshot);
         if (_junctionComingSoonOpen)
             return (-1, -1, null, -1, false, false, null, null);
+        if (_stationPowerOpen)
+        {
+            // The one button: plug the ship into the station's reactor or pull the plug.
+            if (snapshot?.Station.Power is { Available: true }
+                && StationPowerPanel.ButtonRect(new Rectangle(0, 0, DesignWidth, DesignHeight)).Contains(_designMouse))
+                _pendingToggleShorePower = true;
+            return (-1, -1, null, -1, false, false, null, null);
+        }
         if (_shipEditorOpen && snapshot is not null)
         {
             for (var i = 0; i < snapshot.Wiring.Components.Count; i++)
@@ -941,12 +972,42 @@ public partial class Game1
             }
         }
 
+        // W5 of wiring-plan.md - the connection panel is where wiring is done: a spool in hand makes
+        // a pin click start/finish a wire, a screwdriver makes a wire click take it off. A click
+        // anywhere else on the open panel is swallowed so it never falls through to the deck.
+        if (_openBlock.Kind == BlockKind.Connections && _openBlock.TargetComponentId is { } connectionsId)
+        {
+            if (_connectionsPanel.HitTest(snapshot, connectionsId, ConnectionsPanelBounds, _designMouse) is { } hit)
+            {
+                if (hit.IsSetting)
+                {
+                    // W7: a settings button (time, number, operation) - needs no tool in hand.
+                    if (hit.Setting == ComponentSettingAction.EditText)
+                        BeginPartText(connectionsId, snapshot.Wiring.Components.FirstOrDefault(c => c.Id == connectionsId)?.Text ?? "");
+                    else if (hit.Setting != ComponentSettingAction.None)
+                        _pendingComponentSetting = (connectionsId, (int)hit.Setting);
+                }
+                else if (hit.WireId is null && HoldingWireSpool())
+                    _pendingPinInteract = hit.Pin;
+                else if (hit.WireId is { } wireId && HoldingScrewdriver())
+                    _pendingRemoveWireId = wireId;
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+            if (_connectionsPanel.Layout(snapshot, connectionsId, ConnectionsPanelBounds).Panel.Contains(_designMouse))
+                return (-1, -1, null, -1, false, false, null, null);
+        }
+
         if (_openBlock.Kind == BlockKind.Reactor)
         {
             for (var i = 0; i < snapshot.Reactor.RodCharges.Count; i++)
             {
                 if (ReactorPanel.GetSlotRect(i, PowerPanelOrigin).Contains(_designMouse))
                     return (-1, i, null, -1, false, false, null, null);
+            }
+            if (ReactorPanel.GetPowerButtonRect(PowerPanelOrigin).Contains(_designMouse))
+            {
+                _pendingToggleReactorRunning = true;
+                return (-1, -1, null, -1, false, false, null, null);
             }
         }
 
@@ -978,6 +1039,30 @@ public partial class Game1
                 return (-1, -1, null, -1, false, false, null, null);
             }
         }
+        // A shuttle bay panel (ShuttleBayPanel): the launch button while the shuttle is home, call-back and stop while it is out.
+        // Orders only travel to the server as a request; where the shuttle goes is ordered from the helm's map.
+        if (_openBlock.Kind == BlockKind.ShuttleBay && _openBlock.TargetComponentId is { } openBayId)
+        {
+            var bayShuttle = snapshot?.Shuttles?.FirstOrDefault(s => s.BayId == openBayId);
+            if (bayShuttle is { Phase: ShuttlePhase.Docked } && ShuttleBayPanel.GetLaunchRect(PowerPanelOrigin).Contains(_designMouse))
+            {
+                _pendingShuttleRequest = new ShuttleRequest(openBayId, ShuttleOrder.Launch);
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+            if (bayShuttle is { Phase: ShuttlePhase.Flying or ShuttlePhase.Returning })
+            {
+                if (ShuttleBayPanel.GetRecallRect(PowerPanelOrigin).Contains(_designMouse))
+                {
+                    _pendingShuttleRequest = new ShuttleRequest(openBayId, ShuttleOrder.Recall);
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+                if (ShuttleBayPanel.GetStopRect(PowerPanelOrigin).Contains(_designMouse))
+                {
+                    _pendingShuttleRequest = new ShuttleRequest(openBayId, ShuttleOrder.Stop);
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+            }
+        }
 
         // Direct user request ("сделай меню фабрикатора как в баротравме") - every click inside the
         // open panel is purely local UI state (which recipe is highlighted, filter toggles) EXCEPT
@@ -997,8 +1082,17 @@ public partial class Game1
                 return (-1, -1, null, -1, false, false, null, null);
             }
 
+            for (var tab = 0; tab < FabricatorCatalog.Categories.Count; tab++)
+            {
+                if (!FabricatorPanel.GetSidebarIconRect(tab, FabricatorPanelOrigin).Contains(_designMouse))
+                    continue;
+                _fabricatorCategory = FabricatorCatalog.Categories[tab];
+                _fabricatorSelectedRecipeId = null;
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+
             var fabricatorInventory = me?.Inventory;
-            var fabricatorVisible = FabricatorPanel.VisibleRecipes(_fabricatorOnlyAvailable, fabricatorInventory);
+            var fabricatorVisible = FabricatorPanel.VisibleRecipes(_fabricatorOnlyAvailable, fabricatorInventory, _fabricatorCategory);
             if (_fabricatorSortByName)
                 fabricatorVisible = fabricatorVisible.OrderBy(r => ItemDefinitions.DisplayName(r.Output)).ToList();
             for (var i = 0; i < fabricatorVisible.Count; i++)
@@ -1067,14 +1161,18 @@ public partial class Game1
             }
         }
 
+        // The galactic map takes the whole screen: every click on it is its own - a speed button, a system picked, the jump button.
+        if (_galacticMapOpen && !_galacticMapUnlocked)
+            return (-1, -1, null, -1, false, false, null, null); // the password prompt is up: nothing behind it can be clicked
         if (_galacticMapOpen)
         {
-            var galacticMapOrigin = GalacticMapPanel.ComputeOrigin(GalaxyMapPanelOrigin, snapshot.StarSystems, _galacticMapZoom, _galacticMapPanOffset);
-            foreach (var system in snapshot.StarSystems)
+            var mapClick = _galacticMapPanel.HandleClick(snapshot, _designMouse.ToVector2(), Vector2.Zero, _galacticMapZoom, _galacticMapPanOffset);
+            if (mapClick.Consumed)
             {
-                if (!GalacticMapPanel.GetNodeRect(system, galacticMapOrigin, _galacticMapZoom).Contains(_designMouse))
-                    continue;
-                _pendingWarpToSystemId = system.Id;
+                if (mapClick.WarpToSystemId is { } warpTarget)
+                    _pendingWarpToSystemId = warpTarget;
+                if (mapClick.SetWarSpeed is { } warSpeed)
+                    _pendingWarSpeedLevel = warSpeed;
                 return (-1, -1, null, -1, false, false, null, null);
             }
         }
@@ -1237,7 +1335,7 @@ public partial class Game1
         // reads myPosition against a ship-local position (me.OnStation's own doc comment further
         // down) - moving this check above that guard means it has to state the precondition itself
         // now instead of inheriting it for free from running after that return.
-        if (!me.OnStation && NearEnough(snapshot.ReactorBlock.Position))
+        if (!me.OnStation && (snapshot.ReactorBlock.Position - myPosition).Length() < InteractionConstants.ReactorReach(snapshot.ReactorBlock.SizeScale))
         {
             for (var i = 0; i < 3; i++)
             {
@@ -1294,7 +1392,15 @@ public partial class Game1
         // Content-каталог отсеков/Ship Editor - a catalog-built reactor's own console can be much
         // bigger than the hand-authored default; ReactorRectIfNear (Game1.Interactables.cs) already
         // accounts for that, same rect hover uses.
-        if (ReactorRectIfNear(snapshot.ReactorBlock, myPosition, origin) is { } reactorClickRect && reactorClickRect.Contains(_designMouse))
+        // The station's own reactor, power box, battery and junction boxes (drawn into the docked station) open the station's power panel,
+        // not the ship's panels - they are not the ship's machines.
+        if (StationPowerRectUnderMouse(snapshot, myPosition, origin) is not null)
+        {
+            OpenStationPowerPanel();
+            return (-1, -1, null, -1, false, false, null, null);
+        }
+
+        if (ReactorRectUnderMouse(snapshot, myPosition, origin) is not null)
         {
             // humble-soaring-cat.md - a damaged block repairs on click instead of opening its
             // (otherwise unaffected) panel, same priority order World.Interact.cs's own repair
@@ -1304,7 +1410,8 @@ public partial class Game1
                 _pendingRepairDeviceId = snapshot.ReactorBlock.Id;
                 return (-1, -1, null, -1, false, false, null, null);
             }
-            _openBlock = _openBlock.Kind == BlockKind.Reactor ? ClickTarget.None : ClickTarget.Reactor;
+            _openBlock = HoldingWiringTool() ? ToggleConnections(WireGraphFactory.ReactorId)
+                : _openBlock.Kind == BlockKind.Reactor ? ClickTarget.None : ClickTarget.Reactor;
             return (-1, -1, null, -1, false, false, null, null);
         }
 
@@ -1355,13 +1462,33 @@ public partial class Game1
                 return (-1, -1, null, -1, false, false, null, null);
             }
         }
-        // Direct user request ("серый экран с надписью скоро") - same click-to-open convention as
-        // the two loops just above; every JunctionBox shares this one placeholder screen.
+        // W6: a wall lamp has signal pins (toggle, set_state) - with a wire spool or screwdriver in
+        // hand a click on it opens its connection panel.
+        if (HoldingWiringTool())
+            foreach (var lamp in snapshot.WallLamps ?? Array.Empty<WallLamp>())
+            {
+                if (BlockRectIfNear(lamp.Position, myPosition, ShipRenderer.NormalBlockSize, origin) is not { } lampRect || !lampRect.Contains(_designMouse)
+                    || snapshot.Wiring.Components.All(c => c.Id != lamp.Id))
+                    continue;
+                _openBlock = ToggleConnections(lamp.Id);
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+        // A real junction box (W4 made it part of the wiring): a damaged one repairs on click with a
+        // repair tool, otherwise the click opens its connection panel (W5) - the box's whole job.
+        // The old "скоро" placeholder only remains for a box the wiring somehow doesn't know.
         foreach (var junctionDevice in snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>())
         {
             var (width, height) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Junction, junctionDevice.Rotated);
             if (BlockRectIfNear(junctionDevice.Position, myPosition, width, height, origin) is { } rect && rect.Contains(_designMouse))
             {
+                if (snapshot.Wiring.Components.Any(c => c.Id == junctionDevice.Id && c.Kind == ComponentKind.Junction))
+                {
+                    if (HoldingRepairTool() && (snapshot.JunctionStates.FirstOrDefault(s => s.DeviceId == junctionDevice.Id)?.Damaged ?? false))
+                        _pendingRepairDeviceId = junctionDevice.Id;
+                    else
+                        _openBlock = ToggleConnections(junctionDevice.Id);
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
                 _junctionComingSoonOpen = !_junctionComingSoonOpen;
                 if (_junctionComingSoonOpen)
                 {
@@ -1389,6 +1516,18 @@ public partial class Game1
             _openBlock = _openBlock.Kind == BlockKind.Fabricator ? ClickTarget.None : ClickTarget.Fabricator;
             return (-1, -1, null, -1, false, false, null, null);
         }
+        // A click on a shuttle hangar opens its bay panel, the same way the fabricator opens its own.
+        foreach (var shuttleBay in (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>()).Where(d => d.Kind == CustomDeviceKind.ShuttleHangar))
+        {
+            var (bayWidth, bayHeight) = ShipRenderer.FootprintPixelSize(shuttleBay.Kind, shuttleBay.Rotated);
+            if (BlockRectIfNear(shuttleBay.Position, myPosition, bayWidth, bayHeight, origin) is not { } bayRect || !bayRect.Contains(_designMouse))
+                continue;
+            _openBlock = _openBlock.Kind == BlockKind.ShuttleBay && _openBlock.TargetComponentId == shuttleBay.Id
+                ? ClickTarget.None
+                : new ClickTarget(BlockKind.ShuttleBay, TargetComponentId: shuttleBay.Id);
+            return (-1, -1, null, -1, false, false, null, null);
+        }
+
 
         // Direct user request ("сделай чтобы при нажатии на деконструктор открывалась менюшка") -
         // the Deconstructor's own promotion, same shape as Fabricator just above.
@@ -1413,15 +1552,14 @@ public partial class Game1
             return (-1, -1, null, -1, false, false, null, null);
         }
 
-        var (distWidth, distHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Distribution);
-        if (BlockRectIfNear(snapshot.DistributionBlock.Position, myPosition, distWidth, distHeight, origin) is { } distributionRect && distributionRect.Contains(_designMouse))
+        if (DistributionRectUnderMouse(snapshot, myPosition, origin) is not null)
         {
             if (HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.DistributionBlock.Id)?.Damaged ?? false))
             {
                 _pendingRepairDeviceId = snapshot.DistributionBlock.Id;
                 return (-1, -1, null, -1, false, false, null, null);
             }
-            if (HoldingScrewdriver() && snapshot.Wiring.Components.FirstOrDefault(c => c.Kind == ComponentKind.Distribution) is { } distribution)
+            if (HoldingWiringTool() && snapshot.Wiring.Components.FirstOrDefault(c => c.Kind == ComponentKind.Distribution) is { } distribution)
                 _openBlock = ToggleConnections(distribution.Id);
             else
                 _openBlock = _openBlock.Kind == BlockKind.Distribution ? ClickTarget.None : ClickTarget.Distribution;
@@ -1429,14 +1567,25 @@ public partial class Game1
         }
 
         var (batteryWidth, batteryHeight) = ShipRenderer.FootprintPixelSize(CustomDeviceKind.Battery);
-        if (BlockRectIfNear(snapshot.BatteryBlock.Position, myPosition, batteryWidth, batteryHeight, origin) is { } batteryRect && batteryRect.Contains(_designMouse))
+        // Every battery on the ship (the first and any extra ones) is the same one grid battery: clicking any opens its panel.
+        Rectangle batteryRect = default;
+        var batteryHit = false;
+        foreach (var candidate in new[] { snapshot.BatteryBlock }.Concat(snapshot.ExtraBatteries ?? Array.Empty<BatteryBlock>()).Where(b => !IsStationFixtureId(snapshot, b.Id)))
+            if (BlockRectIfNear(candidate.Position, myPosition, batteryWidth, batteryHeight, origin) is { } candidateRect && candidateRect.Contains(_designMouse))
+            {
+                batteryRect = candidateRect;
+                batteryHit = true;
+                break;
+            }
+        if (batteryHit)
         {
             if (HoldingRepairTool() && (snapshot.BlockStates?.FirstOrDefault(s => s.DeviceId == snapshot.BatteryBlock.Id)?.Damaged ?? false))
             {
                 _pendingRepairDeviceId = snapshot.BatteryBlock.Id;
                 return (-1, -1, null, -1, false, false, null, null);
             }
-            _openBlock = _openBlock.Kind == BlockKind.Battery ? ClickTarget.None : ClickTarget.Battery;
+            _openBlock = HoldingWiringTool() ? ToggleConnections(WireGraphFactory.BatteryId)
+                : _openBlock.Kind == BlockKind.Battery ? ClickTarget.None : ClickTarget.Battery;
             return (-1, -1, null, -1, false, false, null, null);
         }
 
@@ -1542,7 +1691,7 @@ public partial class Game1
                     return (-1, -1, null, -1, false, false, null, null);
                 }
 
-                _openBlock = HoldingScrewdriver()
+                _openBlock = HoldingWiringTool()
                     ? ToggleConnections(device.Id)
                     : _openBlock.Kind == BlockKind.System && _openBlock.System == device.System
                         ? ClickTarget.None
@@ -1596,7 +1745,7 @@ public partial class Game1
         // Junction boxes ("С‰РёС‚РєРё") have no function of their own to click for - only screwdriver
         // opens anything here, unlike Distribution/SystemDevice above which fall back to their
         // normal panel otherwise.
-        if (HoldingScrewdriver())
+        if (HoldingWiringTool())
         {
             foreach (var junction in snapshot.Wiring.Components.Where(c => c.Kind == ComponentKind.Junction))
             {
@@ -1678,11 +1827,27 @@ public partial class Game1
         // station floors share this scene's ordinary origin, same as doors/mounts above. EVA-space
         // ones need the same world->local fold FieldRenderer's own WorldToScreen closure uses, since
         // they live in the asteroid field, not this ship-local frame.
+        // Aboard a wreck: its salvage is picked up the same way (World.Wrecks.cs). Checked first and alone -
+        // the player ship's own floor is not under the cursor while standing on another hull.
+        if (me.OnEnemyShip)
+        {
+            foreach (var loot in snapshot.EnemyShip.Loot ?? Array.Empty<WreckLootState>())
+            {
+                if (DroppedItemRectIfNear(new DroppedItem(loot.Id, loot.Item, loot.X, loot.Y, loot.RoomId), myPosition, origin) is not { } lootRect
+                    || !lootRect.Contains(_designMouse))
+                    continue;
+                _pendingPickupDroppedItemId = loot.Id;
+                PlayFloorPickupSound(me);
+                return (-1, -1, null, -1, false, false, null, null);
+            }
+        }
+
         foreach (var dropped in snapshot.DroppedItems.Where(d => d.RoomId is not null))
         {
             if (DroppedItemRectIfNear(dropped, myPosition, origin) is not { } rect || !rect.Contains(_designMouse))
                 continue;
             _pendingPickupDroppedItemId = dropped.Id;
+            PlayFloorPickupSound(me);
             return (-1, -1, null, -1, false, false, null, null);
         }
 
@@ -1698,6 +1863,7 @@ public partial class Game1
                 if (!rect.Contains(_designMouse))
                     continue;
                 _pendingPickupDroppedItemId = dropped.Id;
+                PlayFloorPickupSound(me);
                 return (-1, -1, null, -1, false, false, null, null);
             }
         }
@@ -1726,8 +1892,10 @@ public partial class Game1
             // A destroyed door (World.Doors.cs) repairs on click instead of toggling (which would be
             // a no-op against a jammed-open door anyway) - same priority every other repairable
             // device above already gives its own click.
-            bool DoorDestroyed(string doorId) => snapshot.DoorStates.FirstOrDefault(s => s.DoorId == doorId)?.Destroyed
-                ?? snapshot.DoorEdgeStates?.FirstOrDefault(s => s.Id == doorId)?.Destroyed ?? false;
+            // Damaged, not just destroyed: a wrench in hand mends a half-cut door too (World.Doors.cs).
+            bool DoorDestroyed(string doorId) => snapshot.DoorStates.FirstOrDefault(s => s.DoorId == doorId) is { } doorState
+                ? doorState.Hp < doorState.MaxHp - 0.01f
+                : snapshot.DoorEdgeStates?.FirstOrDefault(s => s.Id == doorId) is { } edgeState && edgeState.Hp < edgeState.MaxHp - 0.01f;
 
             foreach (var door in snapshot.Doors)
             {
@@ -1736,6 +1904,12 @@ public partial class Game1
                 if (HoldingRepairTool() && DoorDestroyed(door.Id))
                 {
                     _pendingRepairDeviceId = door.Id;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+                // W6: with a wire spool or screwdriver in hand the door opens its connection panel instead.
+                if (HoldingWiringTool() && snapshot.Wiring.Components.Any(c => c.Id == door.Id))
+                {
+                    _openBlock = _openBlock.Kind == BlockKind.Connections && _openBlock.TargetComponentId == door.Id ? ClickTarget.None : ClickTarget.ForConnections(door.Id);
                     return (-1, -1, null, -1, false, false, null, null);
                 }
                 return (-1, -1, null, -1, false, false, null, door.Id);
@@ -1751,6 +1925,11 @@ public partial class Game1
                 if (HoldingRepairTool() && DoorDestroyed(edge.Id))
                 {
                     _pendingRepairDeviceId = edge.Id;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+                if (HoldingWiringTool() && snapshot.Wiring.Components.Any(c => c.Id == edge.Id))
+                {
+                    _openBlock = _openBlock.Kind == BlockKind.Connections && _openBlock.TargetComponentId == edge.Id ? ClickTarget.None : ClickTarget.ForConnections(edge.Id);
                     return (-1, -1, null, -1, false, false, null, null);
                 }
                 return (-1, -1, null, -1, false, false, null, edge.Id);
@@ -1806,6 +1985,30 @@ public partial class Game1
             var helmScreenCenter = new Vector2(DesignWidth / 2f, DesignHeight / 2f);
             var mapOrigin = GalaxyMapPanel.ComputeMapOrigin(helmScreenCenter, helmStarPosition, _mapZoom, _mapPanOffset);
             var worldPoint = GalaxyMapPanel.ScreenToField(new Vector2(_designMouse.X, _designMouse.Y), mapOrigin, _mapZoom);
+            // Shuttles out in the field: a click on one picks it (a second click lets go); with one picked, the next click sends it
+            // there - or calls it home, when it lands on the ship - and the pick is spent. Anything else is the ship's own destination.
+            var outShuttles = snapshot.Shuttles?.Where(s => s.Phase is ShuttlePhase.Flying or ShuttlePhase.Returning).ToList();
+            if (_selectedShuttleBayId is not null && outShuttles?.Any(s => s.BayId == _selectedShuttleBayId) != true)
+                _selectedShuttleBayId = null;
+            if (outShuttles is { Count: > 0 })
+            {
+                var click = new Vector2(_designMouse.X, _designMouse.Y);
+                var pickedShuttle = outShuttles.FirstOrDefault(s => Vector2.Distance(GalaxyMapPanel.ShuttleClickPosition(s, mapOrigin, _mapZoom), click) <= GalaxyMapPanel.ShuttlePickRadius);
+                if (pickedShuttle is not null)
+                {
+                    _selectedShuttleBayId = _selectedShuttleBayId == pickedShuttle.BayId ? null : pickedShuttle.BayId;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+                if (_selectedShuttleBayId is { } orderedBayId)
+                {
+                    var shipOnScreen = GalaxyMapPanel.FieldPointToScreen(snapshot.Voyage.ShipMapPosition, mapOrigin, _mapZoom);
+                    _pendingShuttleRequest = Vector2.Distance(shipOnScreen, click) <= GalaxyMapPanel.ShipCallRadius
+                        ? new ShuttleRequest(orderedBayId, ShuttleOrder.Recall)
+                        : new ShuttleRequest(orderedBayId, ShuttleOrder.MoveTo, worldPoint.X, worldPoint.Y);
+                    _selectedShuttleBayId = null;
+                    return (-1, -1, null, -1, false, false, null, null);
+                }
+            }
             _pendingAutopilotTarget = worldPoint;
             return (-1, -1, null, -1, false, false, null, null);
         }
@@ -1821,6 +2024,16 @@ public partial class Game1
     {
         if (!_sessionStarted || !_chatFocused)
             return;
+        if (_mapPasswordMode)
+        {
+            HandleMapPasswordChar(e.Character);
+            return;
+        }
+        if (_partTextMode)
+        {
+            HandlePartTextChar(e.Character);
+            return;
+        }
 
         if (e.Character == '\b')
         {
@@ -1845,7 +2058,10 @@ public partial class Game1
             }
             var trimmed = _chatInput.Trim();
             if (trimmed.Length > 0)
+            {
                 _pendingChatMessage = trimmed;
+                PlayItemSound(GameSounds.ChatSent, 0.6f);
+            }
             _chatInput = "";
             _chatFocused = false;
             return;
@@ -1891,9 +2107,14 @@ public partial class Game1
         var myPosition = new Vec2(me.X, me.Y);
         var blockPosition = _openBlock.Kind switch
         {
-            BlockKind.Reactor => snapshot.ReactorBlock.Position,
-            BlockKind.Distribution => snapshot.DistributionBlock.Position,
-            BlockKind.Battery => snapshot.BatteryBlock.Position,
+            // Whichever one the player stands nearest (a ship can have several reactors/distribution boxes; each opens the same panel).
+            BlockKind.Reactor => new[] { snapshot.ReactorBlock }.Concat(snapshot.ExtraReactors ?? Array.Empty<ReactorBlock>())
+                .OrderBy(b => (b.Position - myPosition).Length()).First().Position,
+            BlockKind.Distribution => new[] { snapshot.DistributionBlock }.Concat(snapshot.ExtraDistributions ?? Array.Empty<PowerDistributionBlock>())
+                .OrderBy(b => (b.Position - myPosition).Length()).First().Position,
+            // Whichever battery the player is standing next to (a ship can have several; all open the same panel).
+            BlockKind.Battery => new[] { snapshot.BatteryBlock }.Concat(snapshot.ExtraBatteries ?? Array.Empty<BatteryBlock>())
+                .OrderBy(b => (b.Position - myPosition).Length()).First().Position,
             BlockKind.Navigation => snapshot.NavigationConsole.Position,
             BlockKind.Jukebox => snapshot.Jukebox?.Block.Position ?? myPosition,
             BlockKind.CardTable => snapshot.CardTable.Position,
@@ -1922,6 +2143,11 @@ public partial class Game1
                 .OrderBy(p => (p - myPosition).Length())
                 .DefaultIfEmpty(myPosition)
                 .First(),
+            BlockKind.ShuttleBay => (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>())
+                .Where(d => d.Id == _openBlock.TargetComponentId)
+                .Select(d => d.Position)
+                .DefaultIfEmpty(myPosition)
+                .First(),
             BlockKind.Deconstructor => (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>())
                 .Where(d => d.Kind == CustomDeviceKind.Deconstructor)
                 .Select(d => d.Position)
@@ -1931,7 +2157,15 @@ public partial class Game1
             _ => myPosition,
         };
 
-        if ((blockPosition - myPosition).Length() >= TurretInteractionRadius)
+        // The reactor is a big block that is clicked from its EDGE (InteractionConstants.ReactorReach, the same reach the click itself and the
+        // server's rod/lever checks use), so it has to stay open that far out too. Measured from its centre against the ordinary device radius,
+        // a panel opened from beside the block was shut again on the very next frame - "при тыкании по реактору ничего не открывается".
+        var reach = _openBlock.Kind == BlockKind.Reactor
+            ? InteractionConstants.ReactorReach(
+                new[] { snapshot.ReactorBlock }.Concat(snapshot.ExtraReactors ?? Array.Empty<ReactorBlock>())
+                    .OrderBy(b => (b.Position - myPosition).Length()).First().SizeScale)
+            : TurretInteractionRadius;
+        if ((blockPosition - myPosition).Length() >= reach)
         {
             _openBlock = ClickTarget.None;
             _talkingToNpcId = null;
@@ -2002,6 +2236,10 @@ public partial class Game1
 
             if (installed.Kind == ComponentKind.Relay)
                 return "[ЛКМ] нажать реле";
+            if (installed.Kind == ComponentKind.Button)
+                return "[ЛКМ] нажать кнопку";
+            if (installed.Kind == ComponentKind.Keyboard && !HeldItemTypes(me.Inventory).Contains(ItemType.Wrench))
+                return "[отвёртка] открыть терминал и ввести сообщение";
 
             return HeldItemTypes(me.Inventory).Contains(ItemType.Wrench)
                 ? $"[ЛКМ] снять: {ComponentDefinitions.DisplayName(installed.Kind)}"
@@ -2034,6 +2272,13 @@ public partial class Game1
         if (me.OnEnemyShip)
         {
             var boardingPosition = new Vec2(me.X, me.Y);
+            // A wreck (World.Wrecks.cs): nobody to fight - the hint is about what is lying around.
+            if (snapshot.EnemyShip.IsDerelict)
+            {
+                var left = snapshot.EnemyShip.Loot?.Count ?? 0;
+                var near = snapshot.EnemyShip.Loot?.Any(l => (l.Position - boardingPosition).Length() < InteractionConstants.PickupRadius) ?? false;
+                return near ? "[F] или [ЛКМ] подобрать" : left > 0 ? $"Взорванный корабль. Осталось добычи: {left}" : "Взорванный корабль. Здесь больше нечего брать";
+            }
             var weapon = HeldItemTypes(me.Inventory).FirstOrDefault(WeaponDefinitions.IsWeapon);
             if (!WeaponDefinitions.IsWeapon(weapon))
                 return "Нужно оружие в руках!  [WASD] отступить к пробоине";
@@ -2101,7 +2346,7 @@ public partial class Game1
                 : $"В свободном полёте  [WASD] ранец  Ранец: {me.JetpackFuel:0}{suitAir}";
         }
 
-        if (HeldItemTypes(me.Inventory).Contains(ItemType.MedKit) && me.Health < 100f)
+        if (HeldItemTypes(me.Inventory).Contains(ItemType.MedKit) && (me.Health < 100f || me.Body is { Parts: var bodyParts } && bodyParts.Any(p => p.Trauma > 0.5f || p.Bleeding > 0.5f || p.Fractured)))
             return "[F] использовать аптечку";
 
         var myPosition = new Vec2(me.X, me.Y);

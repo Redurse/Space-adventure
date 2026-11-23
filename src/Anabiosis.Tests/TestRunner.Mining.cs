@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -161,13 +161,13 @@ internal static partial class TestRunner
         var afterCut = world.CreateSnapshot();
         if (ticks >= 20 * 30 || afterCut.Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
             return false;
-        if (!afterCut.DroppedItems.Any(d => d.Item == ItemType.IronOre))
+        if (!afterCut.DroppedItems.Any(d => d.Item == ItemType.RawIron))
             return false;
 
         world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true)); // pick the ore up off the rock
         var afterPickup = world.CreateSnapshot();
-        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.IronOre)
-               && !afterPickup.DroppedItems.Any(d => d.Item == ItemType.IronOre);
+        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.RawIron)
+               && !afterPickup.DroppedItems.Any(d => d.Item == ItemType.RawIron);
     }
 
     // Click-to-pick-up (World.Mining.cs's TryPickupDroppedItem) works in EVA too, alongside the
@@ -185,10 +185,10 @@ internal static partial class TestRunner
         if (ticks >= 20 * 30 || afterCut.Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp > 0f)
             return false;
 
-        var droppedId = afterCut.DroppedItems.First(d => d.Item == ItemType.IronOre).Id;
+        var droppedId = afterCut.DroppedItems.First(d => d.Item == ItemType.RawIron).Id;
         world.ApplyCommand(1, new ClientCommand(1, PickupDroppedItemId: droppedId));
         var afterPickup = world.CreateSnapshot();
-        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.IronOre)
+        return afterPickup.Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.Contains(ItemType.RawIron)
             && afterPickup.DroppedItems.All(d => d.Id != droppedId);
     }
 
@@ -227,10 +227,10 @@ internal static partial class TestRunner
         ExitShipAndFlyTo(world, deposit.Position);
 
         CutBlock(world, deposit.Id);
-        var dropsAfterFirst = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.NickelOre);
+        var dropsAfterFirst = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.RawNickel);
 
         CutBlock(world, deposit.Id, maxTicks: 5 * 30); // keep burning at a hole in the rock
-        var dropsAfterExtra = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.NickelOre);
+        var dropsAfterExtra = world.CreateSnapshot().DroppedItems.Count(d => d.Item == ItemType.RawNickel);
 
         return dropsAfterFirst == 1 && dropsAfterExtra == 1
                && world.CreateSnapshot().Field.OreDepositStates.First(s => s.DepositId == deposit.Id).Hp <= 0f;
@@ -294,7 +294,7 @@ internal static partial class TestRunner
     // leaving the ship free to travel. Shared by the M18 sell test and the mining-contract tests -
     // the Trader prices ore out of reach on purpose, so genuinely mining it is the only way a
     // test can get any. Always asteroid-4's own vein (AsteroidField.CreateDefault's own doc
-    // comment - deliberately all ItemType.IronOre, the mining contract's own required item), so
+    // comment - deliberately all ItemType.RawIron, the mining contract's own required item), so
     // `count` ore comes home regardless of how many blocks that ends up being.
     private static void MineOre(World world, int count)
     {
@@ -337,7 +337,7 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         MineOre(world, 1);
 
-        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.IronOre);
+        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.RawIron);
         var creditsBefore = world.Credits;
 
         DockAtStation(world, "home-station");

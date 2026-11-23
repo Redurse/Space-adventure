@@ -42,7 +42,7 @@ public sealed partial class GalaxyMapPanel
             var local = room.Center - hullCenter;
             var rotated = new Vector2((float)(local.X * cos - local.Y * sin), (float)(local.X * sin + local.Y * cos));
             var size = new Vector2(room.Width, room.Height) * scale;
-            spriteBatch.Draw(_pixel, destScreen + rotated * scale, null, Color.LimeGreen * 0.35f, radians,
+            spriteBatch.Draw(_pixel, destScreen + rotated * scale, null, Ink(Color.LimeGreen * 0.35f), radians,
                 new Vector2(0.5f, 0.5f), size, SpriteEffects.None, 0f);
         }
 
@@ -53,6 +53,6 @@ public sealed partial class GalaxyMapPanel
         var noseBase = destScreen + forward * hullRadius;
         var noseTip = noseBase + forward * 12f;
         var trianglePoints = new[] { noseTip, noseBase + side * 7f, noseBase - side * 7f };
-        Primitives.FillPolygon(spriteBatch, _pixel, noseBase, trianglePoints, Color.LimeGreen * 0.7f);
+        Primitives.FillPolygon(spriteBatch, _pixel, noseBase, trianglePoints, Ink(Color.LimeGreen * 0.7f));
     }
 }

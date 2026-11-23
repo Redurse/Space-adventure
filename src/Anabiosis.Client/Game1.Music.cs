@@ -7,7 +7,7 @@ namespace Anabiosis.Client;
 public partial class Game1
 {
     private GameMusic? _music;
-    private MenuMusic? _menuMusic;
+    private MenuMusic? _menuMusic; // left null on purpose - the main menu is silent
 
     // suppressed is true whenever the ship's jukebox (Game1.Jukebox.cs) is actually on - the
     // ambient bag simply stays stopped rather than trying to duck under or interleave with it,
@@ -16,6 +16,8 @@ public partial class Game1
     {
         // The menu theme plays whenever no round is live (it fades out as one starts).
         _menuMusic?.Update(nowSeconds, !_sessionStarted);
+        if (!_sessionStarted)
+            _ambience?.Stop(); // no round, no ship to hear
 
         if (_music is null)
             return;

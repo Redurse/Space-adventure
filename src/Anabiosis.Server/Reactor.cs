@@ -63,7 +63,31 @@ public sealed class Reactor
     // whenever the reactor sits in its own zone (or the player never named one at all - building
     // outside a matching zone is allowed, just penalized, never blocked).
     public float ZonePenaltyMultiplier { get; set; } = 1f;
-    public float CurrentOutput => !EmergencyShutdown && !Broken && Fuel > 0 ? MaxOutput * ZonePenaltyMultiplier : 0;
+
+    // W3 of wiring-plan.md (direct user request - a fusion reactor: "включил кнопкой, он начинает
+    // вырабатывать энергию", smooth spin-up, Barotrauma-style auto mode, graphs). Capacity is the
+    // most the reactor could give right now; CurrentOutput is where its plasma actually sits - it
+    // only ever moves toward its target at RampUp/RampDown speed, so starting it is a visible climb,
+    // stopping it a visible fall, and a sudden extra load is a short dip while it catches up. A
+    // SCRAM (the emergency lever), damage or running out of fuel collapses the plasma at once.
+    public const float RampUpSeconds = 6f;   // from cold to full output
+    public const float RampDownSeconds = 4f; // from full output to cold
+
+    // The start/stop button on the reactor's panel. Starts true: a fresh ship comes out of the yard
+    // with its reactor already lit.
+    public bool Running { get; set; } = true;
+
+    public float Capacity => !EmergencyShutdown && !Broken && Fuel > 0 ? MaxOutput * ZonePenaltyMultiplier : 0;
+
+    // A fresh reactor starts warm (at full capacity, then settling down onto the load) so a ship has
+    // power from its very first tick; NaN marks "not set yet" since MaxOutput is only final once the
+    // upgrades have been applied.
+    private float _output = float.NaN;
+    public float CurrentOutput => Capacity <= 0f ? 0f : float.IsNaN(_output) ? Capacity : Math.Min(_output, Capacity);
+
+    // Purely a readout for now (millions of kelvin): hot while lit, hotter the harder it's pushed,
+    // cooling off over a couple of seconds once it isn't.
+    public float PlasmaTemperature { get; private set; }
 
     public Reactor(float maxOutput, float maxFuel, float fuelPerPowerUnitPerSecond)
     {
@@ -72,6 +96,28 @@ public sealed class Reactor
         _fuelPerPowerUnitPerSecond = fuelPerPowerUnitPerSecond;
         for (var i = 0; i < RodSlotCount; i++)
             _rods[i] = RodCapacity;
+    }
+
+    // Auto mode: steer the output toward what the grid asks for (`requested`, PowerNetwork's
+    // ReactorRequested), never past Capacity, never faster than the ramps allow.
+    public void Regulate(double deltaSeconds, float requested)
+    {
+        var dt = (float)deltaSeconds;
+        var capacity = Capacity;
+        var output = CurrentOutput;
+        if (capacity <= 0f)
+            output = 0f; // SCRAM / damage / no fuel: the plasma collapses outright
+        else
+        {
+            var target = Running ? Math.Clamp(requested, 0f, capacity) : 0f;
+            var step = MaxOutput * dt / (target > output ? RampUpSeconds : RampDownSeconds);
+            output = target > output ? Math.Min(target, output + step) : Math.Max(target, output - step);
+        }
+        _output = output;
+
+        var lit = output > 0.01f;
+        var targetTemperature = lit ? 30f + 120f * output / Math.Max(1f, MaxOutput) : 0f;
+        PlasmaTemperature += (targetTemperature - PlasmaTemperature) * Math.Min(1f, dt / 1.5f);
     }
 
     public bool IsRodLoaded(int slotIndex) => _rods[slotIndex] is not null;

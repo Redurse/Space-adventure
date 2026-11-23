@@ -43,8 +43,12 @@ public sealed record CustomShipTileCanvas(
     // Direct user request (doors on compartment junctions) - the half-block walls each junction door
     // removed, so deleting the door after a save/reload still puts them back. Null/empty for every save
     // from before junction doors existed.
-    IReadOnlyList<CustomShipTileCanvas.JunctionDoorRecord>? JunctionDoorsRaw = null)
+    IReadOnlyList<CustomShipTileCanvas.JunctionDoorRecord>? JunctionDoorsRaw = null,
+    // W10 of wiring-plan.md - the power wires drawn with the editor's wiring tool, as pairs of device anchors. Empty for every earlier save.
+    IReadOnlyList<CustomShipTileCanvas.WireRecord>? WiresRaw = null)
 {
+    public IReadOnlyList<WireRecord> Wires { get; init; } = WiresRaw ?? new List<WireRecord>();
+    public sealed record WireRecord(int AX, int AY, int BX, int BY);
     // Defaulted/nullable (same convention CustomShipDefinition.EnginesRaw/Engines already uses) so a
     // save file from before the real ShipEngine editor tool existed - which has no "EnginesRaw"
     // property at all - deserializes to an empty list instead of null/crashing.

@@ -44,21 +44,22 @@ internal static partial class TestRunner
         return MagazineRounds(world, slot) == MagazineDefinitions.FullCharge;
     }
 
-    private static bool World_Rifle_OneBurstReleasesSixBulletsAndWearsSixRoundsOffTheMagazine()
+    // One pull of the trigger is one round: the rifle does not fire bursts on its own any more (as in Barotrauma, a
+    // round per shot - what paces fire is the reload time of the gun).
+    private static bool World_Rifle_OnePullFiresOneRoundAndWearsOneOffTheMagazine()
     {
         var (world, slot) = RifleWorld(withMagazine: true);
         var bullets = FireAndCollectBullets(world, 40, held: false, pressedOnlyFirstTick: true);
-        return bullets.Count == WeaponDefinitions.BurstRounds
-            && MagazineRounds(world, slot) == MagazineDefinitions.FullCharge - WeaponDefinitions.BurstRounds;
+        return bullets.Count == 1 && MagazineRounds(world, slot) == MagazineDefinitions.FullCharge - 1f;
     }
 
-    private static bool World_Rifle_BurstBulletsComeOutOneAfterAnotherNotAllAtOnce()
+    // Held down, it fires at the pace of the gun: 0.24 s between rounds, so three seconds is thirteen of them.
+    private static bool World_Rifle_HeldTriggerFiresAtTheReloadPaceOfTheGun()
     {
-        var (world, _) = RifleWorld(withMagazine: true);
-        world.ApplyCommand(1, new ClientCommand(1, FirePressed: true, LookX: 1f, LookY: 0f));
-        world.Step(RealtimeStep);
-        var afterFirstTick = world.CreateSnapshot().PersonalShots.Count;
-        return afterFirstTick >= 1 && afterFirstTick < WeaponDefinitions.BurstRounds;
+        var (world, slot) = RifleWorld(withMagazine: true);
+        var bullets = FireAndCollectBullets(world, 3 * 30, held: true);
+        var expected = (int)(3f / GunDefinitions.Of(ItemType.Rifle)!.ReloadSeconds) + 1;
+        return Math.Abs(bullets.Count - expected) <= 1 && MagazineRounds(world, slot) == MagazineDefinitions.FullCharge - bullets.Count;
     }
 
     private static bool World_Rifle_WithoutAMagazineCannotFire()

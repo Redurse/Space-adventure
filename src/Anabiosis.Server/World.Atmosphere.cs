@@ -95,6 +95,7 @@ public sealed partial class World
             // Cosmoteer-style marching engines (direct user request) - a breached Bulkhead tile
             // leaks exactly like a breached WallBlock (World.Engines.cs's own TotalEngineLeakInRoom).
             leak += TotalEngineLeakInRoom(room.Id);
+            leak += ShuttleBayVentLeakIn(room.Id); // open bay doors
             var oxygen = _roomOxygen[room.Id] - leak * (float)deltaSeconds;
             _roomOxygen[room.Id] = Math.Clamp(oxygen, 0f, FullOxygen);
         }
@@ -110,6 +111,12 @@ public sealed partial class World
             // damage on top of StepUnsuitedExposure and because an outside character's own RoomId is
             // stale (World.Eva.cs's own doc comment on the field) and was never a safe key into
             // _roomOxygen to begin with.
+            // A dead station has no air at all (World.AbandonedStations.cs): unsuited, its rooms are vacuum.
+            if (character.OnStation && !character.SuitSealed && DockedAtAbandonedStation)
+            {
+                DamageCharacter(character, DamageKind.Suffocation, MaxSuffocationDamagePerSecond * (float)deltaSeconds);
+                continue;
+            }
             if (character.SuitSealed || character.OnStation || character.OnEnemyShip || IsFullyExposedToVacuum(character))
                 continue;
 
@@ -118,7 +125,7 @@ public sealed partial class World
                 continue;
 
             var damage = MaxSuffocationDamagePerSecond * (OxygenSafeThreshold - oxygen) / OxygenSafeThreshold;
-            character.Health = Math.Max(0, character.Health - damage * (float)deltaSeconds);
+            DamageCharacter(character, DamageKind.Suffocation, damage * (float)deltaSeconds);
         }
     }
 }

@@ -119,13 +119,14 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
         world.Step(RealtimeStep);
+        MoveCharacterTo(world, 1, 1.5f, 4.6f); // the spawn is within 1.5 (the device reach) of the console on this hull
 
         var npc = world.CreateSnapshot().NpcShips.First();
         world.ApplyCommand(1, new ClientCommand(1, DockPressed: true));
         world.Step(RealtimeStep);
         world.DebugPlaceShip(new Vec2(npc.X - 100f, npc.Y));
 
-        // Nowhere near the console (still at the ship's spawn point) - sending the exact right
+        // Nowhere near the console (walked to the far side of the cockpit) - sending the exact right
         // bearing AND pressing the ping must still find nothing.
         world.ApplyCommand(1, new ClientCommand(1, ScannerSweepDegrees: 0f, ScannerPingPressed: true));
         world.Step(RealtimeStep);

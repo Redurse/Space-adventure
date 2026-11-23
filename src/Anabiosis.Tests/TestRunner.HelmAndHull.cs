@@ -127,7 +127,12 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1);
-        var target = new Vec2(world.DockBerthPosition.X + 300f, world.DockBerthPosition.Y + 150f);
+        // The start station is docked to through its N/S ports now, so the ship may hang above or below it: head off to the side
+        // the station is NOT on (FlyToward peels away from the berth towards the target's side first).
+        var berth = world.DockBerthPosition;
+        var stationAt = world.GalaxyMap.GetPoint(Station.StartStationPointId).Position;
+        var stationY = stationAt.Y;
+        var target = new Vec2(berth.X + (berth.X >= stationAt.X ? 300f : -300f), berth.Y + (berth.Y >= stationY ? 150f : -150f));
         FlyToward(world, target, () => !world.IsAutopilotActive, 1);
         StepFor(world, 30); // a couple more ticks for auto-stabilize to settle any last residual drift
 

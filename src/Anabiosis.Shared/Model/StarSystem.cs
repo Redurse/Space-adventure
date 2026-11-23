@@ -41,17 +41,32 @@ public sealed class StarSystem
     public const float WarpZoneRadiusFraction = 0.92f;
     public float WarpZoneRadius => (float)(Field.Center.X * WarpZoneRadiusFraction);
 
+    // The places that are NOT on the charts (PointOfInterest.cs) - hidden under the fog of war until found.
+    // Rolled from the game's world seed, so they differ between playthroughs; an asteroid cluster's rocks
+    // and ore are part of Field below, like any other asteroid.
+    public IReadOnlyList<PointOfInterest> Pois { get; }
+
     public StarSystem(string id, string name, IReadOnlyList<GalaxyPoint> points, AsteroidField field,
-        float galaxyX = 0f, float galaxyY = 0f, FactionId? controllingFaction = null)
+        float galaxyX = 0f, float galaxyY = 0f, FactionId? controllingFaction = null, int worldSeed = 0)
     {
         Id = id;
         Name = name;
         // Stamped here rather than repeated on every GalaxyPoint literal - a point only ever
         // belongs to the system it was handed to.
-        // Salvage points come after the hand-authored / generated ones: some callers rely on
-        // Points[0] being the system's main point of interest.
-        Points = points.Concat(SalvagePoints.For(id)).Select(p => p with { SystemId = id }).ToArray();
-        Field = field;
+        var charted = points.Select(p => p with { SystemId = id }).ToArray();
+        var places = PoiGenerator.Generate(worldSeed, id, charted);
+        Pois = places.Pois;
+        // A dead station is also a point the ship can dock at, so it gets a GalaxyPoint of its own (same id as its
+        // place) - after the charted ones, since some callers rely on Points[0] being the system's main point.
+        // What kind of station it used to be (its layout) is picked from its id.
+        var stationKinds = Enum.GetValues<StationKind>();
+        Points = charted.Concat(Pois.Where(p => p.Kind == PoiKind.AbandonedStation).Select(p =>
+            new GalaxyPoint(p.Id, PoiCatalog.NameFor(p.Kind), p.X, p.Y, GalaxyPointKind.AbandonedStation, FactionId.Independent,
+                stationKinds[(AsteroidShape.StableHash(p.Id) & 0x7FFFFFFF) % stationKinds.Length], SystemId: id, CaptureRadius: p.Radius))).ToArray();
+        Field = places.Asteroids.Count == 0
+            ? field
+            : new AsteroidField(field.Width, field.Height, field.Asteroids.Concat(places.Asteroids).ToArray(),
+                field.OreDeposits.Concat(places.OreDeposits).ToArray());
         GalaxyX = galaxyX;
         GalaxyY = galaxyY;
         ControllingFaction = controllingFaction;

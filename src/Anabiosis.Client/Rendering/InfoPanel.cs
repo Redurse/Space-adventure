@@ -124,6 +124,7 @@ public sealed class InfoPanel
         spriteBatch.DrawString(_font, "Никнейм", origin + new Vector2(columns[1], 0), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
         spriteBatch.DrawString(_font, "Пинг", origin + new Vector2(columns[2], 0), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
         spriteBatch.DrawString(_font, "Кошелёк", origin + new Vector2(columns[3], 0), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, "Навык оружия", origin + new Vector2(columns[4], 0), Color.Gray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
 
         for (var i = 0; i < snapshot.Characters.Count; i++)
         {
@@ -144,6 +145,7 @@ public sealed class InfoPanel
             var ping = character.IsBot ? "-" : $"{character.PingMs:0} мс";
             spriteBatch.DrawString(_font, ping, row + new Vector2(columns[2], 0), Color.LightGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
             spriteBatch.DrawString(_font, $"{snapshot.Credits} кред.", row + new Vector2(columns[3], 0), Color.LightGreen, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            spriteBatch.DrawString(_font, $"{character.WeaponsSkill:0}", row + new Vector2(columns[4], 0), Color.LightGray, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
         }
     }
 

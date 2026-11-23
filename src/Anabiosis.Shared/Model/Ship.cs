@@ -67,6 +67,8 @@ public sealed partial class Ship
     public IReadOnlyList<RectF> WreckPatches { get; }
     // Walls removed by in-game junction doors (CustomShipDefinition.JunctionWalls).
     public IReadOnlyList<CustomJunctionWallDef> JunctionWalls { get; }
+    // Wires drawn in the editor (CustomShipDefinition.Wires); read once by World.InitializeWiring when the ship is first wired.
+    public IReadOnlyList<CustomWireDef> CustomWires { get; }
     // M74 (humble-soaring-cat.md) - flattened ECS-style view over every physical device fixture
     // below (ReactorBlock/DistributionBlock/BatteryBlock/HelmConsole/NavigationConsole/CardTable/
     // Jukebox/SystemDevices/Turrets/AmmoStorages/SuitLockers/StorageRacks/Cameras/ComponentMounts,
@@ -103,7 +105,7 @@ public sealed partial class Ship
     // InitializeRackSlots), so the player has one kind of place to look for gear, not two.
     public IReadOnlyList<StorageRack> StorageRacks { get; }
     public IReadOnlyList<ComponentMount> ComponentMounts { get; }
-    public Vec2 SpawnPoint { get; }
+    public Vec2 SpawnPoint { get; private set; }
     public string SpawnRoomId { get; }
     // Which way this hull points when it flies, in its own layout coordinates. The classes laid out
     // as a row of compartments travel along +X, so 0; a hull built down the screen has to lead with
@@ -152,6 +154,21 @@ public sealed partial class Ship
     // mirroring exactly how an extra reactor already turns into extra output.
     public int BatteryDeviceCount { get; }
     public IReadOnlyList<Vec2> ExtraBatteryPositions { get; }
+
+    // The 2nd, 3rd, ... battery as real fixtures the client can draw and click (the first is BatteryBlock). They share
+    // the one PowerGrid.Battery, so each shows the same charge and opens the same panel.
+    private IReadOnlyList<BatteryBlock>? _extraBatteryBlocks;
+    public IReadOnlyList<BatteryBlock> ExtraBatteryBlocks => _extraBatteryBlocks ??= ExtraBatteryPositions
+        .Select((p, i) => new BatteryBlock($"{BatteryBlock.Id}-extra-{i + 1}", RoomIdAt(p), (float)p.X, (float)p.Y)).ToList();
+    // The same for the 2nd, 3rd, ... reactor and power distribution box (ExtraReactorPositions / ExtraDistributionPositions): real
+    // fixtures the client can draw and click, sharing the one PowerGrid reactor / distribution, so each shows the same state and
+    // opens the same panel. They used to be invisible - the bonus counted, but there was nothing to look at.
+    private IReadOnlyList<ReactorBlock>? _extraReactorBlocks;
+    public IReadOnlyList<ReactorBlock> ExtraReactorBlocks => _extraReactorBlocks ??= ExtraReactorPositions
+        .Select((p, i) => new ReactorBlock($"{ReactorBlock.Id}-extra-{i + 1}", RoomIdAt(p), (float)p.X, (float)p.Y, ReactorBlock.SizeScale)).ToList();
+    private IReadOnlyList<PowerDistributionBlock>? _extraDistributionBlocks;
+    public IReadOnlyList<PowerDistributionBlock> ExtraDistributionBlocks => _extraDistributionBlocks ??= ExtraDistributionPositions
+        .Select((p, i) => new PowerDistributionBlock($"{DistributionBlock.Id}-extra-{i + 1}", RoomIdAt(p), (float)p.X, (float)p.Y)).ToList();
     // Direct user bug report ("щитки отображались в игре а не была просто пустота") - the "Щиток"
     // fixture (JunctionBox.cs's own doc comment) is purely decorative, same shape as WallLamps.
     public IReadOnlyList<JunctionBox> JunctionBoxes { get; }
@@ -214,7 +231,8 @@ public sealed partial class Ship
         // at all. Only a custom hull's room name is actually driven by the zone-type picker.
         bool isCustomBuilt = false,
         IReadOnlyList<RectF>? wreckPatches = null,
-        IReadOnlyList<CustomJunctionWallDef>? junctionWalls = null)
+        IReadOnlyList<CustomJunctionWallDef>? junctionWalls = null,
+        IReadOnlyList<CustomWireDef>? customWires = null)
     {
         IsCustomBuilt = isCustomBuilt;
         ForwardDegrees = forwardDegrees;
@@ -258,6 +276,7 @@ public sealed partial class Ship
         WallMaterialOverrides = wallMaterialOverrides ?? Array.Empty<CustomWallMaterialDef>();
         WreckPatches = wreckPatches ?? Array.Empty<RectF>();
         JunctionWalls = junctionWalls ?? Array.Empty<CustomJunctionWallDef>();
+        CustomWires = customWires ?? Array.Empty<CustomWireDef>();
         // A marching engine's own Bulkhead tile IS the hull plating at that spot (ShipEngine.cs's
         // own doc comment) - drops the ordinary WallBlock the room's own outer-wall generation would
         // otherwise ALSO place there, the same way a door's footprint already excludes one, so the
@@ -281,6 +300,36 @@ public sealed partial class Ship
     }
 
     public Room GetRoom(string roomId) => _roomsById[roomId];
+
+    // Stamps every placed device onto Tiles (ShipDeviceOccupancy) so nobody walks through one, then
+    // makes sure the spawn point - the helm console's own centre - isn't inside it: a fresh player,
+    // a respawn and a loaded save are all put down on the nearest clear floor of the same room.
+    internal void OccupyDeviceTiles(IEnumerable<CustomDeviceDef> devices)
+    {
+        ShipDeviceOccupancy.Apply(Tiles, devices);
+        if (ShipDeviceOccupancy.OverlapsDevice(Tiles, SpawnPoint))
+            SpawnPoint = ShipDeviceOccupancy.NearestFreeFloor(Tiles, SpawnPoint, _roomsById.GetValueOrDefault(SpawnRoomId));
+    }
+
+    // Direct user request ("каждая роль спавнилась в своём отсеке по специальности") - the device a
+    // role works at, and the nearest clear floor beside it in that device's own compartment (never on
+    // the device itself). No role, or a ship without that device, falls back to the shared spawn.
+    public (Vec2 Position, string RoomId) RoleSpawn(CrewRole? role)
+    {
+        DeviceKind[] kinds = role switch
+        {
+            CrewRole.Captain => new[] { DeviceKind.Helm },
+            CrewRole.Engineer => new[] { DeviceKind.Distribution },
+            CrewRole.Mechanic => new[] { DeviceKind.Reactor },
+            CrewRole.Security => new[] { DeviceKind.TurretBallistic, DeviceKind.TurretLaser, DeviceKind.TurretMachineGun },
+            CrewRole.Scientist => new[] { DeviceKind.Navigation },
+            _ => Array.Empty<DeviceKind>(),
+        };
+        if (Devices.FirstOrDefault(d => kinds.Contains(d.Kind)) is not { } device || !_roomsById.TryGetValue(device.RoomId, out var room))
+            return (SpawnPoint, SpawnRoomId);
+        var position = ShipDeviceOccupancy.NearestFreeFloor(Tiles, device.Position, room);
+        return (position, TileMovement.RoomIdAt(Rooms, position) ?? device.RoomId);
+    }
 
     // M74 - see Devices's own doc comment above. Runs once at construction time (device fixtures
     // are never added/removed after a Ship is built - Ship.Custom.cs.FromCustomDefinition always
@@ -444,9 +493,9 @@ public sealed partial class Ship
     // already baked into TileCell via World.TileSync.cs/TileGrid.IsWalkable) - kept as parameters
     // purely so World.Movement.cs's existing call site doesn't need to change.
     public (Vec2 Position, string RoomId) MoveAlongAxis(Vec2 position, string roomId, Vec2 delta, Func<string, bool> isDoorOpen,
-        Func<WallBlock, bool>? isPassableBreach = null)
+        Func<WallBlock, bool>? isPassableBreach = null, TileMovement.MoveMemory? memory = null)
     {
-        var next = TileMovement.MoveAlongAxis(Tiles, position, delta, DeviceObstacles.Concat(WallDeviceObstacles).ToList());
+        var next = TileMovement.MoveAlongAxis(Tiles, position, delta, DeviceObstacles.Concat(WallDeviceObstacles).ToList(), memory);
         return (next, TileMovement.RoomIdAt(Rooms, next) ?? roomId);
     }
 

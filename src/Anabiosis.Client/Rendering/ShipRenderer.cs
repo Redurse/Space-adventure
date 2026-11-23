@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -60,6 +60,7 @@ public sealed partial class ShipRenderer
     private const int RibSpacing = 26;
 
     private readonly Texture2D _pixel;
+    private readonly EngineExhaustFx _engineExhaust;
     private readonly Texture2D _wallPlate;
     private readonly Texture2D[] _hullPlates;
     private readonly Texture2D _devicePlate;
@@ -101,6 +102,7 @@ public sealed partial class ShipRenderer
     {
         _pixel = new Texture2D(graphicsDevice, 1, 1);
         _pixel.SetData(new[] { Color.White });
+        _engineExhaust = new EngineExhaustFx(graphicsDevice);
         _terminalTexture = TerminalTexture.Create(graphicsDevice);
         _wallPlate = TileTextures.CreateWallPlate(graphicsDevice);
         _hullPlates = TileTextures.CreateHullPlates(graphicsDevice);
@@ -135,6 +137,10 @@ public sealed partial class ShipRenderer
     // Same "load real art, fall back to procedural if missing" convention as SetWallTextures.
     internal void SetReactorTexture(Texture2D? reactor) => _reactorTexture = reactor;
 
+    // The worn stages + emissive mask (ReactorTexture.CreateArt); _reactorTexture stays the clean stage.
+    private ReactorArt? _reactorArt;
+    internal void SetReactorArt(ReactorArt art) { _reactorArt = art; _reactorTexture = art.Stages[0]; }
+
     // Direct user request - real hand-picked art for all three parts of a Cosmoteer-style marching
     // engine, replacing the DeviceSkin-face placeholder each part drew before. Same "load real art,
     // fall back to procedural if missing" convention as SetWallTextures/SetReactorTexture.
@@ -161,6 +167,16 @@ public sealed partial class ShipRenderer
         var centerX = (int)origin.X + (int)(worldPosition.X * PixelsPerUnit);
         var centerY = (int)origin.Y + (int)(worldPosition.Y * PixelsPerUnit);
         return new Rectangle(centerX - width / 2, centerY - height / 2, width, height);
+    }
+
+    // The reactor room's integrity 0..1 for the worn stages; a room missing from the HP list is gone.
+    private static float ReactorRoomIntegrity(WorldSnapshot snapshot)
+    {
+        if (snapshot.RoomHp is not { } rooms) return 1f;
+        foreach (var room in rooms)
+            if (room.RoomId == snapshot.ReactorBlock.RoomId)
+                return room.MaxHp > 0f ? room.Hp / room.MaxHp : 1f;
+        return 0f;
     }
 
     // Reactor housing size in real screen pixels - a fixed 4x4-game-unit footprint (ReactorBlockSize)
@@ -233,6 +249,7 @@ public sealed partial class ShipRenderer
         // wall slab.
         foreach (var room in snapshot.Rooms)
             DrawRoomFloor(spriteBatch, room, RoomOxygen(snapshot, room.Id), origin);
+        DrawWallOcclusion(spriteBatch, GetLiveShipTiles(snapshot), origin); // floor darkens toward every wall face
         // M75 - the actual wall art is now a real per-tile pass (DrawShipWalls), not one band per
         // room edge; DrawRoomWallLamps keeps only the per-room lamp decor that used to ride along
         // with DrawRoomWalls (still called in full by BoardingRenderer/StationRenderer, unchanged).
@@ -300,6 +317,8 @@ public sealed partial class ShipRenderer
             foreach (var pending in pendingBuilds)
                 DrawPendingRoomBuild(spriteBatch, pending, origin);
 
+        DrawContactShadows(spriteBatch, origin); // under every device, before the first one is drawn
+
         foreach (var storage in snapshot.AmmoStorages)
         {
             var stock = snapshot.AmmoStorageStates.FirstOrDefault(s => s.StorageId == storage.Id);
@@ -318,6 +337,10 @@ public sealed partial class ShipRenderer
         // lighting dims the whole compartment separately (RoomLighting) - this is the device's own
         // screen going out, which is what actually reads as the ship being dead.
         var shipPowered = snapshot.Power.ReactorOutput > 0.01f || snapshot.Power.BatteryCharge > 0.01f;
+        _framePowered = shipPowered;
+        _frameRoomIntegrity.Clear();
+        foreach (var roomHp in snapshot.RoomHp ?? Array.Empty<RoomHpState>())
+            _frameRoomIntegrity[roomHp.RoomId] = roomHp.MaxHp > 0f ? roomHp.Hp / roomHp.MaxHp : 1f;
         foreach (var device in snapshot.SystemDevices)
         {
             // Match by DeviceId, not System — Shields has two separate physical generators
@@ -358,14 +381,23 @@ public sealed partial class ShipRenderer
             DrawSharedEngineControl(spriteBatch, engines[0], engines.Any(e => e.ControlBroken), origin);
         }
 
+        // Extra reactors and distribution boxes first (they show the one grid's state, levers stay on the first reactor, which is
+        // drawn last so its lever animation clock is the one that advances).
+        foreach (var extraReactor in (snapshot.ExtraReactors ?? Array.Empty<ReactorBlock>()).Where(b => !IsStationFixture(b.Id)))
+            DrawReactorBlock(spriteBatch, extraReactor, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds,
+                snapshot.Rooms.FirstOrDefault(r => r.Id == extraReactor.RoomId)?.Name, snapshot.Power, ReactorRoomIntegrity(snapshot), drawLevers: false);
+        foreach (var extraDistribution in (snapshot.ExtraDistributions ?? Array.Empty<PowerDistributionBlock>()).Where(b => !IsStationFixture(b.Id)))
+            DrawDistributionBlock(spriteBatch, extraDistribution, openBlock.Kind == BlockKind.Distribution, origin, shipPowered);
         DrawReactorBlock(spriteBatch, snapshot.ReactorBlock, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds,
-            snapshot.Rooms.FirstOrDefault(r => r.Id == snapshot.ReactorBlock.RoomId)?.Name);
+            snapshot.Rooms.FirstOrDefault(r => r.Id == snapshot.ReactorBlock.RoomId)?.Name, snapshot.Power, ReactorRoomIntegrity(snapshot));
         DrawDistributionBlock(spriteBatch, snapshot.DistributionBlock, openBlock.Kind == BlockKind.Distribution, origin, shipPowered);
         DrawReactorTrunkWires(spriteBatch,
             GetBlockRect(snapshot.ReactorBlock.Position, ReactorSize(snapshot.ReactorBlock), origin),
             GetBlockRect(snapshot.DistributionBlock.Position, MediumBlockSize, origin),
             snapshot.Reactor.CurrentOutput > 0);
         DrawBatteryBlock(spriteBatch, snapshot.BatteryBlock, snapshot.Power, openBlock.Kind == BlockKind.Battery, origin, shipPowered);
+        foreach (var extraBattery in (snapshot.ExtraBatteries ?? Array.Empty<BatteryBlock>()).Where(b => !IsStationFixture(b.Id)))
+            DrawBatteryBlock(spriteBatch, extraBattery, snapshot.Power, openBlock.Kind == BlockKind.Battery, origin, shipPowered);
         DrawNavigationConsole(spriteBatch, snapshot.NavigationConsole, openBlock.Kind == BlockKind.Navigation, origin, shipPowered);
         for (var rackIndex = 0; rackIndex < snapshot.StorageRacks.Count; rackIndex++)
         {
@@ -379,25 +411,30 @@ public sealed partial class ShipRenderer
         DrawCardTable(spriteBatch, snapshot.CardTable, snapshot.CardGame is not null || snapshot.FrontsGame is not null, origin);
         if (snapshot.Jukebox is { } jukebox)
             DrawJukebox(spriteBatch, jukebox, openBlock.Kind == BlockKind.Jukebox, origin);
-        foreach (var terminal in snapshot.Terminals ?? Array.Empty<TerminalState>())
+        foreach (var terminal in (snapshot.Terminals ?? Array.Empty<TerminalState>()).Where(t => !IsStationFixture(t.Block.Id)))
             DrawTerminal(spriteBatch, terminal, origin);
-        foreach (var wallLamp in snapshot.WallLamps ?? Array.Empty<WallLamp>())
-            DrawWallLamp(spriteBatch, wallLamp, origin);
-        foreach (var junctionBox in snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>())
+        foreach (var wallLamp in (snapshot.WallLamps ?? Array.Empty<WallLamp>()).Where(l => !IsStationFixture(l.Id)))
+            DrawWallLamp(spriteBatch, wallLamp, origin, snapshot.ReactorLevers.LightsOn && shipPowered
+                && !(snapshot.Wiring.LampsOff?.Contains(wallLamp.Id) ?? false)); // W6: a signal can switch a lamp off
+        foreach (var junctionBox in (snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>()).Where(b => !IsStationFixture(b.Id)))
             DrawJunctionBox(spriteBatch, junctionBox, junctionComingSoonOpen, origin, shipPowered);
-        foreach (var device in snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>())
+        foreach (var device in (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>()).Where(d => !IsStationFixture(d.Id)))
+        {
             DrawDecorativeDevice(spriteBatch, device, origin);
-        foreach (var shipStatusMonitor in snapshot.ShipStatusMonitors ?? Array.Empty<ShipStatusMonitor>())
+            if (device.Kind == CustomDeviceKind.ShuttleHangar)
+                DrawBayShuttle(spriteBatch, device, snapshot.Shuttles?.FirstOrDefault(s => s.BayId == device.Id), origin, totalSeconds);
+        }
+        foreach (var shipStatusMonitor in (snapshot.ShipStatusMonitors ?? Array.Empty<ShipStatusMonitor>()).Where(m => !IsStationFixture(m.Id)))
             DrawShipStatusMonitor(spriteBatch, shipStatusMonitor, shipStatusMonitorOpen, origin, shipPowered);
-        foreach (var commsConsole in snapshot.CommsConsoles ?? Array.Empty<CommsConsole>())
+        foreach (var commsConsole in (snapshot.CommsConsoles ?? Array.Empty<CommsConsole>()).Where(c => !IsStationFixture(c.Id)))
             DrawCommsConsole(spriteBatch, commsConsole, commsConsoleOpen, origin, shipPowered);
         // Direct user request ("у тебя есть проблема что всех этих 4 устройств на корабле может
         // быть только по одному") - Helm/Navigation's own pre-existing "extra" consoles used to be
         // purely cosmetic bonus-count fodder with no physical object at all (Ship.Custom.cs's own
         // doc comment on ExtraHelmConsoles/ExtraNavigationConsoles); now real, rendered ones too.
-        foreach (var extraNav in snapshot.ExtraNavigationConsoles ?? Array.Empty<NavigationConsole>())
+        foreach (var extraNav in (snapshot.ExtraNavigationConsoles ?? Array.Empty<NavigationConsole>()).Where(c => !IsStationFixture(c.Id)))
             DrawNavigationConsole(spriteBatch, extraNav, false, origin, shipPowered);
-        foreach (var extraHelm in snapshot.ExtraHelmConsoles ?? Array.Empty<HelmConsole>())
+        foreach (var extraHelm in (snapshot.ExtraHelmConsoles ?? Array.Empty<HelmConsole>()).Where(c => !IsStationFixture(c.Id)))
             DrawHelmConsole(spriteBatch, extraHelm, false, origin, shipPowered);
 
         foreach (var turret in snapshot.Turrets)
@@ -433,12 +470,57 @@ public sealed partial class ShipRenderer
         if (effects is not null)
             // Cut and Explosion are both in AsteroidField world space, not this ship-local frame -
             // FieldRenderer draws those instead.
-            foreach (var effect in effects.Where(e => e.Kind is not EffectKind.Cut and not EffectKind.Explosion))
-                DrawSparkBurst(spriteBatch, origin + new Vector2((float)effect.Position.X, (float)effect.Position.Y) * PixelsPerUnit, effect.Progress, effect.Kind == EffectKind.Weld ? Color.White : Color.PaleGreen);
+            foreach (var effect in effects.Where(e => e.Kind is not EffectKind.Cut and not EffectKind.Explosion and not EffectKind.Impact))
+            {
+                var spot = origin + new Vector2((float)effect.Position.X, (float)effect.Position.Y) * PixelsPerUnit;
+                if (effect.Kind == EffectKind.HullHit)
+                    DrawHullHit(spriteBatch, spot, effect.Progress);
+                else
+                    DrawSparkBurst(spriteBatch, spot, effect.Progress, effect.Kind == EffectKind.Weld ? Color.White : Color.PaleGreen);
+            }
 
         if (atmosphere is not null)
             foreach (var particle in atmosphere)
                 DrawAtmosphereParticle(spriteBatch, particle, origin);
+    }
+
+    // The devices drawn into the docked station (Station.Fixtures.cs) travel in the ship's own lists, with ids that start with the station
+    // point's id; Game1 sets this prefix while docked. The ship's own pass (Draw) skips them - the station's floor is painted after it and would
+    // cover them - and StationRenderer calls DrawStationFixtures once the floor is down.
+    internal string? StationFixturePrefix { get; set; }
+
+    private bool IsStationFixture(string id) => StationFixturePrefix is not null && id.StartsWith(StationFixturePrefix, StringComparison.Ordinal);
+
+    // The station has its own power: its lamps burn and its screens are lit whatever state the ship's reactor is in.
+    internal void DrawStationFixtures(SpriteBatch spriteBatch, WorldSnapshot snapshot, Vector2 origin, ClickTarget openBlock, float totalSeconds,
+        bool shipStatusMonitorOpen = false, bool commsConsoleOpen = false, bool junctionComingSoonOpen = false)
+    {
+        if (StationFixturePrefix is null)
+            return;
+        const bool powered = true;
+        foreach (var reactor in (snapshot.ExtraReactors ?? Array.Empty<ReactorBlock>()).Where(b => IsStationFixture(b.Id)))
+            DrawReactorBlock(spriteBatch, reactor, snapshot.Reactor, snapshot.ReactorLevers, openBlock.Kind == BlockKind.Reactor, origin, totalSeconds,
+                snapshot.Station.Rooms.FirstOrDefault(r => r.Id == reactor.RoomId)?.Name, snapshot.Power, 1f, drawLevers: false);
+        foreach (var distribution in (snapshot.ExtraDistributions ?? Array.Empty<PowerDistributionBlock>()).Where(b => IsStationFixture(b.Id)))
+            DrawDistributionBlock(spriteBatch, distribution, openBlock.Kind == BlockKind.Distribution, origin, powered);
+        foreach (var battery in (snapshot.ExtraBatteries ?? Array.Empty<BatteryBlock>()).Where(b => IsStationFixture(b.Id)))
+            DrawBatteryBlock(spriteBatch, battery, snapshot.Power, openBlock.Kind == BlockKind.Battery, origin, powered);
+        foreach (var terminal in (snapshot.Terminals ?? Array.Empty<TerminalState>()).Where(t => IsStationFixture(t.Block.Id)))
+            DrawTerminal(spriteBatch, terminal, origin);
+        foreach (var wallLamp in (snapshot.WallLamps ?? Array.Empty<WallLamp>()).Where(l => IsStationFixture(l.Id)))
+            DrawWallLamp(spriteBatch, wallLamp, origin, lit: true);
+        foreach (var junctionBox in (snapshot.JunctionBoxes ?? Array.Empty<JunctionBox>()).Where(b => IsStationFixture(b.Id)))
+            DrawJunctionBox(spriteBatch, junctionBox, junctionComingSoonOpen, origin, powered);
+        foreach (var device in (snapshot.DecorativeDevices ?? Array.Empty<DecorativeDevice>()).Where(d => IsStationFixture(d.Id)))
+            DrawDecorativeDevice(spriteBatch, device, origin);
+        foreach (var monitor in (snapshot.ShipStatusMonitors ?? Array.Empty<ShipStatusMonitor>()).Where(m => IsStationFixture(m.Id)))
+            DrawShipStatusMonitor(spriteBatch, monitor, shipStatusMonitorOpen, origin, powered);
+        foreach (var comms in (snapshot.CommsConsoles ?? Array.Empty<CommsConsole>()).Where(c => IsStationFixture(c.Id)))
+            DrawCommsConsole(spriteBatch, comms, commsConsoleOpen, origin, powered);
+        foreach (var nav in (snapshot.ExtraNavigationConsoles ?? Array.Empty<NavigationConsole>()).Where(c => IsStationFixture(c.Id)))
+            DrawNavigationConsole(spriteBatch, nav, false, origin, powered);
+        foreach (var helm in (snapshot.ExtraHelmConsoles ?? Array.Empty<HelmConsole>()).Where(c => IsStationFixture(c.Id)))
+            DrawHelmConsole(spriteBatch, helm, false, origin, powered);
     }
 
     // Split out of Draw above (docked-station wall-clipping bug report) - the caller draws this as

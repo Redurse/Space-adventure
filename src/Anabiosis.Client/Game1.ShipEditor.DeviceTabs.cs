@@ -203,7 +203,7 @@ public partial class Game1
     // The "МОДИФИКАЦИИ" mode's own (untabbed - only 2 items, no categories needed) item row.
     private static readonly PaletteItem[] ModificationItems =
     {
-        new("Пол", EditorTool.Floor), new("Зона", EditorTool.Zone),
+        new("Пол", EditorTool.Floor), new("Зона", EditorTool.Zone), new("Провода", EditorTool.Wire),
     };
 
     private static PaletteItem[] DeviceTabItems(DeviceTab tab) => tab switch
@@ -623,6 +623,10 @@ public partial class Game1
                             : _editorTool == item.Tool;
 
             DrawItemArt(iconRect, item);
+            // An outpost compartment (CompartmentType.Outpost) is outlined and labelled in the outpost colour, so it is told from the ship's own.
+            var isOutpostItem = item.CompartmentId is { } outpostId && CompartmentCatalog.Find(outpostId)?.Type == CompartmentType.Outpost;
+            if (isOutpostItem)
+                DrawRectOutline(new Rectangle(iconRect.X - 1, iconRect.Y - 1, iconRect.Width + 2, iconRect.Height + 2), StationBuildPanel.OutpostAccent, 2f);
             if (selected)
                 DrawRectOutline(new Rectangle(iconRect.X - 3, iconRect.Y - 3, iconRect.Width + 6, iconRect.Height + 6), Color.White, 2f);
 
@@ -640,7 +644,7 @@ public partial class Game1
                 : DeviceItemFontScale;
             var textSize = _font.MeasureString(item.Label) * scale;
             _spriteBatch.DrawString(_font, item.Label, new Vector2(rect.X + (rect.Width - textSize.X) / 2, rect.Y),
-                DeviceGold, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+                isOutpostItem ? StationBuildPanel.OutpostAccent : DeviceGold, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
         }
 
         _spriteBatch.End();

@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Shared.Protocol;
 
@@ -270,11 +270,37 @@ public sealed record WorldSnapshot(
     // every character's pockets) - the galactic map prices each jump against it. Appended last,
     // same reasoning as every other field above.
     int HyperiumAboard = 0,
-    // Looted storage pods / wrecks (World.Salvage.cs): ids to hide, plus the pickup message shown
-    // for a few seconds. Appended last, same reasoning as every other field above.
-    IReadOnlyList<string>? SalvagedPointIds = null,
+    // The hidden places the crew has found so far in this system (World.Exploration.cs), plus the message
+    // shown for a few seconds when one is found or looted. Appended last, same reasoning as every other field above.
+    IReadOnlyList<PoiState>? PointsOfInterest = null,
     string? SalvageNotice = null,
     // Laser rifle beams still on screen (World.PersonalShots.cs). Appended last, same reasoning as every other field above.
     IReadOnlyList<LaserBeamState>? LaserBeams = null,
     // Explosions on the ship in the last couple of seconds (World.ShipBlasts.cs). Appended last, same reasoning as every other field above.
-    IReadOnlyList<ShipBlastState>? ShipBlasts = null);
+    IReadOnlyList<ShipBlastState>? ShipBlasts = null,
+    // The current system's fog of war (World.Exploration.cs). Appended last, same reasoning as every other field above.
+    FogOfWarState? Fog = null,
+    // The galactic war (World.War.cs, Anabiosis.Shared/Protocol/WarMapState.cs): null until a real game builds it. Appended last, same reasoning as every other field above.
+    IReadOnlyList<WarLaneState>? WarLanes = null,
+    IReadOnlyList<WarNodeState>? WarNodes = null,
+    IReadOnlyList<WarMoverState>? WarMovers = null,
+    WarClockState? WarClock = null,
+    IReadOnlyList<WarFleetState>? WarFleets = null,
+    WarMotherState? WarMother = null,
+    // What the crew is after in chapter two of the campaign (World.CoreHunt.cs) and the system it is in: shown on the galactic map.
+    string? CampaignObjective = null,
+    string? CampaignTargetSystemId = null,
+    // How far the campaign has got (World.Campaign.cs, World.CoreHunt.cs): the client shows the ending banner when this reaches an end.
+    CampaignStage? CampaignChapter = null,
+    IReadOnlyList<ShuttleState>? Shuttles = null,
+    // The radio line with a station and what is on it (World.Comms.cs). Appended last, same reasoning as every other field above.
+    CommsState? Comms = null,
+    // The 2nd, 3rd, ... battery of a ship with several (Ship.ExtraBatteryBlocks); the first is BatteryBlock. Appended last, same reasoning as every other field above.
+    IReadOnlyList<BatteryBlock>? ExtraBatteries = null,
+    // Likewise the extra reactors and distribution boxes (Ship.ExtraReactorBlocks / ExtraDistributionBlocks).
+    IReadOnlyList<ReactorBlock>? ExtraReactors = null,
+    IReadOnlyList<PowerDistributionBlock>? ExtraDistributions = null,
+    // The lobby's campaign multipliers (CampaignModifiers.cs): the client's trade window and build panel scale their prices by these. Null reads as all 1.0.
+    CampaignModifiers? Modifiers = null,
+    // Seconds until the jump drive can be used again (0 = ready): a jump needs a minute to recharge.
+    float WarpCooldownRemaining = 0f);

@@ -25,38 +25,93 @@ public sealed partial class World
     public IReadOnlyList<Component> Components => _components;
     public IReadOnlyList<Wire> Wires => _wires;
 
-    // Called once from InitializeShipState (constructor + every ship purchase) - a bought hull
-    // starts with its own fresh, undamaged backbone, same reset already applied to turret runtimes
-    // and door state.
+    // Called from InitializeShipState (constructor, loading a save, building a compartment, a
+    // section breaking off). W4 of wiring-plan.md: the wiring is no longer thrown away and
+    // regenerated each time - it's reconciled against the hull as it now stands:
+    //  - backbone components (reactor, battery, distribution, junction boxes, devices) that still
+    //    exist in the same place are kept, with every wire on them - including the player's own;
+    //  - ones that are gone (or whose id now names something somewhere else - ids are positional)
+    //    are dropped along with their wires;
+    //  - anything new gets the standard wiring (WireGraphFactory) - a brand-new hull is simply the
+    //    case where everything is new;
+    //  - an installed logic part survives as long as its mount does (InitializeComponentMounts).
+    // Damage stays on the wires that keep existing.
     private void InitializeWiring()
     {
-        var (components, wires) = WireGraphFactory.CreateDefaultForHull(Ship);
-        _components = components.ToList();
-        _wires = wires.ToList();
+        var (generatedComponents, generatedWires) = WireGraphFactory.CreateDefaultForHull(Ship);
+        var generated = generatedComponents.ToDictionary(c => c.Id);
+        var mountIds = Ship.ComponentMounts.Select(m => m.Id).ToHashSet();
+
+        bool StillStands(Component c) => ComponentDefinitions.IsShipFixture(c.Kind)
+            ? generated.TryGetValue(c.Id, out var g) && g.Kind == c.Kind && g.RoomId == c.RoomId
+                && Math.Abs(g.X - c.X) < 0.01f && Math.Abs(g.Y - c.Y) < 0.01f
+            : c.Id.EndsWith(InstalledSuffix) && mountIds.Contains(c.Id[..^InstalledSuffix.Length]);
+
+        var kept = _components.Where(StillStands).ToList();
+        var keptIds = kept.Select(c => c.Id).ToHashSet();
+        var added = generatedComponents.Where(c => !keptIds.Contains(c.Id)).ToList();
+        var allIds = keptIds.Concat(added.Select(c => c.Id)).ToHashSet();
+        var addedIds = added.Select(c => c.Id).ToHashSet();
+
+        var wires = _wires.Where(w => keptIds.Contains(w.FromPin.ComponentId) && keptIds.Contains(w.ToPin.ComponentId)).ToList();
+        var wireIds = wires.Select(w => w.Id).ToHashSet();
+        foreach (var wire in generatedWires)
+        {
+            var touchesNew = addedIds.Contains(wire.FromPin.ComponentId) || addedIds.Contains(wire.ToPin.ComponentId);
+            if (touchesNew && allIds.Contains(wire.FromPin.ComponentId) && allIds.Contains(wire.ToPin.ComponentId) && wireIds.Add(wire.Id))
+                wires.Add(wire);
+        }
+
+        var freshlyWired = _wires.Count == 0; // nothing was wired before: a new ship (or a save from before wiring was saved)
+        _components = kept.Concat(added).ToList();
+        _wires = wires;
+        if (freshlyWired && Ship.CustomWires.Count > 0)
+            ApplyEditorWires();
+        var damaged = _wireDamaged.Where(kv => kv.Value).Select(kv => kv.Key).ToHashSet();
         _wireDamaged.Clear();
         foreach (var wire in _wires)
-            _wireDamaged[wire.Id] = false;
+            _wireDamaged[wire.Id] = damaged.Contains(wire.Id);
+        _nextWireId = Math.Max(_nextWireId, _wires
+            .Select(w => w.Id.StartsWith("wire-") && int.TryParse(w.Id[5..], out var n) ? n + 1 : 0)
+            .DefaultIfEmpty(0).Max());
+    }
+
+    // How close a character has to be to work a component's pins. The reactor is a big block, so
+    // its reach is measured from its edge rather than its centre - the same rule the client already
+    // uses to open its panels (Game1.Interactables.cs's ReactorRectIfNear: radius + half its drawn
+    // size), which the server's own rod/lever/start checks now share too (W5 - they used to accept
+    // only the bare radius from the centre, so a click from the reactor's edge could silently fail).
+    private float ReactorReach => InteractionConstants.ReactorReach(Ship.ReactorBlock.SizeScale);
+
+    // Repairing a broken block is done from the same spot its panel is used from.
+    private float BlockReach(DeviceKind kind) => kind == DeviceKind.Reactor ? ReactorReach : InteractionRadius;
+
+    private float WiringReach(Component component) =>
+        component.Kind == ComponentKind.Reactor ? ReactorReach : InteractionRadius + 0.5f;
+
+    private const string InstalledSuffix = "-installed"; // World.ComponentMounts.cs's id for an installed part
+
+    // The ship's wiring as a save carries it (W4) - restored by LoadWiring before InitializeShipState
+    // reconciles it against the loaded hull.
+    private ShipWiringSave CreateWiringSave() => new(
+        _components.ToArray(),
+        _wires.ToArray(),
+        _wireDamaged.Where(kv => kv.Value).Select(kv => kv.Key).ToArray());
+
+    private void LoadWiring(ShipWiringSave? saved)
+    {
+        _components = saved?.Components.ToList() ?? new List<Component>();
+        _wires = saved?.Wires.ToList() ?? new List<Wire>();
+        _wireDamaged.Clear();
+        var damaged = saved?.DamagedWireIds.ToHashSet() ?? new HashSet<string>();
+        foreach (var wire in _wires)
+            _wireDamaged[wire.Id] = damaged.Contains(wire.Id);
     }
 
     // A device (by its ShipSystemDevice.Id, reused directly as its Component.Id) only actually
     // receives power if its own input pin traces back to Distribution through an unbroken chain of
     // wires. Public - the client's HUD indicator (ShipSystemState) and tests both ask this directly.
     public bool IsDeviceConnected(string deviceId) => IsPinPowered(new PinRef(deviceId, "in"));
-
-    // What the rest of the simulation should use instead of PowerGrid.GetAllocation directly - folds
-    // in wiring connectivity. A system with more than one device (Shields/Engine) scales its
-    // effective power by the fraction of its devices actually connected - each device now has its
-    // own dedicated junction+trunk (WireGraphFactory), so this is a plain per-device tally rather
-    // than a single shared "is the whole system's one trunk still up" gate.
-    public float GetEffectivePower(PowerSystemId system)
-    {
-        var devices = Ship.SystemDevices.Where(d => d.System == system).ToList();
-        if (devices.Count == 0)
-            return 0f; // this hull has no device on this system at all
-
-        var connected = devices.Count(d => IsPinPowered(new PinRef(d.Id, "in")));
-        return PowerGrid.GetAllocation(system) * connected / devices.Count;
-    }
 
     // Recursive rather than iterative: the Power sub-graph is a fixed tree by construction (no
     // player-authored Power wire exists yet - only the built-in backbone), so it terminates
@@ -75,16 +130,59 @@ public sealed partial class World
     // relaxation) - a plain reachability question and a settling boolean circuit with possible
     // feedback are different enough problems that forcing them through one solver would only make
     // both worse.
+    //
+    // W4: the chain now runs all the way back to a source - the reactor's output, or the battery's
+    // (a ship whose reactor feed is cut still has its battery, as in Barotrauma) - with the
+    // distribution block passing its input through to its outputs the way a junction does. Player
+    // wiring can close loops now, hence the visited set.
+    //
+    // W5: power wires are undirected, as in Barotrauma (a player can wire a junction's output into
+    // another's output and it simply joins the two grids), so this is a plain search outward from
+    // the sources over intact power wires, with junction boxes and the distribution block joining
+    // all of their own pins together.
     private bool IsPinPowered(PinRef pin)
     {
-        if (pin.ComponentId == "distribution")
-            return true;
+        var sources = _components
+            .Where(c => c.Kind is ComponentKind.Reactor or ComponentKind.Battery)
+            .Select(c => new PinRef(c.Id, c.Kind == ComponentKind.Reactor ? ComponentDefinitions.ReactorOutPin().Id : ComponentDefinitions.BatteryOutPin().Id));
+        var reached = new HashSet<PinRef>();
+        var frontier = new Queue<PinRef>();
+        foreach (var source in sources)
+            if (reached.Add(source))
+                frontier.Enqueue(source);
 
-        var owner = _components.FirstOrDefault(c => c.Id == pin.ComponentId);
-        if (owner?.Kind == ComponentKind.Junction && pin.PinId != ComponentDefinitions.JunctionInPin().Id)
-            return IsPinPowered(new PinRef(pin.ComponentId, ComponentDefinitions.JunctionInPin().Id));
+        while (frontier.Count > 0)
+        {
+            var current = frontier.Dequeue();
+            if (current == pin)
+                return true;
 
-        return _wires.Where(w => w.ToPin == pin).Any(w => !_wireDamaged[w.Id] && IsPinPowered(w.FromPin));
+            var neighbours = new List<PinRef>();
+            foreach (var wire in _wires)
+            {
+                if (_wireDamaged.GetValueOrDefault(wire.Id))
+                    continue;
+                if (wire.FromPin == current)
+                    neighbours.Add(wire.ToPin);
+                else if (wire.ToPin == current)
+                    neighbours.Add(wire.FromPin);
+            }
+
+            // A box conducts between everything wired to it: every other pin of it that has a wire.
+            if (_components.FirstOrDefault(c => c.Id == current.ComponentId)?.Kind is ComponentKind.Junction or ComponentKind.Distribution)
+                foreach (var wire in _wires)
+                {
+                    if (wire.FromPin.ComponentId == current.ComponentId)
+                        neighbours.Add(wire.FromPin);
+                    if (wire.ToPin.ComponentId == current.ComponentId)
+                        neighbours.Add(wire.ToPin);
+                }
+
+            foreach (var next in neighbours)
+                if (GetPinKind(next) is { } kind && IsPower(kind) && reached.Add(next))
+                    frontier.Enqueue(next);
+        }
+        return false;
     }
 
     // A Junction's own "damage" is its trunk wire (Distribution->Junction) being cut - the same
@@ -185,37 +283,68 @@ public sealed partial class World
         if (owner is null)
             return null;
 
+        // W6: a device's signal pins come first - they sit alongside its power pins.
+        if (ComponentDefinitions.DeviceSignalPins(owner.Kind).FirstOrDefault(p => p.Id == pin.PinId) is { } signalPin)
+            return signalPin.Kind;
+
         return owner.Kind switch
         {
-            ComponentKind.Distribution => PinKind.PowerOut, // every pin on Distribution is an output
+            ComponentKind.Distribution => pin.PinId == ComponentDefinitions.DistributionInPin().Id ? PinKind.PowerIn : PinKind.PowerOut,
+            ComponentKind.Reactor => PinKind.PowerOut,
+            ComponentKind.Battery => pin.PinId == ComponentDefinitions.BatteryInPin().Id ? PinKind.PowerIn : PinKind.PowerOut,
             ComponentKind.Junction => pin.PinId == ComponentDefinitions.JunctionInPin().Id ? PinKind.PowerIn : PinKind.PowerOut,
             ComponentKind.Device => PinKind.PowerIn, // its only pin, "in"
             _ => ComponentDefinitions.PinsFor(owner.Kind).FirstOrDefault(p => p.Id == pin.PinId)?.Kind,
         };
     }
 
-    private const int PowerInputWireCap = 2; // the generalized "backup" mechanic - see Wire.cs
-    private const int SignalInputWireCap = 1; // no combine rule for >1 source - see Wire.cs
-
     private static bool IsPower(PinKind kind) => kind is PinKind.PowerIn or PinKind.PowerOut;
     private static bool IsOutputPin(PinKind kind) => kind is PinKind.PowerOut or PinKind.SignalOut;
 
-    // True only for one real output paired with one real input of the same category (both Power or
-    // both Signal), with the input not already at its wire-count cap. Normalizes which end is which
-    // regardless of which pin the player clicked first.
+    // W5 of wiring-plan.md - Barotrauma's rules: any pin takes up to WireRules.MaxWiresPerPin wires
+    // (WireRules.CanConnect), at both ends. Power pins join with power pins in any direction - a
+    // grid is just whatever is wired together, so output-to-output simply merges two grids; signal
+    // still has a direction, an output into an input. A second wire alongside an existing one is allowed - a backup if one gets cut.
+    // Normalizes which end is which regardless of which pin the player clicked first.
     private bool CanConnect(PinRef a, PinRef b, out PinRef outputPin, out PinRef inputPin)
     {
         outputPin = default;
         inputPin = default;
         if (GetPinKind(a) is not { } kindA || GetPinKind(b) is not { } kindB)
             return false;
-        if (IsPower(kindA) != IsPower(kindB) || IsOutputPin(kindA) == IsOutputPin(kindB))
+        if (IsPower(kindA) != IsPower(kindB))
             return false;
+        if (!IsPower(kindA) && IsOutputPin(kindA) == IsOutputPin(kindB))
+            return false;
+        if (a.ComponentId == b.ComponentId && IsPower(kindA))
+            return false; // a box already joins its own pins
 
-        (outputPin, inputPin) = IsOutputPin(kindA) ? (a, b) : (b, a);
-        var cap = IsPower(kindA) ? PowerInputWireCap : SignalInputWireCap;
-        var input = inputPin;
-        return _wires.Count(w => w.ToPin == input) < cap;
+        (outputPin, inputPin) = IsOutputPin(kindA) || !IsOutputPin(kindB) ? (a, b) : (b, a);
+        return WireRules.CanConnect(_wires, a, b);
+    }
+
+    // W5: taking a wire off with a screwdriver (the connection panel) - the whole wire comes away
+    // and goes back into the hand as a spool, Barotrauma-style, whatever it was wired to: a
+    // backbone wire is just as removable as one the player laid. Needs the screwdriver and to be
+    // standing at either end of it.
+    private void HandleRemoveWire(Character character, string wireId)
+    {
+        if (!character.Inventory.IsHolding(ItemType.Screwdriver))
+            return;
+        var wire = _wires.FirstOrDefault(w => w.Id == wireId);
+        if (wire is null)
+            return;
+        bool Near(PinRef pin) => _components.FirstOrDefault(c => c.Id == pin.ComponentId) is { } owner
+            && (owner.Position - character.Position).Length() < WiringReach(owner);
+        if (!Near(wire.FromPin) && !Near(wire.ToPin))
+            return;
+
+        ElectrocuteIfLive(character, wire); // W9: a wire with current in it bites
+        _wires.Remove(wire);
+        _wireDamaged.Remove(wire.Id);
+        if (!character.Inventory.TryAdd(ItemType.WireSpool))
+            _droppedItems.Add(new DroppedItem($"drop-{_nextDroppedItemId++}", ItemType.WireSpool,
+                character.Position.X, character.Position.Y, character.RoomId));
     }
 
     // The physical wire-lay: first click on a pin (holding a WireSpool) anchors it; a second click
@@ -234,7 +363,7 @@ public sealed partial class World
         }
 
         var owner = _components.FirstOrDefault(c => c.Id == pin.ComponentId);
-        if (owner is null || (owner.Position - character.Position).Length() >= InteractionRadius)
+        if (owner is null || (owner.Position - character.Position).Length() >= WiringReach(owner))
             return;
 
         if (character.LayingWireFromPin is not { } start)
@@ -297,7 +426,7 @@ public sealed partial class World
     // from M22) has exactly one signal value worth showing: its "out" pin, or its sole input for a
     // pure sink like an actuator (World.ComponentLogic.cs's _signalOutput covers both the same way).
     private IReadOnlyList<ComponentState> CreateComponentStates() =>
-        _components.Where(c => c.Kind is not (ComponentKind.Distribution or ComponentKind.Junction or ComponentKind.Device))
+        _components.Where(c => !ComponentDefinitions.IsShipFixture(c.Kind))
             .Select(c => new ComponentState(c.Id, _signalOutput.GetValueOrDefault(c.Id)))
             .ToArray();
 }

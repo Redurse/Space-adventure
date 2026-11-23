@@ -20,9 +20,12 @@ public static partial class ItemIcons
             return new Color(176, 128, 236);                                     // wiring parts
         return item switch
         {
+            _ when GunDefinitions.Of(item) is not null || GunDefinitions.IsAmmo(item) || ArmorDefinitions.IsArmor(item) => new Color(232, 86, 72),
             ItemType.Rifle or ItemType.LaserRifle or ItemType.Knife or ItemType.Axe or ItemType.AmmoCrate or ItemType.Magazine
+                or ItemType.Revolver or ItemType.RevolverRounds
                 => new Color(232, 86, 72),                                       // weapons and ammunition
             ItemType.MedKit => new Color(96, 214, 128),                          // medicine
+            _ when MedicalTreatment.IsMedical(item) => new Color(96, 214, 128),
             ItemType.OxygenTank or ItemType.WeldingTank or ItemType.FuelRod or ItemType.Spacesuit
                 => new Color(92, 176, 236),                                      // life support and fuel
             ItemType.Wrench or ItemType.Screwdriver or ItemType.WeldingTool or ItemType.Cutter

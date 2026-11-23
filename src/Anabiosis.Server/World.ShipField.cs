@@ -163,6 +163,12 @@ public sealed partial class World
             _shipAutoStabilize = false;
     }
 
+    // How hard auto-stabilize brakes. It is scaled by the old Engine power system, which a hull built purely from engine fixtures never has
+    // (WireGraphFactory gives those no power pin, so the scale reads 0): such a hull used to have no brake at all - stabilize and the autopilot's
+    // arrival could not slow it, and it coasted off the edge of the map. For a hull with real engines the brake therefore never drops below 1x.
+    private float AutoStabilizeDeceleration(float enginePowerScale) =>
+        ShipAutoStabilizeDecelerationPerSecond * (Ship.Engines.Count > 0 ? MathF.Max(1f, enginePowerScale) : enginePowerScale);
+
     private void EngageAutoStabilize()
     {
         _helmThrottle = 0f;
@@ -202,7 +208,7 @@ public sealed partial class World
         var thrustForcePerSecond = ShipThrustForcePerSecond + thrustBonus;
         var mass = ShipCatalog.Mass(CurrentShipKind);
         var thrustAccelerationPerSecond = thrustForcePerSecond / mass;
-        var decelerationPerSecond = ShipAutoStabilizeDecelerationPerSecond * enginePowerScale;
+        var decelerationPerSecond = AutoStabilizeDeceleration(enginePowerScale);
 
         // Direct user request ("тяга зависимая от расположения движков") - real per-engine force/
         // torque (World.Engines.cs's ComputeEngineForces' own doc comment on why it replaced the old
@@ -411,10 +417,20 @@ public sealed partial class World
     // straight row of rooms, so this is just their combined extent.
     private (Vec2 Center, Vec2 HalfExtents) GetHullLocalBounds()
     {
-        var minX = Ship.Rooms.Min(r => r.Left);
-        var maxX = Ship.Rooms.Max(r => r.Right);
-        var minY = Ship.Rooms.Min(r => r.Top);
-        var maxY = Ship.Rooms.Max(r => r.Bottom);
+        // One pass with no LINQ: this is asked for by physics, combat, engines and the autopilot several times a tick.
+        var rooms = Ship.Rooms;
+        var minX = float.MaxValue;
+        var maxX = float.MinValue;
+        var minY = float.MaxValue;
+        var maxY = float.MinValue;
+        for (var i = 0; i < rooms.Count; i++)
+        {
+            var room = rooms[i];
+            minX = Math.Min(minX, room.Left);
+            maxX = Math.Max(maxX, room.Right);
+            minY = Math.Min(minY, room.Top);
+            maxY = Math.Max(maxY, room.Bottom);
+        }
         return (new Vec2((minX + maxX) / 2, (minY + maxY) / 2), new Vec2((maxX - minX) / 2, (maxY - minY) / 2));
     }
 
@@ -430,9 +446,18 @@ public sealed partial class World
         var cos = MathF.Cos(radians);
         var sin = MathF.Sin(radians);
 
-        foreach (var asteroid in ActiveObstacles)
+        var (_, hullHalfExtents) = GetHullLocalBounds();
+        var hullRadius = (float)hullHalfExtents.Length();
+        var obstacles = ActiveObstacles;
+        for (var o = 0; o < obstacles.Count; o++)
         {
+            var asteroid = obstacles[o];
             var worldOffset = asteroid.Position - candidateWorldCenter;
+            // Too far for the rock to touch the hull however jagged either is (the hull is no bigger than its bounding circle around its centre).
+            var reachLimit = hullRadius + asteroid.Radius * AsteroidShape.MaxRadiusFactor + 1f;
+            if (Math.Abs(worldOffset.X) > reachLimit || Math.Abs(worldOffset.Y) > reachLimit)
+                continue;
+
             // Inverse-rotate (world -> hull-local) since local-to-world would be [cos,-sin; sin,cos].
             var localOffset = new Vec2(worldOffset.X * cos + worldOffset.Y * sin, -worldOffset.X * sin + worldOffset.Y * cos);
             var rockInLayout = localCenter + localOffset;
@@ -460,8 +485,10 @@ public sealed partial class World
     {
         var best = layoutPoint;
         var bestDistance = float.MaxValue;
-        foreach (var room in Ship.Rooms)
+        var rooms = Ship.Rooms;
+        for (var i = 0; i < rooms.Count; i++)
         {
+            var room = rooms[i];
             var clamped = new Vec2(
                 Math.Clamp(layoutPoint.X, room.Left, room.Right),
                 Math.Clamp(layoutPoint.Y, room.Top, room.Bottom));

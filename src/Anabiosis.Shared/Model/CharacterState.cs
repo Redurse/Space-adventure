@@ -104,4 +104,14 @@ public sealed record CharacterState(
     // Direct user request ("через 10 секунд... в игре сверху пишется таймер... уменьшения до
     // спавна игрока") - 0 while alive, counting down to 0 while dead (World.Respawn.cs's own
     // StepRespawn). The death screen/HUD reads this to show the countdown.
-    float RespawnSecondsRemaining = 0f);
+    float RespawnSecondsRemaining = 0f,
+    // The medical state (injuries per body part, consciousness, a stopped heart) - see World.Medical.cs.
+    BodyState? Body = null,
+    // What this character is doing right now for someone's health (null when nothing) - drives the progress bar.
+    TreatmentState? Treatment = null,
+    // The weapons skill, 0 to 100 (WeaponSkills.cs): starts by job, grows by hurting hostiles, narrows the spread of a gun.
+    float WeaponsSkill = 0f,
+    // The appearance chosen in the lobby (null: whatever the player id picks, as before).
+    CharacterLook? Look = null,
+    // True while this character is mending something (a damaged device, a broken door): the client plays the repair melody for them.
+    bool Repairing = false);

@@ -18,12 +18,12 @@ public sealed partial class World
     // them, instead of trying to reconstruct "did this ever happen" from a snapshot later.
     private bool _tutorialHelmThrusted;
     private bool _tutorialDoorToggled;
+    // W2 of wiring-plan.md: with no sliders to push, the power step is opening the distribution
+    // block to see where the energy goes - latched like the other two one-shot actions.
+    private bool _tutorialDistributionOpened;
 
     public TutorialStage Tutorial => _tutorialStage;
 
-    // Deliberately does not touch the power grid: the split that a campaign starts with would tick
-    // the AllocatePower step off before the player ever reached the block, and the tutorial is where
-    // that step is the entire point. Starting a tutorial simply never asks for it.
     public void StartTutorial() => _tutorialStage = TutorialStage.ReachReactor;
 
     private void ObserveTutorialInput(Character character, ClientCommand command)
@@ -37,6 +37,8 @@ public sealed partial class World
             _tutorialHelmThrusted = true;
         if (command.DoorToggleId is not null)
             _tutorialDoorToggled = true;
+        if (command.InteractPressed && (Ship.DistributionBlock.Position - character.Position).Length() < InteractionRadius)
+            _tutorialDistributionOpened = true;
     }
 
     private void StepTutorial()
@@ -51,7 +53,7 @@ public sealed partial class World
             case TutorialStage.ReachReactor when character.RoomId == "reactor":
                 _tutorialStage = TutorialStage.AllocatePower;
                 break;
-            case TutorialStage.AllocatePower when Enum.GetValues<PowerSystemId>().Any(s => PowerGrid.GetAllocation(s) > 0.01f):
+            case TutorialStage.AllocatePower when _tutorialDistributionOpened:
                 _tutorialStage = TutorialStage.ManHelm;
                 break;
             case TutorialStage.ManHelm when _tutorialHelmThrusted:
@@ -68,7 +70,7 @@ public sealed partial class World
     public string? GetTutorialObjective() => _tutorialStage switch
     {
         TutorialStage.ReachReactor => "ОБУЧЕНИЕ: дойдите до реакторного отсека (WASD)",
-        TutorialStage.AllocatePower => "ОБУЧЕНИЕ: откройте распределительный блок (E) и подайте энергию на любую систему (Q/E)",
+        TutorialStage.AllocatePower => "ОБУЧЕНИЕ: откройте распределительный блок (F) и посмотрите, куда идёт энергия",
         TutorialStage.ManHelm => "ОБУЧЕНИЕ: дойдите до навигационной панели, встаньте за неё (E) и подвигайте корабль (WASD)",
         TutorialStage.ToggleDoor => "ОБУЧЕНИЕ: откройте или закройте дверь (ЛКМ)",
         TutorialStage.Complete => "ОБУЧЕНИЕ ЗАВЕРШЕНО! Возвращайтесь в главное меню, когда будете готовы.",

@@ -17,6 +17,15 @@ public partial class Game1
     // Quarter scale = four times the reach (twice what it was at half scale, direct user request). A gunner has to see a raider holding station 22 units out and
     // the shell crossing the gap to it; at the interior's own scale that all happens off-screen.
     private const float TurretViewZoom = 0.25f;
+    // The mouse wheel pulls the gunner's view back further still: up to ten times farther than the default view above (direct
+    // user request, "отдалить камеру в 10 раз дальше текущего"). 1 = the default view; the wheel steps it by TurretZoomStep a notch.
+    private const float TurretZoomOutMax = 10f;
+    private const float TurretZoomStep = 1.25f;
+    private float _turretZoomOut = 1f;
+
+    private bool TurretViewActive(WorldSnapshot snapshot) =>
+        !_spectatorMode && !EnemyInteriorViewActive(snapshot)
+        && MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen;
 
     // Barotrauma-style cursor lookahead: the camera doesn't center strictly on the character while
     // walking around - it eases partway toward wherever the mouse is pointing, so you see a bit
@@ -42,7 +51,7 @@ public partial class Game1
             : EnemyInteriorViewActive(snapshot)
                 ? EnemyInteriorZoom(snapshot)
                 : MannedTurret(snapshot) is not null && _openBlock.Kind is not BlockKind.Navigation && !_infoPanelOpen
-                ? TurretViewZoom
+                ? TurretViewZoom / _turretZoomOut
                 : ShipBuildOverviewActive(snapshot)
                     ? ShipOverviewZoom(snapshot)
                     : 1f;
@@ -165,7 +174,9 @@ public partial class Game1
     {
         var me = snapshot?.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         Vec2 target;
-        if (snapshot is null || me is null || me.IsAtHelm || me.OnStation || me.OnEnemyShip ||
+        // On the docked station too (direct user report - the view panned toward the cursor aboard the ship but not on the station): the station is drawn in the
+        // ship's own frame by the same camera. Not while talking to someone - the dialogue and the shipwright's overview frame the view themselves.
+        if (snapshot is null || me is null || me.IsAtHelm || me.OnEnemyShip || _talkingToNpcId is not null ||
             _openBlock.Kind == BlockKind.Navigation || _infoPanelOpen)
         {
             target = Vec2.Zero; // eases back to centered rather than freezing wherever it was

@@ -31,13 +31,17 @@ public sealed class PowerGrid
     // even the same one) at once.
     private readonly Dictionary<int, (int Index, float Direction)> _adjustByPlayer = new();
 
-    public PowerGrid()
+    // reactorMaxOutput: the player ship's grid (World.Power.cs, W2 of wiring-plan.md) gets headroom
+    // above its systems' combined full draw - room for cameras, lamps and charging the battery,
+    // the way a Barotrauma reactor isn't sized to run flat-out at all times. Enemy ships still run
+    // the old even-split sliders on a 60-unit reactor (EnemyShipRuntime.Power.cs) until W11.
+    public PowerGrid(float reactorMaxOutput = 60f)
     {
         // Burn rate: at 0.05 a full load of rods lasted under three minutes of flight at full draw,
         // which turned the reactor into a chore you fed every other jump instead of a system you
         // occasionally look after. An eighth of that puts a full set at something like twenty
         // minutes wide open, and far longer at the draw a ship actually cruises on.
-        Reactor = new Reactor(maxOutput: 60f, maxFuel: 500f, fuelPerPowerUnitPerSecond: 0.006f);
+        Reactor = new Reactor(maxOutput: reactorMaxOutput, maxFuel: 500f, fuelPerPowerUnitPerSecond: 0.006f);
         Battery = new Battery(capacity: 200f);
         _allocated = Systems.ToDictionary(s => s, _ => 0f);
     }

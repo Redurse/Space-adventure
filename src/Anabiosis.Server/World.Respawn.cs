@@ -30,8 +30,7 @@ public sealed partial class World
     {
         character.Health = Character.MaxHealth;
         character.RespawnSecondsRemaining = 0f;
-        character.Position = Ship.SpawnPoint;
-        character.RoomId = Ship.SpawnRoomId;
+        (character.Position, character.RoomId) = Ship.RoleSpawn(character.Role); // in their own compartment
 
         // Whatever seat/location death happened to freeze them at (World.Movement.cs's own
         // IsDead gate never force-leaves one) has to actually clear now - reappearing in the

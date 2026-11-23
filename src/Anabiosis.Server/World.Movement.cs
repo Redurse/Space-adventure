@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Server;
 
@@ -23,6 +23,19 @@ public sealed partial class World
             if (character.IsDead)
             {
                 StepRespawn(character, deltaSeconds);
+                continue;
+            }
+
+            // Unconscious or with a stopped heart: out of action (World.Medical.cs). They fall away from the helm or the gun, still
+            // feel the vacuum, and a body outside still drifts; nothing else they could do.
+            if (character.IsDowned)
+            {
+                character.IsAtHelm = false;
+                character.ManningTurretId = null;
+                _moveInput[character.PlayerId] = Vec2.Zero;
+                StepUnsuitedExposure(character, deltaSeconds);
+                if (character.IsOutside)
+                    StepEvaCharacter(character, Vec2.Zero, deltaSeconds);
                 continue;
             }
 
@@ -69,8 +82,9 @@ public sealed partial class World
             if (!hasInput)
                 continue;
 
-            var sprinting = _sprintInput.TryGetValue(character.PlayerId, out var sprint) && sprint;
-            var delta = character.FacingDirection * MoveSpeed * (sprinting ? SprintSpeedMultiplier : 1f) * (float)deltaSeconds;
+            var sprinting = _sprintInput.TryGetValue(character.PlayerId, out var sprint) && sprint && character.Body.CanSprint;
+            // Broken legs and heavy pain slow a person down (BodyHealth.MobilityFactor).
+            var delta = character.FacingDirection * MoveSpeed * (sprinting ? SprintSpeedMultiplier : 1f) * character.Body.MobilityFactor * (float)deltaSeconds;
 
             if (TryCrossIntoVacuum(character, delta))
                 continue;
@@ -96,7 +110,7 @@ public sealed partial class World
     private (Vec2 Position, string RoomId) MoveInCurrentStructure(Character character, Vec2 position, string roomId, Vec2 delta)
     {
         if (character.OnEnemyShip)
-            return EnemyShipLayout.MoveAlongAxis(position, roomId, delta, IsDoorOpen);
+            return EnemyShipLayout.MoveAlongAxis(position, roomId, delta, IsDoorOpen, character.MoveMemory);
         if (IsDocked)
         {
             // Bug fix (humble-soaring-cat.md, "стены не имеют коллизии") - was RoomLayout.MoveAlongAxis
@@ -106,11 +120,11 @@ public sealed partial class World
             // doc comment for why this was actually reachable in ordinary play (a fresh campaign
             // starts docked), not just a rare corner case.
             var (rooms, _) = GetDockedLayout();
-            var next = TileMovement.MoveAlongAxis(GetDockedTileGrid(), position, delta);
+            var next = TileMovement.MoveAlongAxis(GetDockedTileGrid(), position, delta, null, character.MoveMemory);
             return (next, TileMovement.RoomIdAt(rooms, next) ?? roomId);
         }
         if (character.OnStation)
-            return Station.MoveAlongAxis(position, roomId, delta, IsDoorOpen);
-        return Ship.MoveAlongAxis(position, roomId, delta, IsDoorOpen, IsPassableBreach);
+            return Station.MoveAlongAxis(position, roomId, delta, IsDoorOpen, character.MoveMemory);
+        return Ship.MoveAlongAxis(position, roomId, delta, IsDoorOpen, IsPassableBreach, character.MoveMemory);
     }
 }

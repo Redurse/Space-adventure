@@ -39,9 +39,11 @@ public static class Wire
     public static T Deserialize<T>(ReadOnlySpan<byte> utf8) =>
         JsonSerializer.Deserialize<T>(utf8, Options) ?? throw new InvalidDataException($"пустой кадр {typeof(T).Name}");
 
-    public static void WriteFrame<T>(Stream stream, T value)
+    public static void WriteFrame<T>(Stream stream, T value) => WriteJsonFrame(stream, Serialize(value));
+
+    // The same framing for a body that is already JSON (the delta encoder builds its own).
+    public static void WriteJsonFrame(Stream stream, byte[] json)
     {
-        var json = Serialize(value);
         var deflate = json.Length >= CompressAbove;
         var body = deflate ? Deflate(json) : json;
 

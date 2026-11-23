@@ -60,6 +60,10 @@ public sealed class CrewSkin : IDisposable
         _ => isBot ? new Color(70, 110, 150) : new Color(196, 78, 44),
     };
 
+    // The colours the lobby offers for hair, beard and skin (CharacterLook indices).
+    public static Color HairColorAt(int index) => HairColors[Math.Clamp(index, 0, HairColors.Length - 1)];
+    public static Color SkinToneAt(int index) => SkinTones[Math.Clamp(index, 0, SkinTones.Length - 1)];
+
     public static Color AccentFor(bool isBot) => isBot ? new Color(150, 200, 235) : new Color(226, 186, 70);
 
     // ------------------------------------------------------------------ walk state
@@ -113,16 +117,16 @@ public sealed class CrewSkin : IDisposable
     /// <summary>Draws a crewman centred on `center` (screen pixels), turned to face `facing`.</summary>
     /// <param name="armsForward">Holding something: both arms reach out in front instead of swinging.</param>
     public void Draw(SpriteBatch spriteBatch, Vector2 center, float pixelsPerUnit, int actorId, Vector2 worldPosition,
-        Color uniform, Color accent, bool suited, Vector2 facing, bool armsForward)
+        Color uniform, Color accent, bool suited, Vector2 facing, bool armsForward, CharacterLook? look = null)
     {
         var walk = Advance(actorId, worldPosition);
         var amp0 = MathHelper.Clamp(walk.Speed / 1.5f, 0f, 1f);
-        DrawPosed(spriteBatch, center, pixelsPerUnit, actorId, uniform, accent, suited ? Outfit.Suit : Outfit.Crew, facing, armsForward, MathF.Sin(walk.Phase) * amp0);
+        DrawPosed(spriteBatch, center, pixelsPerUnit, actorId, uniform, accent, suited ? Outfit.Suit : Outfit.Crew, facing, armsForward, MathF.Sin(walk.Phase) * amp0, look);
     }
 
     /// <summary>For people the snapshot gives no facing for (enemy crew, station residents): they turn the way
     /// they are walking, and when standing still look toward `lookToward` (usually the nearest player).</summary>
-    public void DrawAuto(SpriteBatch spriteBatch, Vector2 center, float pixelsPerUnit, int actorId, Vector2 worldPosition,
+    public Vector2 DrawAuto(SpriteBatch spriteBatch, Vector2 center, float pixelsPerUnit, int actorId, Vector2 worldPosition,
         Color uniform, Color accent, Outfit outfit, bool armsForward, Vector2? lookToward = null)
     {
         var walk = Advance(actorId, worldPosition);
@@ -146,14 +150,15 @@ public sealed class CrewSkin : IDisposable
             walk.Facing += Math.Clamp(delta, -0.25f, 0.25f);
         }
 
-        DrawPosed(spriteBatch, center, pixelsPerUnit, actorId, uniform, accent, outfit,
-            new Vector2(MathF.Cos(walk.Facing), MathF.Sin(walk.Facing)), armsForward, MathF.Sin(walk.Phase) * amp);
+        var facing = new Vector2(MathF.Cos(walk.Facing), MathF.Sin(walk.Facing));
+        DrawPosed(spriteBatch, center, pixelsPerUnit, actorId, uniform, accent, outfit, facing, armsForward, MathF.Sin(walk.Phase) * amp);
+        return facing; // the way the figure ended up facing: what it carries is held that way
     }
 
     // The figure in an explicit walk pose: swing in [-1, 1] is how far the stride is through (0 standing,
     // +/-1 at the extremes). Draw derives it from movement; the contact sheet calls this directly.
     internal void DrawPosed(SpriteBatch spriteBatch, Vector2 center, float pixelsPerUnit, int actorId,
-        Color uniform, Color accent, Outfit outfit, Vector2 facing, bool armsForward, float swing)
+        Color uniform, Color accent, Outfit outfit, Vector2 facing, bool armsForward, float swing, CharacterLook? look = null)
     {
         if (facing.LengthSquared() < 1e-6f)
             facing = new Vector2(1f, 0f);
@@ -162,8 +167,8 @@ public sealed class CrewSkin : IDisposable
         var armored = outfit is Outfit.Raider or Outfit.Guard;
         var twist = swing * 0.07f;
 
-        var skin = SkinTones[(uint)(actorId * 2654435761u) % SkinTones.Length];
-        var hair = HairColors[(uint)(actorId * 40503u + 7u) % HairColors.Length];
+        var skin = look is null ? SkinTones[(uint)(actorId * 2654435761u) % SkinTones.Length] : SkinTones[look.Skin % SkinTones.Length];
+        var hair = look is null ? HairColors[(uint)(actorId * 40503u + 7u) % HairColors.Length] : HairColors[look.HairColor % HairColors.Length];
         var ctx = new Ctx(this, spriteBatch, center, pixelsPerUnit, angle);
 
         // Ground shadow, so the figure sits on the floor instead of floating over it.
@@ -250,7 +255,69 @@ public sealed class CrewSkin : IDisposable
             ctx.Shape(new Vector2(0.03f, 0.152f), 0.036f, 0.036f, 0f, Darken(skin, 0.1f), outline: false, highlight: false);   // ears
             ctx.Shape(new Vector2(0.03f, -0.152f), 0.036f, 0.036f, 0f, Darken(skin, 0.1f), outline: false, highlight: false);
             ctx.Shape(new Vector2(0.04f, 0f), 0.158f, 0.158f, 0f, skin);                                                       // face
-            ctx.Shape(new Vector2(-0.005f, 0f), 0.152f, 0.158f, 0f, hair, outline: false);                                    // hair, covering the back of the head
+            if (look is null)
+                ctx.Shape(new Vector2(-0.005f, 0f), 0.152f, 0.158f, 0f, hair, outline: false);                                // hair, covering the back of the head
+            else
+                DrawLook(ctx, look, hair, uniform, accent);
+        }
+    }
+
+    // Hair, beard and accessory chosen in the lobby (CharacterLook), drawn over the face. Everything is in the head's local frame, facing +X.
+    private static void DrawLook(Ctx ctx, CharacterLook look, Color hair, Color uniform, Color accent)
+    {
+        switch (look.Hair)
+        {
+            case 1: // short: a cap over the back of the head
+                ctx.Shape(new Vector2(-0.005f, 0f), 0.152f, 0.158f, 0f, hair, outline: false);
+                break;
+            case 2: // long: the cap and a fall of hair behind
+                ctx.Shape(new Vector2(-0.005f, 0f), 0.152f, 0.158f, 0f, hair, outline: false);
+                ctx.Shape(new Vector2(-0.11f, 0f), 0.11f, 0.175f, 0f, hair, outline: false);
+                break;
+            case 3: // a bun at the back
+                ctx.Shape(new Vector2(-0.005f, 0f), 0.152f, 0.158f, 0f, hair, outline: false);
+                ctx.Shape(new Vector2(-0.16f, 0f), 0.06f, 0.06f, 0f, hair);
+                break;
+            case 4: // a crop: the cap pulled forward over the forehead
+                ctx.Shape(new Vector2(0.02f, 0f), 0.145f, 0.152f, 0f, hair, outline: false);
+                break;
+            case 5: // thinning on top: only the sides and the back
+                ctx.Shape(new Vector2(-0.06f, 0f), 0.07f, 0.15f, 0f, hair, outline: false);
+                ctx.Shape(new Vector2(0.01f, 0.125f), 0.055f, 0.04f, 0f, hair, outline: false);
+                ctx.Shape(new Vector2(0.01f, -0.125f), 0.055f, 0.04f, 0f, hair, outline: false);
+                break;
+        }
+
+        var beard = HairColors[look.BeardColor % HairColors.Length];
+        switch (look.Beard)
+        {
+            case 1: // stubble
+                ctx.Shape(new Vector2(0.105f, 0f), 0.05f, 0.105f, 0f, beard * 0.55f, outline: false, highlight: false);
+                break;
+            case 2: // short beard
+                ctx.Shape(new Vector2(0.11f, 0f), 0.06f, 0.125f, 0f, beard, outline: false, highlight: false);
+                break;
+            case 3: // full beard
+                ctx.Shape(new Vector2(0.115f, 0f), 0.078f, 0.14f, 0f, beard, outline: false);
+                break;
+            case 4: // moustache
+                ctx.Shape(new Vector2(0.14f, 0f), 0.028f, 0.075f, 0f, beard, outline: false, highlight: false);
+                break;
+        }
+
+        switch (look.Accessory)
+        {
+            case 1: // glasses
+                ctx.Shape(new Vector2(0.13f, 0f), 0.018f, 0.12f, 0f, new Color(30, 34, 44), outline: false, highlight: false);
+                ctx.Shape(new Vector2(0.135f, -0.05f), 0.014f, 0.025f, 0f, VisorGlint, outline: false, highlight: false);
+                break;
+            case 2: // a headband in the accent colour
+                ctx.Shape(new Vector2(0.07f, 0f), 0.02f, 0.162f, 0f, accent, outline: false, highlight: false);
+                break;
+            case 3: // a cap in the uniform's colour, with a peak
+                ctx.Shape(new Vector2(0.0f, 0f), 0.15f, 0.155f, 0f, Darken(uniform, 0.25f));
+                ctx.Shape(new Vector2(0.14f, 0f), 0.055f, 0.105f, 0f, Darken(uniform, 0.4f), highlight: false);
+                break;
         }
     }
 

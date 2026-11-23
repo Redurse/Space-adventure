@@ -45,6 +45,8 @@ public sealed class ScenePost : IDisposable
     private RenderTarget2D? _distortion;
     private RenderTarget2D? _normals;
     private RenderTarget2D? _ownLight;
+    private RenderTarget2D? _softLightA;
+    private RenderTarget2D? _softLightB;
     private Texture2D? _lightMask;
     private Texture2D? _noLight;
     private Texture2D? _noNormals;
@@ -90,7 +92,12 @@ public sealed class ScenePost : IDisposable
     // How far the grade pushes shadows blue and highlights warm. 0 leaves the renderer colours be.
     // Most of this frame is shadow, so the shadow half of the grade is the single most visible
     // thing in the whole chain - kept below 1 so it reads as cold light rather than a blue filter.
-    public float GradeStrength { get; set; } = 0.7f;
+    // Raised from 0.7 (item 3 of the Barotrauma pass) - with the interior now a lit dusk rather than black,
+    // there is a lot more shadow on screen for the cold half of the grade to work on.
+    public float GradeStrength { get; set; } = 0.95f;
+
+    // Below 1 mutes the colour toward grey after the grade - steel stays steel, the lamps carry the colour.
+    public float Saturation { get; set; } = 0.82f;
 
     // How far the tone curve reaches before it starts compressing. The light mask is high dynamic
     // range now, so lit pixels genuinely exceed 1 and something has to bring them back into a
@@ -114,9 +121,14 @@ public sealed class ScenePost : IDisposable
     // dark ramps this game is made of, and is itself invisible.
     public float DitherAmount { get; set; } = 1f;
 
-    public float Vignette { get; set; } = 0.12f;
-    public float GrainAmount { get; set; } = 0.020f;
+    public float Vignette { get; set; } = 0.22f;
+    public float GrainAmount { get; set; } = 0.028f;
     public float Aberration { get; set; } = 0.35f;
+
+    // How far every edge of light and sight is smeared, in half-resolution texels per blur tap - the hard rays of
+    // the sight cone and the wall shadows of the lamps come out as soft falloffs instead of drawn lines (direct
+    // user request, "все линии... размытыми"). 0 keeps the mask sharp, which the identity check needs.
+    public float LightSoftness { get; set; } = 2.4f;
 
     // Everything off: the composite becomes a pixel-exact identity. Used by the shader check, and
     // the honest way to answer "is the post chain doing this, or was it always like that?".
@@ -126,6 +138,7 @@ public sealed class ScenePost : IDisposable
         BloomStrength = 0f;
         WideBloomStrength = 0f;
         GradeStrength = 0f;
+        Saturation = 1f;
         TonemapWhite = 0f;
         ReliefStrength = 0f;
         SpecularStrength = 0f;
@@ -134,6 +147,7 @@ public sealed class ScenePost : IDisposable
         GrainAmount = 0f;
         DitherAmount = 0f;
         Aberration = 0f;
+        LightSoftness = 0f;
     }
 
     // A soft round blob to stamp into the distortion mask, one per venting particle. Generated
@@ -228,6 +242,7 @@ public sealed class ScenePost : IDisposable
         SetParam("BloomThreshold", BloomThreshold);
         SetParam("BloomStrength", BloomStrength);
         SetParam("GradeStrength", GradeStrength);
+        SetParam("Saturation", Saturation);
         SetParam("Vignette", Vignette);
         SetParam("GrainAmount", GrainAmount);
         SetParam("DitherAmount", DitherAmount);
@@ -239,7 +254,7 @@ public sealed class ScenePost : IDisposable
         SetParam("TexelSize", new Vector2(1f / _scene!.Width, 1f / _scene.Height));
 
         _noLight ??= CreateNoLight();
-        _effect.Parameters["LightTexture"]?.SetValue(_lightMask ?? _noLight);
+        _effect.Parameters["LightTexture"]?.SetValue(SoftenedLight(spriteBatch));
         // Black stands in whenever nothing was stamped this frame, which is a shimmer of zero.
         SetParam("DistortionStrength", _distortionDrawn ? DistortionStrength : 0f);
         _effect.Parameters["DistortionTexture"]?.SetValue(_distortionDrawn ? _distortion : _noLight);
@@ -283,6 +298,24 @@ public sealed class ScenePost : IDisposable
         spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp, effect: _effect);
         spriteBatch.Draw(_scene, Vector2.Zero, Color.White);
         spriteBatch.End();
+    }
+
+    // The light mask blurred twice over at half size (downsampled by the first pass), so every edge of light and
+    // sight - cone rays, lamp shadows behind walls - is a soft falloff. The mask is unbound first: the passes
+    // render into targets the effect could otherwise still hold as its light texture.
+    private Texture2D SoftenedLight(SpriteBatch spriteBatch)
+    {
+        if (_lightMask is null || LightSoftness <= 0f || _blur is null || _softLightA is null || _softLightB is null)
+            return _lightMask ?? _noLight!;
+        _effect!.Parameters["LightTexture"]?.SetValue(_noLight);
+        for (var i = 0; i < 2; i++)
+        {
+            SetParam("BlurDirection", new Vector2(LightSoftness / _softLightA.Width, 0f));
+            Pass(spriteBatch, _blur, i == 0 ? _lightMask : _softLightB, _softLightA);
+            SetParam("BlurDirection", new Vector2(0f, LightSoftness / _softLightB.Height));
+            Pass(spriteBatch, _blur, _softLightA, _softLightB);
+        }
+        return _softLightB;
     }
 
     private void SetParam(string name, float value) => _effect?.Parameters[name]?.SetValue(value);
@@ -358,6 +391,8 @@ public sealed class ScenePost : IDisposable
         _distortion?.Dispose();
         _normals?.Dispose();
         _ownLight?.Dispose();
+        _softLightA?.Dispose();
+        _softLightB?.Dispose();
         _scene = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.Color, DepthFormat.None);
         // Same size as the frame so the caller can stamp into it with the scene transform unchanged.
         _distortion = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.Color, DepthFormat.None);
@@ -365,6 +400,9 @@ public sealed class ScenePost : IDisposable
         // Half precision like the room light mask, for the same reason: a lamp is allowed to be
         // brighter than white.
         _ownLight = new RenderTarget2D(_device, viewport.Width, viewport.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None);
+        // The softened light mask, at half size: it is blurred anyway, and half the pixels is a quarter of the work.
+        _softLightA = new RenderTarget2D(_device, Math.Max(1, viewport.Width / 2), Math.Max(1, viewport.Height / 2), false, SurfaceFormat.HalfVector4, DepthFormat.None);
+        _softLightB = new RenderTarget2D(_device, Math.Max(1, viewport.Width / 2), Math.Max(1, viewport.Height / 2), false, SurfaceFormat.HalfVector4, DepthFormat.None);
         var bw = Math.Max(1, viewport.Width / BloomDivisor);
         var bh = Math.Max(1, viewport.Height / BloomDivisor);
         // PreserveContents on the one target that gets bound twice in a frame - the wide level is
@@ -390,6 +428,8 @@ public sealed class ScenePost : IDisposable
         _distortion?.Dispose();
         _normals?.Dispose();
         _ownLight?.Dispose();
+        _softLightA?.Dispose();
+        _softLightB?.Dispose();
         _noLight?.Dispose();
         _noNormals?.Dispose();
         _blob?.Dispose();

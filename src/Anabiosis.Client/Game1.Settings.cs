@@ -103,6 +103,7 @@ public partial class Game1
     private bool _stagedTooltipsEnabled;
     private bool _stagedChatBubblesEnabled;
     private bool _stagedEnemyHealthBarsEnabled;
+    private bool _stagedScreenShakeEnabled;
 
     private const int SettingsPanelWidth = 1160;
     private const int SettingsPanelHeight = 540;
@@ -232,6 +233,7 @@ public partial class Game1
         _stagedTooltipsEnabled = _graphicsSettings.TooltipsEnabled;
         _stagedChatBubblesEnabled = _graphicsSettings.ChatBubblesEnabled;
         _stagedEnemyHealthBarsEnabled = _graphicsSettings.EnemyHealthBarsEnabled;
+        _stagedScreenShakeEnabled = _graphicsSettings.ScreenShakeEnabled;
 
         _settingsTab = SettingsTab.Graphics;
         _achievementsScrollOffset = 0f;
@@ -388,6 +390,7 @@ public partial class Game1
     {
         PlayerAction.AutopilotStop, PlayerAction.ToggleLanding,
         PlayerAction.VoicePushToTalk, PlayerAction.RadioPushToTalk, PlayerAction.ToggleGalacticMap, PlayerAction.OpenChat,
+        PlayerAction.OpenHealth,
     };
 
     private static Rectangle GetControlsKeyRect(PlayerAction action, Vector2 panelOrigin)
@@ -412,6 +415,7 @@ public partial class Game1
     private static Rectangle GetTooltipsCheckboxRect(Vector2 panelOrigin) => new((int)SettingsContentOrigin(panelOrigin).X, (int)SettingsContentOrigin(panelOrigin).Y + 158, 20, 20);
     private static Rectangle GetChatBubblesCheckboxRect(Vector2 panelOrigin) => new((int)SettingsContentOrigin(panelOrigin).X, (int)SettingsContentOrigin(panelOrigin).Y + 198, 20, 20);
     private static Rectangle GetEnemyHealthBarsCheckboxRect(Vector2 panelOrigin) => new((int)SettingsContentOrigin(panelOrigin).X, (int)SettingsContentOrigin(panelOrigin).Y + 238, 20, 20);
+    private static Rectangle GetScreenShakeCheckboxRect(Vector2 panelOrigin) => new((int)SettingsContentOrigin(panelOrigin).X, (int)SettingsContentOrigin(panelOrigin).Y + 278, 20, 20);
 
     private void HandleSettingsScreen(KeyboardState keyboard)
     {
@@ -555,6 +559,8 @@ public partial class Game1
                     _stagedChatBubblesEnabled = !_stagedChatBubblesEnabled;
                 else if (GetEnemyHealthBarsCheckboxRect(origin).Contains(point))
                     _stagedEnemyHealthBarsEnabled = !_stagedEnemyHealthBarsEnabled;
+                else if (GetScreenShakeCheckboxRect(origin).Contains(point))
+                    _stagedScreenShakeEnabled = !_stagedScreenShakeEnabled;
             }
             else if (_settingsTab == SettingsTab.Misc)
             {
@@ -587,6 +593,7 @@ public partial class Game1
                     _stagedTooltipsEnabled = defaults.TooltipsEnabled;
                     _stagedChatBubblesEnabled = defaults.ChatBubblesEnabled;
                     _stagedEnemyHealthBarsEnabled = defaults.EnemyHealthBarsEnabled;
+                    _stagedScreenShakeEnabled = defaults.ScreenShakeEnabled;
                     RefreshOutputDevices();
                     RefreshInputDevices();
                 }
@@ -661,7 +668,7 @@ public partial class Game1
             _stagedShadersEnabled,
             _stagedKeyBindings.ToSettingsString(), _stagedLanguage,
             _stagedTooltipsEnabled, _stagedChatBubblesEnabled, _stagedEnemyHealthBarsEnabled,
-            _stagedFrameLimit);
+            _stagedFrameLimit, _stagedScreenShakeEnabled);
         ApplyGraphicsSettings(settings);
         PlayerSettingsStore.SaveGraphicsSettings(settings);
         // Direct user request - "Применить" used to kick back to the main menu, same as "Отмена".
@@ -1041,7 +1048,8 @@ public partial class Game1
 
         DrawCheckboxRow(GetTooltipsCheckboxRect(origin), "Отключить подсказки в игре", !_stagedTooltipsEnabled);
         DrawCheckboxRow(GetChatBubblesCheckboxRect(origin), "Облака с текстом", _stagedChatBubblesEnabled);
-        DrawCheckboxRow(GetEnemyHealthBarsCheckboxRect(origin), "Индикаторы здоровья врагов", _stagedEnemyHealthBarsEnabled);
+        DrawCheckboxRow(GetEnemyHealthBarsCheckboxRect(origin), "Полоски здоровья при ранении", _stagedEnemyHealthBarsEnabled);
+        DrawCheckboxRow(GetScreenShakeCheckboxRect(origin), "Тряска экрана в бою", _stagedScreenShakeEnabled);
     }
 
     private void DrawMiscTab(Vector2 content)

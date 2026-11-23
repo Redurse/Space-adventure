@@ -1,4 +1,4 @@
-using Anabiosis.Server;
+﻿using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Networking;
 using Anabiosis.Shared.Protocol;
@@ -135,6 +135,11 @@ internal static partial class TestRunner
             // so only one lot of damage can ever arrive however long we then wait.
             world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
             StepFor(world, 20); // outlast the magnetic cannon's short cooldown, let the shell arrive
+            // A shell that missed (the enemy swayed off the line) can still be in flight, and would land in the NEXT attempt's
+            // window as a second lot of damage - seed-dependent, which is why this failed in full runs only. Let every
+            // friendly shell finish (hit or fly off) before reading the hull.
+            for (var wait = 0; wait < 600 && world.CreateSnapshot().Projectiles.Any(p => !p.FromEnemy); wait++)
+                world.Step(RealtimeStep);
 
             // A shell hurts the first thing it meets on the real hull: a wall takes the scaled damage, the reactor a bit more.
             var hpAfter = world.DebugEnemyHullHp();
@@ -193,6 +198,31 @@ internal static partial class TestRunner
         var ammoAfterOneMore = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").AmmoRemaining;
 
         return ammoAfterMagazine == 0 && ammoAfterOneMore == 0;
+    }
+
+    // The cheat panel's "infinite ammo": the same setup, but the magazine never goes down and firing past its size still works.
+    private static bool World_Fire_InfiniteAmmoCheatNeverEmptiesTheMagazine()
+    {
+        var world = new World();
+        world.SpawnCharacter(1);
+        EnterBattle(world);
+        MoveCharacterTo(world, 1, 1.5f, 3f);
+        world.ApplyCommand(1, new ClientCommand(1, InteractPressed: true));
+        world.ApplyCommand(1, new ClientCommand(1, DebugInfiniteAmmo: true));
+
+        var capacity = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").MagazineCapacity;
+        for (var shot = 0; shot < capacity + 3; shot++)
+        {
+            world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
+            StepFor(world, 5);
+        }
+        var full = world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").AmmoRemaining == capacity;
+
+        // Off again: it spends ammunition like anything else.
+        world.ApplyCommand(1, new ClientCommand(1, DebugInfiniteAmmo: false));
+        world.ApplyCommand(1, new ClientCommand(1, FirePressed: true));
+        StepFor(world, 5);
+        return full && world.CreateSnapshot().TurretStates.Single(t => t.Id == "turret-bow").AmmoRemaining < capacity;
     }
 
     private static bool World_PickUpAmmoCrate_RequiresProximityToStorage()
@@ -403,12 +433,11 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 3, PowerDirection: 1f)); // WeaponCharger
-        for (var i = 0; i < 30; i++)
-            world.Step(RealtimeStep);
+        world.Step(RealtimeStep); // the grid feeds every wired device by itself
         var allocatedBefore = world.CreateSnapshot().Power.Allocated[PowerSystemId.WeaponCharger];
 
         world.CutWire("trunk-weaponcharger");
+        world.Step(RealtimeStep); // power is solved per tick
         var effectiveWhileDamaged = world.GetEffectivePower(PowerSystemId.WeaponCharger);
 
         return allocatedBefore > 0f && effectiveWhileDamaged == 0f;

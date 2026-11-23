@@ -37,9 +37,16 @@ public partial class Game1
     // actual sight cone while the console was open (M48 follow-up bug report - "видит места которые
     // не должен видеть из-за системы видимых зон персонажа") - the console operator sees exactly as
     // far as their own eyes/lamp would normally reach, same as standing at any other terminal.
+    private long _shipWallsTick = -1;
+    private IReadOnlyList<DoorState>? _shipWallsDoorStates;
+    private List<WallSegment>? _shipWalls;
+    private List<WallSegment>? _shipRoomSeams;
+    private List<WallSegment>? _shipAndStationWalls;
+
     private bool BuildVisibilityMask(WorldSnapshot snapshot, float totalSeconds)
     {
         _roomLightingReady = false;
+        _shipRenderer.SightTest = null; // set again below once there is a sight to test against
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == _client.PlayerId);
         // Info takes over the viewport the same way the helm does - a HUD screen, not something
         // seen through the character's own eyes, so it reads the same regardless of where they're
@@ -161,8 +168,21 @@ public partial class Game1
             // is just a world-space rectangle, it applies correctly to either structure's segments
             // regardless of which one it logically came from.
             var shipTiles = _shipRenderer.GetLiveShipTiles(snapshot);
-            walls = TileOccluders.Build(shipTiles, gaps);
-            if (docked)
+            // The same snapshot is on screen for several frames, and the walls depend on nothing else - build them once per snapshot.
+            if (snapshot.Tick != _shipWallsTick || !ReferenceEquals(snapshot.DoorStates, _shipWallsDoorStates) || _shipWalls is null)
+            {
+                _shipWalls = TileOccluders.Build(shipTiles, gaps);
+                _shipRoomSeams = BuildRoomSeams(shipTiles, snapshot.Rooms);
+                _shipWallsTick = snapshot.Tick;
+                _shipWallsDoorStates = snapshot.DoorStates;
+                _shipAndStationWalls = null; // built from these walls - rebuilt below
+            }
+            walls = _shipWalls;
+            if (!docked)
+                _shipAndStationWalls = null;
+            else if (_shipAndStationWalls is not null)
+                walls = _shipAndStationWalls; // the station's walls depend on the same things as the ship's (tick, door states): once per snapshot, not per frame
+            else
             {
                 // Cached the same way GetLiveShipTiles is (see that method's own doc comment) - a
                 // procedural station is generated once and never rebuilt for the rest of the session,
@@ -178,6 +198,8 @@ public partial class Game1
                 if (_cachedStationTiles is null || _cachedStationTilesFingerprint != stationFingerprint)
                 {
                     _cachedStationTiles = TileGridRasterizer.FromRooms(snapshot.Station.Rooms, stationDoors);
+                    // The drawing's half-block walls and extra wall tiles (Station.TileFixes) - the same stamp the server's tiles and the drawn ones got.
+                    snapshot.Station.TileFixes?.Apply(_cachedStationTiles);
                     _cachedStationTilesFingerprint = stationFingerprint;
                 }
                 // Bug fix (humble-soaring-cat.md, "не вижу через открытые двери", follow-up) - the
@@ -186,7 +208,7 @@ public partial class Game1
                 // or the ship<->station connector was still permanently "closed" to TileOccluders no
                 // matter how it actually stood - the identical bug, just on the other structure.
                 ClientTileGrid.ApplyLiveDoorState(_cachedStationTiles, snapshot.Station.Rooms, stationDoors, snapshot.DoorStates);
-                walls = walls.Concat(TileOccluders.Build(_cachedStationTiles, gaps)).ToList();
+                walls = _shipAndStationWalls = walls.Concat(TileOccluders.Build(_cachedStationTiles, gaps)).ToList();
             }
             // Outside the hull the camera folds the player's world position back into the ship's
             // own frame, and so must the eye - otherwise the mask would sit where the ship isn't.
@@ -207,10 +229,13 @@ public partial class Game1
             // room lamps above (a deliberate light-lever blackout kills these too, same as a real
             // wall sconce would go dark) - purely additive, no per-lamp state to read at all.
             if (snapshot.ReactorLevers.LightsOn)
-                lights.AddRange(BuildWallLampLights(snapshot.WallLamps, mood.PowerFraction));
+                lights.AddRange(BuildWallLampLights(snapshot.WallLamps?.Where(l => !(snapshot.Wiring.LampsOff?.Contains(l.Id) ?? false)).ToList(), mood.PowerFraction));
+            lights.AddRange(BuildDeviceLights(snapshot, totalSeconds));
             // A docked station has its own external power - always lit regardless of what shape the
             // player's own ship's grid is in, or whether its own light lever is on.
-            if (docked)
+            if (docked && snapshot.Station.IsAbandoned)
+                lights.AddRange(BuildAbandonedStationLights(snapshot.Station.Rooms, totalSeconds)); // dead: emergency red only
+            else if (docked)
                 AddStationLights(lights, snapshot.Station.Rooms);
             // Open space has its own ambient darkness, independent of the ship's interior power mood -
             // the same VacuumMaskFloor the sight cone below uses, so the two masks agree on how dark
@@ -235,21 +260,38 @@ public partial class Game1
         // three quarters of its reach, and the mask keeps a small floor so the starfield survives
         // being multiplied by it. Inside, both stay exactly as they were: a room lamp does fill a
         // room, and indoors there is no starfield to protect.
+        // Sight (not light) also stops where two compartments meet without a door - you see into the next
+        // room only through an open door, a breach or a window (direct user choice, "вариант 3").
+        var sightWalls = !me.OnEnemyShip && _shipRoomSeams is { Count: > 0 } seams ? walls.Concat(seams).ToList() : walls;
         var sightReady = me.IsOutside
-            ? _visibility.Build(walls, eye, new Vector2((float)facing.X, (float)facing.Y), radius, halfAngle, ambient,
+            ? _visibility.Build(sightWalls, eye, new Vector2((float)facing.X, (float)facing.Y), radius, halfAngle, ambient,
                 origin, _renderScale, falloffStart: VacuumLampFalloffStart, floor: VacuumMaskFloor,
                 edgeFade: VacuumLampEdgeFade, coneTint: VacuumLampTint)
-            : _visibility.Build(walls, eye, new Vector2((float)facing.X, (float)facing.Y), radius, halfAngle, ambient,
+            : _visibility.Build(sightWalls, eye, new Vector2((float)facing.X, (float)facing.Y), radius, halfAngle, ambient,
                 origin, _renderScale);
         // Always built, even with the light lever off or no power at all - `lights`/`floor` above
         // already encode "how dark", so RoomLighting's own dim floor (never literal black) is what
         // shows beyond the player's own lamp, matching Barotrauma's own unpowered-but-not-hidden subs.
         // The VisibilityMask-only fallback (Game1.cs's own `maskReady` branch) still exists for the
         // genuine edge case of RoomLighting failing to build at all (e.g. a zero-size viewport).
+        // Barotrauma-style dusk instead of pitch black: the hull itself stays faintly readable outside the
+        // light (cold, dim), while anyone behind a wall from you is simply not drawn (SightTest below) -
+        // the darkness used to be the only thing hiding them, and a lifted floor must not turn into a
+        // wall-hack.
+        if (!me.IsOutside)
+            floor = LiftToDusk(floor, me.OnEnemyShip ? EnemyDuskFloor : snapshot.ReactorLevers.LightsOn ? DuskFloor : DuskFloorLightsOff);
         _roomLightingReady = _roomLighting.Build(walls, lights, floor, origin, _renderScale);
         // Has to happen here, before the backbuffer is touched - see MergeSight's own comment.
         if (_roomLightingReady && sightReady)
             _roomLighting.MergeSight(_spriteBatch, _visibility);
+        if (sightReady)
+        {
+            var testWalls = sightWalls;
+            var sightEye = eye;
+            var sightOrigin = origin;
+            _shipRenderer.SightTest = screenPoint =>
+                !ShadowCast.IsBlocked(sightEye, (screenPoint - sightOrigin) / ShipRenderer.PixelsPerUnit, testWalls);
+        }
         return sightReady;
     }
 
@@ -273,21 +315,38 @@ public partial class Game1
     // visibility instead of no visibility at all - still the darkest floor in the game by a wide margin.
     private static readonly Color LightsOffFloor = new(26, 22, 30);
 
+    // The least light the deck ever gets indoors: enough to read the hull, the doors and the machines
+    // as cold shapes, never enough to work by. Lights off is dimmer still; a hostile hull keeps its red.
+    private static readonly Color DuskFloor = new(60, 70, 96);
+    private static readonly Color DuskFloorLightsOff = new(38, 44, 62);
+    private static readonly Color EnemyDuskFloor = new(62, 36, 38);
+
+    private static Color LiftToDusk(Color floor, Color dusk)
+    {
+        return new Color(Math.Max(floor.R, dusk.R), Math.Max(floor.G, dusk.G), Math.Max(floor.B, dusk.B));
+    }
+
     private readonly record struct ShipPowerMood(float PowerFraction, Color Floor);
 
-    // How lit the ship's own lamps/scanner/airlocks are (the "Secondary" power slider,
-    // game_design.md section 1) - the slider's own allocation share of the reactor's rated output,
-    // scaled down further if the reactor isn't actually delivering that much (low fuel, damage) or
-    // the Secondary system itself is damaged (PowerGrid always zeroes a damaged system's output).
+    // How lit the ship's own lamps/scanner/airlocks are (the "Secondary" system, game_design.md
+    // section 1) - how much of its full draw Secondary is actually getting from the ship's grid,
+    // scaled down further if the reactor isn't actually delivering (low fuel, damage) or the
+    // Secondary system itself is damaged.
     private static ShipPowerMood ComputeShipPowerMood(WorldSnapshot snapshot)
     {
         var damaged = snapshot.SystemStates.FirstOrDefault(s => s.System == PowerSystemId.Secondary)?.Damaged ?? false;
-        var maxOutput = snapshot.Power.ReactorMaxOutput;
-        var allocFraction = maxOutput > 0f && snapshot.Power.Allocated.TryGetValue(PowerSystemId.Secondary, out var allocated)
-            ? MathHelper.Clamp(allocated / maxOutput, 0f, 1f)
+        // W2 of wiring-plan.md: Secondary now gets its full draw (SecondaryFullPower) whenever the grid
+        // can supply it, instead of a slider share of the reactor - so the mood is that share of a
+        // full draw, scaled to the same 0.2 the old even split of a 60-unit reactor gave the lights
+        // (the tuned look), and falls off in a brownout or with Secondary's wiring cut.
+        const float SecondaryFullPower = 12f;
+        const float FullyPoweredMood = 0.2f;
+        var allocFraction = snapshot.Power.Allocated.TryGetValue(PowerSystemId.Secondary, out var allocated)
+            ? MathHelper.Clamp(allocated / SecondaryFullPower, 0f, 1f) * FullyPoweredMood
             : 0f;
-        var outputFraction = maxOutput > 0f ? MathHelper.Clamp(snapshot.Power.ReactorOutput / maxOutput, 0f, 1f) : 0f;
-        var fraction = damaged ? 0f : allocFraction * outputFraction;
+        // W3: no reactor-output factor any more - the auto-mode reactor's output tracks its load,
+        // so it says nothing about brightness; a shortfall already shows up in "allocated".
+        var fraction = damaged ? 0f : allocFraction;
         return new ShipPowerMood(fraction, Color.Lerp(UnpoweredFloor, PoweredFloor, fraction));
     }
 
@@ -308,7 +367,7 @@ public partial class Game1
     private static List<PointLight> BuildShipRoomLights(IReadOnlyList<Room> rooms, float powerFraction)
     {
         var lights = new List<PointLight>(rooms.Count);
-        var lampIntensity = MathHelper.Lerp(0.05f, 0.55f, powerFraction);
+        var lampIntensity = MathHelper.Lerp(0.02f, 0.25f, powerFraction); // a dim fill - the wall lamps and machines make the pools of light
         foreach (var room in rooms)
         {
             var tint = Color.Lerp(Color.White, RoomDecor.Accent(room.Id, room.Name), 0.22f);
@@ -327,10 +386,23 @@ public partial class Game1
     {
         if (wallLamps is null)
             yield break;
-        var intensity = MathHelper.Lerp(0.1f, 0.7f, powerFraction);
-        var tint = new Color(255, 225, 160) * intensity;
+        // Direct user request ("сделай чтобы было видно что она излучает свет как в баротравме") -
+        // brighter, warmer and wider than the first version, and cast from just in front of the
+        // fitting's lens rather than the wall tile's own centre: that centre sits right on the
+        // half-thick wall's own sight-blocking edge (TileOccluders), which shadowed half of the pool.
+        var intensity = MathHelper.Lerp(0.15f, 1f, powerFraction);
+        var tint = new Color(255, 206, 136) * intensity;
         foreach (var lamp in wallLamps)
-            yield return new PointLight(new Vector2((float)lamp.Position.X, (float)lamp.Position.Y), 3.5f, tint);
+        {
+            var (dx, dy) = lamp.FacingSide switch
+            {
+                TileSide.North => (0f, -1f),
+                TileSide.South => (0f, 1f),
+                TileSide.East => (1f, 0f),
+                _ => (-1f, 0f),
+            };
+            yield return new PointLight(new Vector2((float)lamp.Position.X + dx * 0.32f, (float)lamp.Position.Y + dy * 0.32f), 6.5f, tint);
+        }
     }
 
     // A docked station runs on its own power, not the ship's - always lit, no flicker.
@@ -339,7 +411,7 @@ public partial class Game1
         foreach (var room in stationRooms)
         {
             var radius = MathF.Max(room.Width, room.Height) * 0.95f + 1.5f;
-            lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius, Color.White * 0.6f));
+            lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius, Color.White * 0.3f));
         }
     }
 
@@ -347,6 +419,21 @@ public partial class Game1
     // uneven red emergency light stands in for "this ship has taken damage and is running dark".
     // The sine offsets are seeded from room position so neighbouring compartments don't flicker in
     // lockstep.
+    // A dead station (World.AbandonedStations.cs) has no working lamps - only a weak red emergency glow in each
+    // room, guttering, so the place is found by the suit lamp and its own dim red rather than lit like a live one.
+    private static List<PointLight> BuildAbandonedStationLights(IReadOnlyList<Room> rooms, float totalSeconds)
+    {
+        var lights = new List<PointLight>(rooms.Count);
+        foreach (var room in rooms)
+        {
+            var flicker = 0.5f + 0.5f * MathF.Sin(totalSeconds * 6f + room.X * 1.7f) * MathF.Sin(totalSeconds * 1.9f + room.Y);
+            var radius = MathF.Max(room.Width, room.Height) * 0.7f + 1f;
+            lights.Add(new PointLight(new Vector2((float)room.Center.X, (float)room.Center.Y), radius,
+                new Color(200, 60, 48) * MathHelper.Clamp(0.1f + 0.22f * flicker, 0.06f, 0.34f)));
+        }
+        return lights;
+    }
+
     private static List<PointLight> BuildEnemyShipLights(IReadOnlyList<Room> rooms, float totalSeconds)
     {
         var lights = new List<PointLight>(rooms.Count);
@@ -358,5 +445,43 @@ public partial class Game1
                 new Color(210, 90, 70) * MathHelper.Clamp(flicker, 0.2f, 0.85f)));
         }
         return lights;
+    }
+}
+
+public partial class Game1
+{
+    // Where two compartments meet across bare floor with no door between them: an invisible wall for the
+    // eye only (lamp light still spills through the opening). Built from the same live tile grid as the
+    // walls, one unit-long segment per seam edge; doors (tile or edge) decide sight by themselves.
+    private static List<WallSegment> BuildRoomSeams(TileGrid tiles, IReadOnlyList<Room> rooms)
+    {
+        var seams = new List<WallSegment>();
+        string? RoomOf(TileCoord c) => TileMovement.RoomIdAt(rooms, new Vec2(c.X + 0.5, c.Y + 0.5));
+        // Both tiles a door edge sits between are its doorway: a door in a wall line stands on one face of a
+        // floor tile that rect-wise belongs to one room, so the tile's other face would read as a door-less
+        // seam and blind an open door (direct user report - "с открытой дверью не вижу соседний отсек").
+        var doorway = new HashSet<TileCoord>();
+        foreach (var (coord, side) in tiles.DoorEdges.Keys)
+        {
+            doorway.Add(coord);
+            doorway.Add(side.Offset(coord));
+        }
+        foreach (var (coord, cell) in tiles.Cells)
+        {
+            if (!cell.HasFloor || cell.Wall != TileWallKind.None || RoomOf(coord) is not { } here)
+                continue;
+            foreach (var side in new[] { TileSide.East, TileSide.South })
+            {
+                var next = side.Offset(coord);
+                if (tiles.CellAt(next) is not { HasFloor: true, Wall: TileWallKind.None } || tiles.DoorEdgeAt(coord, side) is not null)
+                    continue;
+                if (doorway.Contains(coord) || doorway.Contains(next) || RoomOf(next) is not { } there || there == here)
+                    continue;
+                seams.Add(side == TileSide.East
+                    ? new WallSegment(coord.X + 1, coord.Y, coord.X + 1, coord.Y + 1)
+                    : new WallSegment(coord.X, coord.Y + 1, coord.X + 1, coord.Y + 1));
+            }
+        }
+        return seams;
     }
 }

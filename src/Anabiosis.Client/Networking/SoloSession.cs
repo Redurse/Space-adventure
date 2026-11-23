@@ -16,6 +16,8 @@ public sealed class SoloSession : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Thread _serverThread;
     private readonly NetworkHost? _host;
+    // Tells the local network this game can be joined (the join screen's server list) - alive as long as the host is listening.
+    private readonly LanAnnouncer? _announcer;
 
     public IClientConnection Connection => _transport;
     public int PlayerId { get; }
@@ -46,6 +48,8 @@ public sealed class SoloSession : IDisposable
         // accepted by a server that is already stepping the world.
         if (listenPort is { } port)
             _host = new NetworkHost(_server, port, maxPlayers);
+        if (_host is not null)
+            _announcer = new LanAnnouncer(() => new LanAnnouncement("Кооператив", _host.Port, _server.PlayerCount, maxPlayers == int.MaxValue ? 8 : maxPlayers, _server.InLobby));
     }
 
     // Direct user request (screenshot 3 of the Barotrauma reference set) - the host connects to a
@@ -53,7 +57,7 @@ public sealed class SoloSession : IDisposable
     // "starts" here the way the constructor above starts a round immediately - the round only
     // actually begins once the host's own LobbyStartRoundPressed command reaches the server (the
     // new lobby screen's "НАЧАТЬ" button), same embedded-server-plus-listen-socket shape as before.
-    public SoloSession(string lobbyServerName, int maxPlayers, int listenPort)
+    public SoloSession(string lobbyServerName, int maxPlayers, int listenPort, bool visibleOnLan = true)
     {
         _server = new GameServer(lobbyServerName, maxPlayers, SaveStore.DefaultPath);
         PlayerId = _server.Connect(_transport);
@@ -64,10 +68,13 @@ public sealed class SoloSession : IDisposable
         };
         _serverThread.Start();
         _host = new NetworkHost(_server, listenPort, maxPlayers);
+        if (visibleOnLan)
+            _announcer = new LanAnnouncer(() => _server.Settings.OpenServer ? new LanAnnouncement(_server.LobbyServerName, _host.Port, _server.PlayerCount, maxPlayers, _server.InLobby) : null);
     }
 
     public void Dispose()
     {
+        _announcer?.Dispose();
         _host?.Dispose();
         _cts.Cancel();
         _serverThread.Join();

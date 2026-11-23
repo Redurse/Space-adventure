@@ -9,7 +9,14 @@ namespace Anabiosis.Shared.Model;
 // DeviceInteractionRadius=1.0 while TryPickupDroppedItem actually allows PickupRadius=1.5).
 public static class InteractionConstants
 {
-    public const float DeviceInteractionRadius = 1.0f; // periscope/storage/locker/system device/etc.
+    // periscope/storage/locker/system device/etc. Was 1.0; devices are solid now (ShipDeviceOccupancy), and standing
+    // flush against a 2x2 console or a turret leaves its centre 1.35 away - 1.5 reaches anything from its edge.
+    public const float DeviceInteractionRadius = 1.5f;
     public const float WelderReachUnits = 1.7f;
     public const float PickupRadius = 1.5f; // World.Mining.cs's TryPickupDroppedItem - EVA and interior alike
+
+    // The reactor is a solid 4x4-unit machine now (ShipDeviceOccupancy) - nobody gets closer than its
+    // edge, so it is worked from there: the ordinary radius plus half its footprint, from the centre.
+    // One rule for the server (rods, levers, start button, wiring) and the client's click/hover alike.
+    public static float ReactorReach(float sizeScale) => DeviceInteractionRadius + 2f * sizeScale;
 }

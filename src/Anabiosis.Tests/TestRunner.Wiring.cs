@@ -13,17 +13,16 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 3, PowerDirection: 1f)); // WeaponCharger
-        for (var i = 0; i < 30; i++)
-            world.Step(RealtimeStep);
+        world.Step(RealtimeStep); // the grid feeds every wired device by itself
         var allocatedBefore = world.CreateSnapshot().Power.Allocated[PowerSystemId.WeaponCharger];
 
-        // Reinforce the trunk with a second wire into the same junction input - the generalized
-        // backup mechanic (a Power input pin accepts up to 2 wires, Wire.cs).
+        // Reinforce the trunk with a second wire into the same junction box - any second path
+        // between the two keeps them on one grid.
         world.AddWire("backup-trunk-weaponcharger",
             new PinRef("distribution", "out-weaponcharger"), new PinRef("junction-weaponcharger", "in"));
 
         world.CutWire("trunk-weaponcharger"); // primary severed - the backup should now carry it
+        world.Step(RealtimeStep);
         var effectiveAfterCut = world.GetEffectivePower(PowerSystemId.WeaponCharger);
 
         return allocatedBefore > 0f && effectiveAfterCut > 0f;
@@ -34,13 +33,11 @@ internal static partial class TestRunner
         var world = new World();
         world.SpawnCharacter(1);
 
-        // PowerSystemId order: Oxygen(0), Engine(1), Shields(2), WeaponCharger(3), Secondary(4).
-        world.ApplyCommand(1, new ClientCommand(1, PowerSystemIndex: 2, PowerDirection: 1f));
-        for (var i = 0; i < 30; i++)
-            world.Step(RealtimeStep);
+        world.Step(RealtimeStep); // the grid feeds every wired device by itself
         var fullPower = world.GetEffectivePower(PowerSystemId.Shields);
 
         world.CutWire("drop-system-shields-2"); // only the second generator's drop is cut
+        world.Step(RealtimeStep);
         var halfPower = world.GetEffectivePower(PowerSystemId.Shields);
 
         return fullPower > 0f && Math.Abs(halfPower - fullPower / 2f) < 0.01f;
@@ -78,6 +75,17 @@ internal static partial class TestRunner
     // Physical wire-laying (World.Wiring.cs's HandlePinInteract, M20) - the real player-facing
     // counterpart to the World.AddWire test hook the tests above use directly: walk to one pin
     // holding a WireSpool, then to a second.
+    // Hands player 1 a fresh item and holds it (only it - anything held before is let go).
+    private static void GiveAndHold(World world, ItemType item)
+    {
+        world.DebugGiveItem(1, item);
+        var me = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!;
+        foreach (var held in me.HeldMainSlotIndices.ToList())
+            world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: held));
+        var slot = Array.FindLastIndex(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), s => s == item);
+        world.ApplyCommand(1, new ClientCommand(1, ToggleHoldSlotIndex: slot));
+    }
+
     private static void PickUpAndHoldSpool(World world)
     {
         var spoolSlot = TakeFromRack(world, ItemType.WireSpool);
@@ -140,7 +148,9 @@ internal static partial class TestRunner
         return world.Wires.Count == wiresBefore + 1 && !HasWireSpool(world);
     }
 
-    private static bool World_WireLay_IncompatiblePinTypes_RejectsConnection()
+    // W5 - Barotrauma's rule: power pins join in any direction (a grid is just whatever's wired
+    // together), so two junctions' inputs wired to each other is a legal wire that merges them.
+    private static bool World_WireLay_PowerPinsJoinInAnyDirection()
     {
         var world = new World();
         world.SpawnCharacter(1);
@@ -148,40 +158,40 @@ internal static partial class TestRunner
         MoveToOxygenJunction(world);
 
         var wiresBefore = world.Wires.Count;
-        // Both are inputs - a junction's "in" can never legally pair with another input.
         var oxygenIn = new PinRef("junction-oxygen", "in");
         var engineIn = new PinRef("junction-system-engine", "in");
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenIn));
         MoveToEngineJunction(world);
         world.ApplyCommand(1, new ClientCommand(1, PinInteractId: engineIn));
 
-        var stillLaying = world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).LayingWireFromPin == engineIn;
-        return world.Wires.Count == wiresBefore && HasWireSpool(world) && stillLaying;
+        return world.Wires.Count == wiresBefore + 1 && !HasWireSpool(world);
     }
 
-    private static bool World_WireLay_InputPinAtCapacity_RejectsThirdWire()
+    // W5 - every pin takes up to WireRules.MaxWiresPerPin (5) wires: the trunk already on the
+    // junction's input plus four more fit, a sixth is refused and its spool isn't spent.
+    private static bool World_WireLay_PinAtCapacity_RefusesTheSixthWire()
     {
         var world = new World();
         world.SpawnCharacter(1);
         var oxygenOut = new PinRef("distribution", "out-oxygen");
         var junctionIn = new PinRef("junction-oxygen", "in");
 
-        // First reinforcement succeeds - the trunk wire already there plus this one reaches the cap of 2.
-        PickUpAndHoldSpool(world);
-        MoveToDistribution(world);
-        world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenOut));
-        MoveToOxygenJunction(world);
-        world.ApplyCommand(1, new ClientCommand(1, PinInteractId: junctionIn));
-        var wiresAfterFirst = world.Wires.Count;
+        void LayOne()
+        {
+            GiveAndHold(world, ItemType.WireSpool); // the rack only stocks two
+            MoveToDistribution(world);
+            world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenOut));
+            MoveToOxygenJunction(world);
+            world.ApplyCommand(1, new ClientCommand(1, PinInteractId: junctionIn));
+        }
 
-        // Second attempt at the same input must be refused - the spool is not spent on a rejection.
-        PickUpAndHoldSpool(world);
-        MoveToDistribution(world);
-        world.ApplyCommand(1, new ClientCommand(1, PinInteractId: oxygenOut));
-        MoveToOxygenJunction(world);
-        world.ApplyCommand(1, new ClientCommand(1, PinInteractId: junctionIn));
+        for (var i = 0; i < WireRules.MaxWiresPerPin - 1; i++)
+            LayOne();
+        var wiresAtCap = world.Wires.Count;
+        var onPin = WireRules.WiresOn(world.Wires, junctionIn);
+        LayOne();
 
-        return world.Wires.Count == wiresAfterFirst && HasWireSpool(world);
+        return onPin == WireRules.MaxWiresPerPin && world.Wires.Count == wiresAtCap && HasWireSpool(world);
     }
 
     private static bool World_WireLay_CancelPressed_ClearsPendingLayWithoutConsumingSpool()
@@ -521,6 +531,7 @@ internal static partial class TestRunner
     {
         var world = new World();
         world.SpawnCharacter(1); // corridor
+        CutPowerTo(world, PowerSystemId.Oxygen); // no generator refilling the room
         world.AddComponent(new Component("o2", ComponentKind.OxygenSensor, "corridor", 0, 0));
         world.Step(RealtimeStep);
         var beforeBreach = GateSignal(world, "o2");

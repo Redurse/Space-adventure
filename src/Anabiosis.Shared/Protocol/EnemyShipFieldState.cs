@@ -22,4 +22,6 @@ public sealed record EnemyShipFieldState(
     bool IsBoardable,
     // The compartments this ship still has, in its own local frame - every hostile ship is the same hull, but each loses
     // compartments as it is shot up (World.EnemyShips.cs), and the field renderer draws exactly what is left.
-    IReadOnlyList<Room>? Rooms = null);
+    IReadOnlyList<Room>? Rooms = null,
+    // A wreck (World.Wrecks.cs), not a hostile ship: drifting, dead, never shoots.
+    bool IsDerelict = false);

@@ -3,13 +3,15 @@ using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
 
-// What a held Rifle / LaserRifle does when the trigger (right mouse) is down.
+// What a held firearm does when the trigger (right mouse) is down.
 //
-//   * Rifle: a burst. One pull releases WeaponDefinitions.BurstRounds bullets a few hundredths of a
-//     second apart, and every bullet wears one round out of the magazine plugged into the rifle
-//     (MagazineDefinitions, TankSockets) - no magazine or an empty one means no shot at all.
-//     The extra bullets are for the look of it for now: the burst's full damage rides on its first
-//     bullet, exactly what a single shot did before, so balance did not move.
+//   * A gun (GunDefinitions - Barotrauma numbers): one round per shot out of whatever is loaded in it,
+//     at the pace of its reload time for as long as the trigger is held. A shell throws its pellets all
+//     at once. Every round leaves inside the spread cone of the gun - a tight one in trained hands (the
+//     security officer), a wide one for anyone else - and carries the wound, the bleeding and the stun
+//     of that round to whoever it reaches (World.PersonalShots.cs).
+//     With nothing loaded a gun that takes loose rounds reloads from a stack in the pockets on the next
+//     pull (it takes a moment); a gun that takes magazines only clicks until a fresh one is put in.
 //   * LaserRifle: a beam. It is not a travelling bolt - it is a straight line from the muzzle in the
 //     direction the player is looking that ends where it hit somebody or ran into a wall, and it is
 //     drawn for a fraction of a second. No magazine.
@@ -18,18 +20,7 @@ public sealed partial class World
     private const float LaserBeamLifetimeSeconds = 0.2f;
     private const float LaserBeamStep = 0.2f;
     private const int LaserBeamMaxSteps = 220; // 44 units - longer than any room
-    // Fixed fan of angles (degrees) the bullets of one burst leave at, so a burst looks like a burst and
-    // not a single dotted line. Fixed rather than random: it must not consume the world's seeded RNG
-    // stream (enemy rolls would shift), and a test can predict it.
-    private static readonly float[] BurstSpreadDegrees = { 0f, 1.6f, -1.8f, 2.8f, -1.2f, 0.8f, -2.6f, 2.0f };
 
-    private sealed class BurstRuntime
-    {
-        public int Fired;
-        public float Timer;
-    }
-
-    private readonly Dictionary<int, BurstRuntime> _bursts = new();
     private readonly List<LaserBeamRuntime> _laserBeams = new();
     private int _nextLaserBeamId = 1;
 
@@ -40,32 +31,30 @@ public sealed partial class World
         public required Vec2 Start { get; init; }
         public required Vec2 End { get; init; }
         public float Age { get; set; }
+        public bool Tracer { get; init; }
+        public bool FromEnemy { get; init; }
+        public float Weight { get; init; } = 1f;
     }
 
     private IReadOnlyList<LaserBeamState> CreateLaserBeamStates() =>
         _laserBeams.Select(b => new LaserBeamState(b.Id, b.Scene, (float)b.Start.X, (float)b.Start.Y,
-            (float)b.End.X, (float)b.End.Y, 1f - b.Age / LaserBeamLifetimeSeconds)).ToArray();
+            (float)b.End.X, (float)b.End.Y, 1f - b.Age / LaserBeamLifetimeSeconds, b.Tracer, b.FromEnemy, b.Weight)).ToArray();
 
     // The row slot a held weapon sits in, or -1.
     private static int HeldWeaponSlot(Character character, ItemType weapon) => character.Inventory.HeldSlotOf(weapon);
 
-    private static bool HasRoundsLoaded(Character character, ItemType weapon)
-    {
-        var slot = HeldWeaponSlot(character, weapon);
-        return slot >= 0 && character.Inventory.TankCharge(slot) is { } charge && charge >= MagazineDefinitions.RoundsPerBullet;
-    }
+    // Cheat panel: nothing runs out (turret shells, laser charge, rounds in a gun).
+    private bool _debugInfiniteAmmo;
+
+    // Weapons training, the way Barotrauma has a weapons skill: the security officer handles a gun
+    // properly, everybody else sprays (GunSpec.SpreadFor) and fumbles a bolt (GunSpec.ReloadFor).
 
     // Called once per pull of the trigger, after the cooldown check in TryFirePersonalWeapon.
-    // Returns whether the weapon actually fired (so an empty rifle does not start its cooldown).
+    // Returns whether the weapon actually fired (so an empty gun does not start its cooldown).
     private bool FireHeldWeapon(Character character, ItemType weapon, Vec2 aim)
     {
-        if (WeaponDefinitions.IsAutomatic(weapon))
-        {
-            if (!HasRoundsLoaded(character, weapon) || _bursts.ContainsKey(character.PlayerId))
-                return false;
-            _bursts[character.PlayerId] = new BurstRuntime();
-            return true;
-        }
+        if (GunDefinitions.Of(weapon) is { } gun)
+            return FireGun(character, gun, aim);
 
         if (WeaponDefinitions.IsBeam(weapon))
         {
@@ -77,61 +66,51 @@ public sealed partial class World
         return true;
     }
 
-    // Releases the bullets of every burst in progress, one at a time on the burst's own clock. A burst
-    // stops early if the magazine runs dry, the rifle leaves the hand, or its owner dies.
-    private void StepBursts(double deltaSeconds)
+    // How long loading loose rounds from the pockets into an empty gun takes (the pull that finds it empty).
+    public const float GunReloadSeconds = 1.2f;
+    public const float RevolverReloadSeconds = GunReloadSeconds;
+
+    private bool FireGun(Character character, GunSpec gun, Vec2 aim)
     {
-        foreach (var playerId in _bursts.Keys.ToList())
+        var slot = HeldWeaponSlot(character, gun.Weapon);
+        if (slot < 0)
+            return false;
+        // What leaves the barrel is the round that is loaded: the ordinary one, or a variant of it.
+        var loaded = GunDefinitions.Loaded(gun, character.Inventory.LoadedAmmo(slot));
+        if (!_debugInfiniteAmmo)
         {
-            var burst = _bursts[playerId];
-            if (!_characters.TryGetValue(playerId, out var character) || character.Health <= 0
-                || !character.Inventory.IsHolding(ItemType.Rifle))
+            var inventory = character.Inventory;
+            if (inventory.TankCharge(slot) is not >= 1f)
             {
-                _bursts.Remove(playerId);
-                continue;
+                if (gun.StackFed)
+                    for (var i = 0; i < inventory.MainSlots.Length; i++)
+                        if (inventory.MainSlots[i] is { } spare && GunDefinitions.Accepts(gun, spare) && inventory.TryAttachTank(i, slot))
+                        {
+                            _weaponCooldowns[character.PlayerId] = GunReloadSeconds;
+                            break;
+                        }
+                return false;
             }
-
-            burst.Timer -= (float)deltaSeconds;
-            while (burst.Timer <= 0f && burst.Fired < WeaponDefinitions.BurstRounds)
-            {
-                if (!HasRoundsLoaded(character, ItemType.Rifle))
-                {
-                    burst.Fired = WeaponDefinitions.BurstRounds; // magazine dry: the rest of the burst never leaves the barrel
-                    break;
-                }
-
-                character.Inventory.DrainTank(HeldWeaponSlot(character, ItemType.Rifle), MagazineDefinitions.RoundsPerBullet);
-                FireBurstBullet(character, burst.Fired);
-                burst.Fired++;
-                burst.Timer += WeaponDefinitions.BurstIntervalSeconds;
-            }
-
-            if (burst.Fired >= WeaponDefinitions.BurstRounds)
-                _bursts.Remove(playerId);
+            inventory.DrainTank(slot, 1f);
+            // The last loose round gone leaves nothing in the gun; an empty magazine stays in until it is swapped.
+            if (gun.StackFed && inventory.TankCharge(slot) is not > 0f)
+                inventory.ClearTank(slot);
         }
+        FireGunRound(new Shooter(SceneOf(character), FromEnemy: false, character.PlayerId, CrewId: null, character.WeaponsSkill, WeaponDamageBonus),
+            character.Position, character.RoomId, loaded, aim);
+        return true;
     }
 
-    private void FireBurstBullet(Character shooter, int index)
+    // One shot of a gun leaving a muzzle: a round, or every pellet of a shell. The whole shot is thrown off
+    // the aim by up to half the spread cone either way, each pellet by up to half the pellet cone around that.
+    // A fraction of the spread cone, -0.5..0.5, off the number of the shot. Not the seeded RNG of the world:
+    // spraying a magazine must not shift what the enemy rolls next, and a test can predict where a shot goes.
+    private static float SpreadRoll(int shot, int salt)
     {
-        var aim = shooter.LookDirection.Length() > 0.01f ? shooter.LookDirection : shooter.FacingDirection;
-        if (aim.Length() < 0.01f)
-            return;
-
-        var angle = BurstSpreadDegrees[index % BurstSpreadDegrees.Length] * (MathF.PI / 180f);
-        var cos = MathF.Cos(angle);
-        var sin = MathF.Sin(angle);
-        var direction = new Vec2(aim.X * cos - aim.Y * sin, aim.X * sin + aim.Y * cos).Normalized();
-        var damage = index == 0 ? WeaponDefinitions.DamagePerHit(ItemType.Rifle) + WeaponDamageBonus : 0f;
-
-        _personalShots.Add(new PersonalShotRuntime(
-            $"shot-{_nextPersonalShotId++}",
-            shooter.Position,
-            direction * ShotSpeed(ItemType.Rifle),
-            damage,
-            shooter.RoomId,
-            SceneOf(shooter),
-            fromEnemy: false,
-            ItemType.Rifle));
+        var n = unchecked((uint)(shot * 374761393 + salt * 668265263));
+        n = unchecked((n ^ (n >> 13)) * 1274126177u);
+        n ^= n >> 16;
+        return (n & 0xFFFF) / 65535f - 0.5f;
     }
 
     // Marches a probe along the aim until it hits a defender or leaves the compartment (a wall) - the
@@ -143,7 +122,8 @@ public sealed partial class World
             return;
         var dir = direction.Normalized();
         var probe = new PersonalShotRuntime("beam", shooter.Position, dir, WeaponDefinitions.DamagePerHit(ItemType.LaserRifle) + WeaponDamageBonus,
-            shooter.RoomId, SceneOf(shooter), fromEnemy: false, ItemType.LaserRifle);
+            shooter.RoomId, SceneOf(shooter), fromEnemy: false, ItemType.LaserRifle)
+            { Shooter = new Shooter(SceneOf(shooter), FromEnemy: false, shooter.PlayerId, CrewId: null, shooter.WeaponsSkill, DamageBonus: 0f) };
 
         var end = shooter.Position;
         for (var i = 0; i < LaserBeamMaxSteps; i++)

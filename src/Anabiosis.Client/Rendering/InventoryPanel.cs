@@ -141,6 +141,16 @@ public sealed class InventoryPanel
             DrawSlot(spriteBatch, _pixel, _font, rect, item, string.Empty);
             DrawHotkeyBadge(spriteBatch, i, rect);
 
+            // A stack of loose rounds shows how many are left, "x6" as in Barotrauma.
+            if (item is { } stacked && TankSockets.IsStack(stacked) && inventory.MainSlotTanks[i] is { } rounds)
+            {
+                var count = $"x{(int)System.MathF.Ceiling(rounds)}";
+                var size = _font.MeasureString(count) * 0.5f;
+                var at = new Vector2(rect.Right - size.X - 3, rect.Bottom - size.Y - 1);
+                spriteBatch.DrawString(_font, count, at + new Vector2(1, 1), Color.Black, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+                spriteBatch.DrawString(_font, count, at, Color.White, 0f, Vector2.Zero, 0.5f, SpriteEffects.None, 0f);
+            }
+
             var isHoldable = item is { } itemType && ItemDefinitions.IsHoldable(itemType);
             if (item is { } heldItemType && isHoldable)
             {
@@ -160,7 +170,7 @@ public sealed class InventoryPanel
             // suit's own bottle - same fraction the hover-only socket bar above already shows, just
             // visible at a glance without having to mouse over it first. Stays below the slot -
             // only the hold strip moved, this didn't need to.
-            if (inventory.MainSlotTanks[i] is { } charge && TankTypeFor(item) is { } tankType)
+            if (inventory.MainSlotTanks[i] is { } charge && (inventory.MainSlotTankTypes?[i] ?? TankTypeFor(item)) is { } tankType)
                 DrawChargeBar(spriteBatch, new Rectangle(rect.X, rect.Bottom + 2, SlotSize, ChargeBarHeight), charge / TankSockets.FullChargeOf(tankType));
         }
     }
@@ -313,11 +323,14 @@ public sealed class InventoryPanel
     {
         ItemType.AmmoCrate => Color.SaddleBrown,
         ItemType.Spacesuit => Color.CadetBlue,
-        ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle or ItemType.Axe => Color.DarkRed,
+        ItemType.Knife or ItemType.Rifle or ItemType.LaserRifle or ItemType.Axe or ItemType.Revolver => Color.DarkRed,
         ItemType.MedKit => Color.Crimson,
         ItemType.BeltBag => Color.SaddleBrown,
         ItemType.IdCard => Color.SteelBlue,
-        ItemType.Magazine => Color.DarkGoldenrod,
+        ItemType.Magazine or ItemType.RevolverRounds => Color.DarkGoldenrod,
+        _ when ArmorDefinitions.IsArmor(type) => Color.DarkOliveGreen,
+        _ when GunDefinitions.Of(type) is not null => Color.DarkRed,
+        _ when GunDefinitions.IsAmmo(type) => Color.DarkGoldenrod,
         _ => Color.DarkKhaki, // Wrench, Screwdriver, WeldingTool, Cutter
     };
 

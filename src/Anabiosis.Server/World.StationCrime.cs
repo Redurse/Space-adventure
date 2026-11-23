@@ -18,13 +18,11 @@ public sealed partial class World
     private const int FinePerStolenItem = 60;
     private const int StandingPenaltyPerArrest = -25;
     private const int StandingPenaltyForKillingGuard = -50; // far worse than being caught
-    private const float GuardAttackIntervalSeconds = 2f;
 
     private readonly HashSet<string> _lootedCrateIds = new();
     private readonly Dictionary<int, int> _stolenItemCount = new();
     private readonly Dictionary<string, float> _guardHealth = new();
     private float _arrestCheckCooldown = ArrestCheckIntervalSeconds;
-    private float _guardAttackCooldown = GuardAttackIntervalSeconds;
 
     // Guards only shoot once shot at - a thief who comes quietly is arrested, not gunned down.
     private bool _stationAlerted;
@@ -39,6 +37,15 @@ public sealed partial class World
         _guardHealth.TryGetValue(npcId, out var health) ? health : GuardMaxHealth;
 
     private bool IsGuardAlive(string npcId) => GuardHealthOf(npcId) > 0;
+
+    // Anyone on a station can be hurt, not only its guards (direct user request): the people behind the counters
+    // share the guards' health table, with less health of their own. Shooting any of them puts the station on
+    // alert, and killing one costs the same standing as killing a guard. A dead one serves nobody until the next visit.
+    private const float StaffMaxHealth = 60f;
+    private static float NpcMaxHealth(StationNpc npc) => npc.Kind == NpcKind.Security ? GuardMaxHealth : StaffMaxHealth;
+    private float NpcHealthOf(StationNpc npc) => _guardHealth.TryGetValue(npc.Id, out var health) ? health : NpcMaxHealth(npc);
+    private bool IsNpcAlive(StationNpc npc) => NpcHealthOf(npc) > 0;
+    private bool HasLivingNpc(NpcKind kind) => Station.Npcs.Any(n => n.Kind == kind && IsNpcAlive(n));
 
     // Taking a crate. Called from HandleInteract's station branch, so it competes with nothing -
     // there's nothing else to interact with in a station room.
@@ -67,19 +74,46 @@ public sealed partial class World
     private bool TryHitGuardAt(Vec2 point, string roomId, float damage)
     {
         var guard = Station.Npcs.FirstOrDefault(n =>
-            n.Kind == NpcKind.Security &&
-            IsGuardAlive(n.Id) &&
+            IsNpcAlive(n) &&
             Station.Rooms.FirstOrDefault(r => r.Contains(n.Position))?.Id == roomId &&
             (n.Position - point).Length() <= BulletRadius);
-        if (guard is null)
-            return false;
+        if (guard is not null)
+        {
+            HitGuard(guard, damage);
+            return true;
+        }
+        return TryHitResidentAt(point, damage);
+    }
 
+    // The people walking about the station (World.StationResidents.cs) can be hit like anyone else.
+    private bool TryHitResidentAt(Vec2 point, float damage)
+    {
+        if (!IsDocked || DockedAtAbandonedStation)
+            return false;
+        foreach (var (id, position) in ResidentSim().Living)
+        {
+            if ((position - point).Length() > BulletRadius)
+                continue;
+            HitResident(id, damage);
+            return true;
+        }
+        return false;
+    }
+
+    private void HitResident(string residentId, float damage)
+    {
         _stationAlerted = true;
-        var health = Math.Max(0, GuardHealthOf(guard.Id) - damage);
+        if (ResidentSim().Damage(residentId, damage))
+            AdjustStanding(DockedFaction, StandingPenaltyForKillingGuard);
+    }
+
+    private void HitGuard(StationNpc guard, float damage)
+    {
+        _stationAlerted = true;
+        var health = Math.Max(0, NpcHealthOf(guard) - damage);
         _guardHealth[guard.Id] = health;
         if (health <= 0)
             AdjustStanding(DockedFaction, StandingPenaltyForKillingGuard);
-        return true;
     }
 
     private bool TryFireAtGuard(Character character, ItemType weapon)
@@ -116,28 +150,6 @@ public sealed partial class World
         StepGuardFire(onStation, deltaSeconds);
         StepArrestChecks(onStation, deltaSeconds);
         StepStationResidents(deltaSeconds, onStation);
-    }
-
-    private void StepGuardFire(List<Character> onStation, double deltaSeconds)
-    {
-        if (!_stationAlerted)
-            return;
-
-        _guardAttackCooldown -= (float)deltaSeconds;
-        if (_guardAttackCooldown > 0)
-            return;
-        _guardAttackCooldown = GuardAttackIntervalSeconds;
-
-        foreach (var guard in Station.Npcs.Where(n => n.Kind == NpcKind.Security && IsGuardAlive(n.Id)))
-        {
-            var guardRoomId = Station.Rooms.FirstOrDefault(r => r.Contains(guard.Position))?.Id;
-            var victim = onStation.FirstOrDefault(c =>
-                c.RoomId == guardRoomId && (guard.Position - c.Position).Length() <= GuardSightRadius);
-            if (victim is null)
-                continue;
-
-            victim.Health = Math.Max(0, victim.Health - WeaponDefinitions.DamagePerHit(ItemType.Rifle));
-        }
     }
 
     private void StepArrestChecks(List<Character> onStation, double deltaSeconds)
@@ -186,7 +198,7 @@ public sealed partial class World
         _guardHealth.Clear();
         _stationAlerted = false;
         _arrestCheckCooldown = ArrestCheckIntervalSeconds;
-        _guardAttackCooldown = GuardAttackIntervalSeconds;
+        _guardFire.Clear();
     }
 
     private IReadOnlyList<StationCrateState> CreateStationCrateStates() =>
@@ -194,7 +206,8 @@ public sealed partial class World
 
     private IReadOnlyList<StationGuardState> CreateStationGuardStates() =>
         Station.Npcs
-            .Where(n => n.Kind == NpcKind.Security)
-            .Select(n => new StationGuardState(n.Id, GuardHealthOf(n.Id), GuardMaxHealth, _stationAlerted))
+            // every guard, and anyone else on the staff who has been hurt (the client needs their health too)
+            .Where(n => n.Kind == NpcKind.Security || _guardHealth.ContainsKey(n.Id))
+            .Select(n => new StationGuardState(n.Id, NpcHealthOf(n), NpcMaxHealth(n), _stationAlerted))
             .ToArray();
 }

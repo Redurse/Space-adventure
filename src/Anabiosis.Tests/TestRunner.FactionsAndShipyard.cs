@@ -268,14 +268,14 @@ internal static partial class TestRunner
         world.SpawnCharacter(1);
         MineOre(world, 1);
 
-        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.IronOre);
+        var slotIndex = Array.IndexOf(world.CreateSnapshot().Characters.Single(c => c.PlayerId == 1).Inventory!.MainSlots.ToArray(), ItemType.RawIron);
         var creditsBefore = world.Credits;
 
         DockAtStation(world, "mining-outpost");
         world.ApplyCommand(1, new ClientCommand(1, SellSlotIndex: slotIndex));
 
         var gained = world.Credits - creditsBefore;
-        return gained > TradeCatalog.Find(ItemType.IronOre)!.SellPrice;
+        return gained > TradeCatalog.Find(ItemType.RawIron)!.SellPrice;
     }
 
     // Enough Consortium losses hand their own frontier station to FreeFleet outright

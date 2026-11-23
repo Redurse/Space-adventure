@@ -12,4 +12,10 @@ public enum CampaignStage
     EdgeBeckons,
     Returning,
     Complete,
+    // Chapter two (World.CoreHunt.cs), after the intro: the artifact is the core of the virus. The crew goes for the precursor tool,
+    // then races to the mother ship before the virus does. Appended last so older saves read as they were.
+    CoreHunt,       // looking for the tool at the great precursor post
+    MotherChase,    // has the tool, must reach the mother ship
+    CoreDestroyed,  // the end: the virus is dead everywhere
+    ArtifactLost,   // the mother ship fell first: the artifact is the virus own now
 }

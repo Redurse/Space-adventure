@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 using Anabiosis.Shared.Protocol;
 
 namespace Anabiosis.Server;
@@ -39,7 +39,7 @@ public sealed partial class World
     // (World.ShipPurchase.cs) - everything keyed off it (turret runtimes, room oxygen, door
     // states, breaches) gets rebuilt at the same time.
     public Ship Ship { get; private set; }
-    public PowerGrid PowerGrid { get; } = new();
+    public PowerGrid PowerGrid { get; } = new(reactorMaxOutput: 80f);
     public ShieldSystem Shield { get; } = new();
     // Enemy is a computed view over the squadron actually in the field (World.EnemyFleet.cs).
     // One generated instance per station actually visited so far this session (M49 - every station
@@ -92,7 +92,10 @@ public sealed partial class World
             anchor = new Vec2(maxRight, (minY + maxBottom) / 2);
             airlockSide = EdgeSide.Right;
         }
-        var station = Station.CreateProcedural(pointId, kind, anchor, airlockSide);
+        // An outpost is the three drawn compartments, every other station the procedural ring (Station.CreateFor decides).
+        var station = Station.CreateFor(GalaxyMap.GetPoint(pointId), anchor, airlockSide);
+        if (IsAbandonedStationPoint(pointId))
+            station = station.AsAbandoned(); // the same rooms, nobody home (World.AbandonedStations.cs)
         _stationsByPointId[pointId] = station;
         // Every station's doors, not just the one currently resolved - door state is one flat
         // dictionary across all structures in the game. TryAdd rather than a raw assignment so
@@ -122,7 +125,7 @@ public sealed partial class World
     // Either a hostile sector/station's squadron (World.Voyage.cs) or a persistent Military NPC
     // that turned hostile and closed the distance (World.NpcShips.cs) - the two are mutually
     // exclusive, never both set at once.
-    public bool IsInBattle => _battleSectorPointId is not null || _battleNpcShipId is not null;
+    public bool IsInBattle => _battleSectorPointId is not null || _battleNpcShipId is not null || _battleWar;
 
     // What the galaxy map actually plots as the ship's marker. While docked, _shipFieldPosition
     // holds DockBerthPosition - a field-space point anchored to the ship's OWN airlock door
@@ -186,8 +189,13 @@ public sealed partial class World
     // customShip supplied falls back to ShipDefaultHull.Definition - the old Frigate/CreateStarter
     // layout, frozen as data rather than code (that file's own doc comment explains why), so those
     // hundreds of existing callers keep behaving identically without needing to change at all.
-    public World(ShipKind shipKind = ShipKind.Custom, CustomShipDefinition? customShip = null)
+    // worldSeed: what every system's hidden places are rolled from (PoiGenerator.cs). 0 - the default every
+    // test builds - is the fixed world with no asteroid clusters; a real game passes a random one (GameServer).
+    // startDocked: false - a real new game begins with the ship free beside the home station, in its own base position (not turned, not mated);
+    // every test and the tutorial keep the old "starts docked" (hundreds of them are written against it).
+    public World(ShipKind shipKind = ShipKind.Custom, CustomShipDefinition? customShip = null, int worldSeed = 0, bool startDocked = true)
     {
+        GalaxyMap = GalaxyMap.CreateStarter(worldSeed);
         // Set before anything below touches AsteroidField (which resolves through it) - a fresh
         // crew always starts in whichever system the home station actually sits in.
         _currentSystemId = GalaxyMap.SystemOf(GalaxyMap.HomePointId).Id;
@@ -213,15 +221,25 @@ public sealed partial class World
         AutosavePending = true;
         RegenerateRecruitRoster();
         RecordDockCheckpoint(home.Id); // where the ship is put back if it ever blows up
+        if (!startDocked)
+            StartFreeBesideStation();
     }
 
     // Every player starts with a radio headset already worn (direct user request) - radio voice
     // needs one in EquipSlot.Headset (World.Voice.cs), and nobody should have to dig it out of the
     // rack before the first call. Recruited bots are built separately and don't get one.
-    public void SpawnCharacter(int playerId)
+    // `look` / `role` / `kitIndex` come from the lobby (the appearance tab, the role slot, the 1/2/3 sets): the kit's items are in the inventory the moment
+    // the character appears. A player who joins a running round without a lobby gets the defaults - no look chosen, no role, the plain kit-less start.
+    public void SpawnCharacter(int playerId, CharacterLook? look = null, CrewRole? role = null, int? kitIndex = null)
     {
         var character = new Character(playerId, Ship.SpawnPoint, Ship.SpawnRoomId);
         character.Inventory.Equipped[EquipSlot.Headset] = ItemType.Radio;
+        character.Look = look?.Clamped();
+        if (role is { } chosenRole)
+            character.Role = chosenRole;
+        if (kitIndex is { } kit)
+            foreach (var item in StartKits.Get(role, kit).Items)
+                character.Inventory.TryAdd(item); // a full row just leaves the rest out: nothing is lost that was ever there
         _characters[playerId] = character;
     }
 
@@ -261,17 +279,31 @@ public sealed partial class World
             return;
 
         var character = _characters[playerId];
+        // The look chosen in the lobby, for a player who started without one (solo, or a join into a running round): sent once, at the round's start.
+        if (command.LobbyLook is { } chosenLook)
+            character.Look = chosenLook.Clamped();
         // Direct user request ("экран смерти... почти точь в точь как в баротравме") - a dead
         // character does nothing at all any more (World.Movement.cs's own StepCharacters gate is
         // the other half); deliberately doesn't drop held items or force them off a manned turret/
         // helm, only what the plan itself actually asked for.
         if (character.IsDead)
             return;
+        if (command.GiveUp)
+        {
+            character.Body.GiveUp();
+            if (character.IsDead)
+                return;
+        }
+        // Down (unconscious, or the heart has stopped): the input is simply ignored, apart from letting go of the walking input.
+        if (character.IsDowned)
+        {
+            _moveInput[playerId] = Vec2.Zero;
+            return;
+        }
 
         _moveInput[playerId] = new Vec2(command.MoveX, command.MoveY);
         _sprintInput[playerId] = command.Sprint;
         character.LookDirection = new Vec2(command.LookX, command.LookY);
-        PowerGrid.ApplyInput(playerId, command.PowerSystemIndex, command.PowerDirection);
 
         ObserveTutorialInput(character, command);
 
@@ -287,7 +319,14 @@ public sealed partial class World
         // A live player's own role is a self-identification label only (unlike a hired bot's,
         // World.CrewAi.cs never reads it) - no docked/proximity gate needed, same as Nickname above.
         if (command.SetOwnRoleTo is { } roleToSet)
+        {
+            // The first pick (it arrives a tick or two after the character appears at the shared spawn):
+            // someone still standing there is moved to their role's own compartment (Ship.RoleSpawn).
+            if (character.Role is null && !character.OnStation && !character.IsOutside && !character.OnEnemyShip
+                && (character.Position - Ship.SpawnPoint).Length() < 0.5)
+                (character.Position, character.RoomId) = Ship.RoleSpawn(roleToSet);
             character.Role = roleToSet;
+        }
 
         if (command.PlayCardRank is { } cardRank && command.PlayCardSuit is { } cardSuit)
             TryPlayCard(character, cardRank, cardSuit);
@@ -333,7 +372,7 @@ public sealed partial class World
         // interaction, so proximity-checked like ToggleReactorSlot rather than trusted client-side
         // like the panel clicks (DoorToggleId etc.) below.
         if ((command.ToggleLightsPressed || command.ToggleReactorEmergencyPressed || command.ToggleDoorsLockedPressed) &&
-            (Ship.ReactorBlock.Position - character.Position).Length() < InteractionRadius)
+            (Ship.ReactorBlock.Position - character.Position).Length() < ReactorReach)
         {
             if (command.ToggleLightsPressed)
                 LightsOn = !LightsOn;
@@ -342,6 +381,10 @@ public sealed partial class World
             if (command.ToggleDoorsLockedPressed)
                 DoorsLocked = !DoorsLocked;
         }
+        if (command.ToggleReactorRunningPressed)
+            HandleToggleReactorRunning(character);
+        if (command.ToggleShorePowerPressed)
+            HandleToggleShorePower(character);
 
         // Dev cheat panel (Ё key, Game1.cs's CheatPanel) - no proximity/role gate, it's a testing
         // tool for hit resolution, not a game action.
@@ -349,6 +392,10 @@ public sealed partial class World
             DebugSpawnEnemyNearby();
         if (command.DebugAddCreditsPressed)
             DebugAddCredits(100);
+        if (command.DebugInfiniteAmmo is { } infiniteAmmo)
+            _debugInfiniteAmmo = infiniteAmmo;
+        if (command.DebugRevealSystemMap)
+            DebugRevealSystemMap();
 
         // The jukebox's checkbox and two steppers (JukeboxPanel) - same physical, proximity-checked
         // treatment as the reactor levers above, gated on Ship.Jukebox actually existing since a
@@ -388,6 +435,12 @@ public sealed partial class World
         if (command.WarpToSystemId is not null)
             TryWarpTo(command.WarpToSystemId);
 
+        if (command.Shuttle is { } shuttleRequest)
+            HandleShuttleRequest(character, shuttleRequest);
+
+        if (command.WarSpeedLevel is { } warSpeedLevel)
+            SetWarSpeed(warSpeedLevel);
+
         if (command.PurchaseUpgradeTrack is { } upgradeTrack)
             TryPurchaseUpgrade(upgradeTrack);
 
@@ -396,6 +449,8 @@ public sealed partial class World
 
         if (command.DemolishRoomId is { } demolishRoomId)
             TryDemolishRoom(demolishRoomId);
+
+        ApplyMedicalCommand(character, command);
 
         if (command.BuildCompartment is { } buildCompartmentRequest)
             TryBuildCompartment(buildCompartmentRequest);
@@ -408,6 +463,11 @@ public sealed partial class World
 
         if (command.DockPressed)
             HandleDockButtonPressed();
+
+        if (command.HailPointId is { } hailPointId)
+            HandleHail(hailPointId);
+        if (command.EndCommsPressed)
+            EndComms();
 
         if (command.ToggleLandingPressed)
             HandleLandingButtonPressed();
@@ -424,11 +484,23 @@ public sealed partial class World
         if (command.WireLayCancelPressed)
             HandleWireLayCancel(character);
 
+        if (command.RemoveWireId is { } removeWireId)
+            HandleRemoveWire(character, removeWireId);
+
         if (command.WireBendAtX is { } wireBendX && command.WireBendAtY is { } wireBendY)
             HandleWireBend(character, new Vec2(wireBendX, wireBendY));
 
         if (command.ComponentOperateId is { } operateId)
+        {
             ToggleRelay(operateId);
+            PressButton(operateId);
+        }
+
+        if (command.ComponentSettingId is { } settingId && command.ComponentSettingAction is { } settingAction)
+            ChangeComponentSetting(settingId, (ComponentSettingAction)settingAction);
+
+        if (command.ComponentTextId is { } textId)
+            SetComponentText(textId, command.ComponentText);
 
         if (command.ComponentMountInteractId is { } mountId)
             HandleComponentMountInteract(character, mountId);
@@ -534,6 +606,8 @@ public sealed partial class World
 
     public void Step(double deltaSeconds)
     {
+        StepWar(deltaSeconds);
+        StepWarpCooldown(deltaSeconds);
         // Owned here, not just by GameServer's own caller loop (M58 follow-up - a whole test suite
         // calling World.Step directly, never touching Tick itself, left CurrentTotalSeconds
         // (World.Gravity.cs) frozen at 0 for the entire run: every station/planet position resolved
@@ -567,34 +641,40 @@ public sealed partial class World
         StepProjectiles(deltaSeconds);
         StepEnemyHulls(deltaSeconds);
         StepVoyage(deltaSeconds);
+        StepShuttles(deltaSeconds);
+        StepComms(deltaSeconds);
         StepSunZone(deltaSeconds);
-        StepSalvage(deltaSeconds);
+        StepExploration(deltaSeconds);
+        StepWrecks();
         // After voyage, so a fresh engagement (TryEngageHostileNpc) spawns its squadron against
         // this tick's already-updated ship position, same freshness UpdateNearestStation's own
         // station-defense check relies on.
         StepNpcFleet(deltaSeconds);
+        StepWarEncounter(deltaSeconds);
         StepScanners(deltaSeconds);
         StepCampaign();
+        StepCoreHunt(deltaSeconds);
         StepTutorial();
         // M72 - before atmosphere, so it reads this tick's already-synced door/wall tile state, not
         // whatever was true a tick behind.
         SyncShipTiles();
         StepAtmosphere(deltaSeconds);
-        StepInjuries(deltaSeconds);
+        StepMedical(deltaSeconds);
         // After everything else so a bot reacts to this tick's state (a fresh breach, a target that
         // just came into a fight) rather than lagging a tick behind it, and before PowerGrid.Step so
         // an Engineer bot's nudge this tick is actually reflected in this tick's allocation.
         StepCrewBots(deltaSeconds);
         // After crew bots (so a bot's own action this tick is visible to a sensor) and before
-        // PowerGrid.Step (so a PowerLossSensor reads last tick's settled allocation, same timing
-        // every other GetEffectivePower caller already relies on).
+        // StepShipPower (so a PowerLossSensor reads last tick's settled power, same timing every
+        // other GetEffectivePower caller already relies on).
         StepComponentLogic(deltaSeconds);
         StepCardTable();
         StepCardGame(deltaSeconds);
         StepFrontsGame(deltaSeconds);
         StepShipDebris(deltaSeconds); // M63 - order doesn't matter, pure independent inertia
         StepShipBlasts(deltaSeconds); // explosions, chains of them, and the whole-ship one
-        PowerGrid.Step(deltaSeconds);
+        StepShipPower(deltaSeconds);
+        StepWiringHazards(deltaSeconds);
         Shield.Step(deltaSeconds, GetEffectivePower(PowerSystemId.Shields));
     }
 
@@ -642,7 +722,10 @@ public sealed partial class World
             Station.DockingPortPosition,
             Station.WallBlocks,
             CreateStationWallBlockStates(),
-            Residents: CreateStationResidentStates()),
+            Residents: CreateStationResidentStates(),
+            IsAbandoned: Station.IsAbandoned,
+            TileFixes: Station.TileFixes.IsEmpty ? null : Station.TileFixes,
+            Power: CreateStationPowerState()),
         DockBerthPosition,
         CanDockNow,
         new EnemyShipSnapshot(
@@ -663,7 +746,9 @@ public sealed partial class World
             CreateEnemyNotWorkingIds(),
             BoardableEnemy?.Grid.Reactor.Broken ?? false,
             BoardableEnemy?.Grid.DistributionBroken ?? false,
-            BoardableEnemy?.HelmBroken ?? false),
+            BoardableEnemy?.HelmBroken ?? false,
+            BoardableEnemy?.Derelict ?? false,
+            CreateWreckLootStates()),
         CreateProjectileStates(),
         CreatePersonalShotStates(),
         CreateFactionStandings(),
@@ -696,7 +781,8 @@ public sealed partial class World
                     c.Inventory.HeldSlotIndices.ToArray(),
                     c.Inventory.MainSlotTanks.ToArray(),
                     c.Inventory.TankCharge(Inventory.WornSuitSlot),
-                    c.Inventory.BeltBagSlots.ToArray()),
+                    c.Inventory.BeltBagSlots.ToArray(),
+                    Enumerable.Range(0, Inventory.MainSlotCount).Select(c.Inventory.LoadedAmmo).ToArray()),
                 c.IsBleeding, c.IsAtHelm, c.IsOutside, c.JetpackFuel, c.EvaAttachedTo != EvaAttachment.None, c.OnStation, c.OnEnemyShip,
                 c.Inventory.TankCharge(Inventory.WornSuitSlot),
                 c.Inventory.HeldSlotOf(ItemType.Cutter) is var cutterSlot && cutterSlot >= 0
@@ -723,14 +809,20 @@ public sealed partial class World
                 c.ProductionActionRemaining,
                 c.ProductionRecipeId,
                 c.ProductionIsDeconstruct,
-                c.RespawnSecondsRemaining);
+                c.RespawnSecondsRemaining,
+                CreateBodyState(c),
+                CreateTreatmentState(c),
+                c.WeaponsSkill,
+                c.Look,
+                _repairingNow.Contains(c.PlayerId));
         }).ToArray(),
-        PowerGrid.CreateState(),
+        CreatePowerState(),
         new VoyageState(ShipMapPosition, _dockedPointId, IsInBattle, IsDocked || _nearestStationPointId is not null, _landedBodyId),
         Credits,
         ActiveQuest,
         new Dictionary<ShipUpgradeTrack, int>(UpgradeLevels),
-        new WiringSnapshot(Components, CreateComponentStates(), Wires, CreateWireStates(), Ship.ComponentMounts, CreateComponentMountStates()),
+        new WiringSnapshot(Components, CreateComponentStates(), Wires, CreateWireStates(), Ship.ComponentMounts, CreateComponentMountStates(),
+            CreatePinSignals(), CreateLampsOff(), CreateOverheatingJunctions()),
         new AsteroidFieldSnapshot(AsteroidField.Asteroids, AsteroidField.OreDeposits, CreateOreDepositStates()),
         _droppedItems.ToArray(),
         new ShipFieldState(
@@ -765,26 +857,39 @@ public sealed partial class World
         CreateFrontsGameState(),
         CreateCardTableChoiceSeatedIds(),
         CreateCardTableDurakVotes(),
-        CreateTerminalStates(),
-        Ship.WallLamps,
+        Merge<TerminalState>(CreateTerminalStates(), DockedFixtures.Terminals.Select(t => new TerminalState(t, true)).ToArray()),
+        Merge<WallLamp>(Ship.WallLamps, DockedFixtures.WallLamps),
         Ship.SupplementalWallTiles,
         Ship.ForcedFloorTiles,
         Ship.WallOpenSideOverrides,
         Ship.WallMaterialOverrides,
-        Ship.JunctionBoxes,
+        Merge<JunctionBox>(Ship.JunctionBoxes, DockedFixtures.JunctionBoxes),
         Ship.DoorEdges,
         CreateDoorEdgeStates(),
         CreateRoomHpStates(),
         Ship.WreckPatches,
         CreateAutopilotState(),
-        Ship.DecorativeDevices,
-        Ship.ShipStatusMonitors,
-        Ship.CommsConsoles,
-        Ship.ExtraNavigationConsoles,
-        Ship.ExtraHelmConsoles,
+        Merge<DecorativeDevice>(Ship.DecorativeDevices, DockedFixtures.DecorativeDevices),
+        Merge<ShipStatusMonitor>(Ship.ShipStatusMonitors, DockedFixtures.StatusMonitors),
+        Merge<CommsConsole>(Ship.CommsConsoles, DockedFixtures.CommsConsoles),
+        Merge<NavigationConsole>(Ship.ExtraNavigationConsoles, DockedFixtures.Navigations),
+        Merge<HelmConsole>(Ship.ExtraHelmConsoles, DockedFixtures.Helms),
         HyperiumAboard,
-        _salvagedPointIds.ToArray(),
+        CreatePoiStates(),
         SalvageNotice,
         CreateLaserBeamStates(),
-        CreateShipBlastStates());
+        CreateShipBlastStates(),
+        Fog: CreateFogState(),
+        WarLanes: _warLanes, WarNodes: _warNodes, WarMovers: _warMovers, WarClock: _warClock, WarFleets: _warFleets, WarMother: _warMother,
+        CampaignObjective: CampaignObjective, CampaignTargetSystemId: CampaignTargetSystemId, CampaignChapter: _campaignStage, Shuttles: CreateShuttleStates(), Comms: CreateCommsState(), ExtraBatteries: Merge<BatteryBlock>(Ship.ExtraBatteryBlocks, DockedFixtures.Batteries),
+            ExtraReactors: Merge<ReactorBlock>(Ship.ExtraReactorBlocks, DockedFixtures.Reactors),
+            ExtraDistributions: Merge<PowerDistributionBlock>(Ship.ExtraDistributionBlocks, DockedFixtures.Distributions),
+            Modifiers: Modifiers,
+            WarpCooldownRemaining: _warpCooldownRemaining);
+
+    // What the author drew into the docked station (Station.Fixtures.cs): in the ship's own frame while mated, so it simply joins the ship's lists.
+    private StationFixtures DockedFixtures => IsDocked ? Station.Fixtures : StationFixtures.Empty;
+
+    private static IReadOnlyList<T> Merge<T>(IReadOnlyList<T> ship, IReadOnlyList<T> station) =>
+        station.Count == 0 ? ship : ship.Concat(station).ToArray();
 }

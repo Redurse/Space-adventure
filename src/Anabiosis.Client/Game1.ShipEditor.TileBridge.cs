@@ -29,7 +29,12 @@ public partial class Game1
     private (CustomShipDefinition Definition, IReadOnlyList<string> Errors) BuildAndValidateEditorDefinition()
     {
         var (definition, tileErrors) = BuildDefinitionFromTiles();
-        var named = (definition ?? CustomShipDefinition.Empty) with { Name = _editorShipName, ForwardDegrees = _editorForwardDegrees };
+        var named = (definition ?? CustomShipDefinition.Empty) with
+        {
+            Name = _editorShipName, ForwardDegrees = _editorForwardDegrees,
+            // W10: the wires drawn with the wiring tool; the server uses them in place of the standard wiring at the pins they reach.
+            Wires = BuildEditorWireDefs(),
+        };
         if (tileErrors.Count > 0)
             return (named, tileErrors);
         return (named, CustomShipValidator.Validate(named));

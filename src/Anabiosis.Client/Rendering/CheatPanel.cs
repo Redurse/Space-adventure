@@ -10,7 +10,7 @@ namespace Anabiosis.Client.Rendering;
 public sealed class CheatPanel
 {
     public const int PanelWidth = 300;
-    public const int PanelHeight = 264;
+    public const int PanelHeight = 376;
     private const int ButtonWidth = 260;
     private const int ButtonHeight = 44;
     private const int TopPadding = 38;
@@ -60,7 +60,18 @@ public sealed class CheatPanel
         (int)panelOrigin.Y + TopPadding + 3 * (ButtonHeight + ButtonGap),
         ButtonWidth, ButtonHeight);
 
-    public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint, bool enemyInteriorOn = false)
+    public static Rectangle GetInfiniteAmmoButtonRect(Vector2 panelOrigin) => new(
+        (int)panelOrigin.X + (PanelWidth - ButtonWidth) / 2,
+        (int)panelOrigin.Y + TopPadding + 4 * (ButtonHeight + ButtonGap),
+        ButtonWidth, ButtonHeight);
+
+    // "Reveal the system map": clears the whole fog of the current system and marks every hidden place in it as found.
+    public static Rectangle GetRevealMapButtonRect(Vector2 panelOrigin) => new(
+        (int)panelOrigin.X + (PanelWidth - ButtonWidth) / 2,
+        (int)panelOrigin.Y + TopPadding + 5 * (ButtonHeight + ButtonGap),
+        ButtonWidth, ButtonHeight);
+
+    public void Draw(SpriteBatch spriteBatch, Vector2 panelOrigin, Point hoverPoint, bool enemyInteriorOn = false, bool infiniteAmmoOn = false)
     {
         var panelRect = new Rectangle((int)panelOrigin.X, (int)panelOrigin.Y, PanelWidth, PanelHeight);
         PanelFrame.Draw(spriteBatch, _pixel, panelRect, PanelBackground, PanelBorder, 0.97f, BorderThickness);
@@ -72,6 +83,8 @@ public sealed class CheatPanel
         DrawButton(spriteBatch, GetAddCreditsButtonRect(panelOrigin), hoverPoint, "Выдать 100 кредитов");
         DrawButton(spriteBatch, GetSpectatorModeButtonRect(panelOrigin), hoverPoint, "Режим наблюдателя");
         DrawButton(spriteBatch, GetEnemyInteriorButtonRect(panelOrigin), hoverPoint, enemyInteriorOn ? "Скрыть внутренности врага" : "Видеть внутри врага");
+        DrawButton(spriteBatch, GetInfiniteAmmoButtonRect(panelOrigin), hoverPoint, infiniteAmmoOn ? "Бесконечные снаряды: ВКЛ" : "Бесконечные снаряды: выкл");
+        DrawButton(spriteBatch, GetRevealMapButtonRect(panelOrigin), hoverPoint, "Разведать всю карту системы");
     }
 
     private void DrawButton(SpriteBatch spriteBatch, Rectangle buttonRect, Point hoverPoint, string label)

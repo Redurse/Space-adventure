@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -56,8 +56,15 @@ public sealed class FabricatorPanel
     public static bool CanAfford(FabricatorRecipe recipe, InventoryState? inventory) =>
         inventory is not null && recipe.Ingredients.All(ing => inventory.MainSlots.Count(s => s == ing.Item) >= ing.Count);
 
-    public static IReadOnlyList<FabricatorRecipe> VisibleRecipes(bool onlyAvailable, InventoryState? inventory) =>
-        onlyAvailable ? FabricatorCatalog.Recipes.Where(r => CanAfford(r, inventory)).ToList() : FabricatorCatalog.Recipes.ToList();
+    public static IReadOnlyList<FabricatorRecipe> VisibleRecipes(bool onlyAvailable, InventoryState? inventory, string? category = null)
+    {
+        var inCategory = FabricatorCatalog.Recipes.Where(r => r.Category == (category ?? FabricatorCatalog.Categories[0]));
+        return onlyAvailable ? inCategory.Where(r => CanAfford(r, inventory)).ToList() : inCategory.ToList();
+    }
+
+    // The category tabs down the left edge: one icon per FabricatorCatalog.Categories entry.
+    public static Rectangle GetSidebarIconRect(int index, Vector2 origin) =>
+        new((int)origin.X, (int)origin.Y + ContentTop + 30 + index * (SidebarIconSize + 6), SidebarIconSize, SidebarIconSize);
 
     public static Rectangle Housing(Vector2 origin) => new(
         (int)origin.X - DevicePanelChrome.OriginInsetX, (int)origin.Y - DevicePanelChrome.OriginInsetY,
@@ -79,8 +86,9 @@ public sealed class FabricatorPanel
         (int)origin.X + SidebarWidth + MaxInputSlots * (InputSlotSize + InputSlotGap) + 16,
         (int)origin.Y + InputRowTop + 14 + InputSlotSize / 2 - 12, 120, 26);
 
-    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 origin, bool onlyAvailable, bool sortByName, string? selectedRecipeId)
+    public void Draw(SpriteBatch spriteBatch, WorldSnapshot snapshot, int playerId, Vector2 origin, bool onlyAvailable, bool sortByName, string? selectedRecipeId, string? category = null)
     {
+        category ??= FabricatorCatalog.Categories[0];
         var housing = Housing(origin);
         spriteBatch.Draw(_pixel, housing, new Color(14, 20, 24));
         DrawRectOutline(spriteBatch, housing, new Color(70, 150, 140), 2);
@@ -88,12 +96,12 @@ public sealed class FabricatorPanel
         DrawCentered(spriteBatch, "ФАБРИКАТОР", new Vector2(housing.Center.X, housing.Y + 14), Color.White, 0.6f);
 
         var inventory = snapshot.Characters.FirstOrDefault(c => c.PlayerId == playerId)?.Inventory;
-        var visible = VisibleRecipes(onlyAvailable, inventory);
+        var visible = VisibleRecipes(onlyAvailable, inventory, category);
         if (sortByName)
             visible = visible.OrderBy(r => ItemDefinitions.DisplayName(r.Output)).ToList();
 
-        DrawSidebar(spriteBatch, origin);
-        DrawListColumn(spriteBatch, origin, visible, inventory, onlyAvailable, sortByName, selectedRecipeId);
+        DrawSidebar(spriteBatch, origin, category);
+        DrawListColumn(spriteBatch, origin, visible, inventory, onlyAvailable, sortByName, selectedRecipeId, category);
 
         var me = snapshot.Characters.FirstOrDefault(c => c.PlayerId == playerId);
         var busy = me?.ProductionActionRemaining > 0 && !me.ProductionIsDeconstruct;
@@ -107,24 +115,25 @@ public sealed class FabricatorPanel
     // Only "Материалы" is real (FabricatorCatalog.MaterialsCategory) - the rest are drawn dimmed,
     // reserved for whenever a second recipe category exists (weapons/medical/... per the reference
     // screenshot), not wired to anything yet.
-    private void DrawSidebar(SpriteBatch spriteBatch, Vector2 origin)
+    private void DrawSidebar(SpriteBatch spriteBatch, Vector2 origin, string category)
     {
-        var x = (int)origin.X;
-        var y = (int)origin.Y + ContentTop + 30;
-        DrawSidebarIcon(spriteBatch, new Rectangle(x, y, SidebarIconSize, SidebarIconSize), "М", active: true);
-        for (var i = 1; i < 5; i++)
-            DrawSidebarIcon(spriteBatch, new Rectangle(x, y + i * (SidebarIconSize + 6), SidebarIconSize, SidebarIconSize), "-", active: false);
+        for (var i = 0; i < 5; i++)
+        {
+            var real = i < FabricatorCatalog.Categories.Count;
+            DrawSidebarIcon(spriteBatch, GetSidebarIconRect(i, origin), real ? FabricatorCatalog.Categories[i][..1] : "-",
+                active: real && FabricatorCatalog.Categories[i] == category, enabled: real);
+        }
     }
 
-    private void DrawSidebarIcon(SpriteBatch spriteBatch, Rectangle rect, string glyph, bool active)
+    private void DrawSidebarIcon(SpriteBatch spriteBatch, Rectangle rect, string glyph, bool active, bool enabled)
     {
         spriteBatch.Draw(_pixel, rect, active ? new Color(40, 70, 68) : new Color(24, 30, 32));
         DrawRectOutline(spriteBatch, rect, active ? new Color(120, 210, 190) : new Color(60, 68, 70), 1);
-        DrawCentered(spriteBatch, glyph, new Vector2(rect.Center.X, rect.Center.Y), active ? Color.White : Color.Gray * 0.6f, 0.5f);
+        DrawCentered(spriteBatch, glyph, new Vector2(rect.Center.X, rect.Center.Y), active ? Color.White : enabled ? Color.LightGray * 0.85f : Color.Gray * 0.6f, 0.5f);
     }
 
     private void DrawListColumn(SpriteBatch spriteBatch, Vector2 origin, IReadOnlyList<FabricatorRecipe> visible,
-        InventoryState? inventory, bool onlyAvailable, bool sortByName, string? selectedRecipeId)
+        InventoryState? inventory, bool onlyAvailable, bool sortByName, string? selectedRecipeId, string category)
     {
         var listX = origin.X + SidebarWidth;
 
@@ -148,7 +157,7 @@ public sealed class FabricatorPanel
         spriteBatch.DrawString(_font, "Только доступные", new Vector2(checkboxRect.Right + 6, checkboxRect.Y - 1), Color.White, 0f, Vector2.Zero, 0.42f, SpriteEffects.None, 0f);
 
         var categoryLabelPos = new Vector2(listX, origin.Y + ListTop - 16);
-        spriteBatch.DrawString(_font, FabricatorCatalog.Recipes.FirstOrDefault()?.Category ?? "Материалы", categoryLabelPos, new Color(150, 200, 190), 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
+        spriteBatch.DrawString(_font, category, categoryLabelPos, new Color(150, 200, 190), 0f, Vector2.Zero, 0.45f, SpriteEffects.None, 0f);
 
         for (var i = 0; i < visible.Count; i++)
         {

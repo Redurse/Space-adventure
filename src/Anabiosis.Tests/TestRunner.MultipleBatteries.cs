@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using Anabiosis.Server;
 using Anabiosis.Shared.Model;
 
@@ -38,6 +38,26 @@ internal static partial class TestRunner
     {
         var ship = Ship.FromCustomDefinition(BuildSimpleCustomShipDefinition());
         return ship.BatteryDeviceCount == 1 && ship.ExtraBatteryPositions.Count == 0;
+    }
+
+    // User bug report ("на корабле не отображаются несколько батарей, а только 1"): the extras only counted
+    // toward capacity and never reached the client, so only BatteryBlock was drawn.
+    private static bool Snapshot_MultipleBatteries_SendsExtraBatteriesToClient()
+    {
+        var def = BuildSimpleCustomShipDefinition();
+        var withExtraBatteries = def with
+        {
+            Devices = def.Devices
+                .Append(new CustomDeviceDef(CustomDeviceKind.Battery, 3, 1))
+                .Append(new CustomDeviceDef(CustomDeviceKind.Battery, 3, 2))
+                .Append(new CustomDeviceDef(CustomDeviceKind.Battery, 3, 3))
+                .ToList(),
+        };
+        var snapshot = new World(ShipKind.Custom, withExtraBatteries).CreateSnapshot();
+        var ownBatteries = (snapshot.ExtraBatteries ?? Array.Empty<BatteryBlock>()).Where(b => !b.Id.StartsWith(Station.StartStationPointId)).ToList(); // the start station's own battery joins the list while docked
+        return ownBatteries is { Count: 2 } extras
+            && extras.Any(b => b.X == 3 && b.Y == 2) && extras.Any(b => b.X == 3 && b.Y == 3)
+            && extras.All(b => b.Id != snapshot.BatteryBlock.Id);
     }
 
     private static bool World_MultipleBatteryDevices_IncreasesPowerGridCapacity()

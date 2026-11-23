@@ -210,33 +210,19 @@ internal static partial class TestRunner
         return reactor.Fuel == 0f && reactor.CurrentOutput == 0f;
     }
 
-    // A campaign begins with the reactor split evenly across the systems rather than with every
-    // slider at zero. Worth a test rather than a glance, for two reasons: the share is derived from
-    // two numbers that live apart from each other - reactor output and the number of PowerSystemId
-    // values - so adding a sixth system quietly changes what every ship starts on; and the split has
-    // to happen on starting a run, not on constructing the grid, which is a distinction no reader
-    // would guess from the value alone.
-    private static bool World_NewCampaign_StartsWithAnEqualShareForEverySystem()
+    // W2 of wiring-plan.md: no sliders to split - the ship's grid powers every wired device from the
+    // first tick, each system getting its full draw while the reactor has headroom for all of them.
+    private static bool World_NewCampaign_PowersEverySystemInFull()
     {
         var world = new World(ShipKind.Custom);
         world.StartCampaign();
+        world.Step(RealtimeStep);
 
-        var systems = Enum.GetValues<PowerSystemId>();
-        var state = world.PowerGrid.CreateState();
-        var expected = state.ReactorOutput / systems.Length;
-        return systems.All(s => Math.Abs(world.PowerGrid.GetAllocation(s) - expected) < 0.01f)
-            && Math.Abs(state.Allocated.Values.Sum() - state.ReactorOutput) < 0.05f;
-    }
-
-    // The tutorial teaches allocating power, so it has to start from nothing - otherwise its own
-    // completion check sees a boot-time split and ticks the step off before the player moves. This
-    // is the guard against anyone moving the split back into the PowerGrid constructor, where it
-    // would reach the tutorial too.
-    private static bool World_TutorialWorld_StartsWithNothingAllocated()
-    {
-        var world = new World(ShipKind.Custom);
-        world.StartTutorial();
-        return Enum.GetValues<PowerSystemId>().All(s => world.PowerGrid.GetAllocation(s) < 0.01f);
+        var systems = world.Ship.SystemDevices.Select(d => d.System).Distinct().ToList();
+        var state = world.CreateSnapshot().Power;
+        return systems.Count > 0
+            && systems.All(s => world.GetEffectivePower(s) >= (s == PowerSystemId.Engine ? 20f : 12f) - 0.01f)
+            && state.Allocated.Values.Sum() <= state.ReactorOutput;
     }
 
     private static bool PowerGrid_Allocation_CannotExceedReactorOutput()

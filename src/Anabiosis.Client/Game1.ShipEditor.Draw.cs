@@ -231,6 +231,11 @@ public partial class Game1
             DrawEditorDoubleEnginePlacementPreview();
         if (_editorTool == EditorTool.Compartment)
             DrawEditorCompartmentPlacementPreview();
+        // The wires are always shown (thin) so the author sees what is connected; the wiring tool adds the dimming and the lit devices.
+        if (_editorTool == EditorTool.Wire)
+            DrawEditorWiring();
+        else
+            DrawEditorWireLines(0.55f, 2f);
 
         _spriteBatch.End();
         GraphicsDevice.ScissorRectangle = previousScissor;
@@ -431,9 +436,8 @@ public partial class Game1
         // un-thinned sprite that disagrees with the tile's own real collision.
         if (openSide is { } forcedHalf)
         {
-            var forcedRect = EditorHalfRect(rect, forcedHalf);
-            _spriteBatch.Draw(_pixel, forcedRect, tint == Color.White ? new Color(120, 130, 150) : tint);
-            DrawRectOutline(forcedRect, Color.Black, 1f);
+            ShipRenderer.DrawHalfWall(_spriteBatch, _pixel, _editorWallVerticalTexture, _editorWallHorizontalTexture,
+                EditorHalfRect(rect, forcedHalf), forcedHalf, tint);
             return;
         }
 
@@ -863,6 +867,7 @@ public partial class Game1
 
         var rotated = CompartmentPlacer.Rotate(entry, _editorCompartmentPendingRotation);
         var anchor = new TileCoord(hovered.X - rotated.Width / 2, hovered.Y - rotated.Height / 2);
+        anchor = CompartmentBuilder.SnapToDoors(_editorTiles, new HashSet<TileCoord>(), entry, anchor, _editorCompartmentPendingRotation); // the same snap as the click
 
         var speculative = _editorTiles.Clone();
         var result = CompartmentPlacer.Stamp(speculative, entry, anchor, _editorCompartmentPendingRotation, "preview");
@@ -986,6 +991,8 @@ public partial class Game1
         {
             var halfSide = _editorDeviceHalfSides.TryGetValue(anchor, out var hs) ? hs : CustomDeviceFootprint.ResolveHalfSide(null, rotated);
             var combinedRect = HalfWidthCombinedEditorRect(anchor, halfSide, CustomDeviceFootprint.Size(kind).Height);
+            if (_shipRenderer.TryDrawWorkshopMachine(_spriteBatch, kind, combinedRect, stage: 0, lit: true))
+                return;
             var baked = DeviceIconSkin.Get(face, combinedRect.Width, combinedRect.Height, lit: true);
             _spriteBatch.Draw(baked, combinedRect, Color.White);
             return;
@@ -1296,6 +1303,7 @@ public partial class Game1
                 "Клик - поставить (нужна стена в сторону сопла). ПКМ - убрать.",
             EditorTool.DoubleEngine => $"R - повернуть (сейчас: {EngineFacingLabel(_editorDoubleEnginePendingFacing)} + {EngineFacingLabel(DoubleEngineSecondFacing(_editorDoubleEnginePendingFacing))}). " +
                 "Клик - поставить (нужна стена в сторону обоих сопел). ПКМ - убрать целиком.",
+            EditorTool.Wire => "Клик по устройству, затем по другому - провод питания (контакты подберутся сами). Тот же клик ещё раз - снять. ПКМ по устройству - снять все его провода. Не соединённое вручную подключится стандартно.",
             EditorTool.Compartment => "R - повернуть отсек. Клик - поставить целиком (пол+стены+устройства). ПКМ по отсеку - убрать целиком.",
             _ => "",
         };

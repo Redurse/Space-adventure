@@ -12,13 +12,14 @@ public sealed partial class World
 {
     private const float MechanicActionCooldownSeconds = 4f;
     private const float ScientistHealPerSecond = 8f;
+    private float _scientistBotActionTimer;
     private const float BotTurretAimToleranceDegrees = 2f;
 
     private readonly Dictionary<int, float> _mechanicCooldowns = new();
 
     private void StepCrewBots(double deltaSeconds)
     {
-        foreach (var bot in _characters.Values.Where(c => c.IsBot && c.Role is not null).ToList())
+        foreach (var bot in _characters.Values.Where(c => c.IsBot && c.Role is not null && !c.IsDowned).ToList())
         {
             switch (bot.Role)
             {
@@ -81,24 +82,11 @@ public sealed partial class World
 
     private static float ShortestAngle(float degrees) => ((degrees % 360f) + 540f) % 360f - 180f;
 
-    // Keeps life support and defense fed before anything else, nudging the slider the same way a
-    // player's held key would - on its own player-keyed slot now (PowerGrid.ApplyInput), so a live
-    // Engineer's own input alongside it just adds up instead of one overwriting the other.
-    private static readonly PowerSystemId[] EngineerPriority =
-        { PowerSystemId.Oxygen, PowerSystemId.Shields, PowerSystemId.Engine, PowerSystemId.WeaponCharger };
-
-    private void StepEngineerBot(Character bot)
+    // The Engineer used to nudge the distribution sliders; there are none any more - the ship's grid
+    // feeds every wired device by itself (World.Power.cs, W2 of wiring-plan.md). Rewiring work for
+    // the Engineer arrives with player-editable wiring (W5/W9).
+    private static void StepEngineerBot(Character bot)
     {
-        const float TargetShare = 12f; // a modest, sustainable allocation per system - not "max everything"
-        foreach (var system in EngineerPriority)
-        {
-            if (PowerGrid.GetAllocation(system) < TargetShare)
-            {
-                PowerGrid.ApplyInput(bot.PlayerId, (int)system, 1f);
-                return;
-            }
-        }
-        PowerGrid.ApplyInput(bot.PlayerId, -1, 0f); // everything it cares about is already fed - hands off the slider
     }
 
     // Keeps the reactor topped up and, on the same slow cadence, clears one broken thing ship-wide
@@ -148,14 +136,19 @@ public sealed partial class World
     // bot has no perception of the scanner side of the job, only this one.
     private void StepScientistBot(double deltaSeconds)
     {
+        // A heart that has stopped comes first, then whoever is worst off (World.Treatment.cs has the human version of all this).
         var patient = _characters.Values
-            .Where(c => c.Health < Character.MaxHealth && c.Health >= 0)
-            .OrderBy(c => c.Health)
+            .Where(c => !c.Body.Dead && c.Body.NeedsTreatment)
+            .OrderByDescending(c => c.Body.InArrest)
+            .ThenBy(c => c.Body.Vitality)
             .FirstOrDefault();
         if (patient is null)
+        {
+            _scientistBotActionTimer = 0f;
             return;
+        }
 
-        patient.Health = Math.Min(Character.MaxHealth, patient.Health + ScientistHealPerSecond * (float)deltaSeconds);
+        AdministerFirstAid(patient.Body, (float)deltaSeconds, ScientistHealPerSecond, ref _scientistBotActionTimer);
     }
 
     // A safety net, not a pilot: if nobody living is at the helm and the ship is coasting, brake it

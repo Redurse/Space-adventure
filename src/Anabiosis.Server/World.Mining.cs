@@ -42,7 +42,10 @@ public sealed partial class World
     {
         var dropped = _droppedItems.FirstOrDefault(d => d.Id == droppedItemId);
         if (dropped is null)
+        {
+            TryTakeWreckLoot(character, droppedItemId); // a click on salvage aboard a wreck (World.Wrecks.cs)
             return;
+        }
 
         var position = GetCharacterWorldPosition(character);
         var roomId = character.IsOutside ? null : character.RoomId;
@@ -53,6 +56,9 @@ public sealed partial class World
             return;
 
         if (character.Inventory.TryAdd(dropped.Item))
+        {
             _droppedItems.Remove(dropped);
+            RememberStationSalvageTaken(dropped.Id);
+        }
     }
 }

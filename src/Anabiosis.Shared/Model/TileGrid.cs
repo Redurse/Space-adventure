@@ -379,7 +379,7 @@ public sealed class TileGrid
     // North = -Y, South = +Y, East = +X, West = -X (TileSideExtensions' own convention) - the solid
     // half sits on `solidSide`, occupying the [0, 0.5) or [0.5, 1) fraction of the tile's own local
     // square on the matching axis.
-    private static bool IsInSolidHalf(TileCoord coord, Vec2 position, TileSide solidSide)
+    internal static bool IsInSolidHalf(TileCoord coord, Vec2 position, TileSide solidSide)
     {
         var fx = position.X - coord.X;
         var fy = position.Y - coord.Y;
@@ -899,6 +899,8 @@ public sealed class TileGrid
     // touches (there can be more than one, if it reconnects two previously-separate pockets).
     private void OnTileBecameRegionMember(TileCoord coord)
     {
+        if (_bulkBuilding)
+            return; // EndBulkBuild rebuilds every region at once
         var neighborRegionIds = new HashSet<int>();
         foreach (var neighbor in ConnectedNeighbors(coord))
             if (RegionIdOf.TryGetValue(neighbor, out var id))
@@ -953,6 +955,8 @@ public sealed class TileGrid
     // own tile count, never the whole grid.
     private void OnTileLeftRegionMembership(TileCoord coord)
     {
+        if (_bulkBuilding)
+            return;
         if (!RegionIdOf.TryGetValue(coord, out var oldRegionId))
             return;
         var oldRegion = Regions[oldRegionId];
@@ -1018,6 +1022,45 @@ public sealed class TileGrid
             foreach (var tile in piece)
                 RegionIdOf[tile] = newRegion.Id;
             RecomputeLeak(newRegion.Id);
+        }
+    }
+
+    // Building a whole grid tile by tile (TileGridRasterizer.FromRooms) updated the region graph after EVERY tile - each new floor tile and each wall
+    // re-scanned its region, so a big station cost tens of milliseconds (and every ship build, every client cache, every test world paid it).
+    // Between BeginBulkBuild and EndBulkBuild the region graph is left alone, and EndBulkBuild computes it once: the connected components of open
+    // floor, with their leak flags - the same regions the incremental updates end up at (only their ids can differ).
+    private bool _bulkBuilding;
+
+    public void BeginBulkBuild() => _bulkBuilding = true;
+
+    public void EndBulkBuild()
+    {
+        _bulkBuilding = false;
+        Regions.Clear();
+        RegionIdOf.Clear();
+        foreach (var (coord, cell) in Cells)
+        {
+            if (!IsRegionMember(cell) || RegionIdOf.ContainsKey(coord))
+                continue;
+            var region = new SealedRegion { Id = _nextRegionId++ };
+            region.Tiles.Add(coord);
+            RegionIdOf[coord] = region.Id;
+            var queue = new Queue<TileCoord>();
+            queue.Enqueue(coord);
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                foreach (var neighbor in ConnectedNeighbors(current))
+                {
+                    if (RegionIdOf.ContainsKey(neighbor) || !Cells.TryGetValue(neighbor, out var neighborCell) || !IsRegionMember(neighborCell))
+                        continue;
+                    region.Tiles.Add(neighbor);
+                    RegionIdOf[neighbor] = region.Id;
+                    queue.Enqueue(neighbor);
+                }
+            }
+            Regions[region.Id] = region;
+            RecomputeLeak(region.Id);
         }
     }
 

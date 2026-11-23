@@ -33,6 +33,11 @@ public sealed partial class EnemyShipRuntime
     // doesn't all sweep the same direction in lockstep.
     public float OrbitDirection { get; init; } = 1f;
 
+    // A wreck (World.Wrecks.cs): a dead hull drifting at its place - nobody aboard, never steered, never fires.
+    public bool Derelict { get; init; }
+    // Salvage lying on its decks, in the hull's own local frame.
+    internal List<Anabiosis.Shared.Protocol.WreckLootState> Loot { get; } = new();
+
     // This hull's own wall hit points, one entry per Layout.WallBlocks id. Own instance per ship so two raiders don't share
     // a wall's damage (World.Cutting.cs damages these once cut, World.EnemyDamage.cs when shot, World.Eva.cs's
     // StepMagnetizedWalk lets a boarder climb through a breached one same as the player's own hull). Keyed by id, so the

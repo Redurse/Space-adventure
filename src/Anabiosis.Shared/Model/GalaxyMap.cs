@@ -1,4 +1,4 @@
-namespace Anabiosis.Shared.Model;
+﻿namespace Anabiosis.Shared.Model;
 
 // The whole galaxy: a small set of star systems (StarSystem.cs), each with its own local points of
 // interest. No corridor graph - a system parked anywhere past its own WarpZoneRadius
@@ -95,8 +95,13 @@ public sealed class GalaxyMap
     // there is only ever one real galaxy alive per process, exactly like the embedded server itself.
     public static volatile GalaxyMap? Current;
 
-    private GalaxyMap(IReadOnlyList<StarSystem> handAuthoredSystems, string homePointId)
+    // The game's world seed (0 = the fixed test world): what every system's hidden places are rolled from.
+    public int WorldSeed => _worldSeed;
+    private readonly int _worldSeed;
+
+    private GalaxyMap(IReadOnlyList<StarSystem> handAuthoredSystems, string homePointId, int worldSeed)
     {
+        _worldSeed = worldSeed;
         _systems = handAuthoredSystems.ToList();
         _points = _systems.SelectMany(s => s.Points).ToList();
         _systemsById = new Dictionary<string, StarSystem>();
@@ -157,7 +162,7 @@ public sealed class GalaxyMap
             GenerateProceduralChunk(ProceduralChunkSize);
     }
 
-    public static GalaxyMap CreateStarter()
+    public static GalaxyMap CreateStarter(int worldSeed = 0)
     {
         // Real positions in this system's own local field (World.Voyage.cs), spread across the
         // full 4800x4800 field (M48, doubling M40's own 2400x2400) rather than sitting in a small
@@ -343,7 +348,7 @@ public sealed class GalaxyMap
         // rendering one, however many times the map's own drawing code got fixed. Spread apart by
         // bearing AROUND their shared host instead, which neither existing clamp touches.
         var sol = new StarSystem("sol", "Солнечная система", SeparateCoincidentStations(solPoints, solFieldCenter),
-        AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null);
+        AsteroidField.CreateDefault(), galaxyX: 300f, galaxyY: 300f, controllingFaction: null, worldSeed: worldSeed);
 
         // Every hand-authored stub below is controlled by whichever faction its own single point
         // already belongs to - simplest reading of "who actually runs this place". Each gets its
@@ -352,7 +357,7 @@ public sealed class GalaxyMap
         var alphaCentauri = new StarSystem("alpha-centauri", "Альфа Центавра", new[]
         {
             new GalaxyPoint("ac-outpost", "Форпост Альфы Центавра", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Military),
-        }.Select(p => PlaceSingleSystemPoint(p, "alpha-centauri")).ToArray(), AsteroidField.CreateForSystem("alpha-centauri"), galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent);
+        }.Select(p => PlaceSingleSystemPoint(p, "alpha-centauri")).ToArray(), AsteroidField.CreateForSystem("alpha-centauri"), galaxyX: 420f, galaxyY: 200f, controllingFaction: FactionId.Independent, worldSeed: worldSeed);
 
         // The rest of the chain (game_design.md - "куча систем"): each new system is a light stub,
         // the same shape alpha-centauri already was - a single point of interest, no dedicated warp
@@ -365,25 +370,25 @@ public sealed class GalaxyMap
         var sirius = new StarSystem("sirius", "Сириус", new[]
         {
             new GalaxyPoint("sirius-trade-post", "Торговый пост Сириуса", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Consortium, StationKind.Trade),
-        }.Select(p => PlaceSingleSystemPoint(p, "sirius")).ToArray(), AsteroidField.CreateForSystem("sirius"), galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium);
+        }.Select(p => PlaceSingleSystemPoint(p, "sirius")).ToArray(), AsteroidField.CreateForSystem("sirius"), galaxyX: 180f, galaxyY: 200f, controllingFaction: FactionId.Consortium, worldSeed: worldSeed);
 
         var vega = new StarSystem("vega", "Вега", new[]
         {
             new GalaxyPoint("vega-outpost", "Аванпост Веги", 2400f, 2400f, GalaxyPointKind.Station, FactionId.Independent, StationKind.Research),
-        }.Select(p => PlaceSingleSystemPoint(p, "vega")).ToArray(), AsteroidField.CreateForSystem("vega"), galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent);
+        }.Select(p => PlaceSingleSystemPoint(p, "vega")).ToArray(), AsteroidField.CreateForSystem("vega"), galaxyX: 60f, galaxyY: 300f, controllingFaction: FactionId.Independent, worldSeed: worldSeed);
 
         var tauCeti = new StarSystem("tau-ceti", "Тау Кита", new[]
         {
             new GalaxyPoint("tau-ceti-sector", "Сектор Тау Кита", 2400f, 2400f, GalaxyPointKind.HostileSector, FactionId.FreeFleet, SquadronSize: 2),
-        }.Select(p => PlaceSingleSystemPoint(p, "tau-ceti")).ToArray(), AsteroidField.CreateForSystem("tau-ceti"), galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet);
+        }.Select(p => PlaceSingleSystemPoint(p, "tau-ceti")).ToArray(), AsteroidField.CreateForSystem("tau-ceti"), galaxyX: 540f, galaxyY: 300f, controllingFaction: FactionId.FreeFleet, worldSeed: worldSeed);
 
         var barnardsStar = new StarSystem("barnards-star", "Звезда Барнарда", new[]
         {
             new GalaxyPoint("barnard-mining-outpost", "Форпост старателей Барнарда", 2400f, 2400f, GalaxyPointKind.Station, FactionId.MinersGuild, StationKind.Mining),
-        }.Select(p => PlaceSingleSystemPoint(p, "barnards-star")).ToArray(), AsteroidField.CreateForSystem("barnards-star"), galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild);
+        }.Select(p => PlaceSingleSystemPoint(p, "barnards-star")).ToArray(), AsteroidField.CreateForSystem("barnards-star"), galaxyX: 660f, galaxyY: 200f, controllingFaction: FactionId.MinersGuild, worldSeed: worldSeed);
 
         var handAuthoredSystems = new[] { sol, alphaCentauri, sirius, vega, tauCeti, barnardsStar };
-        var map = new GalaxyMap(handAuthoredSystems, "home-station");
+        var map = new GalaxyMap(handAuthoredSystems, "home-station", worldSeed);
         // Seeds just enough of the procedural tail for each hand-authored system to have a handful
         // of real jump targets from the very start - not the whole 194-system galaxy, which now
         // only fills in as the crew actually explores (EnsureGenerated, called from
@@ -410,10 +415,13 @@ public sealed class GalaxyMap
     // this guarantees by induction that the whole galaxy stays one single warp-reachable component
     // (World_StarSystem_GalaxyHas200SystemsAllReachable) - a plain geometric guarantee, not a
     // hand-authored edge list.
-    private const int MaxProceduralSystems = 194;
+    // The whole galaxy: 4000 stars (direct user request, "карту галактики состоящую из 4000 звёзд") - the six hand-authored ones plus the rest.
+    public const int TotalSystemCount = 4000;
+    private const int HandAuthoredSystemCount = 6;
+    public const int MaxProceduralSystems = TotalSystemCount - HandAuthoredSystemCount;
     private const int ProceduralChunkSize = 20; // how many EnsureGenerated rolls out per top-up
     private const int MinReachableNeighborsAtStart = 3; // CreateStarter's own initial seeding, per hand-authored system
-    private const float ProceduralMinSpacing = 90f; // keeps galactic-map nodes from overlapping
+    private const float ProceduralMinSpacing = 55f; // keeps galactic-map nodes from overlapping (tighter than it was: 4000 stars share the disc)
 
     // Logarithmic-spiral placement (PULSAR: Lost Colony's own galaxy screen, and every other
     // "looks like an actual galaxy" starmap, reads that way because the nodes sit along a handful
@@ -424,10 +432,18 @@ public sealed class GalaxyMap
     // systems into a much smaller area than before, so most systems sit close enough to several
     // neighbours for a single warp jump to actually reach more than one candidate.
     private const int SpiralArmCount = 4;
-    private const float SpiralTotalTurns = 1.8f; // how many full winds from core to rim
-    private const float SpiralMaxRadius = 1400f;
+    private const float SpiralTotalTurns = 1.1f; // how many full winds from core to rim
+    private const float SpiralMaxRadius = 3200f; // 4000 stars: about 8000 square units apiece, so a jump of 220 reaches a couple of dozen neighbours
     private const float SpiralCoreRadius = 150f; // keeps the first few systems per arm off the exact centre
-    private const float SpiralAngleJitterRadians = 0.5f; // scatters systems off the bare spiral curve into a visible "arm" band
+    // Wide, soft arms (direct user request: "галактика не была узкими рукавами, как в Pulsar: Lost Colony"): a system sits within about 35 degrees of its arm's curve instead of
+    // about 6, so the arms melt into one broad disc, and a good share of the systems ignore the arms altogether and fill the gaps between them.
+    private const float SpiralAngleJitterRadians = 0.36f;
+    private const float DiscShare = 0.18f; // the part of the systems spread over the whole disc, not along an arm
+    private const float BulgeShare = 0.12f; // the part packed into the bright core
+    private const float BulgeRadius = 700f;
+    // The rim is not a perfect circle: a few slow swells in the radius give the galaxy an organic outline.
+    private static float RimFactor(float angle) =>
+        1f + 0.07f * MathF.Sin(2f * angle + 0.7f) + 0.05f * MathF.Sin(3f * angle + 2.1f) + 0.04f * MathF.Sin(5f * angle + 4.2f);
     private const float GalaxySpiralCenterX = 360f;
     private const float GalaxySpiralCenterY = 250f;
     // How close (inside WarpJumpRadius) a pulled-in system is placed next to its nearest neighbour -
@@ -538,6 +554,71 @@ public sealed class GalaxyMap
         return result;
     }
 
+    // A coarse grid over every system placed so far, so that "is anything closer than 55" and "which system is nearest" stay cheap
+    // when there are thousands of them (the old plain list made each new system cost a scan of all the others).
+    private const float PlacementCell = 110f;
+    private readonly Dictionary<(int, int), List<(float GalaxyX, float GalaxyY)>> _placementGrid = new();
+    private int _placementGridCount;
+
+    private static (int, int) CellOf(float x, float y) => ((int)MathF.Floor(x / PlacementCell), (int)MathF.Floor(y / PlacementCell));
+
+    private void AddToPlacementGrid(float x, float y)
+    {
+        var cell = CellOf(x, y);
+        if (!_placementGrid.TryGetValue(cell, out var list))
+            _placementGrid[cell] = list = new List<(float, float)>();
+        list.Add((x, y));
+        _placementGridCount++;
+    }
+
+    // Catches the grid up with _systems (the hand-authored ones, and anything added by another path).
+    private void EnsurePlacementGrid()
+    {
+        for (var i = _placementGridCount; i < _systems.Count; i++)
+            AddToPlacementGrid(_systems[i].GalaxyX, _systems[i].GalaxyY);
+    }
+
+    private bool AnyPlacedWithin(float x, float y, float radius)
+    {
+        var (cx, cy) = CellOf(x, y);
+        var reach = (int)MathF.Ceiling(radius / PlacementCell);
+        for (var gx = cx - reach; gx <= cx + reach; gx++)
+        for (var gy = cy - reach; gy <= cy + reach; gy++)
+            if (_placementGrid.TryGetValue((gx, gy), out var list))
+                foreach (var p in list)
+                    if (Distance(p.GalaxyX, p.GalaxyY, x, y) < radius)
+                        return true;
+        return false;
+    }
+
+    private (float GalaxyX, float GalaxyY) NearestPlaced(float x, float y)
+    {
+        var (cx, cy) = CellOf(x, y);
+        var best = (GalaxyX: 0f, GalaxyY: 0f);
+        var bestDistance = float.MaxValue;
+        for (var ring = 0; ring < 400; ring++)
+        {
+            for (var gx = cx - ring; gx <= cx + ring; gx++)
+            for (var gy = cy - ring; gy <= cy + ring; gy++)
+            {
+                if (Math.Max(Math.Abs(gx - cx), Math.Abs(gy - cy)) != ring)
+                    continue; // only the new outer shell of cells
+                if (!_placementGrid.TryGetValue((gx, gy), out var list))
+                    continue;
+                foreach (var p in list)
+                {
+                    var d = Distance(p.GalaxyX, p.GalaxyY, x, y);
+                    if (d < bestDistance)
+                        (bestDistance, best) = (d, p);
+                }
+            }
+            // anything in a farther shell is at least (ring) cells away, so this one cannot be beaten
+            if (bestDistance <= ring * PlacementCell)
+                break;
+        }
+        return best;
+    }
+
     // Rolls the next `count` procedural systems (or however many remain under MaxProceduralSystems)
     // and appends them - called both by CreateStarter (one big eager chunk today) and by
     // EnsureGenerated (small top-up chunks as the crew explores). Always continues _proceduralRandom
@@ -552,7 +633,7 @@ public sealed class GalaxyMap
         // Rebuilt fresh each call from the current Systems list rather than kept as a running field -
         // this is O(placed-so-far) per new system, fine at this total scale (at most 200), and means
         // there's no separate bookkeeping list to keep in sync with _systems.
-        var placed = _systems.Select(s => (s.GalaxyX, s.GalaxyY)).ToList();
+        EnsurePlacementGrid();
 
         for (var i = startIndex; i < endIndex; i++)
         {
@@ -568,17 +649,35 @@ public sealed class GalaxyMap
                 // Denser near the core than the rim (radius^1.3, not radius^1 or radius^0.5) - the
                 // same "most stars sit close to the centre, fewer way out at the rim" shape a real
                 // spiral galaxy's disk has.
-                var radius = SpiralCoreRadius + MathF.Pow((float)random.NextDouble(), 1.3f) * (SpiralMaxRadius - SpiralCoreRadius);
-                var winding = radius / SpiralMaxRadius * SpiralTotalTurns * 2f * MathF.PI;
-                var angle = armAngle + winding + ((float)random.NextDouble() * 2f - 1f) * SpiralAngleJitterRadians;
+                // Most follow an arm (dense toward the core); the rest are spread evenly over the disc's area, which fills what the soft arms leave empty.
+                var pick = random.NextDouble();
+                var inBulge = pick < BulgeShare;
+                var onDisc = !inBulge && pick < BulgeShare + DiscShare;
+                float radius, angle;
+                if (inBulge)
+                {
+                    // The core: a round, dense cluster that thins out smoothly.
+                    radius = SpiralCoreRadius + MathF.Pow((float)random.NextDouble(), 0.8f) * BulgeRadius;
+                    angle = (float)random.NextDouble() * 2f * MathF.PI;
+                }
+                else
+                {
+                    var reach = onDisc ? MathF.Sqrt((float)random.NextDouble()) : MathF.Pow((float)random.NextDouble(), 0.6f);
+                    radius = SpiralCoreRadius + reach * (SpiralMaxRadius - SpiralCoreRadius);
+                    var winding = radius / SpiralMaxRadius * SpiralTotalTurns * 2f * MathF.PI;
+                    angle = onDisc
+                        ? (float)random.NextDouble() * 2f * MathF.PI
+                        : armAngle + winding + ((float)random.NextDouble() * 2f - 1f) * SpiralAngleJitterRadians;
+                }
+                radius *= RimFactor(angle); // the outline, applied to where the system actually ended up
 
                 x = GalaxySpiralCenterX + radius * MathF.Cos(angle);
                 y = GalaxySpiralCenterY + radius * MathF.Sin(angle);
-                if (placed.All(p => Distance(p.GalaxyX, p.GalaxyY, x, y) >= ProceduralMinSpacing))
+                if (!AnyPlacedWithin(x, y, ProceduralMinSpacing))
                     break;
             }
 
-            var nearest = placed.OrderBy(p => Distance(p.GalaxyX, p.GalaxyY, x, y)).First();
+            var nearest = NearestPlaced(x, y);
 
             // The spiral spot landed too far from anything already placed to ever be warp-reachable
             // - pull it in next to its nearest neighbour instead, trying a handful of angles around
@@ -593,7 +692,7 @@ public sealed class GalaxyMap
                     var candidateY = nearest.GalaxyY + pulledInDistance * MathF.Sin(pullAngle);
                     x = candidateX;
                     y = candidateY;
-                    if (placed.All(p => Distance(p.GalaxyX, p.GalaxyY, candidateX, candidateY) >= ProceduralMinSpacing))
+                    if (!AnyPlacedWithin(candidateX, candidateY, ProceduralMinSpacing))
                         break;
                 }
             }
@@ -617,11 +716,11 @@ public sealed class GalaxyMap
                 : PlaceSingleSystemPoint(new GalaxyPoint($"{id}-poi", $"Сектор {name}", 2400f, 2400f, GalaxyPointKind.HostileSector, pointFaction,
                     SquadronSize: random.Next(1, 4)), id);
 
-            var system = new StarSystem(id, name, new[] { poi }, AsteroidField.CreateForSystem(id), galaxyX: x, galaxyY: y, controllingFaction: controllingFaction);
+            var system = new StarSystem(id, name, new[] { poi }, AsteroidField.CreateForSystem(id), galaxyX: x, galaxyY: y, controllingFaction: controllingFaction, worldSeed: _worldSeed);
             _systems.Add(system);
             _points.AddRange(system.Points);
             IndexSystem(system);
-            placed.Add((x, y));
+            AddToPlacementGrid(x, y);
         }
 
         GeneratedProceduralCount = endIndex;

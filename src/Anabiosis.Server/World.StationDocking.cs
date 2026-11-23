@@ -91,7 +91,7 @@ public sealed partial class World
     // (World.Voyage.cs's UpdateNearestStation) - docking is refused then too, not just once things
     // are calm enough to talk.
     public bool CanDockNow =>
-        !IsDocked && !IsInBattle && _nearestStationPointId is { } stationId &&
+        !IsDocked && !IsInBattle && AllShuttlesHome && !IsVirusHeldHere && _nearestStationPointId is { } stationId &&
         (DockBerthPosition - _shipFieldPosition).Length() < DockCaptureRadius &&
         _shipVelocity.Length() < DockMaxSpeed &&
         GetStanding(OwnerOf(stationId)) > FactionDefinitions.WarThreshold;
@@ -131,6 +131,7 @@ public sealed partial class World
     private void Undock()
     {
         PullCrewOffStation();
+        ClearStationSalvage();
         _dockedPointId = null;
         _justCastOffStation = true; // World.ShipField.cs's StepShipFieldPhysics clears this itself
 
@@ -165,19 +166,9 @@ public sealed partial class World
         }
     }
 
-    private bool HullTouchesStation(Vec2 candidateWorldCenter)
-    {
-        var (localCenter, halfExtents) = GetHullLocalBounds();
-        var clear = new Vec2(halfExtents.X - HullClearance, halfExtents.Y - HullClearance);
-
-        foreach (var (sx, sy) in new[] { (-1f, -1f), (1f, -1f), (-1f, 1f), (1f, 1f) })
-        {
-            var corner = candidateWorldCenter + RotateLocalToWorld(new Vec2(clear.X * sx, clear.Y * sy), _shipRotationDegrees);
-            if (Station.ContainsPoint(corner - Station.WorldOffset))
-                return true;
-        }
-        return false;
-    }
+    // Rooms against rooms, for every station of the system (World.Solidity.cs) - the bounding-box corner test below only ever
+    // looked at the nearest station only and could let an arm of the hull through.
+    private bool HullTouchesStation(Vec2 candidateWorldCenter) => HullOverlapsStationShape(candidateWorldCenter);
 
     // While docked the station's rooms sit in the same coordinate system as the ship's own, joined
     // by one shared doorway, so crossing over is an ordinary walk through a door handled by

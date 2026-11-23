@@ -121,12 +121,24 @@ public sealed partial class ShipRenderer
     // actual person from this camera height. FacingX/Y offsets the shoulders/head forward and picks
     // which side the (unlit) hip capsule trails on, plus a small bright nose on the head, so a
     // standing-still character still visibly has a front and a back.
+    // Line of sight from the player (Game1.BuildVisibilityMask sets it each frame, screen point in, true = seen).
+    // The interior is lit to a readable dusk now, so darkness alone no longer hides who is behind a wall -
+    // anyone the walls cut off is simply not drawn, the way Barotrauma does it. Null = no sight (helm, turret,
+    // spectator): everyone shows.
+    internal Func<Vector2, bool>? SightTest { get; set; }
+
+    private bool Hidden(Vector2 screenCenter) => SightTest is { } seen && !seen(screenCenter);
+
     internal void DrawCharacter(SpriteBatch spriteBatch, CharacterState character, Vector2 origin,
         (string Text, float Alpha)? chatBubble = null)
     {
         var size = (int)(CharacterDiameter * PixelsPerUnit);
         var center = new Vector2(origin.X + (float)character.X * PixelsPerUnit, origin.Y + (float)character.Y * PixelsPerUnit);
+        if (Hidden(center))
+            return;
+        DrawBlobShadow(spriteBatch, center, size * 1.05f);
         var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
+        HealthBars.Draw(spriteBatch, _pixel, "char:" + character.PlayerId, character.Health / 100f, new Vector2(center.X, rect.Y - 8));
 
         var facing = new Vector2(character.FacingX, character.FacingY);
         if (facing.LengthSquared() > 0.01f)
@@ -143,7 +155,7 @@ public sealed partial class ShipRenderer
         // way it is heading, arms reaching forward while it holds something.
         _crewSkin.Draw(spriteBatch, center, PixelsPerUnit, character.PlayerId,
             new Vector2((float)character.X, (float)character.Y), bodyColor, accent, character.WearingSuit, facing,
-            armsForward: held.Count > 0);
+            armsForward: held.Count > 0, look: character.Look);
 
         DrawHeldItems(spriteBatch, _pixel, _font, held, center, facing);
 
@@ -176,9 +188,13 @@ public sealed partial class ShipRenderer
     // A hostile boarder: dark armour and a red visor, the same top-down figure the player's crew uses so
     // the two sides read as people of one world. It has no facing in the snapshot, so it walks the way
     // it moves and otherwise watches the nearest of your crew.
-    internal void DrawEnemyCrewman(SpriteBatch spriteBatch, EnemyCrewState crew, Vector2 center, Vector2? lookToward) =>
+    internal void DrawEnemyCrewman(SpriteBatch spriteBatch, EnemyCrewState crew, Vector2 center, Vector2? lookToward)
+    {
+        if (Hidden(center))
+            return;
         _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(crew.Id), new Vector2(crew.X, crew.Y),
             new Color(104, 34, 42), new Color(236, 120, 60), Outfit.Raider, armsForward: true, lookToward);
+    }
 
     public static (Color Uniform, Color Accent, Outfit Outfit) NpcLook(NpcKind kind) => kind switch
     {
@@ -207,21 +223,32 @@ public sealed partial class ShipRenderer
         (new Color(76, 132, 120), new Color(226, 240, 236)),
     };
 
+    // A station guard always carries the assault rifle (World.GuardFire.cs): it is in their hands, turned the way they face.
+    private static readonly ItemType[] GuardCarry = { ItemType.Rifle };
+
     internal void DrawResident(SpriteBatch spriteBatch, StationResidentState resident, Vector2 center, Vector2? lookToward)
     {
+        if (Hidden(center))
+            return;
         var guard = resident.Role == ResidentRole.Guard;
         var (uniform, accent, outfit) = guard
             ? NpcLook(NpcKind.Security)
             : (ResidentPalette[resident.Look % ResidentPalette.Length].Uniform, ResidentPalette[resident.Look % ResidentPalette.Length].Accent, Outfit.Crew);
-        _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(resident.Id), new Vector2(resident.X, resident.Y),
+        var facing = _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(resident.Id), new Vector2(resident.X, resident.Y),
             uniform, accent, outfit, armsForward: guard, lookToward);
+        if (guard)
+            DrawHeldItems(spriteBatch, _pixel, _font, GuardCarry, center, facing);
     }
 
     internal void DrawStationResident(SpriteBatch spriteBatch, StationNpc npc, Vector2 center, Vector2? lookToward)
     {
+        if (Hidden(center))
+            return;
         var (uniform, accent, outfit) = NpcLook(npc.Kind);
-        _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(npc.Id), new Vector2(npc.X, npc.Y),
+        var facing = _crewSkin.DrawAuto(spriteBatch, center, PixelsPerUnit, StableActorId(npc.Id), new Vector2(npc.X, npc.Y),
             uniform, accent, outfit, armsForward: outfit == Outfit.Guard, lookToward);
+        if (outfit == Outfit.Guard)
+            DrawHeldItems(spriteBatch, _pixel, _font, GuardCarry, center, facing);
     }
 
     // Every crew nameplate, in one later pass over the whole snapshot - deliberately NOT part of
@@ -251,6 +278,8 @@ public sealed partial class ShipRenderer
     {
         var size = (int)(CharacterDiameter * PixelsPerUnit);
         var center = new Vector2(origin.X + (float)character.X * PixelsPerUnit, origin.Y + (float)character.Y * PixelsPerUnit);
+        if (Hidden(center))
+            return;
         var rect = new Rectangle((int)center.X - size / 2, (int)center.Y - size / 2, size, size);
 
         // The crew panel's role picker (CrewPanel.GetOwnRoleIconRect) is the only way a live

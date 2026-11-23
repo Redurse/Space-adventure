@@ -104,7 +104,7 @@ public sealed partial class GalaxyMapPanel
 
     private void DrawRadarBezel(SpriteBatch spriteBatch, Vector2 panelOrigin, float totalSeconds)
     {
-        var bezelColor = new Color(9, 11, 9);
+        var bezelColor = HousingFill; // the same as the housing, so the mask does not read as a darker square
 
         // One bezel-coloured span left of the circle and one right of it per row (or one full-width
         // span for rows entirely above/below it) - the same per-row circle math HudIcons.FillCircle
@@ -128,20 +128,8 @@ public sealed partial class GalaxyMapPanel
             spriteBatch.Draw(_pixel, new Rectangle((int)(panelOrigin.X + rightEdge), rowScreenY, (int)(MaskRight - rightEdge), 1), bezelColor);
         }
 
-        var center = panelOrigin + RadarCircleLocalCenter;
-        HudIcons.DrawRingArc(spriteBatch, _pixel, center, RadarCircleRadius, 0f, 360f, new Color(130, 150, 130), 96, 3f);
-
-        // Compass-style tick marks around the rim, longer every 30 degrees - purely decorative, the
-        // same "reads as a sonar screen at a glance" reasoning DrawSystemBackdrop's own rings have.
-        for (var degrees = 0; degrees < 360; degrees += 10)
-        {
-            var major = degrees % 30 == 0;
-            var angle = degrees * (MathF.PI / 180f);
-            var direction = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
-            var outer = center + direction * RadarCircleRadius;
-            var inner = center + direction * (RadarCircleRadius - (major ? 14f : 7f));
-            HudIcons.DrawLine(spriteBatch, _pixel, inner, outer, major ? Color.LightGray * 0.8f : Color.Gray * 0.5f, major ? 2f : 1f);
-        }
+        // The mask above squares off the porthole; the rim itself (GalaxyMapPanel.SonarScreen.cs) goes over its edge.
+        DrawBezelRim(spriteBatch, panelOrigin + RadarCircleLocalCenter);
     }
 
     // Screen-space hit test for the local player's own scanner contacts (Game1.Input.cs's own

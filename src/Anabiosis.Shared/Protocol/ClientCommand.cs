@@ -1,4 +1,4 @@
-using Anabiosis.Shared.Model;
+﻿using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Shared.Protocol;
 
@@ -336,4 +336,52 @@ public sealed record ClientCommand(
     // put a junction door on a wall joint, take one out. Edge-triggered, like BuildRoom above.
     BuildCompartmentRequest? BuildCompartment = null,
     PlaceDoorRequest? PlaceDoor = null,
-    string? RemoveDoorId = null);
+    string? RemoveDoorId = null,
+    // Medicine (World.Treatment.cs): treat a body part with an item, operate on an organ, give chest compressions (level-triggered - held),
+    // stop what you are doing.
+    TreatRequest? Treat = null,
+    SurgeryRequest? Surgery = null,
+    int? CprTargetId = null,
+    bool CancelTreatment = false,
+    bool GiveUp = false,
+    // Cheat panel: non-null sets whether turrets and personal weapons stop spending ammunition (and laser charge). Sent once per click.
+    bool? DebugInfiniteAmmo = null,
+    // The reactor panel's start/stop button (W3 of wiring-plan.md). Edge-triggered, needs to be next
+    // to the reactor like its levers.
+    bool ToggleReactorRunningPressed = false,
+    // W5 of wiring-plan.md - the connection panel's "take this wire off" click (screwdriver in hand,
+    // standing at either end). The wire comes back as a spool.
+    string? RemoveWireId = null,
+    // The galactic map's war speed buttons (World.War.cs): how many seconds of war pass per real second, 0 pauses.
+    int? WarSpeedLevel = null,
+    // Shuttles (World.Shuttle.cs): launch, recall, send somewhere or stop one. Edge-triggered like BuildRoom; null means no order this tick.
+    ShuttleRequest? Shuttle = null,
+    // Cheat panel: clear the fog over the whole of the current system and mark every hidden place in it as found. Edge-triggered, once per click.
+    bool DebugRevealSystemMap = false,
+    // The comms console: hail the station at this point (World.Comms.cs), or hang up. Edge-triggered, once per click.
+    string? HailPointId = null,
+    bool EndCommsPressed = false,
+    // W7 of wiring-plan.md - the part settings panel: change one setting of this part (a ComponentSettingAction as a number). Edge-triggered.
+    string? ComponentSettingId = null,
+    int? ComponentSettingAction = null,
+    // The text typed into a regular expression / terminal part (Enter in its panel); a terminal also sends it. Edge-triggered.
+    string? ComponentTextId = null,
+    string? ComponentText = null,
+    // The station's power panel (World.StationPower.cs): connect or cut the shore power the docked station feeds the ship. Edge-triggered, once per click.
+    bool ToggleShorePowerPressed = false,
+    // The lobby (GameServer.cs, before any round exists): a line of the waiting room's chat; the host removing a player; the host changing the round's settings.
+    // Each is edge-triggered, once per click / Enter.
+    string? LobbyChat = null,
+    int? LobbyKickPlayerId = null,
+    LobbySettings? LobbySettingsUpdate = null,
+    // Own flags, sent when they change (null = unchanged): "away" (takes no part in the round) and "watching" (in the round without a character).
+    bool? LobbyAfk = null,
+    bool? LobbySpectate = null,
+    // Own look and starting kit (the "Внешность" tab and the 1/2/3 sets): sent when changed, applied to the character spawned at the round's start.
+    CharacterLook? LobbyLook = null,
+    int? LobbyKitIndex = null,
+    // Host only: put a player on the black list (and remove them), take an entry off it, or choose a saved campaign to continue (its LobbySaveInfo.Id;
+    // an empty string goes back to a new campaign).
+    int? LobbyBanPlayerId = null,
+    string? LobbyUnbanId = null,
+    string? LobbyLoadSaveId = null);

@@ -68,6 +68,7 @@ public sealed partial class World
     // least one character is actually in reach with the right tool in hand.
     private void StepSystemRepair(double deltaSeconds)
     {
+        _repairingNow.Clear();
         foreach (var device in Ship.SystemDevices)
             StepSystemRepairFor(device.Id, r => r == device.RoomId, device.Position, IsDeviceConnected(device.Id), deltaSeconds);
 
@@ -81,8 +82,7 @@ public sealed partial class World
         foreach (var junction in _components.Where(c => c.Kind == ComponentKind.Junction))
             StepSystemRepairFor(junction.Id, r => r == junction.RoomId, junction.Position, !IsJunctionDamaged(junction.Id), deltaSeconds);
 
-        foreach (var (doorId, connects, position) in AllShipDoors())
-            StepSystemRepairFor(doorId, connects, position, !IsDoorDestroyed(doorId), deltaSeconds);
+        StepDoorRepairs((float)deltaSeconds); // doors mend in seconds with a wrench (World.Doors.cs), not on the hours-long device timer
 
         // The reactor/distribution/battery "boxes" plus the helm and scanner console (enemy/weapon
         // overhaul - "реактор и коробки могли быть сломаны", "штурвал, сонар можно было сломать") -
@@ -120,11 +120,13 @@ public sealed partial class World
         // M57 - the Engineer tab's own device list adds a second, remote way to work a repair
         // (Character.EngineerFocusDeviceId) alongside the original physical wrench/screwdriver
         // presence - either one alone is enough, and having both doesn't work it any faster.
-        var beingWorked = _characters.Values.Any(c =>
+        var workers = _characters.Values.Where(c =>
             (matchesRoom(c.RoomId) && (position - c.Position).Length() < InteractionRadius &&
              (c.Inventory.IsHolding(ItemType.Wrench) || c.Inventory.IsHolding(ItemType.Screwdriver)))
-            || c.EngineerFocusDeviceId == id);
-        if (!beingWorked)
+            || c.EngineerFocusDeviceId == id).ToList();
+        foreach (var worker in workers)
+            _repairingNow.Add(worker.PlayerId); // heard as well as seen: the repair melody plays for them
+        if (workers.Count == 0)
             return; // pauses exactly where it was rather than resetting - walking away costs no progress
 
         progress.WorkedSeconds += deltaSeconds;

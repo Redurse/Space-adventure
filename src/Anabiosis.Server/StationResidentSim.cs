@@ -54,6 +54,26 @@ public sealed class StationResidentSim
         public List<TileCoord> Patrol = new();
         public int PatrolIndex;
         public bool Walking => PathIndex < Path.Count;
+        public float Health = MaxHealth;
+    }
+
+    // A resident can be hurt and killed like anyone else (World.StationCrime.cs). A dead one stays where it fell,
+    // out of the simulation, until the station is next visited.
+    public const float MaxHealth = 60f;
+
+    public IEnumerable<(string Id, Vec2 Position)> Living => _residents.Where(r => r.Health > 0f).Select(r => (r.Id, r.Position));
+
+    // The patrolling guards that are still on their feet - the ones that fire once the station is on alert (World.GuardFire.cs).
+    public IEnumerable<(string Id, Vec2 Position)> LivingGuards => _residents.Where(r => r.Role == ResidentRole.Guard && r.Health > 0f).Select(r => (r.Id, r.Position));
+
+    // Returns whether this hit killed them.
+    public bool Damage(string id, float amount)
+    {
+        var resident = _residents.FirstOrDefault(r => r.Id == id);
+        if (resident is null || resident.Health <= 0f)
+            return false;
+        resident.Health = Math.Max(0f, resident.Health - amount);
+        return resident.Health <= 0f;
     }
 
     private readonly Station _station;
@@ -94,7 +114,7 @@ public sealed class StationResidentSim
     }
 
     public IReadOnlyList<StationResidentState> States =>
-        _residents.Select(r => new StationResidentState(r.Id, r.Name, r.Look, r.Role, (float)r.Position.X, (float)r.Position.Y)).ToList();
+        _residents.Select(r => new StationResidentState(r.Id, r.Name, r.Look, r.Role, (float)r.Position.X, (float)r.Position.Y, r.Health, MaxHealth)).ToList();
 
     public int Count => _residents.Count;
     public int GuardCount => _residents.Count(r => r.Role == ResidentRole.Guard);
@@ -156,6 +176,8 @@ public sealed class StationResidentSim
         var dt = (float)deltaSeconds;
         foreach (var resident in _residents)
         {
+            if (resident.Health <= 0f)
+                continue;
             if (alerted && resident.Role == ResidentRole.Civilian)
             {
                 resident.Path.Clear(); // freeze - nobody wants to be in the way

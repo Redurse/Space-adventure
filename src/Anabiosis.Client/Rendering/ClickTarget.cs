@@ -2,7 +2,7 @@ using Anabiosis.Shared.Model;
 
 namespace Anabiosis.Client.Rendering;
 
-public enum BlockKind { None, Reactor, Distribution, Battery, System, Navigation, Station, Rack, Connections, SuitLocker, Jukebox, CardTable, Terminal, Fabricator, Deconstructor }
+public enum BlockKind { None, Reactor, Distribution, Battery, System, Navigation, Station, Rack, Connections, SuitLocker, Jukebox, CardTable, Terminal, Fabricator, Deconstructor, ShuttleBay }
 
 // Which block, if any, the player currently has "open" (game_design.md sections 1, 5, 10 — click
 // a block to walk up to its terminal). System carries which of the 5 power systems it is;

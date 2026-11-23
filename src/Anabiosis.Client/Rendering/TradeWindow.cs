@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
@@ -78,6 +78,8 @@ public sealed class TradeWindow
     public Tab CurrentTab { get; private set; } = Tab.Buy;
     public Category CurrentCategory { get; private set; } = Category.All;
     public TradeCart Cart { get; } = new();
+    // The station whose prices apply, when it is not the one docked at: the one on the comms line.
+    public string? PointOverride { get; set; }
 
     public TradeWindow(GraphicsDevice graphicsDevice, SpriteFont font)
     {
@@ -125,7 +127,10 @@ public sealed class TradeWindow
                 or ItemType.WireSpool => Category.Tools,
             ItemType.WeldingTank or ItemType.OxygenTank or ItemType.Spacesuit or ItemType.MedKit or ItemType.FuelRod
                 or ItemType.Hyperium => Category.Supplies,
+            _ when MedicalTreatment.IsMedical(item) => Category.Supplies,
+            _ when GunDefinitions.Of(item) is not null || GunDefinitions.IsAmmo(item) || ArmorDefinitions.IsArmor(item) => Category.Weapons,
             ItemType.Rifle or ItemType.LaserRifle or ItemType.Knife or ItemType.Axe or ItemType.AmmoCrate or ItemType.Magazine
+                or ItemType.Revolver or ItemType.RevolverRounds
                 => Category.Weapons,
             _ => Category.Materials,
         };
@@ -158,9 +163,9 @@ public sealed class TradeWindow
 
     private void SyncPrices(WorldSnapshot snapshot)
     {
-        var point = snapshot.GalaxyPoints.FirstOrDefault(p => p.Id == snapshot.Voyage.DockedPointId);
+        var point = snapshot.GalaxyPoints.FirstOrDefault(p => p.Id == (PointOverride ?? snapshot.Voyage.DockedPointId));
         var standing = point is null ? 0 : snapshot.FactionStandings.FirstOrDefault(f => f.Faction == point.Faction)?.Standing ?? 0;
-        Cart.PriceMultiplier = point is null ? 1f : FactionDefinitions.PriceMultiplier(point.Faction, standing);
+        Cart.PriceMultiplier = (point is null ? 1f : FactionDefinitions.PriceMultiplier(point.Faction, standing)) * (snapshot.Modifiers?.ShopPrice ?? 1f); // the lobby's shop multiplier too: the server charges it
         Cart.MiningStation = point?.StationKind == StationKind.Mining;
     }
 

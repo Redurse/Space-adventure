@@ -13,4 +13,12 @@ public sealed record WiringSnapshot(
     IReadOnlyList<Wire> Wires,
     IReadOnlyList<WireState> WireStates,
     IReadOnlyList<ComponentMount> ComponentMounts,
-    IReadOnlyList<ComponentMountState> ComponentMountStates);
+    IReadOnlyList<ComponentMountState> ComponentMountStates,
+    // W6 of wiring-plan.md - the value currently on every signal output pin that carries one, and
+    // which wall lamps a signal has switched off. Appended, optional, same as every additive field.
+    IReadOnlyList<PinSignalState>? PinSignals = null,
+    IReadOnlyList<string>? LampsOff = null,
+    // W9 - junction boxes carrying more than they can (World.WiringHazards.cs), about to burn out: the client sparks them.
+    IReadOnlyList<string>? OverheatingJunctions = null);
+
+public sealed record PinSignalState(PinRef Pin, string Value);
